@@ -251,6 +251,7 @@ export class AppEmojiManager extends AppManager {
   }
 
   public getCustomEmojiDocuments(docIds: DocId[]) {
+    docIds=docIds.filter(p=>p!=undefined);
     if(!docIds.length) return Promise.resolve([] as MyDocument[]);
     return this.apiManager.invokeApi('messages.getCustomEmojiDocuments', {document_id: docIds}).then((documents) => {
       return documents.map((doc) => {
