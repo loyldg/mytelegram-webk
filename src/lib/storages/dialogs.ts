@@ -16,7 +16,7 @@ import tsNow from '../../helpers/tsNow';
 import SearchIndex from '../searchIndex';
 import {SliceEnd} from '../../helpers/slicedArray';
 import {MyDialogFilter} from './filters';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '../mtproto/mtproto_config';
+import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '../mtproto/mtproto_config';
 import {MaybePromise, NoneToVoidFunction} from '../../types';
 import ctx from '../../environment/ctx';
 import AppStorage from '../storage';
@@ -758,7 +758,7 @@ export default class DialogsStorage extends AppManager {
     const {peerId} = dialog;
     const isForum = this.appPeersManager.isForum(peerId);
     const isTopic = isForumTopic(dialog);
-    if(isForum && !isTopic) {
+    if(isForum && !isTopic && !(dialog as Dialog).pFlags.view_forum_as_messages) {
       const forumUnreadCount = this.getForumUnreadCount(peerId);
       if(forumUnreadCount instanceof Promise) {
         forumUnreadCount.then(({count, hasUnmuted}) => {
@@ -841,7 +841,7 @@ export default class DialogsStorage extends AppManager {
     const isTopic = isForumTopic(dialog);
     const _isDialog = isDialog(dialog);
     let topDate = 0, isPinned: boolean;
-    if(isTopic && dialog.pFlags.hidden) { // general topic must be first
+    if(isTopic && dialog.pFlags.hidden && CAN_HIDE_TOPIC) { // general topic must be first
       topDate = this.generateDialogPinnedDateByIndex(0xFFF);
       isPinned = true;
     } else if(dialog.pFlags.pinned && !noPinnedOrderUpdate) {
@@ -1832,9 +1832,16 @@ export default class DialogsStorage extends AppManager {
     }) as any;
   }
 
-  public getForumUnreadCount(peerId: PeerId) {
+  public getForumUnreadCount(peerId: PeerId, ignoreIfAsMessages?: boolean) {
     if(!this.appPeersManager.isForum(peerId)) {
       return;
+    }
+
+    if(ignoreIfAsMessages) {
+      const dialog = this.getDialogOnly(peerId);
+      if(dialog && dialog.pFlags.view_forum_as_messages) {
+        return;
+      }
     }
 
     const folder = this.getFolder(peerId);

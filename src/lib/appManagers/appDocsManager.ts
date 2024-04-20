@@ -51,10 +51,13 @@ export class AppDocsManager extends AppManager {
 
   private fixingChromiumMp4: {[src: string]: MaybePromise<string>};
 
+  private requestingDocParts: {[docId: DocId]: Set<() => void>};
+
   protected after() {
     this.docs = {};
     this.uploadingWallPapers = {};
     this.fixingChromiumMp4 = {};
+    this.requestingDocParts = {};
 
     MTProtoMessagePort.getInstance<false>().addEventListener('serviceWorkerOnline', (online) => {
       if(!online) {
@@ -166,9 +169,9 @@ export class AppDocsManager extends AppManager {
             doc.type = 'sticker';
             doc.sticker = 1;
           } else if(doc.mime_type === EXTENSION_MIME_TYPE_MAP.webm) {
-            if(!getEnvironment().IS_WEBM_SUPPORTED) {
-              break;
-            }
+            // if(!getEnvironment().IS_WEBM_SUPPORTED) {
+            //   break;
+            // }
 
             doc.type = 'sticker';
             doc.sticker = 3;
@@ -377,7 +380,51 @@ export class AppDocsManager extends AppManager {
   public requestDocPart(docId: DocId, dcId: number, offset: number, limit: number) {
     const doc = this.getDoc(docId);
     if(!doc) return Promise.reject(makeError('NO_DOC'));
-    return this.apiFileManager.requestFilePart(dcId, getDocumentInputFileLocation(doc), offset, limit);
+
+    const set = this.requestingDocParts[docId] ??= new Set();
+
+    const onFinish = () => {
+      if(
+        set.delete(cancel) &&
+        !set.size &&
+        this.requestingDocParts[docId] === set
+      ) {
+        delete this.requestingDocParts[docId];
+      }
+    };
+
+    let canceled = false;
+    const cancel = () => {
+      canceled = true;
+      onFinish();
+    };
+
+    set.add(cancel);
+
+    const promise = this.apiFileManager.requestFilePart({
+      dcId,
+      location: getDocumentInputFileLocation(doc),
+      offset,
+      limit,
+      checkCancel: () => {
+        if(canceled) {
+          throw makeError('DOWNLOAD_CANCELED');
+        }
+      }
+    });
+
+    promise.finally(onFinish);
+
+    return promise;
+  }
+
+  public cancelDocPartsRequests(docId: DocId) {
+    const set = this.requestingDocParts[docId];
+    if(!set) return;
+
+    for(const cancel of set) {
+      cancel();
+    }
   }
 
   public fixChromiumMp4(src: string) {

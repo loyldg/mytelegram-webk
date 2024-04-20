@@ -45,6 +45,7 @@ import callbackify from '../../helpers/callbackify';
 import isLegacyMessageId from '../appManagers/utils/messageId/isLegacyMessageId';
 import {MTAppConfig} from './appConfig';
 import {setAppStateSilent} from '../../stores/appState';
+import getObjectKeysAndSort from '../../helpers/object/getObjectKeysAndSort';
 
 const TEST_NO_STREAMING = false;
 
@@ -102,7 +103,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
 
   public share: ShareData;
 
-  private serviceMessagePort: ServiceMessagePort<true>;
+  public serviceMessagePort: ServiceMessagePort<true>;
   private lastServiceWorker: ServiceWorker;
 
   private pingServiceWorkerPromise: CancellablePromise<void>;
@@ -204,7 +205,11 @@ class ApiManagerProxy extends MTProtoMessagePort {
         return (sessionStorage[storageTask.type] as any)(...storageTask.args);
       },
 
-      mirror: this.onMirrorTask
+      mirror: this.onMirrorTask,
+
+      receivedServiceMessagePort: () => {
+        this.log.warn('mtproto worker received service message port');
+      }
 
       // hello: () => {
       //   this.log.error('time hello', performance.now() - perf);
@@ -313,23 +318,30 @@ class ApiManagerProxy extends MTProtoMessagePort {
     const promise = this.pingServiceWorkerPromise = deferredPromise<void>();
     const iframe = document.createElement('iframe');
     iframe.hidden = true;
-    const onLoad = () => {
+    const onFinish = () => {
+      clearTimeout(timeout);
       setTimeout(() => { // ping once in 10 seconds
         this.pingServiceWorkerPromise = undefined;
       }, 10e3);
 
-      clearTimeout(timeout);
-      iframe.remove();
       iframe.removeEventListener('load', onLoad);
-      iframe.removeEventListener('error', onLoad);
+      iframe.removeEventListener('error', onError);
+      iframe.remove();
+    };
+    const onLoad = () => {
+      onFinish();
       promise.resolve();
     };
+    const onError = () => {
+      onFinish();
+      promise.reject();
+    };
     iframe.addEventListener('load', onLoad);
-    iframe.addEventListener('error', onLoad);
+    iframe.addEventListener('error', onError);
     iframe.src = 'ping/' + (Math.random() * 0xFFFFFFFF | 0) + '.nocache';
     document.body.append(iframe);
 
-    const timeout = window.setTimeout(onLoad, 1e3);
+    const timeout = window.setTimeout(onError, 1500);
     return promise;
   }
 
@@ -345,9 +357,9 @@ class ApiManagerProxy extends MTProtoMessagePort {
   }
 
   private _registerServiceWorker() {
-    if(import.meta.env.DEV && IS_SAFARI) {
-      return;
-    }
+    // if(import.meta.env.DEV && IS_SAFARI) {
+    //   return;
+    // }
 
     navigator.serviceWorker.register(
       // * doesn't work
@@ -434,6 +446,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
       this.serviceMessagePort.attachListenPort(worker);
       this.serviceMessagePort.addMultipleEventsListeners({
         port: (payload, source, event) => {
+          this.log.warn('got service worker port');
           this.invokeVoid('serviceWorkerPort', undefined, undefined, [event.ports[0]]);
         },
 
@@ -648,6 +661,17 @@ class ApiManagerProxy extends MTProtoMessagePort {
     }
 
     return storage.get(minMid);
+  }
+
+  public getMidsByGroupedId(groupedId: string, sort: 'asc' | 'desc' = 'asc') {
+    return getObjectKeysAndSort(this.mirrors.groupedMessages[groupedId], sort);
+  }
+
+  public getMessagesByGroupedId(groupedId: string) {
+    const mids = this.getMidsByGroupedId(groupedId, 'asc');
+    const storage = this.mirrors.groupedMessages[groupedId];
+    // return mids.map((mid) => this.getMessageFromStorage(storage, mid) as Message.message);
+    return mids.map((mid) => storage.get(mid) as Message.message);
   }
 
   public getHistoryMessagesStorage(peerId: PeerId): MessagesStorageKey {

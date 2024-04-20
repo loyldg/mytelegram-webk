@@ -22,8 +22,10 @@ export default class DownloadStorage implements FileStorage {
     size: number
   }) {
     const headers = {
-      'Content-Type': 'application/octet-stream; charset=utf-8',
+      // 'Content-Type': 'application/octet-stream; charset=utf-8',
+      // 'Content-Type': EXTENSION_MIME_TYPE_MAP[fileName.split('.').pop() as keyof typeof EXTENSION_MIME_TYPE_MAP] || 'application/octet-stream; charset=utf-8',
       'Content-Disposition': 'attachment; filename*=UTF-8\'\'' + fileNameRFC(fileName),
+      // 'Content-Disposition': `attachment; filename="${fileNameRFC(fileName)}"`,
       ...(size ? {'Content-Length': size} : {})
     };
 

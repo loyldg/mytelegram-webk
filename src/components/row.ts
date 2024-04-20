@@ -111,9 +111,13 @@ export default class Row<T extends SliderSuperTabEventableConstructable = any> {
       this.container.classList.add('no-wrap');
     }
 
-    if(options.subtitle) {
+    if(options.subtitle || options.subtitleLangKey) {
       const subtitle = this.subtitle;
-      setContent(subtitle, options.subtitle);
+      if(options.subtitleLangKey) {
+        subtitle.append(i18n(options.subtitleLangKey, options.subtitleLangArgs));
+      } else {
+        setContent(subtitle, options.subtitle);
+      }
 
       if(options.noWrap) subtitle.classList.add('no-wrap');
 
@@ -126,8 +130,6 @@ export default class Row<T extends SliderSuperTabEventableConstructable = any> {
         setContent(subtitleRight, options.subtitleRight);
         this.subtitleRow.append(subtitle, subtitleRight);
       }
-    } else if(options.subtitleLangKey) {
-      this.subtitle.append(i18n(options.subtitleLangKey, options.subtitleLangArgs));
     }
 
     let havePadding = !!options.havePadding;
@@ -387,6 +389,12 @@ export default class Row<T extends SliderSuperTabEventableConstructable = any> {
   }
 }
 
+export const RowTsx = (props: Partial<ConstructorParameters<typeof Row>[0]>) => {
+  const obj = new Row(props);
+
+  return obj.container;
+};
+
 export const CreateRowFromCheckboxField = (checkboxField: CheckboxField) => {
   return new Row({checkboxField, listenerSetter: checkboxField.listenerSetter});
 };
@@ -395,12 +403,18 @@ export const RadioFormFromRows = (rows: Row[], onChange: (value: string) => void
   return RadioForm(rows.map((r) => ({container: r.container, input: r.radioField.input})), onChange);
 };
 
-export const RadioFormFromValues = (values: {langPackKey: LangPackKey, value: number | string, checked?: boolean}[], onChange: Parameters<typeof RadioFormFromRows>[1]) => {
+export const RadioFormFromValues = (values: {
+  langPackKey?: LangPackKey,
+  value: number | string,
+  checked?: boolean,
+  textElement?: ConstructorParameters<typeof RadioField>[0]['textElement']
+}[], onChange: Parameters<typeof RadioFormFromRows>[1]) => {
   const name = 'name-' + (Math.random() * 0x7FFFFF | 0);
   let checkedRadioField: RadioField;
-  const rows = values.map(({langPackKey, value, checked}) => {
+  const rows = values.map(({langPackKey, value, checked, textElement}) => {
     const row = new Row({
       radioField: new RadioField({
+        textElement,
         langKey: langPackKey,
         name,
         value: '' + value

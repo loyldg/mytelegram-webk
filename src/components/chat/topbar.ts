@@ -55,12 +55,15 @@ import {avatarNew, findUpAvatar} from '../avatarNew';
 import {Middleware, MiddlewareHelper, getMiddleware} from '../../helpers/middleware';
 import setBadgeContent from '../../helpers/setBadgeContent';
 import createBadge from '../../helpers/createBadge';
-import PopupBoostsViaGifts from '../popups/boostsViaGifts';
 import AppStatisticsTab from '../sidebarRight/tabs/statistics';
 import {ChatType} from './chat';
 import AppBoostsTab from '../sidebarRight/tabs/boosts';
+import ChatLive from './topbarLive/container';
+import {RtmpStartStreamPopup} from '../rtmp/adminPopup';
 import {appState} from '../../stores/appState';
 import assumeType from '../../helpers/assumeType';
+import PinnedContainer from './pinnedContainer';
+import IS_LIVE_STREAM_SUPPORTED from '../../environment/liveStreamSupport';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
 
@@ -80,6 +83,7 @@ export default class ChatTopbar {
   private btnPinned: HTMLButtonElement;
   private btnCall: HTMLButtonElement;
   private btnGroupCall: HTMLButtonElement;
+  private btnGroupCallMenu: HTMLElement;
   private btnMute: HTMLButtonElement;
   private btnSearch: HTMLButtonElement;
   private btnMore: HTMLElement;
@@ -87,7 +91,9 @@ export default class ChatTopbar {
   private chatActions: ChatActions;
   private chatRequests: ChatRequests;
   private chatAudio: ChatAudio;
+  private chatLive: ChatLive;
   public pinnedMessage: ChatPinnedMessage;
+  private pinnedContainers: PinnedContainer[];
 
   private setUtilsRAF: number;
 
@@ -164,6 +170,7 @@ export default class ChatTopbar {
     this.chatAudio = new ChatAudio(this, this.chat, this.managers);
     this.chatRequests = new ChatRequests(this, this.chat, this.managers);
     this.chatActions = new ChatActions(this, this.chat, this.managers);
+    if(IS_LIVE_STREAM_SUPPORTED) this.chatLive = new ChatLive(this, this.chat, this.managers);
 
     if(this.menuButtons.length) {
       this.btnMore = ButtonMenuToggle({
@@ -187,13 +194,15 @@ export default class ChatTopbar {
       this.btnPinned,
       this.btnCall,
       this.btnGroupCall,
+      this.btnGroupCallMenu,
       this.btnMute,
       this.btnSearch,
       this.btnMore
     ].filter(Boolean));
 
     this.pushButtonToVerify(this.btnCall, this.verifyCallButton.bind(this, 'voice'));
-    this.pushButtonToVerify(this.btnGroupCall, this.verifyVideoChatButton);
+    this.pushButtonToVerify(this.btnGroupCall, this.verifyVideoChatButton.bind(this, 'nonadmin'));
+    this.pushButtonToVerify(this.btnGroupCallMenu, this.verifyVideoChatButton.bind(this, 'admin'));
 
     this.chatInfoContainer.append(this.btnBack, this.chatInfo, this.chatUtils);
     this.container.append(this.chatInfoContainer);
@@ -202,18 +211,13 @@ export default class ChatTopbar {
       this.appendPinnedMessage(this.pinnedMessage);
     }
 
-    if(this.chatAudio) {
-      // this.container.append(this.chatAudio.divAndCaption.container, this.chatUtils);
-      this.container.append(this.chatAudio.divAndCaption.container);
-    }
-
-    if(this.chatRequests) {
-      this.container.append(this.chatRequests.divAndCaption.container);
-    }
-
-    if(this.chatActions) {
-      this.container.append(this.chatActions.divAndCaption.container);
-    }
+    const pinnedContainers = this.pinnedContainers = [
+      this.chatAudio,
+      this.chatRequests,
+      this.chatActions,
+      this.chatLive
+    ].filter(Boolean);
+    this.container.append(...pinnedContainers.map((pinnedContainer) => pinnedContainer.container));
 
     // * construction end
 
@@ -323,7 +327,7 @@ export default class ChatTopbar {
     r();
   };
 
-  private verifyVideoChatButton = async(type?: 'group' | 'broadcast') => {
+  private verifyVideoChatButton = async(type?: 'group' | 'broadcast' | 'admin' | 'nonadmin') => {
     if(!IS_GROUP_CALL_SUPPORTED || this.peerId.isUser() || this.chat.type !== ChatType.Chat || this.chat.threadId) return false;
 
     const currentGroupCall = groupCallsController.groupCall;
@@ -333,14 +337,23 @@ export default class ChatTopbar {
     }
 
     if(type) {
-      if(((await this.managers.appPeersManager.isBroadcast(this.peerId)) && type === 'group') ||
-        ((await this.managers.appPeersManager.isAnyGroup(this.peerId)) && type === 'broadcast')) {
+      if(((type === 'group' && await this.managers.appPeersManager.isBroadcast(this.peerId))) ||
+        ((type === 'broadcast' && await this.managers.appPeersManager.isAnyGroup(this.peerId)))) {
         return false;
       }
     }
 
     const chat = apiManagerProxy.getChat(chatId);
-    return (chat as MTChat.chat).pFlags?.call_active || hasRights(chat, 'manage_call');
+    if(hasRights(chat, 'manage_call')) {
+      if(type === 'admin') return !(chat as MTChat.chat).pFlags?.call_active;
+    }
+    if(!(chat as MTChat.chat).pFlags?.call_active) return false;
+
+    const fullChat = await this.managers.appProfileManager.getChatFull(chatId);
+    const groupCall = await this.managers.appGroupCallsManager.getGroupCallFull(fullChat.call.id);
+    if(groupCall?._ !== 'groupCall') return false;
+
+    return !groupCall.pFlags.rtmp_stream;
   };
 
   private verifyCallButton = async(type?: CallType) => {
@@ -655,6 +668,23 @@ export default class ChatTopbar {
     this.btnJoin = Button('btn-primary btn-color-primary chat-join hide');
     this.btnCall = ButtonIcon('phone');
     this.btnGroupCall = ButtonIcon('videochat');
+    this.btnGroupCallMenu = ButtonMenuToggle({
+      listenerSetter: this.listenerSetter,
+      direction: 'bottom-left',
+      buttons: [{
+        icon: 'videochat',
+        text: 'Rtmp.Topbar.StartVideoChat',
+        onClick: this.onJoinGroupCallClick
+      }, {
+        icon: 'link',
+        text: 'Rtmp.Topbar.StreamWith',
+        onClick: () => {
+          PopupElement.createPopup(RtmpStartStreamPopup, {peerId: this.peerId}).show();
+        },
+        verify: () => IS_LIVE_STREAM_SUPPORTED
+      }],
+      icon: 'videochat'
+    });
     this.btnPinned = ButtonIcon('pinlist chat-pinlist');
     this.btnMute = ButtonIcon('mute');
 
@@ -773,7 +803,7 @@ export default class ChatTopbar {
   public openPinned(byCurrent: boolean) {
     this.chat.appImManager.setInnerPeer({
       peerId: this.peerId,
-      lastMsgId: byCurrent ? +this.pinnedMessage.pinnedMessageContainer.divAndCaption.container.dataset.mid : 0,
+      lastMsgId: byCurrent ? +this.pinnedMessage.pinnedMessageContainer.container.dataset.mid : 0,
       type: ChatType.Pinned
     });
   }
@@ -824,9 +854,8 @@ export default class ChatTopbar {
 
   private onChangeScreen = (from: ScreenSize, to: ScreenSize) => {
     const isFloating = to === ScreenSize.mobile || PINNED_ALWAYS_FLOATING;
-    this.container.classList.toggle('is-pinned-floating', mediaSizes.isMobile || isFloating);
     // this.chatAudio && this.chatAudio.divAndCaption.container.classList.toggle('is-floating', to === ScreenSize.mobile);
-    this.pinnedMessage && this.pinnedMessage.pinnedMessageContainer.divAndCaption.container.classList.toggle('is-floating', isFloating);
+    this.pinnedMessage && this.pinnedMessage.pinnedMessageContainer.container.classList.toggle('is-floating', isFloating);
     this.onResize();
   };
 
@@ -838,14 +867,13 @@ export default class ChatTopbar {
     this.titleMiddlewareHelper?.destroy();
     this.avatarMiddlewareHelper?.destroy();
     this.pinnedMessage?.destroy(); // * возможно это можно не делать
-    this.chatAudio?.destroy();
-    this.chatRequests?.destroy();
-    this.chatActions?.destroy();
+    this.pinnedContainers?.forEach((pinnedContainer) => pinnedContainer.destroy());
 
     delete this.pinnedMessage;
     delete this.chatAudio;
     delete this.chatRequests;
     delete this.chatActions;
+    delete this.chatLive;
   }
 
   public cleanup() {
@@ -855,9 +883,9 @@ export default class ChatTopbar {
   }
 
   private appendPinnedMessage(pinnedMessage: ChatPinnedMessage) {
-    const container = pinnedMessage.pinnedMessageContainer.divAndCaption.container;
+    const container = pinnedMessage.pinnedMessageContainer.container;
     if(this.pinnedMessage && this.pinnedMessage !== pinnedMessage) {
-      this.pinnedMessage.pinnedMessageContainer.divAndCaption.container.replaceWith(container);
+      this.pinnedMessage.pinnedMessageContainer.container.replaceWith(container);
     } else {
       if(PINNED_ALWAYS_FLOATING) {
         this.container.append(container);
@@ -908,8 +936,8 @@ export default class ChatTopbar {
       this.setTitleManual(),
       status?.prepare(true),
       apiManagerProxy.getState(),
-      modifyAckedPromise(this.chatRequests.setPeerId(peerId)),
-      modifyAckedPromise(this.chatActions.setPeerId(peerId))
+      modifyAckedPromise(this.chatRequests?.setPeerId(peerId)),
+      modifyAckedPromise(this.chatActions?.setPeerId(peerId))
     ] as const;
 
     const [
@@ -1007,6 +1035,8 @@ export default class ChatTopbar {
       if(setActionsCallback.result instanceof Promise) {
         this.chatActions.unset(peerId);
       }
+
+      this.chatLive?.setPeerId(peerId);
 
       callbackify(setRequestsCallback.result, (callback) => {
         if(!middleware()) {
@@ -1139,11 +1169,10 @@ export default class ChatTopbar {
 
   public setFloating = () => {
     const containers = [
-      this.chatAudio,
-      this.chatRequests,
-      this.chatActions,
+      ...(this.pinnedContainers || []),
       this.pinnedMessage?.pinnedMessageContainer
     ].filter(Boolean);
+    let top = 56, floatingHeight = 0;
     const count = containers.reduce((acc, container) => {
       const isFloating = container.isFloating();
       this.container.classList.toggle(`is-pinned-${container.className}-floating`, isFloating);
@@ -1152,9 +1181,18 @@ export default class ChatTopbar {
         return acc;
       }
 
+      if(isFloating) {
+        floatingHeight += container.height;
+        container.container.style.top = top + 'px';
+        top += container.height;
+      } else {
+        container.container.style.top = '';
+      }
+
       return acc + +isFloating;
     }, 0);
     this.container.dataset.floating = '' + count;
+    this.container.style.setProperty('--pinned-floating-height', `calc(${floatingHeight}px + var(--topbar-floating-call-height)`);
   };
 
   private messagesCounter(middleware: Middleware, key: LangPackKey) {

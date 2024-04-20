@@ -6,7 +6,7 @@
 
 import {logger, LogTypes} from '../logger';
 import {CACHE_ASSETS_NAME, requestCache} from './cache';
-import onStreamFetch from './stream';
+import onStreamFetch, {toggleStreamInUse} from './stream';
 import {closeAllNotifications, onPing, onShownNotification} from './push';
 import CacheStorageController from '../files/cacheStorage';
 import {IS_SAFARI} from '../../environment/userAgent';
@@ -16,6 +16,7 @@ import {getWindowClients} from '../../helpers/context';
 import {MessageSendPort} from '../mtproto/superMessagePort';
 import handleDownload from './download';
 import onShareFetch, {checkWindowClientForDeferredShare} from './share';
+import {onRtmpFetch, onRtmpLeftCall} from './rtmp';
 
 // #if MTPROTO_SW
 // import '../mtproto/mtproto.worker';
@@ -27,6 +28,15 @@ const ctx = self as any as ServiceWorkerGlobalScope;
 // #if !MTPROTO_SW
 let _mtprotoMessagePort: MessagePort;
 export const getMtprotoMessagePort = () => _mtprotoMessagePort;
+
+export const invokeVoidAll: ServiceMessagePort['invokeVoid'] = (...args) => {
+  getWindowClients().then((windowClients) => {
+    windowClients.forEach((windowClient) => {
+      // @ts-ignore
+      serviceMessagePort.invokeVoid(...args, windowClient);
+    });
+  });
+};
 
 log('init');
 
@@ -75,7 +85,10 @@ serviceMessagePort.addMultipleEventsListeners({
     onWindowConnected(source as any as WindowClient);
   },
 
-  shownNotification: onShownNotification
+  shownNotification: onShownNotification,
+  leaveRtmpCall: onRtmpLeftCall,
+
+  toggleStreamInUse
 });
 
 const {
@@ -126,7 +139,7 @@ const onFetch = (event: FetchEvent): void => {
     return event.respondWith(requestCache(event));
   }
 
-  if(import.meta.env.DEV && event.request.url.endsWith('.ts')) {
+  if(import.meta.env.DEV && event.request.url.match(/\.([jt]sx?|s?css)?($|\?)/)) {
     return;
   }
 
@@ -135,7 +148,7 @@ const onFetch = (event: FetchEvent): void => {
     const [scope, _params] = event.request.url.split('/').slice(-2);
     const [params, search] = _params.split('?');
 
-    // log.debug('[fetch]:', event);
+    // log.debug('[fetch]', event, event.request.url);
 
     switch(scope) {
       case 'stream': {
@@ -143,6 +156,7 @@ const onFetch = (event: FetchEvent): void => {
         break;
       }
 
+      case 'd':
       case 'download': {
         onDownloadFetch(event, params);
         break;
@@ -155,6 +169,11 @@ const onFetch = (event: FetchEvent): void => {
 
       case 'ping': {
         event.respondWith(new Response('pong'));
+        break;
+      }
+
+      case 'rtmp': {
+        onRtmpFetch(event, params, search);
         break;
       }
 

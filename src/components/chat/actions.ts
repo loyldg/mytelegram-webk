@@ -40,7 +40,8 @@ export default class ChatActions extends PinnedContainer {
       onClose: () => {
         this.managers.appProfileManager.hidePeerSettingsBar(this.peerId);
       },
-      floating: true
+      floating: true,
+      height: 52
     });
 
     // this.middlewareHelper = getMiddleware();
@@ -199,7 +200,8 @@ export default class ChatActions extends PinnedContainer {
     });
   }
 
-  public destroy() {
-    // this.middlewareHelper.destroy();
-  }
+  // public destroy() {
+  //   super.destroy();
+  //   this.middlewareHelper.destroy();
+  // }
 }

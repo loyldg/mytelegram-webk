@@ -81,8 +81,6 @@
   --message-beside-button-size: 2.375rem;
   --message-beside-button-margin: calc((var(--message-beside-button-size) + .5rem) * -1);
   --message-time-background: rgba(0, 0, 0, .35);
-  --message-highlighting-color: hsla(85.5319, 36.9171%, 40.402%, .4);//rgba(77, 142, 80, .4);
-  --message-highlighting-hover-color: rgba(var(--message-highlighting-color-rgb), calc(var(--message-highlighting-alpha) + .24));
   --messages-container-width: #{$messages-container-width};
   --messages-text-size: 16px;
   --messages-line-height: 1.3125;
@@ -138,7 +136,9 @@
   }
 
   --topbar-floating-scaleX: 1;
-  --topbar-call-height: 3rem;
+  --topbar-call-group-call-height: 3rem;
+  --topbar-call-call-height: 3rem;
+  --topbar-call-rtmp-height: 1.6875rem;
   --topbar-floating-call-height: 0px;
 
   --call-button-size: 3.375rem;
@@ -194,11 +194,12 @@
 
   @include respond-to(not-handhelds) {
     --right-column-width: calc(#{$large-screen} / 4);
+    // --right-column-width: calc(400px);
 
     --chat-input-size: #{$chat-input-size};
     --chat-input-padding: #{$chat-padding};
     --chat-input-inner-padding: #{$chat-input-inner-padding};
-  }
+}
 
   @include respond-to(esg-bottom) {
     --chat-input-size: #{$chat-input-handhelds-size};
@@ -257,6 +258,7 @@
 
   --secondary-color: #c4c9cc;
   --warning-color: #fed85a;
+  --green-color: #3ba748;
 
   // --avatar-online-color: #0ac630;
   --avatar-online-color: var(--primary-color);
@@ -277,27 +279,6 @@
   --limit-line-empty-background: #F1F3F5;
   --old-input-background-color: #F1F3F5;
   --premium-color: #9275ff;
-
-  --message-time-color: var(--secondary-text-color);
-  --message-checkbox-color: #61c642;
-  --message-checkbox-border-color: #fff;
-  --message-primary-color: var(--primary-color);
-  --message-primary-color-rgb: var(--primary-color-rgb);
-  --light-filled-message-primary-color: var(--light-filled-primary-color);
-  --message-status-color: var(--secondary-text-color);
-  --message-secondary-color: var(--secondary-color);
-  --message-error-color: var(--danger-color);
-  --message-icon-text-color: #fff;
-  --message-empty-primary-color: #fff;
-  --message-empty-primary-color-rgb: 255,255,255;
-  --message-reaction-tag-dot-color: rgba(255, 255, 255, .4);
-
-  --message-out-link-color: var(--link-color);
-  --message-out-status-color: var(--message-out-primary-color);
-  --message-out-time-color: var(--message-out-status-color);
-  --message-out-icon-text-color: #fff;
-  --message-out-selection-background-color: var(--selection-background-color);
-  --message-out-reaction-tag-dot-color: var(--message-reaction-tag-dot-color);
 
   --gc-background-color: #212121;
   --gc-button-leave-color: rgba(255, 89, 90, .3);
@@ -356,6 +337,36 @@
   --limit-line-empty-background: var(--light-filled-secondary-text-color);
   --old-input-background-color: var(--background-color-true);
 
+  // * Night theme end
+}
+
+.chat {
+  --message-highlighting-color: hsla(85.5319, 36.9171%, 40.402%, .4);//rgba(77, 142, 80, .4);
+  --message-highlighting-hover-color: rgba(var(--message-highlighting-color-rgb), calc(var(--message-highlighting-alpha) + .24));
+
+  --message-time-color: var(--secondary-text-color);
+  --message-checkbox-color: #61c642;
+  --message-checkbox-border-color: #fff;
+  --message-primary-color: var(--primary-color);
+  --message-primary-color-rgb: var(--primary-color-rgb);
+  --light-filled-message-primary-color: var(--light-filled-primary-color);
+  --message-status-color: var(--secondary-text-color);
+  --message-secondary-color: var(--secondary-color);
+  --message-error-color: var(--danger-color);
+  --message-icon-text-color: #fff;
+  --message-empty-primary-color: #fff;
+  --message-empty-primary-color-rgb: 255,255,255;
+  --message-reaction-tag-dot-color: rgba(255, 255, 255, .4);
+
+  --message-out-link-color: var(--link-color);
+  --message-out-status-color: var(--message-out-primary-color);
+  --message-out-time-color: var(--message-out-status-color);
+  --message-out-icon-text-color: #fff;
+  --message-out-selection-background-color: var(--selection-background-color);
+  --message-out-reaction-tag-dot-color: var(--message-reaction-tag-dot-color);
+}
+
+.night .chat {
   --message-time-color: var(--secondary-text-color);
   --message-checkbox-color: var(--primary-color);
   --message-checkbox-border-color: #fff;
@@ -371,7 +382,6 @@
   --message-out-selection-background-color: rgba(var(--surface-color-rgb), .4);
   // --message-out-reaction-tag-dot-color: rgba(var(--message-out-background-color-rgb), 1);
   --message-out-reaction-tag-dot-color: var(--message-out-background-color);
-  // * Night theme end
 }
 
 @import "components/prism";
@@ -733,6 +743,10 @@ input:-webkit-autofill:active {
   .btn-menu-item-icon {
     color: inherit !important;
   }
+}
+
+.green {
+  color: var(--green-color) !important;
 }
 
 .bg-warning {
@@ -2342,5 +2356,60 @@ hr {
     flex: 1 1 auto;
     border-radius: 1px;
     opacity: .5;
+  }
+}
+
+.business-hours {
+  font-size: var(--font-size-14);
+  position: absolute;
+  // top: 3.5rem;
+  top: 3.25rem;
+  width: calc(100% - 4.5rem - 1rem);
+  pointer-events: none;
+  opacity: 0;
+
+  @include animation-level(2) {
+    transition: opacity var(--transition-standard-in);
+  }
+
+  &-container {
+    @include animation-level(2) {
+      transition: padding-bottom var(--transition-standard-in);
+    }
+
+    .row-icon {
+      top: .75rem;
+      transform: none;
+      font-size: 2rem;
+      margin-inline-start: -.3125rem;
+    }
+
+    &.is-expanded {
+      .business-hours {
+        opacity: 1;
+      }
+    }
+  }
+
+  &-row {
+    display: flex;
+    justify-content: space-between;
+    line-height: 27px;
+
+    &-time {
+      color: var(--secondary-text-color);
+    }
+  }
+
+  &-switch-time {
+    background-color: var(--light-primary-color);
+    border-radius: 1.5rem;
+    padding: .125rem .375rem;
+    color: var(--primary-color);
+    font-size: var(--font-size-14);
+    cursor: pointer;
+    pointer-events: all;
+    position: relative;
+    z-index: 1;
   }
 }

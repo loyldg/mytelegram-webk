@@ -202,11 +202,13 @@ export class InternalLinkProcessor {
     }
 
     type K1 = {thread?: string, comment?: string, t?: string};
-    type K2 = {thread?: string, comment?: string, start?: string, t?: string};
+    type K2 = {thread?: string, comment?: string, start?: string, t?: string, text?: string};
     type K3 = {startattach?: string, attach?: string, choose?: TelegramChoosePeerType};
     type K4 = {startapp?: string};
     type K5 = {story?: string};
     type K6 = {boost?: string};
+    type K7 = {voicechat?: string, videochat?: string, livestream?: string};
+    type K8 = {text?: string};
 
     addAnchorListener<{
     //   pathnameParams: ['c', string, string],
@@ -215,12 +217,19 @@ export class InternalLinkProcessor {
     //   pathnameParams: [string, string?],
     //   uriParams: {comment?: number}
       pathnameParams: ['c', string, string] | [string, string?],
-      uriParams: K1 | K2 | K3 | K4 | K5 | K6
+      uriParams: K1 | K2 | K3 | K4 | K5 | K6 | K7 | K8
     }>({
       name: 'im',
       callback: async({pathnameParams, uriParams}, element, masked) => {
         let link: InternalLink;
-        if('boost' in uriParams || pathnameParams?.[0] === 'boost') {
+        if('voicechat' in uriParams || 'videochat' in uriParams || 'livestream' in uriParams) {
+          assumeType<K7>(uriParams);
+          link = {
+            _: INTERNAL_LINK_TYPE.VOICE_CHAT,
+            domain: pathnameParams[0],
+            ...uriParams
+          };
+        } else if('boost' in uriParams || pathnameParams?.[0] === 'boost') {
           const channel = pathnameParams?.[0] === 'c' ? pathnameParams[1] : (uriParams as any).c;
           link = {
             _: INTERNAL_LINK_TYPE.BOOST,
@@ -236,7 +245,8 @@ export class InternalLinkProcessor {
         } else if(PHONE_NUMBER_REG_EXP.test(pathnameParams[0])) {
           link = {
             _: INTERNAL_LINK_TYPE.USER_PHONE_NUMBER,
-            phone: pathnameParams[0].slice(1)
+            phone: pathnameParams[0].slice(1),
+            text: (uriParams as K8).text
           };
         } else if(pathnameParams[0] === 'c') {
           assumeType<K1>(uriParams);
@@ -271,7 +281,8 @@ export class InternalLinkProcessor {
             comment: uriParams.comment,
             start: 'start' in uriParams ? uriParams.start : undefined,
             stack: appImManager.getStackFromElement(element),
-            t: uriParams.t
+            t: uriParams.t,
+            text: uriParams.text
           };
         }
 
@@ -305,6 +316,8 @@ export class InternalLinkProcessor {
         startgroup?: string,
         game?: string,
         voicechat?: string,
+        videochat?: string,
+        livestream?: string,
         post?: string,
         thread?: string,
         comment?: string,
@@ -322,7 +335,9 @@ export class InternalLinkProcessor {
       protocol: 'tg',
       callback: ({uriParams}, element, masked) => {
         let link: InternalLink;
-        if(uriParams.story) {
+        if(uriParams.voicechat !== undefined || uriParams.videochat !== undefined || uriParams.livestream !== undefined) {
+          link = this.makeLink(INTERNAL_LINK_TYPE.VOICE_CHAT, uriParams as Required<typeof uriParams>);
+        } else if(uriParams.story) {
           link = this.makeLink(INTERNAL_LINK_TYPE.STORY, uriParams as Required<typeof uriParams>);
         } else if(uriParams.phone) {
           link = this.makeLink(INTERNAL_LINK_TYPE.USER_PHONE_NUMBER, uriParams as Required<typeof uriParams>);
@@ -479,6 +494,33 @@ export class InternalLinkProcessor {
         return this.processInternalLink(link);
       }
     });
+
+    // t.me/m/slug
+    addAnchorListener<{pathnameParams: ['m', string]}>({
+      name: 'm',
+      callback: ({pathnameParams}) => {
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.BUSINESS_CHAT,
+          slug: pathnameParams[1]
+        };
+
+        return this.processInternalLink(link);
+      }
+    });
+
+    // tg://message?slug=...
+    addAnchorListener<{
+      uriParams: {
+        slug: string
+      }
+    }>({
+      name: 'message',
+      protocol: 'tg',
+      callback: ({uriParams}) => {
+        const link = this.makeLink(INTERNAL_LINK_TYPE.BUSINESS_CHAT, uriParams);
+        return this.processInternalLink(link);
+      }
+    });
   }
 
   private makeLink<T extends INTERNAL_LINK_TYPE>(type: T, uriParams: Omit<InternalLinkTypeMap[T], '_'>) {
@@ -500,7 +542,8 @@ export class InternalLinkProcessor {
       startParam: link.start,
       stack: link.stack,
       threadId,
-      mediaTimestamp: link.t && +link.t
+      mediaTimestamp: link.t && +link.t,
+      text: link.text
     });
   };
 
@@ -555,16 +598,36 @@ export class InternalLinkProcessor {
     });
   };
 
-  public processVoiceChatLink = (link: InternalLink.InternalLinkVoiceChat) => {
-    if(IS_GROUP_CALL_SUPPORTED) {
-      return appImManager.joinGroupCall(link.chat_id.toPeerId(true), link.id);
+  public processVoiceChatLink = async(link: InternalLink.InternalLinkVoiceChat) => {
+    const openPeerId = (peerId: PeerId) => {
+      if(appImManager.chat.peerId !== peerId) {
+        return appImManager.setInnerPeer({peerId});
+      }
+    };
+
+    if(link.livestream !== undefined) {
+      const peer = await this.managers.appUsersManager.resolveUsername(link.domain);
+      const peerId = peer.id.toPeerId(true);
+      await openPeerId(peerId);
+      return appImManager.joinLiveStream(peerId);
+    }
+
+    if(!IS_GROUP_CALL_SUPPORTED) {
+      return;
+    }
+
+    if(link.id) {
+      const peerId = link.chat_id.toPeerId(true);
+      await openPeerId(peerId);
+      return appImManager.joinGroupCall(peerId, link.id);
     }
   };
 
   public processUserPhoneNumberLink = (link: InternalLink.InternalLinkUserPhoneNumber) => {
     return this.managers.appUsersManager.resolvePhone(link.phone).then((user) => {
       return appImManager.setInnerPeer({
-        peerId: user.id.toPeerId(false)
+        peerId: user.id.toPeerId(false),
+        text: link.text
       });
     }).catch((err: ApiError) => {
       if(err.type === 'PHONE_NOT_OCCUPIED') {
@@ -772,6 +835,15 @@ export class InternalLinkProcessor {
     PopupElement.createPopup(PopupGiftLink, link.slug, link.stack);
   };
 
+  public processBusinessChatLink = async(link: InternalLink.InternalLinkBusinessChat) => {
+    const resolved = await this.managers.appBusinessManager.resolveBusinessChatLink(link.slug);
+    appImManager.setInnerPeer({
+      peerId: resolved.peerId,
+      text: resolved.message,
+      entities: resolved.entities
+    });
+  };
+
   public processInternalLink(link: InternalLink) {
     const map: {
       [key in InternalLink['_']]?: (link: any) => any
@@ -790,7 +862,8 @@ export class InternalLinkProcessor {
       [INTERNAL_LINK_TYPE.STORY]: this.processStoryLink,
       [INTERNAL_LINK_TYPE.BOOST]: this.processBoostLink,
       [INTERNAL_LINK_TYPE.PREMIUM_FEATURES]: this.processPremiumFeaturesLink,
-      [INTERNAL_LINK_TYPE.GIFT_CODE]: this.processGiftCodeLink
+      [INTERNAL_LINK_TYPE.GIFT_CODE]: this.processGiftCodeLink,
+      [INTERNAL_LINK_TYPE.BUSINESS_CHAT]: this.processBusinessChatLink
     };
 
     const processor = map[link._];

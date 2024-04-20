@@ -379,7 +379,7 @@ export class AppChatsManager extends AppManager {
     return this.apiManager.invokeApi('channels.inviteToChannel', {
       channel: input,
       users: usersInputs
-    }).then((updates) => {
+    }).then((messagesInvitedUsers) => {
       const timestamp = tsNow(true);
       const participantUpdates: Update.updateChannelParticipant[] = userIds.map((userId) => {
         return this.generateUpdateChannelParticipant({
@@ -396,7 +396,8 @@ export class AppChatsManager extends AppManager {
         this.apiUpdatesManager.processLocalUpdate(update);
       });
 
-      return this.onChatUpdatedForce(id, updates);
+      this.onChatUpdatedForce(id, messagesInvitedUsers.updates);
+      return messagesInvitedUsers.missing_invitees;
     });
   }
 
@@ -448,7 +449,10 @@ export class AppChatsManager extends AppManager {
       chat_id: id,
       user_id: this.appUsersManager.getUserInput(userId),
       fwd_limit: fwdLimit
-    }).then(this.onChatUpdated.bind(this, id));
+    }).then((messagesInvitedUsers) => {
+      this.onChatUpdated(id, messagesInvitedUsers.updates);
+      return messagesInvitedUsers.missing_invitees;
+    });
   }
 
   public deleteChatUser(id: ChatId, userId: UserId) {
@@ -1027,6 +1031,14 @@ export class AppChatsManager extends AppManager {
       if(channelFull) this.rootScope.dispatchEvent('chat_full_update', id);
       if(groupChannelFull) this.rootScope.dispatchEvent('chat_full_update', newOrWasGroupId);
     });
+  }
+
+  public async toggleSlowMode(id: ChatId, seconds: number) {
+    id = await this.migrateChat(id);
+    return this.apiManager.invokeApi('channels.toggleSlowMode', {
+      channel: this.getChannelInput(id),
+      seconds
+    }).then(this.onChatUpdated.bind(this, id));
   }
 
   public hideChatJoinRequest(chatId: ChatId, userId: UserId, approved: boolean) {

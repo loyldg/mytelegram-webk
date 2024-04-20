@@ -26,7 +26,7 @@ import {MOUNT_CLASS_TO} from '../../config/debug';
 import appNavigationController from '../../components/appNavigationController';
 import AppPrivateSearchTab from '../../components/sidebarRight/tabs/search';
 import I18n, {i18n, join, LangPackKey} from '../langPack';
-import {ChatFull, ChatParticipants, Message, MessageAction, MessageMedia, SendMessageAction, User, Chat as MTChat, UrlAuthResult, WallPaper, Config, AttachMenuBot, Peer, InputChannel, HelpPeerColors, Reaction} from '../../layer';
+import {ChatFull, ChatParticipants, Message, MessageAction, MessageMedia, SendMessageAction, User, Chat as MTChat, UrlAuthResult, WallPaper, Config, AttachMenuBot, Peer, InputChannel, HelpPeerColors, Reaction, Document, MessageEntity} from '../../layer';
 import PeerTitle from '../../components/peerTitle';
 import {PopupPeerCheckboxOptions} from '../../components/popups/peer';
 import blurActiveElement from '../../helpers/dom/blurActiveElement';
@@ -119,6 +119,12 @@ import {getPeerColorIndexByPeer, getPeerColorsByPeer, setPeerColors} from './uti
 import deepEqual from '../../helpers/object/deepEqual';
 import {savedReactionTags} from '../../components/chat/reactions';
 import {setAppState} from '../../stores/appState';
+import rtmpCallsController, {RtmpCallInstance} from '../calls/rtmpCallsController';
+import {AppMediaViewerRtmp} from '../../components/appMediaViewerRtmp';
+import useProfileColors from '../../hooks/useProfileColors';
+import {DEFAULT_BACKGROUND_SLUG} from '../../config/app';
+import blur from '../../helpers/blur';
+import {wrapSlowModeLeftDuration} from '../../components/wrappers/wrapDuration';
 
 export type ChatSavedPosition = {
   mids: number[],
@@ -134,7 +140,9 @@ export type ChatSetPeerOptions = {
   commentId?: number,
   type?: ChatType,
   mediaTimestamp?: number,
-  savedReaction?: Reaction[]
+  savedReaction?: Reaction[],
+  text?: string
+  entities?: MessageEntity[]
 };
 
 export type ChatSetInnerPeerOptions = Modify<ChatSetPeerOptions, {
@@ -171,11 +179,11 @@ export class AppImManager extends EventListenerBase<{
   private prevTab: HTMLElement;
   private chatsSelectTabDebounced: () => void;
 
-  private backgroundPromises: {[slug: string]: Promise<string>};
+  private backgroundPromises: {[url: string]: MaybePromise<string>};
 
   private topbarCall: TopbarCall;
 
-  private lastBackgroundUrl: string;
+  public lastBackgroundUrl: string;
 
   public managers: AppManagers;
 
@@ -219,7 +227,7 @@ export class AppImManager extends EventListenerBase<{
       }
 
       const url = 'assets/img/' + slug + '.svg' + (IS_FIREFOX ? '?1' : '');
-      this.backgroundPromises[slug] = Promise.resolve(url);
+      this.setBackgroundUrlToCache({slug, url})
     });
 
     this.selectTab(APP_TABS.CHATLIST);
@@ -366,6 +374,22 @@ export class AppImManager extends EventListenerBase<{
             emoticon: action.emoticon
           });
         }
+      }
+    });
+
+    rootScope.addEventListener('message_error', ({peerId, error}) => {
+      if(error.type.includes('SLOWMODE_WAIT')) {
+        const time = +error.type.split('_').pop();
+        confirmationPopup({
+          titleLangKey: 'Slowmode',
+          peerId,
+          descriptionLangKey: 'SlowModeHint',
+          descriptionLangArgs: [wrapSlowModeLeftDuration(time)],
+          button: {
+            langKey: 'OK',
+            isCancel: true
+          }
+        });
       }
     });
 
@@ -559,7 +583,7 @@ export class AppImManager extends EventListenerBase<{
         const popup = PopupElement.createPopup(PopupCall, instance);
 
         instance.addEventListener('acceptCallOverride', () => {
-          return this.discardCurrentCall(instance.interlocutorUserId.toPeerId(), undefined, instance)
+          return this.discardCurrentCall(instance.interlocutorUserId.toPeerId(), 'Call', undefined, instance)
           .then(() => {
             callsController.dispatchEvent('accepting', instance);
             return true;
@@ -981,6 +1005,11 @@ export class AppImManager extends EventListenerBase<{
     };
     rootScope.addEventListener('theme_changed', () => onHelpPeerColors());
     this.managers.apiManager.getPeerColors().then(onHelpPeerColors);
+
+    const [_, setProfileColors] = useProfileColors();
+    this.managers.apiManager.getPeerProfileColors().then((helpPeerColors) => {
+      setProfileColors(helpPeerColors.colors);
+    });
   }
 
   public clickIfSponsoredMessage(message: Message.message) {
@@ -1243,7 +1272,7 @@ export class AppImManager extends EventListenerBase<{
 
     // open forum tab
     if(!commentId && !threadId && !lastMsgId && isForum) {
-      appDialogsManager.toggleForumTabByPeerId(peerId, true);
+      appDialogsManager.toggleForumTabByPeerId(peerId, true, true);
       return;
     }
 
@@ -1366,33 +1395,49 @@ export class AppImManager extends EventListenerBase<{
       return;
     }
 
-    await this.discardCurrentCall(userId.toPeerId());
+    await this.discardCurrentCall(userId.toPeerId(), 'Call');
 
     callsController.startCallInternal(userId, type === 'video');
   }
 
-  private discardCurrentCall(toPeerId: PeerId, ignoreGroupCall?: GroupCallInstance, ignoreCall?: CallInstance) {
-    if(groupCallsController.groupCall && groupCallsController.groupCall !== ignoreGroupCall) return this.discardGroupCallConfirmation(toPeerId);
-    else if(callsController.currentCall && callsController.currentCall !== ignoreCall) return this.discardCallConfirmation(toPeerId);
+  private discardCurrentCall(toPeerId: PeerId, toType: 'Live' | 'Voice' | 'Call', ignoreGroupCall?: GroupCallInstance, ignoreCall?: CallInstance, ignoreLive?: RtmpCallInstance): Promise<void> {
+    if(groupCallsController.groupCall && groupCallsController.groupCall !== ignoreGroupCall) return this.discardGroupCallConfirmation(toPeerId, toType);
+    else if(callsController.currentCall && callsController.currentCall !== ignoreCall) return this.discardCallConfirmation(toPeerId, toType);
+    else if(rtmpCallsController.currentCall && rtmpCallsController.currentCall !== ignoreLive) return this.discardLiveConfirmation(toPeerId, toType);
     else return Promise.resolve();
   }
 
-  private async discardCallConfirmation(toPeerId: PeerId) {
+  private async discardAnyCallConfirmation(fromPeerId: PeerId, toPeerId: PeerId, fromType: Parameters<AppImManager['discardCurrentCall']>[1], toType: Parameters<AppImManager['discardCurrentCall']>[1]) {
+    await Promise.all([
+      wrapPeerTitle({peerId: fromPeerId}),
+      wrapPeerTitle({peerId: toPeerId})
+    ]).then(([title1, title2]) => {
+      return confirmationPopup({
+        titleLangKey: `Call.Confirm.Discard.${fromType}.Header`,
+        descriptionLangKey: `Call.Confirm.Discard.${fromType}.To${toType}.Text`,
+        descriptionLangArgs: [title1, title2],
+        button: {
+          langKey: 'OK'
+        }
+      });
+    });
+  }
+
+  private async discardGroupCallConfirmation(toPeerId: PeerId, toType: Parameters<AppImManager['discardCurrentCall']>[1]) {
+    const currentCall = groupCallsController.groupCall;
+    if(currentCall) {
+      await this.discardAnyCallConfirmation(currentCall.chatId.toPeerId(true), toPeerId, 'Voice', toType);
+
+      if(groupCallsController.groupCall === currentCall) {
+        await currentCall.hangUp();
+      }
+    }
+  }
+
+  private async discardCallConfirmation(toPeerId: PeerId, toType: Parameters<AppImManager['discardCurrentCall']>[1]) {
     const currentCall = callsController.currentCall;
     if(currentCall) {
-      await Promise.all([
-        wrapPeerTitle({peerId: currentCall.interlocutorUserId.toPeerId(false)}),
-        wrapPeerTitle({peerId: toPeerId})
-      ]).then(([title1, title2]) => {
-        return confirmationPopup({
-          titleLangKey: 'Call.Confirm.Discard.Call.Header',
-          descriptionLangKey: toPeerId.isUser() ? 'Call.Confirm.Discard.Call.ToCall.Text' : 'Call.Confirm.Discard.Call.ToVoice.Text',
-          descriptionLangArgs: [title1, title2],
-          button: {
-            langKey: 'OK'
-          }
-        });
-      });
+      await this.discardAnyCallConfirmation(currentCall.interlocutorUserId.toPeerId(false), toPeerId, 'Call', toType);
 
       if(!currentCall.isClosing) {
         await currentCall.hangUp('phoneCallDiscardReasonDisconnect');
@@ -1400,25 +1445,13 @@ export class AppImManager extends EventListenerBase<{
     }
   }
 
-  private async discardGroupCallConfirmation(toPeerId: PeerId) {
-    const currentGroupCall = groupCallsController.groupCall;
-    if(currentGroupCall) {
-      await Promise.all([
-        wrapPeerTitle({peerId: currentGroupCall.chatId.toPeerId(true)}),
-        wrapPeerTitle({peerId: toPeerId})
-      ]).then(([title1, title2]) => {
-        return confirmationPopup({
-          titleLangKey: 'Call.Confirm.Discard.Voice.Header',
-          descriptionLangKey: toPeerId.isUser() ? 'Call.Confirm.Discard.Voice.ToCall.Text' : 'Call.Confirm.Discard.Voice.ToVoice.Text',
-          descriptionLangArgs: [title1, title2],
-          button: {
-            langKey: 'OK'
-          }
-        });
-      });
+  private async discardLiveConfirmation(toPeerId: PeerId, toType: Parameters<AppImManager['discardCurrentCall']>[1]) {
+    const currentCall = rtmpCallsController.currentCall;
+    if(currentCall) {
+      await this.discardAnyCallConfirmation(currentCall.chatId.toPeerId(true), toPeerId, 'Live', toType);
 
-      if(groupCallsController.groupCall === currentGroupCall) {
-        await currentGroupCall.hangUp();
+      if(rtmpCallsController.currentCall === currentCall) {
+        await rtmpCallsController.leaveCall();
       }
     }
   }
@@ -1462,10 +1495,33 @@ export class AppImManager extends EventListenerBase<{
       }
     }
 
-    // await this.discardCurrentCall(peerId);
+    await this.discardCurrentCall(peerId, 'Voice');
 
     next();
-  };
+  }
+
+  public async joinLiveStream(peerId: PeerId) {
+    await this.discardCurrentCall(peerId, 'Live');
+
+    await rtmpCallsController.joinCall(peerId.toChatId()).catch((err) => {
+      console.error(err);
+      toastNew({
+        langPackKey: 'Error.AnError'
+      });
+    });
+
+    this.openLiveStreamPlayer(peerId);
+  }
+
+  private async openLiveStreamPlayer(peerId: PeerId) {
+    if(AppMediaViewerRtmp.activeInstance) return;
+
+    const shareUrl = await AppMediaViewerRtmp.getShareUrl(peerId.toChatId());
+    new AppMediaViewerRtmp(shareUrl).openMedia({
+      peerId,
+      isAdmin: rtmpCallsController.currentCall.admin
+    });
+  }
 
   public setCurrentBackground(broadcastEvent = false, skipAnimation?: boolean): ReturnType<AppImManager['setBackground']> {
     const theme = themeController.getTheme();
@@ -1477,7 +1533,7 @@ export class AppImManager extends EventListenerBase<{
       // slug === defaultslug;
 
       // if(!isDefaultBackground) {
-      return this.getBackground(slug).then((url) => {
+      return Promise.resolve(this.getBackground({slug})).then((url) => {
         return this.setBackground(url, broadcastEvent, skipAnimation);
       }, () => { // * if NO_ENTRY_FOUND
         theme.settings = copy(defaultTheme.settings); // * reset background
@@ -1489,16 +1545,66 @@ export class AppImManager extends EventListenerBase<{
     return this.setBackground('', broadcastEvent, skipAnimation);
   }
 
-  private getBackground(slug: string) {
-    return this.backgroundPromises[slug] ||= this.cacheStorage.getFile('backgrounds/' + slug).then((blob) => {
-      return URL.createObjectURL(blob);
+  private getWallPaperStorageUrl(slug: string, blur?: boolean) {
+    return `backgrounds/${slug}${blur ? '?blur' : ''}`;
+  }
+
+  public saveWallPaperToCache(slug: string, url: string, blur?: boolean) {
+    if(!slug || slug === DEFAULT_BACKGROUND_SLUG) {
+      return;
+    }
+
+    return fetch(url).then((response) => {
+      return appImManager.cacheStorage.save(this.getWallPaperStorageUrl(slug, blur), response);
     });
+  }
+
+  public blurWallPaperImage(url: string) {
+    const {canvas, promise} = blur(url, 12, 4);
+    return promise.then(() => {
+      return canvas.toDataURL();
+    });
+  }
+
+  public setBackgroundUrlToCache({slug, url, blur}: {slug: string, url: string, blur?: boolean}) {
+    this.backgroundPromises[this.getWallPaperStorageUrl(slug, blur)] = url;
+  }
+
+  public getBackground({
+    slug,
+    canDownload,
+    blur
+  }: {
+    slug: string,
+    canDownload?: boolean,
+    blur?: boolean
+  }) {
+    const storageUrl = this.getWallPaperStorageUrl(slug, blur);
+    return this.backgroundPromises[storageUrl] ||= this.cacheStorage.getFile(storageUrl).then((blob) => {
+      return this.backgroundPromises[storageUrl] = URL.createObjectURL(blob);
+    }, canDownload ? async(err) => {
+      if((err as ApiError).type !== 'NO_ENTRY_FOUND') {
+        throw err;
+      }
+
+      const wallPaper = await this.managers.appThemesManager.getWallPaperBySlug(slug);
+      let url = await appDownloadManager.downloadMediaURL({
+        media: (wallPaper as WallPaper.wallPaper).document as Document.document
+      });
+
+      if(blur) {
+        url = await this.blurWallPaperImage(url);
+      }
+
+      this.saveWallPaperToCache(slug, url, blur);
+      return this.backgroundPromises[storageUrl] = url;
+    } : undefined);
   }
 
   public setBackground(url: string, broadcastEvent = true, skipAnimation?: boolean): Promise<void> {
     this.lastBackgroundUrl = url;
-    const promises = this.chats.map((chat) => chat.setBackground(url, skipAnimation));
-    return promises[promises.length - 1].then(() => {
+    const promises = this.chats.map((chat) => chat.setBackgroundIfNotSet({url, skipAnimation}));
+    return Promise.resolve(promises[promises.length - 1]).then(() => {
       if(broadcastEvent) {
         rootScope.dispatchEvent('background_change');
       }
@@ -1566,7 +1672,7 @@ export class AppImManager extends EventListenerBase<{
     skipAnimation?: boolean
   } = {}) {
     if(backgroundUrl) {
-      this.backgroundPromises[slug] = Promise.resolve(backgroundUrl);
+      this.setBackgroundUrlToCache({slug, url: backgroundUrl});
     }
 
     !noSetTheme && themeController.setTheme();
@@ -1831,7 +1937,16 @@ export class AppImManager extends EventListenerBase<{
   private async canDrag() {
     const chat = this.chat;
     const peerId = chat?.peerId;
-    return !(!peerId || overlayCounter.isOverlayActive || !(await chat.canSend('send_media')));
+    const good = !(!peerId || overlayCounter.isOverlayActive || !(await chat.canSend('send_media')));
+    if(good) {
+      if(await this.chat.input.showSlowModeTooltipIfNeeded({
+        element: this.chat.input.attachMenu
+      })) {
+        return false;
+      }
+    }
+
+    return good;
   }
 
   private onDocumentPaste = async(e: ClipboardEvent | DragEvent, attachType?: 'media' | 'document') => {
@@ -1947,9 +2062,9 @@ export class AppImManager extends EventListenerBase<{
 
     this.chatsContainer.append(chat.container);
 
-    if(this.chats.length) {
-      chat.setBackground(this.lastBackgroundUrl, true);
-    }
+    // if(this.chats.length) {
+    //   chat.setBackground({url: this.lastBackgroundUrl, skipAnimation: true});
+    // }
 
     this.chats.push(chat);
 
@@ -2134,7 +2249,7 @@ export class AppImManager extends EventListenerBase<{
     }
 
     this.selectTab(APP_TABS.CHATLIST);
-    appDialogsManager.toggleForumTabByPeerId(peerId, !enabled);
+    appDialogsManager.toggleForumTabByPeerId(peerId, !enabled, false);
   }
 
   private getTypingElement(action: SendMessageAction) {
@@ -2486,12 +2601,17 @@ export class AppImManager extends EventListenerBase<{
     });
   }
 
-  public setPeerColorToElement(
+  public setPeerColorToElement({
+    peerId,
+    element,
+    messageHighlighting,
+    colorAsOut
+  }: {
     peerId: PeerId,
     element: HTMLElement,
     messageHighlighting?: boolean,
     colorAsOut?: boolean
-  ) {
+  }) {
     const colorProperty = '--peer-color-rgb';
     const borderBackgroundProperty = '--peer-border-background';
     // if(!peerId) {

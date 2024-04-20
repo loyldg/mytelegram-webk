@@ -21,7 +21,6 @@ import styles from './viewer.module.scss';
 import {createSignal, createEffect, JSX, For, Accessor, onCleanup, createMemo, mergeProps, createContext, useContext, Context, ParentComponent, splitProps, untrack, on, getOwner, runWithOwner, createRoot, ParentProps, Suspense, batch, Signal, onMount, Setter, createReaction, Show, FlowComponent, useTransition, $TRACK, Owner, createRenderEffect} from 'solid-js';
 import {unwrap} from 'solid-js/store';
 import {assign, isServer, Portal} from 'solid-js/web';
-import {Transition} from 'solid-transition-group';
 import rootScope from '../../lib/rootScope';
 import ListenerSetter from '../../helpers/listenerSetter';
 import {Middleware, getMiddleware} from '../../helpers/middleware';
@@ -85,10 +84,7 @@ import {joinDeepPath} from '../../helpers/object/setDeepProperty';
 import isTargetAnInput from '../../helpers/dom/isTargetAnInput';
 import {setQuizHint} from '../poll';
 import {doubleRaf} from '../../helpers/schedulers';
-import type {ListTransitionOptions} from '@solid-primitives/transition-group';
-import {resolveElements, resolveFirst} from '@solid-primitives/refs';
-import noop from '../../helpers/noop';
-import {Modify} from '../../types';
+import {resolveFirst} from '@solid-primitives/refs';
 import {IS_MOBILE} from '../../environment/userAgent';
 import formatNumber from '../../helpers/number/formatNumber';
 import callbackify from '../../helpers/callbackify';
@@ -100,6 +96,10 @@ import appSidebarRight from '../sidebarRight';
 import AppStatisticsTab from '../sidebarRight/tabs/statistics';
 import getStoryRepostInfo from '../../lib/appManagers/utils/stories/repostInfo';
 import anchorCallback from '../../helpers/dom/anchorCallback';
+import {ButtonIconTsx} from '../buttonIconTsx';
+import {IconTsx} from '../iconTsx';
+import {Transition} from 'solid-transition-group';
+import {TransitionGroup} from '../../helpers/solid/transitionGroup';
 
 export const STORY_DURATION = 5e3;
 const STORY_HEADER_AVATAR_SIZE = 32;
@@ -128,24 +128,6 @@ export const createMiddleware = () => {
   return middleware;
 };
 
-export const ButtonIconTsx = (props: {icon?: Icon, noRipple?: boolean} & JSX.HTMLAttributes<HTMLButtonElement>) => {
-  const [, rest] = splitProps(props, ['icon', 'noRipple']);
-  return (
-    <button {...rest} class={classNames('btn-icon', props.class)} tabIndex={-1}>
-      {props.icon ? Icon(props.icon) : props.children}
-    </button>
-  );
-};
-
-export const IconTsx = (props: {icon: Icon} & JSX.HTMLAttributes<HTMLSpanElement>) => {
-  const [, rest] = splitProps(props, ['icon']);
-  return (
-    <span {...rest} class={classNames('tgico', props.class)}>
-      {getIconContent(props.icon)}
-    </span>
-  );
-};
-
 const MessageInputField = (props: {}) => {
   const inputField = new InputFieldAnimated({
     placeholder: 'PreviewSender.CaptionPlaceholder',
@@ -162,211 +144,6 @@ const MessageInputField = (props: {}) => {
       {inputField.inputFake}
     </div>
   );
-};
-
-export function createListTransition<T extends object>(
-  source: Accessor<readonly T[]>,
-  options: Modify<ListTransitionOptions<T>, {exitMethod?: ListTransitionOptions<T>['exitMethod'] | 'keep-relative'}>
-): Accessor<T[]> {
-  const initSource = untrack(source);
-
-  if(isServer) {
-    const copy = initSource.slice();
-    return () => copy;
-  }
-
-  const {onChange} = options;
-
-  // if appear is enabled, the initial transition won't have any previous elements.
-  // otherwise the elements will match and transition skipped, or transitioned if the source is different from the initial value
-  let prevSet: ReadonlySet<T> = new Set(options.appear ? undefined : initSource);
-  const exiting = new WeakSet<T>();
-
-  const [toRemove, setToRemove] = createSignal<T[]>([], {equals: false});
-  const [isTransitionPending] = useTransition();
-
-  const finishRemoved: (els: T[]) => void =
-    options.exitMethod === 'remove' ?
-      noop :
-      (els) => {
-        setToRemove((p) => (p.push(...els), p));
-        for(const el of els) exiting.delete(el);
-      };
-
-  type RemovedOptions = {
-    elements: T[],
-    element: T,
-    previousElements: T[],
-    previousIndex: number,
-    side: 'start' | 'end'
-  };
-
-  let handleRemoved: (options: RemovedOptions) => void;
-  if(options.exitMethod === 'remove') {
-    handleRemoved = noop;
-  } else if(options.exitMethod === 'keep-index') {
-    handleRemoved = (options) => options.elements.splice(options.previousIndex, 0, options.element);
-  } else if(options.exitMethod === 'keep-relative') {
-    handleRemoved = (options) => {
-      let index: number;
-      if(options.side === 'start') {
-        index = options.previousIndex;
-      } else {
-        // index = options.elements.length - (options.previousElements.length - 1 - options.previousIndex);
-        index = options.elements.length;
-      }
-
-      options.elements.splice(index, 0, options.element);
-    };
-  } else {
-    handleRemoved = (options) => options.elements.push(options.element);
-  }
-
-  const compute = (prev: T[]) => {
-    const elsToRemove = toRemove();
-    const sourceList = source();
-    (sourceList as any)[$TRACK]; // top level store tracking
-
-    if(untrack(isTransitionPending)) {
-      // wait for pending transition to end before animating
-      isTransitionPending();
-      return prev;
-    }
-
-    if(elsToRemove.length) {
-      const next = prev.filter(e => !elsToRemove.includes(e));
-      elsToRemove.length = 0;
-      onChange({list: next, added: [], removed: [], unchanged: next, finishRemoved});
-      return next;
-    }
-
-    return untrack(() => {
-      const nextSet: ReadonlySet<T> = new Set(sourceList);
-      const next: T[] = sourceList.slice();
-
-      const added: T[] = [];
-      const removed: T[] = [];
-      const unchanged: T[] = [];
-
-      for(const el of sourceList) {
-        (prevSet.has(el) ? unchanged : added).push(el);
-      }
-
-      const removedOptions: Modify<RemovedOptions, {element?: T, previousIndex?: number}> = {
-        elements: next,
-        previousElements: prev,
-        side: 'start'
-      };
-
-      let nothingChanged = !added.length;
-      for(let i = 0; i < prev.length; ++i) {
-        const el = prev[i]!;
-        if(!nextSet.has(el)) {
-          if(!exiting.has(el)) {
-            removed.push(el);
-            exiting.add(el);
-          }
-
-          removedOptions.element = el;
-          removedOptions.previousIndex = i;
-
-          handleRemoved(removedOptions as RemovedOptions);
-        } else {
-          removedOptions.side = 'end';
-        }
-
-        if(nothingChanged && el !== next[i]) {
-          nothingChanged = false;
-        }
-      }
-
-      // skip if nothing changed
-      if(!removed.length && nothingChanged) {
-        return prev;
-      }
-
-      onChange({list: next, added, removed, unchanged, finishRemoved});
-
-      prevSet = nextSet;
-      return next;
-    });
-  };
-
-  return createMemo(compute, options.appear ? [] : initSource.slice());
-}
-
-export const TransitionGroup: FlowComponent<{
-  noWait?: Accessor<boolean>,
-  transitions: WeakMap<Element, Accessor<boolean>>
-}> = (props) => {
-  const observeElement = (element: Element, callback: () => void) => {
-    const transition = props.transitions.get(element);
-    createEffect((prev) => {
-      const t = transition();
-      if(prev || t) {
-        if(!t) {
-          callback();
-        }
-
-        return true;
-      }
-    });
-  };
-
-  const disposers: Map<Element, () => void> = new Map();
-  const exitElement = (element: Element, callback: () => void) => {
-    createRoot((dispose) => {
-      disposers.set(element, dispose);
-
-      observeElement(element, () => {
-        dispose();
-        callback();
-      });
-
-      onCleanup(() => {
-        if(disposers.get(element) === dispose) {
-          disposers.delete(element);
-        }
-      });
-    });
-  };
-
-  onCleanup(() => {
-    disposers.forEach((dispose) => dispose());
-  });
-
-  const listTransition = createListTransition(resolveElements(() => props.children).toArray, {
-    exitMethod: 'keep-relative',
-    onChange: ({added, removed, finishRemoved}) => {
-      for(const element of added) {
-        const dispose = disposers.get(element);
-        dispose?.();
-      }
-
-      if(props.noWait?.() || !liteMode.isAvailable('animations')) {
-        finishRemoved(removed);
-        return;
-      }
-
-      const filtered: Element[] = [];
-      for(const element of removed) {
-        if(!props.transitions.has(element)) {
-          filtered.push(element);
-          continue;
-        }
-
-        exitElement(element, () => {
-          finishRemoved([element]);
-        });
-      }
-
-      if(filtered.length) {
-        finishRemoved(filtered);
-      }
-    }
-  }) as unknown as JSX.Element;
-
-  return listTransition;
 };
 
 export function createListenerSetter() {
@@ -794,7 +571,8 @@ export const showTooltip = ({
   paddingX = 0,
   centerVertically,
   onClose,
-  icon
+  icon,
+  auto
 }: {
   element: HTMLElement,
   container?: HTMLElement,
@@ -804,7 +582,8 @@ export const showTooltip = ({
   paddingX?: number,
   centerVertically?: boolean,
   onClose?: () => void,
-  icon?: Icon
+  icon?: Icon,
+  auto?: boolean
 }) => {
   const containerRect = container.getBoundingClientRect();
   const elementRect = element.getBoundingClientRect();
@@ -900,10 +679,12 @@ export const showTooltip = ({
       tooltipOverlayClickHandler.close();
     };
 
-    const timeout = KEEP_TOOLTIP ? 0 : window.setTimeout(close, 3000);
+    const timeout = KEEP_TOOLTIP && !auto ? 0 : window.setTimeout(close, 3000);
 
-    tooltipOverlayClickHandler.open(mountOn);
-    tooltipOverlayClickHandler.addEventListener('toggle', onToggle, {once: true});
+    Promise.resolve().then(() => {
+      tooltipOverlayClickHandler.open(mountOn);
+      tooltipOverlayClickHandler.addEventListener('toggle', onToggle, {once: true});
+    });
   });
 
   return {close};

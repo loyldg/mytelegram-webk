@@ -63,7 +63,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     this.init = null;
     // const perf = performance.now();
 
-    this.container.classList.add('shared-media-container', 'profile-container');
+    this.container.classList.add('shared-media-container');
 
     // * header
     const newCloseBtn = Button('btn-icon sidebar-close-button', {noRipple: true});
@@ -170,7 +170,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     // * body
 
     if(!this.noProfile) {
-      this.profile = new PeerProfile(this.managers, this.scrollable, this.listenerSetter);
+      this.profile = new PeerProfile(this.managers, this.scrollable, this.listenerSetter, true, this.container);
       this.profile.init();
       this.scrollable.append(this.profile.element);
     }
@@ -232,6 +232,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
 
         if(!this.isFirst) {
           animatedCloseIcon.classList.remove('state-back');
+          this.container.classList.remove('header-filled');
         }
       } else if(!this.scrollable.isHeavyAnimationInProgress) {
         this.slider.onCloseBtnClick();
@@ -364,7 +365,11 @@ export default class AppSharedMediaTab extends SliderSuperTab {
 
     this.searchSuper.scrollStartCallback = () => {
       setIsSharedMedia(true);
+      this.container.classList.add('header-filled');
     };
+
+    // * fix scroll position to media tab because of absolute header
+    this.searchSuper.scrollOffset = 56;
 
     if(this.profile) {
       this.profile.element.append(this.searchSuper.container);
@@ -554,12 +559,13 @@ export default class AppSharedMediaTab extends SliderSuperTab {
   private async changeTitleKey() {
     const {peerId, threadId} = this;
     const isSavedDialog = !!(peerId === rootScope.myId && threadId);
+    const usePeerId = isSavedDialog ? threadId : peerId;
     const [isForum, isBroadcast, isBot, peerTitle] = await Promise.all([
-      this.managers.appPeersManager.isForum(peerId),
-      this.managers.appPeersManager.isBroadcast(peerId),
-      this.managers.appPeersManager.isBot(peerId),
+      this.managers.appPeersManager.isForum(usePeerId),
+      this.managers.appPeersManager.isBroadcast(usePeerId),
+      this.managers.appPeersManager.isBot(usePeerId),
       wrapPeerTitle({
-        peerId: isSavedDialog ? threadId : peerId,
+        peerId,
         threadId: isSavedDialog ? undefined : threadId,
         meAsNotes: isSavedDialog && threadId === rootScope.myId,
         dialog: true
@@ -568,10 +574,10 @@ export default class AppSharedMediaTab extends SliderSuperTab {
 
     return () => {
       this.titleI18n.compareAndUpdate({
-        key: isBot ? 'Profile.Info.Bot' : (isBroadcast ? 'Profile.Info.Channel' : (threadId && isForum ? 'Profile.Info.Topic' : (peerId.isUser() ? 'Profile.Info.User' : 'Profile.Info.Group')))
+        key: isBot ? 'Profile.Info.Bot' : (isBroadcast ? 'Profile.Info.Channel' : (threadId && isForum ? 'Profile.Info.Topic' : (usePeerId.isUser() ? 'Profile.Info.User' : 'Profile.Info.Group')))
       });
       this.sharedMediaTitle.replaceChildren(peerTitle);
-      this.btnMenu.classList.toggle('hide', !this.isFirst || peerId !== rootScope.myId);
+      this.btnMenu.classList.toggle('hide', !this.isFirst || isSavedDialog || peerId !== rootScope.myId);
     };
   }
 

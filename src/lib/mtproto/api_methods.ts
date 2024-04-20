@@ -362,6 +362,10 @@ export default abstract class ApiManagerMethods extends AppManager {
     });
   }
 
+  public getTimezonesList() {
+    return this.invokeApiCacheable('help.getTimezonesList', {hash: 0}, {cacheSeconds: 86400, syncIfHasResult: true});
+  }
+
   public getLimit(type: ApiLimitType, isPremium?: boolean) {
     return callbackify(this.getAppConfig(), (appConfig) => {
       const map: {[type in ApiLimitType]: [keyof MTAppConfig, keyof MTAppConfig] | keyof MTAppConfig} = {
@@ -394,6 +398,10 @@ export default abstract class ApiManagerMethods extends AppManager {
 
   public getPeerColors() {
     return this.apiManager.invokeApiCacheable('help.getPeerColors', {hash: 0}) as Promise<HelpPeerColors.helpPeerColors>;
+  }
+
+  public getPeerProfileColors() {
+    return this.apiManager.invokeApiCacheable('help.getPeerProfileColors', {hash: 0}) as Promise<HelpPeerColors.helpPeerColors>;
   }
 
   public setThemeParams(themeParams: DataJSON) {

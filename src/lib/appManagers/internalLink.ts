@@ -21,7 +21,8 @@ export enum INTERNAL_LINK_TYPE {
   STORY,
   BOOST,
   PREMIUM_FEATURES,
-  GIFT_CODE
+  GIFT_CODE,
+  BUSINESS_CHAT
 };
 
 export type InternalLink =
@@ -39,7 +40,8 @@ export type InternalLink =
   InternalLink.InternalLinkStory |
   InternalLink.InternalLinkBoost |
   InternalLink.InternalLinkPremiumFeatures |
-  InternalLink.InternalLinkGiftCode;
+  InternalLink.InternalLinkGiftCode |
+  InternalLink.InternalLinkBusinessChat;
 
 export namespace InternalLink {
   export interface InternalLinkMessage {
@@ -51,6 +53,7 @@ export namespace InternalLink {
     start?: string,
     t?: string, // media timestamp
     single?: string,
+    text?: string,
     stack?: ChatSetPeerOptions['stack'] // local
   }
 
@@ -74,19 +77,21 @@ export namespace InternalLink {
     invite: string
   }
 
-  /**
-   * LOCAL LINK
-   */
   export interface InternalLinkVoiceChat {
     _: INTERNAL_LINK_TYPE.VOICE_CHAT,
-    id: string,
-    access_hash: string,
-    chat_id: string
+    id?: string,
+    access_hash?: string,
+    chat_id?: string,
+    domain?: string,
+    livestream?: string,
+    videochat?: string,
+    voicechat?: string
   }
 
   export interface InternalLinkUserPhoneNumber {
     _: INTERNAL_LINK_TYPE.USER_PHONE_NUMBER,
-    phone: string
+    phone: string,
+    text?: string
   }
 
   export interface InternalLinkInvoice {
@@ -143,6 +148,11 @@ export namespace InternalLink {
     slug: string,
     stack?: ChatSetPeerOptions['stack'] // local
   }
+
+  export interface InternalLinkBusinessChat {
+    _: INTERNAL_LINK_TYPE.BUSINESS_CHAT,
+    slug: string
+  }
 }
 
 export type InternalLinkTypeMap = {
@@ -161,4 +171,5 @@ export type InternalLinkTypeMap = {
   [INTERNAL_LINK_TYPE.BOOST]: InternalLink.InternalLinkBoost,
   [INTERNAL_LINK_TYPE.PREMIUM_FEATURES]: InternalLink.InternalLinkPremiumFeatures,
   [INTERNAL_LINK_TYPE.GIFT_CODE]: InternalLink.InternalLinkGiftCode,
+  [INTERNAL_LINK_TYPE.BUSINESS_CHAT]: InternalLink.InternalLinkBusinessChat
 };

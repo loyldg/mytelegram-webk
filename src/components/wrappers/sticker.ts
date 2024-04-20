@@ -41,8 +41,9 @@ import liteMode, {LiteModeKey} from '../../helpers/liteMode';
 import Scrollable from '../scrollable';
 import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
 import Icon from '../icon';
-import {leakVideoFallbacks, onVideoLeak} from '../../helpers/dom/handleVideoLeak';
+import {SHOULD_HANDLE_VIDEO_LEAK, attachVideoLeakListeners, leakVideoFallbacks, onVideoLeak} from '../../helpers/dom/handleVideoLeak';
 import noop from '../../helpers/noop';
+import {IS_WEBM_SUPPORTED} from '../../environment/videoSupport';
 
 // https://github.com/telegramdesktop/tdesktop/blob/master/Telegram/SourceFiles/history/view/media/history_view_sticker.cpp#L40
 export const STICKER_EFFECT_MULTIPLIER = 1 + 0.245 * 2;
@@ -79,7 +80,7 @@ const getThumbFromContainer = (container: HTMLElement) => {
   return element;
 };
 
-export default async function wrapSticker({doc, div, middleware, loadStickerMiddleware, lazyLoadQueue, exportLoad, group, play, onlyThumb, emoji, width, height, withThumb, loop, loadPromises, needFadeIn, needUpscale, skipRatio, static: asStatic, managers = rootScope.managers, fullThumb, isOut, noPremium, withLock, relativeEffect, loopEffect, isCustomEmoji, syncedVideo, liteModeKey, isEffect, textColor, scrollable, showPremiumInfo}: {
+export default async function wrapSticker({doc, div, middleware, loadStickerMiddleware, lazyLoadQueue, exportLoad, group, play, onlyThumb, emoji, width, height, withThumb, loop, loadPromises, needFadeIn, needUpscale, skipRatio, static: asStatic, managers = rootScope.managers, fullThumb, isOut, noPremium, withLock, relativeEffect, loopEffect, isCustomEmoji, syncedVideo, liteModeKey, isEffect, textColor, scrollable, showPremiumInfo, useCache}: {
   doc: MyDocument,
   div: HTMLElement | HTMLElement[],
   middleware?: Middleware,
@@ -112,7 +113,8 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
   isEffect?: boolean,
   textColor?: WrapSomethingOptions['textColor'],
   scrollable?: Scrollable
-  showPremiumInfo?: () => void
+  showPremiumInfo?: () => void,
+  useCache?: boolean
 }) {
   const options = arguments[0];
   div = Array.isArray(div) ? div : [div];
@@ -124,7 +126,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
   }
 
   const stickerType = doc.sticker;
-  if(stickerType === 1) {
+  if(stickerType === 1 || (stickerType === 3 && !IS_WEBM_SUPPORTED)) {
     asStatic = true;
   }
 
@@ -237,7 +239,8 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
     render: undefined as typeof loadPromise,
     load: undefined as typeof load,
     width,
-    height
+    height,
+    downloaded
   };
   let loadThumbPromise = deferredPromise<void>();
   let haveThumbCached = false;
@@ -334,7 +337,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
           (div as HTMLElement[]).forEach((div) => {
             const thumbImage = new Image();
             const url = getPreviewURLFromThumb(doc, thumb as PhotoSize.photoStrippedSize, true);
-            renderImageFromUrl(thumbImage, url, () => afterRender(div, thumbImage));
+            renderImageFromUrl(thumbImage, url, () => afterRender(div, thumbImage), useCache);
           });
         };
 
@@ -371,7 +374,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
           }
 
           if(!url) afterRender(div, thumbImage);
-          else renderImageFromUrl(thumbImage, url, () => afterRender(div, thumbImage));
+          else renderImageFromUrl(thumbImage, url, () => afterRender(div, thumbImage), useCache);
         };
 
         getCacheContext();
@@ -548,10 +551,15 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
                 video.removeEventListener('timeupdate', onTimeupdate);
               }
 
+              (this as any).timeUpdatedTimes = ((this as any).timeUpdatedTimes || 0) + 1;
+
               previousTime = this.currentTime;
             }
 
             video.addEventListener('timeupdate', onTimeupdate);
+            middleware.onClean(() => {
+              video.removeEventListener('timeupdate', onTimeupdate);
+            });
           }
         }
 
@@ -626,7 +634,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
                 return;
               }
 
-              if(isVideo) {
+              if(isVideo && SHOULD_HANDLE_VIDEO_LEAK) {
                 leakVideoFallbacks.set(media, () => {
                   const reset = () => {
                     onVideoLeak(media).catch(noop);
@@ -656,6 +664,12 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
                     reset();
                   }
                 });
+
+                if(media.duration < 1 ||
+                  media.getVideoPlaybackQuality().totalVideoFrames < 10) {
+                  const detach = attachVideoLeakListeners(media);
+                  middleware.onClean(detach);
+                }
               }
 
               div.append(media);
@@ -692,7 +706,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
           (div as HTMLElement[]).forEach((div, idx) => {
             const _media = media[idx];
             const cb = () => onLoad(div, _media, thumbImage[idx]);
-            if(_media) lastPromise = renderImageFromUrlPromise(_media, cacheContext.url);
+            if(_media) lastPromise = renderImageFromUrlPromise(_media, cacheContext.url, useCache);
             lastPromise.then(cb);
           });
         };

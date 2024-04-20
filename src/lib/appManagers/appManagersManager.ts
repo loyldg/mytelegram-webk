@@ -124,6 +124,22 @@ export class AppManagersManager {
             const {docId, dcId, offset, limit} = payload;
             return managers.appDocsManager.requestDocPart(docId, dcId, offset, limit);
           });
+        },
+        cancelFilePartRequests: (docId) => {
+          return callbackify(appManagersManager.getManagers(), (managers) => {
+            return managers.appDocsManager.cancelDocPartsRequests(docId);
+          });
+        },
+        requestRtmpState(call) {
+          return callbackify(appManagersManager.getManagers(), (managers) => {
+            return managers.appGroupCallsManager.fetchRtmpState(call);
+          });
+        },
+        requestRtmpPart(payload) {
+          return callbackify(appManagersManager.getManagers(), (managers) => {
+            const {request, dcId} = payload;
+            return managers.appGroupCallsManager.fetchRtmpPart(request, dcId);
+          });
         }
       });
     }

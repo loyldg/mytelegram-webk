@@ -22,7 +22,7 @@ const handlebarsPlugin = handlebars({
 });
 
 const serverOptions: ServerOptions = {
-  // host: '192.168.92.78',
+  // host: '192.168.95.17',
   port: 8080,
   sourcemapIgnoreList(sourcePath, sourcemapPath) {
     return sourcePath.includes('node_modules') || sourcePath.includes('logger');
@@ -32,6 +32,14 @@ const serverOptions: ServerOptions = {
 const USE_SSL = false;
 const NO_MINIFY = false;
 const HAS_SOLID = existsSync(resolve(rootDir, 'src/vendor/solid'));
+const SSL_CONFIG: any = undefined && USE_SSL && {
+  name: '192.168.95.17',
+  certDir: './certs/'
+};
+
+const ADDITIONAL_ALIASES = {
+  'solid-transition-group': resolve(rootDir, 'src/vendor/solid-transition-group')
+};
 
 console.log('has built solid', HAS_SOLID);
 
@@ -50,7 +58,7 @@ export default defineConfig({
     }),
     solidPlugin(),
     handlebarsPlugin as any,
-    USE_SSL ? basicSsl() : undefined,
+    USE_SSL ? (basicSsl as any)(SSL_CONFIG) : undefined,
     visualizer({
       gzipSize: true,
       template: 'treemap'
@@ -121,7 +129,8 @@ export default defineConfig({
       'solid-js/jsx-runtime': resolve(rootDir, 'src/vendor/solid/jsx'),
       'solid-js/web': resolve(rootDir, 'src/vendor/solid/web'),
       'solid-js/store': resolve(rootDir, 'src/vendor/solid/store'),
-      'solid-js': resolve(rootDir, 'src/vendor/solid')
-    } : undefined
+      'solid-js': resolve(rootDir, 'src/vendor/solid'),
+      ...ADDITIONAL_ALIASES
+    } : ADDITIONAL_ALIASES
   }
 });

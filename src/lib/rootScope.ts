@@ -25,6 +25,7 @@ import EventListenerBase from '../helpers/eventListenerBase';
 import {MOUNT_CLASS_TO} from '../config/debug';
 import MTProtoMessagePort from './mtproto/mtprotoMessagePort';
 import {IS_WORKER} from '../helpers/context';
+import {RtmpCallInstance} from './calls/rtmpCallsController';
 
 export type BroadcastEvents = {
   'chat_full_update': ChatId,
@@ -88,7 +89,7 @@ export type BroadcastEvents = {
 
   'message_edit': {storageKey: MessagesStorageKey, peerId: PeerId, mid: number, message: MyMessage},
   'message_sent': {storageKey: MessagesStorageKey, tempId: number, tempMessage: any, mid: number, message: MyMessage},
-  'message_error': {storageKey: MessagesStorageKey, tempId: number, error: ApiError},
+  'message_error': {storageKey: MessagesStorageKey, peerId: PeerId, tempId: number, error: ApiError},
   'message_transcribed': {peerId: PeerId, mid: number, text: string, pending?: boolean},
   'messages_views': {peerId: PeerId, mid: number, views: number}[],
   'messages_reactions': {message: Message.message, changedResults: ReactionCount[], removedResults: ReactionCount[]}[],
@@ -121,8 +122,8 @@ export type BroadcastEvents = {
   'sticker_updated': {type: 'recent' | 'faved', document: MyDocument, faved: boolean},
 
   'state_cleared': void,
-  'state_synchronized': ChatId | void,
-  'state_synchronizing': ChatId | void,
+  'state_synchronized': void,
+  'state_synchronizing': void,
 
   'contacts_update': UserId,
   'avatar_update': {peerId: PeerId, threadId?: number},
@@ -166,6 +167,8 @@ export type BroadcastEvents = {
 
   'call_update': PhoneCall,
   'call_signaling': {callId: CallId, data: Uint8Array},
+
+  'rtmp_call_update': RtmpCallInstance,
 
   'quick_reaction': Reaction,
 

@@ -24,7 +24,7 @@ import Button from '../../components/button';
 import SetTransition from '../../components/singleTransition';
 import {MyDraftMessage} from './appDraftsManager';
 import {MOUNT_CLASS_TO} from '../../config/debug';
-import PeerTitle from '../../components/peerTitle';
+import PeerTitle, {changeTitleEmojiColor} from '../../components/peerTitle';
 import I18n, {FormatterArguments, i18n, LangPackKey, _i18n} from '../langPack';
 import findUpTag from '../../helpers/dom/findUpTag';
 import lottieLoader from '../rlottie/lottieLoader';
@@ -45,7 +45,7 @@ import isInDOM from '../../helpers/dom/isInDOM';
 import {setSendingStatus} from '../../components/sendingStatus';
 import SortedList, {SortedElementBase} from '../../helpers/sortedList';
 import debounce from '../../helpers/schedulers/debounce';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, NULL_PEER_ID, REAL_FOLDERS} from '../mtproto/mtproto_config';
+import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, NULL_PEER_ID, REAL_FOLDERS} from '../mtproto/mtproto_config';
 import groupCallActiveIcon from '../../components/groupCallActiveIcon';
 import {Chat, ChatlistsChatlistUpdates, DialogFilter, Message, MessageReplyHeader} from '../../layer';
 import IS_GROUP_CALL_SUPPORTED from '../../environment/groupCallSupport';
@@ -112,6 +112,8 @@ import createBadge from '../../helpers/createBadge';
 import {isDialog, isForumTopic, isSavedDialog} from './utils/dialogs/isDialog';
 import {ChatType} from '../../components/chat/chat';
 import PopupDeleteDialog from '../../components/popups/deleteDialog';
+import rtmpCallsController from '../calls/rtmpCallsController';
+import IS_LIVE_STREAM_SUPPORTED from '../../environment/liveStreamSupport';
 
 export const DIALOG_LIST_ELEMENT_TAG = 'A';
 
@@ -1269,7 +1271,7 @@ class Some3 extends Some<ForumTopic> {
       offsetIndex,
       limit: loadCount,
       filterId,
-      skipMigrated: true
+      skipMigrated: !!CAN_HIDE_TOPIC
     });
   }
 }
@@ -2009,6 +2011,7 @@ export class AppDialogsManager {
     groupCallsController.construct(managers);
     callsController.construct(managers);
     appImManager.construct(managers);
+    if(IS_LIVE_STREAM_SUPPORTED) rtmpCallsController.construct(managers);
     new ConnectionStatusComponent().construct(managers, this.chatsContainer, appSidebarLeft.inputSearch);
 
     // start
@@ -2185,11 +2188,7 @@ export class AppDialogsManager {
       customEmojiRenderer.textColor = this.getTextColor(active);
     });
 
-    const emojiStatus = listEl.querySelector<HTMLElement>('.emoji-status-text-color');
-    const player = emojiStatus && lottieLoader.getAnimation(emojiStatus);
-    if(player) {
-      player.setColor(this.getPrimaryColor(active), true);
-    }
+    changeTitleEmojiColor(listEl, this.getPrimaryColor(active));
   }
 
   public setDialogActive(listEl: HTMLElement, active: boolean) {
@@ -2889,7 +2888,7 @@ export class AppDialogsManager {
     dispatchHeavyAnimationEvent(deferred, duration).then(() => deferred.resolve());
   }
 
-  public async toggleForumTabByPeerId(peerId: PeerId, show?: boolean) {
+  public async toggleForumTabByPeerId(peerId: PeerId, show?: boolean, asInnerIfAsMessages?: boolean) {
     if(peerId === rootScope.myId) {
       const tab = appSidebarLeft.getTab(AppSharedMediaTab);
       if(show === true || (show === undefined && !tab)) {
@@ -2913,7 +2912,7 @@ export class AppDialogsManager {
     const viewAsMessages = dialog && !!dialog.pFlags.view_forum_as_messages;
     if(viewAsMessages) {
       const isSamePeer = appImManager.chat?.peerId === peerId;
-      appImManager[isSamePeer ? 'setPeer' : 'setInnerPeer']({
+      appImManager[isSamePeer || !asInnerIfAsMessages ? 'setPeer' : 'setInnerPeer']({
         type: ChatType.Chat,
         peerId
       });
@@ -3020,7 +3019,7 @@ export class AppDialogsManager {
 
       const isForum = !!elem.querySelector('.is-forum');
       if(isForum && !e.shiftKey && !lastMsgId) {
-        this.toggleForumTabByPeerId(peerId);
+        this.toggleForumTabByPeerId(peerId, undefined, false);
         return;
       }
 
@@ -3378,7 +3377,7 @@ export class AppDialogsManager {
       !isSaved ? this.getLastMessageForDialog(dialog) : undefined,
       isTopic || isSaved ? !!dialog.pFlags.pinned : this.managers.dialogsStorage.isDialogPinned(peerId, this.filterId),
       this.managers.appMessagesManager.isDialogUnread(dialog),
-      peerId.isAnyChat() && !isTopic ? this.managers.acknowledged.dialogsStorage.getForumUnreadCount(peerId).then((result) => {
+      peerId.isAnyChat() && !isTopic ? this.managers.acknowledged.dialogsStorage.getForumUnreadCount(peerId, true).then((result) => {
         if(result.cached) {
           return result.result;
         } else {
