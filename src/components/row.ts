@@ -318,7 +318,7 @@ export default class Row<T extends SliderSuperTabEventableConstructable = any> {
     return c;
   }
 
-  private createTitle() {
+  public createTitle() {
     const title = document.createElement('div');
     title.classList.add('row-title');
     setDirection(title);
@@ -430,7 +430,7 @@ export const RadioFormFromValues = (values: {
 
   const form = RadioFormFromRows(rows, onChange);
   if(checkedRadioField) {
-    checkedRadioField.checked = true;
+    checkedRadioField.setValueSilently(true);
   }
   return form;
 };

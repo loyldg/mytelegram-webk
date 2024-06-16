@@ -46,7 +46,7 @@ rootScope.addEventListener('document_downloading', (docId) => {
   });
 });
 
-export default async function wrapDocument({message, withTime, fontWeight, voiceAsMusic, showSender, searchContext, loadPromises, autoDownloadSize, lazyLoadQueue, sizeType, managers = rootScope.managers, cacheContext, fontSize, getSize, canTranscribeVoice}: {
+export default async function wrapDocument({message, withTime, fontWeight, voiceAsMusic, showSender, searchContext, loadPromises, autoDownloadSize, lazyLoadQueue, sizeType, managers = rootScope.managers, cacheContext, fontSize, getSize, canTranscribeVoice, isOut}: {
   message: Message.message,
   withTime?: boolean,
   fontWeight?: number,
@@ -61,7 +61,8 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
   cacheContext?: ThumbCache,
   fontSize?: number,
   getSize?: () => number,
-  canTranscribeVoice?: boolean
+  canTranscribeVoice?: boolean,
+  isOut?: boolean
 }): Promise<HTMLElement> {
   fontWeight ??= 500;
   sizeType ??= '' as any;
@@ -87,6 +88,7 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
     audioElement.dataset.fontWeight = '' + fontWeight;
     audioElement.dataset.fontSize = '' + fontSize;
     audioElement.dataset.sizeType = sizeType;
+    if(isOut) audioElement.classList.add('is-out');
     await audioElement.render();
     return audioElement;
   }
@@ -214,6 +216,8 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
     return docDiv;
   }
 
+  const canSaveToCache = doc.size <= MAX_FILE_SAVE_SIZE;
+
   let downloadDiv: HTMLElement, preloader: ProgressivePreloader = null;
   const onLoad = () => {
     docDiv.classList.remove('downloading');
@@ -226,7 +230,7 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
       return;
     }
 
-    if(doc.size <= MAX_FILE_SAVE_SIZE) {
+    if(canSaveToCache) {
       docDiv.classList.add('downloaded');
     }
 
@@ -295,7 +299,11 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
           }, liteMode.isAvailable('animations') ? 250 : 0);
         });
       }
-    } else if(MEDIA_MIME_TYPES_SUPPORTED.has(doc.mime_type) && doc.thumbs?.length) {
+    } else if(
+      MEDIA_MIME_TYPES_SUPPORTED.has(doc.mime_type) &&
+      doc.thumbs?.length &&
+      canSaveToCache
+    ) {
       download = appDownloadManager.downloadMediaURL({media: doc, queueId});
     } else {
       download = appDownloadManager.downloadToDisc({media: doc, queueId});

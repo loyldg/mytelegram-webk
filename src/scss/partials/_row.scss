@@ -34,6 +34,16 @@ $row-border-radius: $border-radius-medium;
     opacity: var(--disabled-opacity);
   }
 
+  &.is-fake-disabled {
+    .row-row {
+      opacity: var(--disabled-opacity);
+    }
+
+    .checkbox-field-toggle {
+      --primary-color: var(--secondary-color);
+    }
+  }
+
   &.no-wrap {
     padding-top: 0 !important;
     padding-bottom: 0 !important;
@@ -71,6 +81,20 @@ $row-border-radius: $border-radius-medium;
       grid-template-columns: 3.5rem 1fr auto;
     }
 
+    &.no-subtitle {
+      grid-template-areas: "left title right";
+      grid-template-rows: auto;
+
+      .row-title {
+        align-self: unset;
+      }
+    }
+
+    &.with-midtitle {
+      grid-template-areas: "left title right" "left midtitle right" "left subtitle right";
+      grid-template-rows: auto auto auto;
+    }
+
     .row-title {
       grid-area: title;
       align-self: flex-end;
@@ -78,6 +102,11 @@ $row-border-radius: $border-radius-medium;
 
     .row-subtitle {
       grid-area: subtitle;
+      align-self: flex-start;
+    }
+
+    .row-midtitle {
+      grid-area: midtitle;
       align-self: flex-start;
     }
 
@@ -188,8 +217,9 @@ $row-border-radius: $border-radius-medium;
   }
 
   &-midtitle {
-    margin-top: .125rem;
     font-size: var(--font-size-14);
+    line-height: 20px;
+    margin: 1px 0 -1px;
     order: 1;
   }
 
@@ -219,6 +249,10 @@ $row-border-radius: $border-radius-medium;
 
       &-custom-color {
         color: var(--custom-icon-color);
+      }
+
+      &-stars-color {
+        color: #fecf16;
       }
     }
 

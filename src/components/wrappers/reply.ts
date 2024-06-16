@@ -22,7 +22,8 @@ export type WrapReplyOptions = WrapPinnedContainerOptions & {
   isQuote?: boolean,
   noBorder?: boolean,
   replyHeader?: MessageReplyHeader,
-  quote?: {text: string, entities?: MessageEntity[]}
+  quote?: {text: string, entities?: MessageEntity[]},
+  canTranslate?: boolean
 } & WrapSomethingOptions;
 
 export default function wrapReply(options: WrapReplyOptions) {
@@ -77,6 +78,7 @@ export default function wrapReply(options: WrapReplyOptions) {
         canvasHeight: 54,
         emojiSize: 16
       }).then((canvas) => {
+        if(options.middleware && !options.middleware()) return;
         canvas.classList.add('reply-background-canvas');
       });
     }

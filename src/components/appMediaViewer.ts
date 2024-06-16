@@ -32,6 +32,8 @@ import AppSharedMediaTab from './sidebarRight/tabs/sharedMedia';
 import PopupElement from './popups';
 import {ChatType} from './chat/chat';
 import getFwdFromName from '../lib/appManagers/utils/messages/getFwdFromName';
+import TranslatableMessage from './translatableMessage';
+import {MAX_FILE_SAVE_SIZE} from '../lib/mtproto/mtproto_config';
 
 type AppMediaViewerTargetType = {
   element: HTMLElement,
@@ -266,10 +268,14 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     if(caption) {
       const media = getMediaFromMessage(message, true);
 
-      html = wrapRichText(caption, {
-        entities: (message as Message.message).totalEntities,
-        maxMediaTimestamp: ((media as MyDocument)?.type === 'video' && (media as MyDocument).duration) || undefined,
-        textColor: 'white'
+      html = TranslatableMessage({
+        peerId: message.peerId,
+        message: message as Message.message,
+        middleware: this.content.mover.middlewareHelper.get(),
+        richTextOptions: {
+          maxMediaTimestamp: ((media as MyDocument)?.type === 'video' && (media as MyDocument).duration) || undefined,
+          textColor: 'white'
+        }
       });
     }
 
@@ -353,6 +359,6 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
   }
 
   public static isMediaCompatibleForDocumentViewer(media: MyPhoto | MyDocument) {
-    return media._ === 'photo' || MEDIA_MIME_TYPES_SUPPORTED.has(media.mime_type);
+    return (media._ === 'photo' || MEDIA_MIME_TYPES_SUPPORTED.has(media.mime_type) && media.size <= MAX_FILE_SAVE_SIZE);
   }
 }

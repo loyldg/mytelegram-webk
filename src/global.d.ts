@@ -7,6 +7,8 @@ import type LazyLoadQueue from './components/lazyLoadQueue';
 import type {AppManagers} from './lib/appManagers/managers';
 import type {CustomProperty} from './helpers/dom/customProperties';
 import type Icons from './icons';
+import type {CancellablePromise} from './helpers/cancellablePromise';
+import type Languages from './lib/tinyld/languages';
 
 declare global {
   interface AddEventListenerOptions extends EventListenerOptions {
@@ -21,6 +23,8 @@ declare global {
 
   interface HTMLElement {
     middlewareHelper?: MiddlewareHelper;
+    timeAppenders?: {element: HTMLElement, callback: () => void}[];
+    timeSpan?: HTMLElement;
     // middleware?: Middleware;
   }
 
@@ -98,11 +102,14 @@ declare global {
     `FILE_MIGRATE_${number}` | `CALL_MIGRATE_${number}` | 'MSG_WAIT_FAILED' | 'MSG_WAIT_TIMEOUT' |
     'SAVED_DIALOGS_UNSUPPORTED' | 'YOUR_PRIVACY_RESTRICTED' | 'INVITE_REQUEST_SENT' | 'GROUPCALL_INVALID' |
     'TIME_TOO_BIG' | 'TIME_TOO_SMALL' | 'TIME_INVALID' | 'GROUPCALL_FORBIDDEN' | 'VIDEO_CHANNEL_INVALID' |
-    'GROUPCALL_JOIN_MISSING' | `SLOWMODE_WAIT_${number}`;
+    'GROUPCALL_JOIN_MISSING' | `SLOWMODE_WAIT_${number}` | 'BALANCE_TOO_LOW' | 'FORM_EXPIRED' |
+    `FLOOD_PREMIUM_WAIT_${number}`;
 
   type ErrorType = LocalErrorType | ServerErrorType;
 
   type TelegramChoosePeerType = 'users' | 'bots' | 'groups' | 'channels';
+
+  type TranslatableLanguageISO = typeof Languages[number][0];
 
   interface Error {
     type?: ErrorType;
@@ -126,6 +133,7 @@ declare global {
   type DOMRectMinified = {top: number, right: number, bottom: number, left: number};
   type DOMRectEditable = DOMRectMinified & {width: number, height: number};
   type MaybePromise<T> = PromiseLike<T> | T;
+  type MaybeDeferredPromise<T> = CancellablePromise<T> | T;
 
   type WrapSomethingOptions = {
     lazyLoadQueue?: LazyLoadQueue | false,

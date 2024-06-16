@@ -13,6 +13,7 @@ import wrapRichText from '../../lib/richTextProcessor/wrapRichText';
 import {MediaSearchContext} from '../appMediaPlaybackController';
 import Chat from '../chat/chat';
 import LazyLoadQueue from '../lazyLoadQueue';
+import TranslatableMessage from '../translatableMessage';
 import wrapDocument from './document';
 
 export default async function wrapGroupedDocuments({
@@ -32,7 +33,10 @@ export default async function wrapGroupedDocuments({
   fontSize,
   richTextFragment,
   richTextOptions,
-  canTranscribeVoice
+  canTranscribeVoice,
+  translatableParams,
+  factCheckBox,
+  isOut
 }: {
   albumMustBeRenderedFull: boolean,
   message: any,
@@ -49,18 +53,22 @@ export default async function wrapGroupedDocuments({
   managers?: AppManagers,
   fontWeight?: number,
   fontSize?: number,
-  richTextFragment?: DocumentFragment,
+  richTextFragment?: DocumentFragment | HTMLElement,
   richTextOptions?: Parameters<typeof wrapRichText>[1]
-  canTranscribeVoice?: boolean
+  canTranscribeVoice?: boolean,
+  translatableParams: Parameters<typeof TranslatableMessage>[0],
+  factCheckBox?: HTMLElement,
+  isOut?: boolean
 }) {
   let nameContainer: HTMLElement;
-  const mids = albumMustBeRenderedFull ? await chat.getMidsByMid(message.mid) : [message.mid];
+  const {peerId} = message;
+  const mids = albumMustBeRenderedFull ? await chat.getMidsByMid(message.peerId, message.mid) : [message.mid];
   /* if(isPending) {
     mids.reverse();
   } */
 
-  const promises = mids.map(async(mid, idx) => {
-    const message = chat.getMessage(mid) as Message.message;
+  const promises = mids.map(async(mid, idx, arr) => {
+    const message = chat.getMessageByPeer(peerId, mid) as Message.message;
     const div = await wrapDocument({
       message,
       loadPromises,
@@ -71,7 +79,8 @@ export default async function wrapGroupedDocuments({
       managers,
       fontWeight,
       fontSize,
-      canTranscribeVoice
+      canTranscribeVoice,
+      isOut
     });
 
     const container = document.createElement('div');
@@ -82,22 +91,45 @@ export default async function wrapGroupedDocuments({
     const wrapper = document.createElement('div');
     wrapper.classList.add('document-wrapper');
 
-    if(message.message) {
-      const messageDiv = document.createElement('div');
-      messageDiv.classList.add('document-message');
+    const isFirst = idx === 0;
+    const isLast = idx === (arr.length - 1);
 
+    if(isFirst) container.classList.add('is-first');
+    if(isLast) container.classList.add('is-last');
+    // if(!(isFirst && isLast)) container.classList.add('has-sibling');
+
+    let messageDiv: HTMLElement;
+    if(message.message || (isLast && factCheckBox)) {
+      messageDiv = document.createElement('div');
+      messageDiv.classList.add('document-message');
+    }
+
+    if(message.message) {
       let fragment = richTextFragment;
       if(!fragment) {
-        fragment = wrapRichText(message.message, {
-          ...richTextOptions,
-          entities: message.totalEntities,
-          maxMediaTimestamp: getMediaDurationFromMessage(message)
-        });
+        if(translatableParams) {
+          fragment = TranslatableMessage({
+            ...translatableParams,
+            message,
+            richTextOptions: {
+              ...translatableParams.richTextOptions,
+              maxMediaTimestamp: getMediaDurationFromMessage(message)
+            }
+          });
+        } else {
+          fragment = wrapRichText(message.message, {
+            ...richTextOptions,
+            entities: message.totalEntities,
+            maxMediaTimestamp: getMediaDurationFromMessage(message)
+          });
+        }
       }
 
       setInnerHTML(messageDiv, fragment);
+    }
 
-      wrapper.append(messageDiv);
+    if(factCheckBox && messageDiv && isLast) {
+      messageDiv.append(factCheckBox);
     }
 
     if(mids.length > 1) {
@@ -112,7 +144,7 @@ export default async function wrapGroupedDocuments({
       }
     }
 
-    wrapper.append(div);
+    wrapper.append(...[div, messageDiv].filter(Boolean));
     container.append(wrapper);
     return container;
   });

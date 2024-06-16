@@ -9,7 +9,7 @@ import {formatFullSentTimeRaw, formatTime, getFullDate} from '../../helpers/date
 import setInnerHTML from '../../helpers/dom/setInnerHTML';
 import {Middleware} from '../../helpers/middleware';
 import formatNumber from '../../helpers/number/formatNumber';
-import {Message, MessageReplyHeader} from '../../layer';
+import {AvailableEffect, Message, MessageReplyHeader} from '../../layer';
 import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
 import {i18n, _i18n} from '../../lib/langPack';
 import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
@@ -22,6 +22,13 @@ import Chat, {ChatType} from './chat';
 import RepliesElement from './replies';
 import ChatBubbles from './bubbles';
 import getFwdFromName from '../../lib/appManagers/utils/messages/getFwdFromName';
+import deferredPromise from '../../helpers/cancellablePromise';
+import wrapSticker from '../wrappers/sticker';
+import cancelEvent from '../../helpers/dom/cancelEvent';
+import getStickerEffectThumb from '../../lib/appManagers/utils/stickers/getStickerEffectThumb';
+import wrapStickerAnimation from '../wrappers/stickerAnimation';
+import Scrollable from '../scrollable';
+import appDownloadManager from '../../lib/appManagers/appDownloadManager';
 
 const NBSP = '&nbsp;';
 
@@ -36,6 +43,124 @@ const makeTime = (date: Date, includeDate?: boolean) => {
   return includeDate ? formatFullSentTimeRaw(date.getTime() / 1000 | 0, {combined: true}).dateEl : formatTime(date);
 };
 
+const makeEffect = (props: {
+  onlyElement?: boolean,
+  docId?: DocId,
+  middleware?: Middleware,
+  loadPromises?: Promise<any>[]
+}) => {
+  const span = document.createElement('span');
+  span.classList.add('time-effect');
+  if(props.onlyElement) {
+    return span;
+  }
+
+  const deferred = deferredPromise<void>();
+
+  span.dataset.effectId = '' + props.docId;
+
+  rootScope.managers.acknowledged.appReactionsManager.getAvailableEffect(props.docId)
+  .then(async(result) => {
+    if(!result.cached) {
+      deferred.resolve();
+    }
+
+    const availableEffect = await result.result;
+
+    const loadPromises: Promise<any>[] = [];
+    wrapSticker({
+      doc: await rootScope.managers.appDocsManager.getDoc(availableEffect.static_icon_id),
+      div: span,
+      middleware: props.middleware,
+      loadPromises,
+      width: 12,
+      height: 12
+    });
+
+    Promise.all(loadPromises).then(async() => {
+      if(result.cached) {
+        deferred.resolve();
+      }
+
+      // * preload effect
+      const {doc, thumb} = await getDocForEffect(availableEffect);
+      appDownloadManager.downloadMedia({
+        media: doc,
+        thumb
+      });
+    });
+  });
+
+  props.loadPromises?.push(deferred);
+
+  return span;
+};
+
+const getDocForEffect = async(availableEffect: AvailableEffect) => {
+  const isPremiumEffect = !availableEffect.effect_animation_id;
+  const doc = await rootScope.managers.appDocsManager.getDoc(isPremiumEffect ? availableEffect.effect_sticker_id : availableEffect.effect_animation_id);
+  return {isPremiumEffect, doc, thumb: getStickerEffectThumb(doc)};
+};
+
+export const fireMessageEffect = ({e, isOut, element, middleware, scrollable, effectId}: {
+  e?: Event,
+  isOut?: boolean,
+  element: HTMLElement,
+  middleware: Middleware,
+  scrollable?: Scrollable,
+  effectId: DocId
+}) => {
+  if(element.dataset.playing) {
+    e && cancelEvent(e);
+    return;
+  }
+
+  element.dataset.playing = '1';
+
+  rootScope.managers.appReactionsManager.getAvailableEffect(effectId).then(async(availableEffect) => {
+    const {doc, thumb: fullThumb} = await getDocForEffect(availableEffect);
+    if(!middleware()) return;
+
+    const {animationDiv} = wrapStickerAnimation({
+      doc,
+      middleware,
+      side: isOut ? 'right' : 'left',
+      size: 240,
+      target: element,
+      play: true,
+      scrollable,
+      fullThumb: getStickerEffectThumb(doc),
+      addOffsetX: 40,
+      onUnmount: () => {
+        delete element.dataset.playing;
+      }
+    });
+
+    if(isOut === false) {
+      animationDiv.classList.add('reflect-x');
+    }
+  });
+
+  e && cancelEvent(e);
+};
+
+export const fireMessageEffectByBubble = ({timeEffect, bubble, e, scrollable}: {
+  timeEffect: HTMLElement,
+  bubble: HTMLElement,
+  e?: Event,
+  scrollable?: Scrollable
+}) => {
+  const effectId = timeEffect.dataset.effectId as DocId;
+  return fireMessageEffect({
+    element: timeEffect,
+    isOut: bubble.classList.contains('is-out'),
+    e,
+    scrollable,
+    effectId,
+    middleware: bubble.middlewareHelper.get()
+  });
+};
+
 // const makeSponsored = () => i18n('SponsoredMessage');
 
 export namespace MessageRender {
@@ -48,7 +173,9 @@ export namespace MessageRender {
     chatType: ChatType,
     message: Message.message | Message.messageService,
     reactionsMessage?: Message.message,
-    isOut: boolean
+    isOut: boolean,
+    middleware: Middleware,
+    loadPromises?: Promise<any>[]
   }) => {
     const {chatType, message} = options;
     const isMessage = !('action' in message)/*  && !isSponsored */;
@@ -62,7 +189,8 @@ export namespace MessageRender {
     }
     const date = new Date(timestamp * 1000);
 
-    let editedSpan: HTMLElement;
+    let editedSpan: HTMLElement,
+      effectSpan: HTMLElement;
     // sponsoredSpan: HTMLElement;
     // reactionsElement: ReactionsElement,
     // reactionsMessage: Message.message;
@@ -86,9 +214,9 @@ export namespace MessageRender {
       const postAuthor = options.chat.getPostAuthor(message);
       if(postAuthor) {
         const span = document.createElement('span');
-        span.classList.add('post-author');
+        span.classList.add('time-post-author');
         setInnerHTML(span, wrapEmojiText(postAuthor));
-        span.insertAdjacentHTML('beforeend', '<span class="post-author-comma">,' + NBSP + '</span>');
+        span.insertAdjacentHTML('beforeend', '<span class="time-post-author-comma">,' + NBSP + '</span>');
         args.push(span);
       }
 
@@ -99,6 +227,11 @@ export namespace MessageRender {
       if(chatType !== ChatType.Pinned && message.pFlags.pinned) {
         const i = Icon('pinnedchat', 'time-icon', 'time-pinned', 'time-part');
         args.unshift(i);
+      }
+
+      if(message.effect) {
+        effectSpan = makeEffect({onlyElement: true});
+        args.push(effectSpan);
       }
 
       // if(USER_REACTIONS_INLINE && message.peer_id._ === 'peerUser'/*  && message.reactions?.results?.length */) {
@@ -145,10 +278,20 @@ export namespace MessageRender {
     //   _reactionsElement.init(reactionsMessage, 'inline');
     //   _reactionsElement.render();
     // }
+    if(effectSpan) {
+      clonedArgs[clonedArgs.indexOf(effectSpan)] = makeEffect({
+        docId: (message as Message.message).effect,
+        middleware: options.middleware,
+        loadPromises: options.loadPromises
+      });
+    }
     clonedArgs = clonedArgs.map((a) => {
-      return a instanceof HTMLElement && !a.classList.contains('i18n') && !a.classList.contains('reactions') ?
-        a.cloneNode(true) as HTMLElement :
-        a;
+      return a instanceof HTMLElement &&
+        !a.classList.contains('i18n') &&
+        !a.classList.contains('reactions') &&
+        !a.classList.contains('time-effect') ?
+          a.cloneNode(true) as HTMLElement :
+          a;
     });
     if(time) {
       clonedArgs[clonedArgs.length - 1] = makeTime(date, includeDate); // clone time
@@ -169,7 +312,9 @@ export namespace MessageRender {
     lazyLoadQueue?: LazyLoadQueue,
     middleware: Middleware
   }) => {
-    const isFooter = !bubble.classList.contains('sticker') && !bubble.classList.contains('emoji-big') && !bubble.classList.contains('round');
+    const isFooter = !bubble.classList.contains('sticker') &&
+      !bubble.classList.contains('emoji-big') &&
+      !bubble.classList.contains('round');
     const repliesFooter = new RepliesElement();
     repliesFooter.message = message;
     repliesFooter.type = isFooter ? 'footer' : 'beside';
@@ -177,7 +322,7 @@ export namespace MessageRender {
     repliesFooter.lazyLoadQueue = lazyLoadQueue;
     repliesFooter.middlewareHelper = middleware.create();
     repliesFooter.init();
-    bubbleContainer.prepend(repliesFooter);
+    bubbleContainer.append(repliesFooter);
     return isFooter;
   };
 
@@ -213,7 +358,7 @@ export namespace MessageRender {
       (
         replyTo.reply_to_peer_id ?
           getPeerId(replyTo.reply_to_peer_id) :
-          chat.peerId
+          message.peerId
       );
 
     const originalMessage = !isStoryReply && apiManagerProxy.getMessageByPeer(replyToPeerId, message.reply_to_mid);
@@ -224,7 +369,7 @@ export namespace MessageRender {
     let titlePeerId: PeerId, setColorPeerId: PeerId;
     if(isStoryReply) {
       if(!originalStory.cached) {
-        needUpdate.push({replyToPeerId, replyStoryId: replyTo.story_id, mid: message.mid});
+        needUpdate.push({replyToPeerId, replyStoryId: replyTo.story_id, mid: message.mid, peerId: message.peerId});
         rootScope.managers.appMessagesManager.fetchMessageReplyTo(message);
 
         originalPeerTitle = i18n('Loading');
@@ -250,12 +395,13 @@ export namespace MessageRender {
           fromName: getFwdFromName(replyTo.reply_from)
         }).element;
       } else {
-        needUpdate.push({replyToPeerId, replyMid: message.reply_to_mid, mid: message.mid});
+        needUpdate.push({replyToPeerId, replyMid: message.reply_to_mid, mid: message.mid, peerId: message.peerId});
         rootScope.managers.appMessagesManager.fetchMessageReplyTo(message);
 
         originalPeerTitle = i18n('Loading');
       }
     } else {
+      isReplyFromAnotherPeer = !!replyTo.reply_from;
       const originalMessageFwdFromId = (originalMessage as Message.message).fwdFromId;
       titlePeerId = message.fwdFromId && message.fwdFromId === originalMessageFwdFromId ?
         message.fwdFromId :
@@ -318,14 +464,19 @@ export namespace MessageRender {
       lazyLoadQueue,
       replyHeader: replyTo,
       useHighlightingColor: isStandaloneMedia,
-      colorAsOut: isOut
+      colorAsOut: isOut,
+      canTranslate: originalMessage && !isReplyFromAnotherPeer ? !originalMessage.pFlags.out : undefined
     });
 
     await fillPromise;
     if(currentReplyDiv) {
-      if(currentReplyDiv.classList.contains('floating-part')) {
-        container.classList.add('floating-part');
-      }
+      const saveClassNames = ['floating-part', 'mb-shorter'];
+      const classList = currentReplyDiv.classList;
+      saveClassNames.forEach((className) => {
+        if(classList.contains(className)) {
+          container.classList.add(className);
+        }
+      });
       currentReplyDiv.replaceWith(container);
     } else {
       appendCallback(container);

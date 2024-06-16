@@ -693,9 +693,8 @@ export default class PopupBoostsViaGifts extends PopupElement {
         purpose,
         option: option()
       };
-      const paymentForm = await this.managers.appPaymentsManager.getPaymentForm(inputInvoice);
 
-      const popup = PopupElement.createPopup(PopupPayment, {inputInvoice, paymentForm});
+      const popup = await PopupPayment.create({inputInvoice});
       await new Promise<void>((resolve, reject) => {
         popup.addEventListener('finish', (result) => {
           if(result === 'cancelled' || result === 'failed') {
@@ -741,10 +740,7 @@ export default class PopupBoostsViaGifts extends PopupElement {
     this.appConfig = appConfig;
     this.subscribersLimit = this.channelsLimit = appConfig.giveaway_add_peers_max ?? 10;
     this.countriesLimit = appConfig.giveaway_countries_max ?? 10;
-    const div = document.createElement('div');
-    this.scrollable.append(div);
-    const dispose = render(() => this._construct(), div);
-    this.addEventListener('closeAfterTimeout', dispose);
+    this.appendSolid(() => this._construct());
     this.show();
   }
 }

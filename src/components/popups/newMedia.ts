@@ -22,7 +22,7 @@ import getGifDuration from '../../helpers/getGifDuration';
 import replaceContent from '../../helpers/dom/replaceContent';
 import createVideo from '../../helpers/dom/createVideo';
 import prepareAlbum from '../prepareAlbum';
-import {makeMediaSize, MediaSize} from '../../helpers/mediaSize';
+import {makeMediaSize} from '../../helpers/mediaSize';
 import {ThumbCache} from '../../lib/storages/thumbs';
 import onMediaLoad from '../../helpers/onMediaLoad';
 import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
@@ -40,7 +40,6 @@ import {DocumentAttribute, DraftMessage, Photo, PhotoSize} from '../../layer';
 import {getPreviewBytesFromURL} from '../../helpers/bytes/getPreviewURLFromBytes';
 import {renderImageFromUrlPromise} from '../../helpers/dom/renderImageFromUrl';
 import ButtonMenuToggle from '../buttonMenuToggle';
-import partition from '../../helpers/array/partition';
 import InputFieldAnimated from '../inputFieldAnimated';
 import IMAGE_MIME_TYPES_SUPPORTED from '../../environment/imageMimeTypesSupport';
 import VIDEO_MIME_TYPES_SUPPORTED from '../../environment/videoMimeTypesSupport';
@@ -52,6 +51,9 @@ import handleVideoLeak from '../../helpers/dom/handleVideoLeak';
 import wrapDraft from '../wrappers/draft';
 import getRichValueWithCaret from '../../helpers/dom/getRichValueWithCaret';
 import {ChatType} from '../chat/chat';
+import pause from '../../helpers/schedulers/pause';
+import {Accessor, createRoot, createSignal, Setter} from 'solid-js';
+import SelectedEffect from '../chat/selectedEffect';
 
 type SendFileParams = SendFileDetails & {
   file?: File,
@@ -79,8 +81,11 @@ export default class PopupNewMedia extends PopupElement {
     type: 'media' | 'document',
     isMedia: true,
     group: boolean,
-    sendFileDetails: SendFileParams[]
+    sendFileDetails: SendFileParams[],
+    invertMedia: boolean
   }>;
+  private effect: Accessor<DocId>;
+  private setEffect: Setter<DocId>;
   private messageInputField: InputFieldAnimated;
   private captionLengthMax: number;
 
@@ -149,7 +154,7 @@ export default class PopupNewMedia extends PopupElement {
     const canSendVideos = canSend.send_videos;
     const canSendDocs = canSend.send_docs;
 
-    attachClickEvent(this.btnConfirm, () => this.send(), {listenerSetter: this.listenerSetter});
+    attachClickEvent(this.btnConfirm, async() => (await pause(0), this.send()), {listenerSetter: this.listenerSetter});
 
     const btnMenu = ButtonMenuToggle({
       listenerSetter: this.listenerSetter,
@@ -224,6 +229,16 @@ export default class PopupNewMedia extends PopupElement {
         text: 'Popup.Attach.RemoveSpoilers',
         onClick: () => this.changeSpoilers(false),
         verify: () => this.canToggleSpoilers(false, false)
+      }, {
+        icon: 'captionup',
+        text: 'CaptionAbove',
+        onClick: () => this.moveCaption(true),
+        verify: () => this.canMoveCaption() && !this.willAttach.invertMedia
+      }, {
+        icon: 'captiondown',
+        text: 'CaptionBelow',
+        onClick: () => this.moveCaption(false),
+        verify: () => this.canMoveCaption() && !!this.willAttach.invertMedia
       }]
     });
 
@@ -312,6 +327,14 @@ export default class PopupNewMedia extends PopupElement {
     });
 
     if(this.chat.type !== ChatType.Scheduled) {
+      createRoot((dispose) => {
+        this.chat.destroyMiddlewareHelper.onDestroy(dispose);
+        const [effect, setEffect] = createSignal<DocId>((this.wasDraft as any)?.effect); // * soon
+        this.effect = effect;
+        this.setEffect = setEffect;
+        this.btnConfirm.append(SelectedEffect({effect: this.effect}) as HTMLElement);
+      });
+
       const sendMenu = new SendContextMenu({
         onSilentClick: () => {
           this.chat.input.sendSilent = true;
@@ -329,13 +352,17 @@ export default class PopupNewMedia extends PopupElement {
         },
         openSide: 'top-left',
         onContextElement: this.btnConfirm,
-        listenerSetter: this.listenerSetter,
-        canSendWhenOnline: this.chat.input.canSendWhenOnline
+        middleware: this.middlewareHelper.get(),
+        canSendWhenOnline: this.chat.input.canSendWhenOnline,
+        onRef: (element) => {
+          this.container.append(element);
+        },
+        withEffects: () => this.chat.peerId.isUser() && this.chat.peerId !== rootScope.myId,
+        effect: this.effect,
+        onEffect: this.setEffect
       });
 
       sendMenu.setPeerId(this.chat.peerId);
-
-      this.container.append(sendMenu.sendMenu);
     }
 
     currentPopup = this;
@@ -440,14 +467,6 @@ export default class PopupNewMedia extends PopupElement {
     this.body.append(element);
   }
 
-  get type() {
-    return this.willAttach.type;
-  }
-
-  set type(type: PopupNewMedia['willAttach']['type']) {
-    this.willAttach.type = type;
-  }
-
   private partition(mimeTypes = MEDIA_MIME_TYPES_SUPPORTED) {
     const media: SendFileParams[] = [], files: SendFileParams[] = [], audio: SendFileParams[] = [];
     this.willAttach.sendFileDetails.forEach((d) => {
@@ -511,6 +530,10 @@ export default class PopupNewMedia extends PopupElement {
   }
 
   private changeType(type: PopupNewMedia['willAttach']['type']) {
+    if(type === 'document') {
+      this.moveCaption(false);
+    }
+
     this.willAttach.type = type;
     this.attachFiles();
   }
@@ -528,6 +551,14 @@ export default class PopupNewMedia extends PopupElement {
         this.removeMediaSpoiler(item);
       }
     });
+  }
+
+  public canMoveCaption() {
+    return !this.messageInputField.isEmpty() && this.willAttach.type === 'media';
+  }
+
+  public moveCaption(above: boolean) {
+    this.willAttach.invertMedia = above || undefined;
   }
 
   public addFiles(files: File[]) {
@@ -565,11 +596,12 @@ export default class PopupNewMedia extends PopupElement {
       return;
     }
 
-    if(await this.chat.input.showSlowModeTooltipIfNeeded({
+    const isSlowModeActive = await this.chat.input.showSlowModeTooltipIfNeeded({
       sendingFew: this.messagesCount() > 1,
       container: this.btnConfirm.parentElement,
       element: this.btnConfirm
-    })) {
+    });
+    if(isSlowModeActive) {
       return;
     }
 
@@ -639,16 +671,18 @@ export default class PopupNewMedia extends PopupElement {
 
     const {length} = sendFileDetails;
     const sendingParams = this.chat.getMessageSendingParams();
+    let effect = this.effect();
     this.iterate((sendFileParams) => {
       if(caption && sendFileParams.length !== length) {
         this.managers.appMessagesManager.sendText({
           ...sendingParams,
           text: caption,
-          entities
+          entities,
+          effect
           // clearDraft: true
         });
 
-        caption = entities = undefined;
+        caption = entities = effect = undefined;
       }
 
       const d: SendFileDetails[] = sendFileParams.map((params) => {
@@ -668,12 +702,13 @@ export default class PopupNewMedia extends PopupElement {
         ...sendingParams,
         caption,
         entities,
+        effect,
         isMedia,
         // clearDraft: true,
         ...w
       });
 
-      caption = entities = undefined;
+      caption = entities = effect = undefined;
     });
 
     if(sendingParams.replyToMsgId) {

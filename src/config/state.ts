@@ -123,7 +123,15 @@ export type State = {
   },
   hiddenSimilarChannels: number[],
   appConfig: MTAppConfig,
-  accountThemes: AccountThemes.accountThemes
+  accountThemes: AccountThemes.accountThemes,
+  translations: {
+    peers: {[peerId: PeerId]: string},
+    enabledPeers: {[peerId: PeerId]: boolean},
+    enabled: boolean,
+    showInMenu: boolean,
+    doNotTranslate: TranslatableLanguageISO[]
+  },
+  shownUploadSpeedTimestamp?: number
 };
 
 // const BACKGROUND_DAY_MOBILE: Background = {
@@ -341,5 +349,12 @@ export const STATE_INIT: State = {
   },
   hiddenSimilarChannels: [],
   appConfig: {} as any,
-  accountThemes: {} as any
+  accountThemes: {} as any,
+  translations: {
+    peers: {},
+    enabledPeers: {},
+    enabled: true,
+    showInMenu: true,
+    doNotTranslate: []
+  }
 };

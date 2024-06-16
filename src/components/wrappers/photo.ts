@@ -28,7 +28,7 @@ import liteMode from '../../helpers/liteMode';
 import isWebFileLocation from '../../lib/appManagers/utils/webFiles/isWebFileLocation';
 import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
 
-export default async function wrapPhoto({photo, message, container, boxWidth, boxHeight, withTail, isOut, lazyLoadQueue, middleware, size, withoutPreloader, loadPromises, autoDownloadSize, noBlur, noThumb, noFadeIn, blurAfter, managers = rootScope.managers, processUrl, fadeInElement, onRender, onRenderFinish, useBlur, useRenderCache}: {
+export default async function wrapPhoto({photo, message, container, boxWidth, boxHeight, withTail, isOut, lazyLoadQueue, middleware, size, withoutPreloader, loadPromises, autoDownloadSize, noBlur, noThumb, noFadeIn, blurAfter, managers = rootScope.managers, processUrl, fadeInElement, onRender, onRenderFinish, useBlur, useRenderCache, canHaveVideoPlayer}: {
   photo: MyPhoto | MyDocument | WebDocument | InputWebFileLocation,
   message?: Message.message | Message.messageService,
   container?: HTMLElement,
@@ -52,7 +52,8 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
   onRender?: () => void,
   onRenderFinish?: () => void,
   useBlur?: boolean | number,
-  useRenderCache?: boolean
+  useRenderCache?: boolean,
+  canHaveVideoPlayer?: boolean
 }) {
   const ret = {
     loadPromises: {
@@ -88,7 +89,8 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
         element: container,
         boxWidth,
         boxHeight,
-        message
+        message: message as Message.message,
+        canHaveVideoPlayer
       });
     }
 
@@ -120,14 +122,15 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
       element: container,
       boxWidth,
       boxHeight,
-      message,
+      message: message as Message.message,
       photoSize: isImageFromDocument ? {
         _: 'photoSize',
         w: photo.w,
         h: photo.h,
         size: photo.size,
         type: THUMB_TYPE_FULL
-      } : undefined
+      } : undefined,
+      canHaveVideoPlayer
     });
     size = set.photoSize;
     isFit = set.isFit;

@@ -23,8 +23,10 @@ import sortEntities from '../../lib/richTextProcessor/sortEntities';
 import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
 import wrapPlainText from '../../lib/richTextProcessor/wrapPlainText';
 import wrapRichText, {WrapRichTextOptions} from '../../lib/richTextProcessor/wrapRichText';
+import wrapTextWithEntities from '../../lib/richTextProcessor/wrapTextWithEntities';
 import rootScope from '../../lib/rootScope';
 import {Modify} from '../../types';
+import TranslatableMessage from '../translatableMessage';
 import wrapMessageActionTextNew, {WrapMessageActionTextOptions} from './messageActionTextNew';
 import {wrapMessageGiveawayResults} from './messageActionTextNewUnsafe';
 import wrapPeerTitle from './peerTitle';
@@ -35,12 +37,10 @@ export type WrapMessageForReplyOptions = Modify<WrapMessageActionTextOptions, {
   text?: string,
   usingMids?: number[],
   highlightWord?: string,
-  withoutMediaType?: boolean
+  withoutMediaType?: boolean,
+  canTranslate?: boolean
 };
 
-// export default async function wrapMessageForReply(message: MyMessage | MyDraftMessage, text: string, usingMids: number[], plain: true, highlightWord?: string, withoutMediaType?: boolean): Promise<string>;
-// export default async function wrapMessageForReply(message: MyMessage | MyDraftMessage, text?: string, usingMids?: number[], plain?: false, highlightWord?: string, withoutMediaType?: boolean): Promise<DocumentFragment>;
-// export default async function wrapMessageForReply(message: MyMessage | MyDraftMessage, text: string = (message as Message.message).message, usingMids?: number[], plain?: boolean, highlightWord?: string, withoutMediaType?: boolean): Promise<DocumentFragment | string> {
 export default async function wrapMessageForReply<T extends WrapMessageForReplyOptions>(
   options: T
 ): Promise<T['plain'] extends true ? string : DocumentFragment> {
@@ -77,6 +77,13 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
   const appMessagesManager = managers.appMessagesManager;
 
   const isRestricted = isMessageRestricted(message as any);
+
+  const someRichTextOptions: WrapRichTextOptions = {
+    ...options,
+    noLinebreaks: true,
+    noLinks: true,
+    noTextFormat: true
+  };
 
   let entities = (message as Message.message).totalEntities ?? (message as DraftMessage.draftMessage).entities;
   if((message as Message.message).media && !isRestricted) {
@@ -132,8 +139,16 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
           addPart('AttachLiveLocation');
           break;
         case 'messageMediaPoll':
-          const f = '📊' + ' ' + (media.poll.question || 'poll');
-          addPart(undefined, plain ? f : wrapEmojiText(f));
+          const pre = '📊' + ' ';
+          if(plain) {
+            const f = pre + media.poll.question.text;
+            addPart(undefined, f);
+          } else {
+            const textWithEntities = wrapTextWithEntities(media.poll.question);
+            const fragment = wrapRichText(textWithEntities.text, {...someRichTextOptions, entities: textWithEntities.entities});
+            fragment.prepend(wrapEmojiText(pre));
+            addPart(undefined, fragment);
+          }
           break;
         case 'messageMediaContact':
           addPart('AttachContact');
@@ -311,15 +326,30 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
         }
       }
 
-      const messageWrapped = wrapRichText(options.text, {
-        ...options,
-        noLinebreaks: true,
-        entities,
-        noLinks: true,
-        noTextFormat: true
-      });
+      let what: DocumentFragment | HTMLElement;
+      if(options.canTranslate) {
+        what = TranslatableMessage({
+          peerId: (message as Message.message).peerId,
+          message: message as Message.message,
+          richTextOptions: someRichTextOptions,
+          middleware: options.middleware,
+          onTextWithEntities: (textWithEntities) => {
+            return {
+              ...textWithEntities,
+              text: limitSymbols(textWithEntities.text, 100)
+            };
+          }
+        });
+      } else {
+        what = wrapRichText(options.text, {
+          ...someRichTextOptions,
+          entities
+        });
 
-      parts.push(htmlToDocumentFragment(messageWrapped));
+        what = htmlToDocumentFragment(what);
+      }
+
+      parts.push(what);
     }
   }
 
