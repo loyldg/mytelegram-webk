@@ -5,9 +5,9 @@
  */
 
 import type {ReactionsContext} from '../../lib/appManagers/appReactionsManager';
+import type {RequestHistoryOptions} from '../../lib/appManagers/appMessagesManager';
 import {createEffect, createSignal, onCleanup, JSX, createMemo, onMount, splitProps, on, untrack, batch, Accessor} from 'solid-js';
 import InputSearch from '../inputSearch';
-import {createMiddleware} from '../stories/viewer';
 import {ButtonIconTsx} from '../buttonIconTsx';
 import classNames from '../../helpers/string/classNames';
 import PopupElement from '../popups';
@@ -50,7 +50,14 @@ import fastSmoothScroll from '../../helpers/fastSmoothScroll';
 import Icon from '../icon';
 import PopupPremium from '../popups/premium';
 import usePremium from '../../stores/premium';
-import {AnimationList} from '../../helpers/solid/animationList';
+import createMiddleware from '../../helpers/solid/createMiddleware';
+import Animated from '../../helpers/solid/animations';
+import Chat, {ChatType} from './chat';
+import {subscribeOn} from '../../helpers/solid/subscribeOn';
+import getHistoryStorageKey, {getHistoryStorageType} from '../../lib/appManagers/utils/messages/getHistoryStorageKey';
+import useScreenSize from '../../hooks/useScreenSize';
+import {ScreenSize} from '../../helpers/mediaSizes';
+import ButtonCorner from '../buttonCorner';
 
 export const ScrollableYTsx = (props: {
   children: JSX.Element,
@@ -76,16 +83,21 @@ export const ScrollableYTsx = (props: {
   return ret;
 };
 
+type SearchType = RequestHistoryOptions['hashtagType'];
+const SEARCH_TYPES: SearchType[] = ['this', 'my', 'public'];
+const DEFAULT_SEARCH_TYPE: SearchType = undefined;
+
 type LoadOptions = {
   middleware: Middleware,
   peerId: PeerId,
   threadId: number,
   query: string,
   fromPeerId?: PeerId,
-  reaction?: Reaction
+  reaction?: Reaction,
+  searchType?: SearchType
 };
 
-const renderHistoryResult = ({middleware, peerId, fromSavedDialog, messages, query/* , fromPeerId */}: LoadOptions & {fromSavedDialog: boolean, messages: (Message.message | Message.messageService)[]}) => {
+const renderHistoryResult = ({middleware, peerId, fromSavedDialog, messages, query, searchType/* , fromPeerId */}: LoadOptions & {fromSavedDialog: boolean, messages: (Message.message | Message.messageService)[]}) => {
   const promises = messages.map(async(message) => {
     const fromPeerId = message.fromId;
     const loadPromises: Promise<any>[] = [];
@@ -93,7 +105,7 @@ const renderHistoryResult = ({middleware, peerId, fromSavedDialog, messages, que
       peerId: fromSavedDialog ? rootScope.myId : (fromPeerId || peerId),
       container: false,
       avatarSize: 'abitbigger',
-      meAsSaved: false,
+      meAsSaved: searchType === 'my',
       message,
       query,
       // noIcons: this.noIcons,
@@ -113,9 +125,9 @@ const renderHistoryResult = ({middleware, peerId, fromSavedDialog, messages, que
 };
 
 const createSearchLoader = (options: LoadOptions) => {
-  const {middleware, peerId, threadId, query, fromPeerId, reaction} = options;
+  const {middleware, peerId, threadId, query, fromPeerId, reaction, searchType} = options;
   const fromSavedDialog = !!(peerId === rootScope.myId && threadId);
-  let lastMessage: Message.message | Message.messageService, loading = false;
+  let lastMessage: Message.message | Message.messageService, loading = false, nextRate: number;
   const loadMore = async() => {
     if(loading) {
       return;
@@ -124,22 +136,41 @@ const createSearchLoader = (options: LoadOptions) => {
 
     const offsetId = lastMessage?.mid || 0;
     const offsetPeerId = lastMessage?.peerId || NULL_PEER_ID;
-    const result = await rootScope.managers.appMessagesManager.getHistory({
-      peerId,
-      threadId,
+    const requestHistoryOptions: RequestHistoryOptions = {
+      peerId: searchType === 'this' || !searchType ? peerId : NULL_PEER_ID,
+      threadId: searchType === 'this' || !searchType ? threadId : undefined,
       query,
       inputFilter: {_: 'inputMessagesFilterEmpty'},
       offsetId,
       offsetPeerId,
       limit: 30,
       fromPeerId,
-      savedReaction: reaction ? [reaction as Reaction.reactionEmoji] : undefined
+      savedReaction: reaction ? [reaction as Reaction.reactionEmoji] : undefined,
+      nextRate,
+      isPublicHashtag: searchType === 'public',
+      isCacheableSearch: !!searchType,
+      hashtagType: searchType
+    };
+
+    const key = getHistoryStorageKey({type: getHistoryStorageType(requestHistoryOptions), ...requestHistoryOptions});
+    rootScope.managers.appMessagesManager.toggleHistoryKeySubscription(key, true);
+    onCleanup(() => {
+      rootScope.managers.appMessagesManager.toggleHistoryKeySubscription(key, false);
     });
+
+    const result = await rootScope.managers.appMessagesManager.getHistory(requestHistoryOptions);
     if(!middleware()) {
       return;
     }
 
-    const messages = result.history.map((mid) => apiManagerProxy.getMessageByPeer(peerId, mid));
+    let messages: Message.message[];
+    if(result.messages) {
+      messages = result.messages as Message.message[];
+      nextRate = result.nextRate;
+    } else {
+      messages = result.history.map((mid) => apiManagerProxy.getMessageByPeer(peerId, mid)) as Message.message[];
+    }
+
     const rendered = await renderHistoryResult({...options, fromSavedDialog, messages});
     if(!middleware()) {
       return;
@@ -230,20 +261,123 @@ const createParticipantsLoader = (options: LoadOptions) => {
   return f;
 };
 
+function SearchFooter(props: {
+  index: () => number,
+  count: () => number,
+  pickUserBtn: JSX.Element,
+  pickDateBtn: JSX.Element,
+  resultsShown: () => boolean,
+  onToggle: () => void,
+  choosingSender: () => boolean
+}) {
+  return (
+    <div class={classNames('chat-search-footer', props.choosingSender() && 'hide')}>
+      <div class="chat-search-footer-left">
+        {props.pickDateBtn}
+        {props.pickUserBtn}
+        <span class={classNames('chat-search-footer-count', props.count() === undefined && 'hide')}>
+          {
+            props.count() === 0 ?
+              i18n('NoResult') :
+              props.resultsShown() ? i18n('messages', [props.count()]) : i18n('Of', [props.index() + 1, props.count()])
+          }
+        </span>
+      </div>
+      <div class={classNames('chat-search-footer-right', !props.count() && 'hide')}>
+        <span
+          class="chat-search-footer-type"
+          onClick={() => props.onToggle()}
+        >
+          {i18n(props.resultsShown() ? 'SearchAsChat' : 'SearchAsList')}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function SearchMobileResults(props: {
+  scrollable: JSX.Element
+}) {
+  return (
+    <div class="chat-search-results chatlist-container">
+      {props.scrollable}
+    </div>
+  );
+}
+
+function SearchMobileTop(props: {
+  reactionsScrollable: JSX.Element,
+  searchTypesScrollable: JSX.Element,
+  hasReactions: () => boolean,
+  hasSearchTypes: () => boolean
+}) {
+  return (
+    <div class="chat-search-top">
+      {props.hasSearchTypes() ? props.searchTypesScrollable : props.reactionsScrollable}
+    </div>
+  );
+}
+
+function SearchMobileButtons(props: {
+  index: () => number,
+  count: () => number,
+  chat: Chat,
+  onArrowButtonClick: (direction: 'up' | 'down') => void
+}) {
+  const makeButton = (icon: 'up' | 'down', onClick: () => void) => {
+    const btn = ButtonCorner({icon, className: 'bubbles-corner-button chat-secondary-button chat-search-go chat-search-go-' + icon});
+    const detach = attachClickEvent(btn, onClick);
+    onCleanup(detach);
+
+    const isEnd = createMemo(() => {
+      if(icon === 'down') {
+        return props.index() === 0;
+      } else {
+        return props.index() === props.count() - 1;
+      }
+    });
+
+    createEffect(() => {
+      btn.classList.toggle('is-end', isEnd());
+      btn.classList.toggle('hide', (props.count() || 0) < 2);
+    });
+
+    return btn;
+  };
+
+  const buttons = [
+    makeButton('up', props.onArrowButtonClick.bind(null, 'up')),
+    makeButton('down', props.onArrowButtonClick.bind(null, 'down'))
+  ];
+
+  props.chat.bubbles.container.after(...buttons);
+  onCleanup(() => {
+    buttons.forEach((button) => {
+      button.remove();
+    });
+  });
+}
+
 export default function TopbarSearch(props: {
+  chat: Chat,
+  chatType: ChatType,
   peerId: PeerId,
   threadId?: number,
-  filterPeerId?: Accessor<PeerId>,
+  filterPeerId: Accessor<PeerId>,
   canFilterSender?: boolean,
   query?: Accessor<string>,
   reaction?: Accessor<Reaction>,
   onClose?: () => void,
   onDatePick?: (timestamp: number) => void,
-  onActive?: (active: boolean, showingReactions: boolean) => void
+  onActive?: (active: boolean, showingReactions: boolean, isSmallScreen: boolean) => void,
+  onSearchTypeChange?: () => void
 }) {
+  const screenSize = useScreenSize();
+  const isSmallScreen = createMemo(() => screenSize() === ScreenSize.mobile);
   const [isInputFocused, setIsInputFocused] = createSignal(false);
   const [value, setValue] = createSignal<string>('');
   const [count, setCount] = createSignal<number>();
+  const [totalCount, setTotalCount] = createSignal<number>();
   const [list, setList] = createSignal<{element: HTMLElement, type: 'messages' | 'senders'}>();
   const [messages, setMessages] = createSignal<(Message.message | Message.messageService)[]>();
   const [sendersPeerIds, setSendersPeerIds] = createSignal<PeerId[]>();
@@ -255,27 +389,39 @@ export default function TopbarSearch(props: {
   const [savedReactionTags, setSavedReactionTags] = createSignal<SavedReactionTag[]>(undefined, {equals: false});
   const [reactionsElement, setReactionsElement] = createSignal<ReactionsElement>();
   const [reaction, setReaction] = createSignal<Reaction>(undefined, {equals: false});
-  const shouldShowResults = isInputFocused;
+  const [searchType, setSearchType] = createSignal<SearchType>(DEFAULT_SEARCH_TYPE);
+  const [showingSmallResults, setShowingSmallResults] = createSignal(false);
+  const choosingSender = createMemo(() => filteringSender() && !filterPeerId());
+  const shouldShowResults = createMemo(() => isSmallScreen() ? showingSmallResults() : isInputFocused());
   const shouldHaveListNavigation = createMemo(() => (shouldShowResults() && count() && list()) || undefined);
+  const lookingHashtag = createMemo(() => {
+    if(filteringSender() || reaction()) return;
+    const _value = value();
+    return _value.startsWith('#') ? _value.slice(1) : undefined;
+  });
+  const isHashtag = createMemo(() => lookingHashtag() !== undefined);
   const shouldShowReactions = createMemo(() => {
+    if(isHashtag()) return false;
     const element = reactionsElement();
     const tags = savedReactionTags();
     return !!(element && tags?.length);
   });
-  const isActive = createMemo(() => shouldShowReactions() || shouldShowResults());
+  const shouldShowSearchTypes = createMemo(() => isHashtag());
+  const shouldShowFromPlaceholder = createMemo(() => (!isSmallScreen() || !filterPeerId()) && filteringSender());
+  const isActive = createMemo(() => isSmallScreen() || shouldShowReactions()/*  || shouldShowSearchTypes() */ || shouldShowResults());
   const isPremium = usePremium();
 
   if(props.onActive) {
     createEffect(() => {
-      props.onActive(isActive(), shouldShowReactions());
+      props.onActive(isActive(), shouldShowReactions(), isSmallScreen());
     });
 
     onCleanup(() => {
-      props.onActive(false, false);
+      props.onActive(false, false, isSmallScreen());
     });
   }
 
-  // full search replacement
+  // * full search replacement
   createEffect(() => {
     inputSearch.onChange(inputSearch.value = props.query());
     setFilteringSender(!!props.filterPeerId());
@@ -287,6 +433,7 @@ export default function TopbarSearch(props: {
     });
   });
 
+  // * list navigation
   createEffect(() => {
     const {element} = shouldHaveListNavigation() || {};
     if(!element) {
@@ -347,19 +494,30 @@ export default function TopbarSearch(props: {
     }
 
     if(wasEmpty) {
+      if(isSmallScreen()) {
+        return;
+      }
+
       props.onClose?.();
     }
   };
 
-  const inputSearch = new InputSearch({
+  const inputSearch: InputSearch = new InputSearch({
     placeholder: 'Search',
-    onChange: (value) => {
-      setValue(value);
-    },
+    onChange: setValue,
     onClear: onInputClear,
     onFocusChange: setIsInputFocused,
+    onBack: () => {
+      props.onClose?.();
+    },
     alwaysShowClear: true,
-    noBorder: true
+    noBorder: true,
+    verifyDebounce: (value) => {
+      return value !== '#' &&
+        !inputSearch.container.classList.contains('show-placeholder') &&
+        !!value.trim(); // skip debounce for hashtag
+    },
+    arrowBack: isSmallScreen()
   });
   inputSearch.container.classList.add('topbar-search-input-container');
   inputSearch.input.classList.add('topbar-search-input');
@@ -373,18 +531,19 @@ export default function TopbarSearch(props: {
       onInputClear(undefined, isEmpty);
     }
   };
-  inputSearch.input.addEventListener('keydown', onKeyDown);
+  subscribeOn(inputSearch.input)('keydown', onKeyDown);
   onCleanup(() => {
-    inputSearch.input.removeEventListener('keydown', onKeyDown);
     inputSearch.remove();
   });
 
+  const hashWidth = getTextWidth('#', FontFull);
   const fromText = I18n.format('Search.From', true) + ' ';
   const fromWidth = getTextWidth(fromText, FontFull);
-  const fromSpan = (<span class={classNames('topbar-search-input-from', filteringSender() && 'is-visible')}>{fromText}</span>);
+  const fromSpan = (<span class={classNames('topbar-search-input-from', shouldShowFromPlaceholder() && 'is-visible')}>{fromText}</span>);
   inputSearch.container.append(fromSpan as HTMLElement);
   createEffect<HTMLElement>((_element) => {
     const filtering = filteringSender();
+    const _isHashtag = isHashtag();
     if(_element) {
       _element.classList.remove('scale-in');
       void _element.offsetWidth;
@@ -399,31 +558,115 @@ export default function TopbarSearch(props: {
       element.classList.add('topbar-search-input-entity', 'scale-in');
       const detach = attachClickEvent(element, (e) => {
         cancelEvent(e);
-        setFilterPeerId();
+        if(_isHashtag) {
+          setSearchType();
+        } else {
+          setFilterPeerId();
+        }
       }, {cancelMouseDown: true});
       onCleanup(detach);
       inputSearch.container.append(element);
     }
 
-    inputSearch.container.style.setProperty('--padding-placeholder', (filtering ? fromWidth : 0) + 'px');
+    inputSearch.container.style.setProperty('--padding-placeholder', (shouldShowFromPlaceholder() ? fromWidth : 0) + 'px');
+    inputSearch.container.style.setProperty('--padding-hashtag', (_isHashtag ? hashWidth : 0) + 'px');
     inputSearch.container.style.setProperty('--padding-sender', (element ? element.offsetWidth + 6 : 0) + 'px');
-    inputSearch.setPlaceholder(filtering && !element ? 'Search.Member' : 'Search');
+    inputSearch.setPlaceholder(filtering && !element ? 'Search.Member' : (_isHashtag ? 'Search.Hashtag' : 'Search'));
     return element;
   });
 
+  // * keep placeholder while input is empty
+  createEffect(() => {
+    inputSearch.container.classList.toggle('show-placeholder', /* !value() ||  */lookingHashtag() === '');
+  });
+
+  const PeerEntity = (props: {
+    peerId?: PeerId | string,
+    fallbackIcon?: Icon,
+    title?: HTMLElement,
+    active?: Accessor<boolean>,
+    onPromises?: (promises: Promise<any>[]) => void,
+    onClick?: () => void,
+  }) => {
+    const middleware = createMiddleware().get();
+    const entity = untrack(() => AppSelectPeers.renderEntity({
+      key: props.peerId,
+      title: props.title,
+      fallbackIcon: props.fallbackIcon,
+      middleware,
+      avatarSize: 30,
+      meAsSaved: false
+    }));
+
+    if(props.active !== undefined) {
+      createEffect(() => {
+        entity.element.classList.toggle('active', props.active());
+      });
+    }
+
+    if(props.onClick) {
+      const detach = attachClickEvent(entity.element, (e) => {
+        cancelEvent(e);
+        props.onClick();
+      }, {cancelMouseDown: true});
+      onCleanup(detach);
+    }
+
+    if(props.onPromises) {
+      props.onPromises(entity.promises);
+    }
+
+    return entity.element;
+  };
+
+  const SearchTypeEntity = (_props: {
+    type: SearchType,
+    notList?: boolean,
+    onPromises?: (promises: Promise<any>[]) => void
+  }) => {
+    const peerId = _props.type === 'this' ? props.peerId : (_props.type === 'my' ? rootScope.myId : 'public');
+    const title = i18n(`Search.Types.${_props.type === 'this' ? 'ThisChat' : _props.type === 'my' ? 'MyMessages' : 'PublicPosts'}`);
+    return (
+      <PeerEntity
+        peerId={peerId}
+        title={title}
+        {...(!_props.notList && {
+          active: () => searchType() === _props.type,
+          onClick: () => setSearchType((type) => type === _props.type ? DEFAULT_SEARCH_TYPE : _props.type)
+        })}
+        fallbackIcon={_props.type === 'public' ? 'newchannel_filled' : undefined}
+        onPromises={_props.onPromises}
+      />
+    );
+  };
+
+  // * handle sender or search type entity
   createEffect(async() => {
     const peerId = filterPeerId();
+    const _searchType = searchType();
     const middleware = createMiddleware().get();
     let element: HTMLElement;
-    if(peerId) {
-      const entity = untrack(() => AppSelectPeers.renderEntity({
-        key: peerId,
-        middleware,
-        avatarSize: 30,
-        meAsSaved: false
-      }));
-      element = entity.element;
-      await Promise.all(entity.promises);
+    if(peerId || _searchType) {
+      element = await new Promise((resolve) => {
+        let element: HTMLDivElement;
+        const onPromises = async(promises: Promise<any>[]) => {
+          await Promise.all(promises);
+          return resolve(element);
+        };
+
+        if(_searchType) {
+          element = SearchTypeEntity({
+            type: _searchType,
+            notList: true,
+            onPromises
+          }) as HTMLDivElement;
+        } else {
+          element = PeerEntity({
+            peerId,
+            onPromises
+          });
+        }
+      });
       if(!middleware()) {
         return;
       }
@@ -432,7 +675,35 @@ export default function TopbarSearch(props: {
     setSenderInputEntity(element);
   });
 
+  const MIN_HEIGHT = 43;
   const MAX_HEIGHT = 271;
+
+  const onArrowButtonClick = (direction: 'up' | 'down') => {
+    // let _target = scrollableDiv.querySelector<HTMLElement>('.active');
+    let _target = target();
+    if(!_target) {
+      _target = scrollableDiv.querySelector<HTMLElement>('.chatlist-chat');
+      setTarget(_target);
+      return;
+    }
+
+    if(direction === 'down') {
+      _target = _target.previousElementSibling as HTMLElement;
+    } else {
+      _target = _target.nextElementSibling as HTMLElement;
+    }
+
+    if(!_target || !_target.classList.contains('chatlist-chat')) {
+      return;
+    }
+
+    // set scroll position to center
+    const top = _target.offsetTop;
+    const clientHeight = MAX_HEIGHT;
+    scrollableDiv.scrollTop = top - clientHeight / 2 + _target.clientHeight / 2;
+
+    setTarget(_target);
+  };
 
   const ArrowButton = ({direction}: {direction: 'up' | 'down'}) => {
     return (
@@ -445,30 +716,7 @@ export default function TopbarSearch(props: {
         )}
         noRipple
         onClick={() => {
-          // let _target = scrollableDiv.querySelector<HTMLElement>('.active');
-          let _target = target();
-          if(!_target) {
-            _target = scrollableDiv.querySelector<HTMLElement>('.chatlist-chat');
-            setTarget(_target);
-            return;
-          }
-
-          if(direction === 'down') {
-            _target = _target.previousElementSibling as HTMLElement;
-          } else {
-            _target = _target.nextElementSibling as HTMLElement;
-          }
-
-          if(!_target || !_target.classList.contains('chatlist-chat')) {
-            return;
-          }
-
-          // set scroll position to center
-          const top = _target.offsetTop;
-          const clientHeight = MAX_HEIGHT;
-          scrollableDiv.scrollTop = top - clientHeight / 2 + _target.clientHeight / 2;
-
-          setTarget(_target);
+          onArrowButtonClick(direction);
         }}
       />
     );
@@ -477,20 +725,46 @@ export default function TopbarSearch(props: {
   const b = inputSearch.clearBtn.previousSibling;
   let inputSearchTools: HTMLDivElement;
   (<div ref={inputSearchTools} class="topbar-search-input-tools">
-    <ArrowButton direction="up" />
-    <ArrowButton direction="down" />
+    {!isSmallScreen() && (
+      <>
+        <ArrowButton direction="up" />
+        <ArrowButton direction="down" />
+      </>
+    )}
     {inputSearch.clearBtn}
   </div>);
   b.after(inputSearchTools);
 
-  createEffect(() => {
+  const updateChatSearchContext = (searchType: SearchType, query: string) => {
+    appImManager.chat.setMessageId({
+      query: searchType && query || undefined,
+      isPublicHashtag: searchType === 'public' || undefined,
+      isCacheableSearch: !!searchType || undefined,
+      inputFilter: query && searchType ? {_: 'inputMessagesFilterEmpty'} : undefined,
+      type: query && searchType ? ChatType.Search : props.chatType,
+      hashtagType: searchType
+    });
+  };
+
+  // * search
+  createEffect<Partial<{searchType: SearchType, query: string}>>((prev) => {
+    prev ||= {};
     const {peerId, threadId} = props;
     const query = value();
     const fromPeerId = filterPeerId();
-    const isSender = filteringSender() && !fromPeerId;
+    const isSender = choosingSender();
     const middleware = createMiddleware().get();
-    const isEmptyQuery = !query.trim();
+    const isEmptyQuery = !query.trim() || query === '#';
+    const _isHashtag = isHashtag();
     const _reaction = !isSender && reaction();
+    const _searchType = searchType();
+
+    // * reset search if it's not a hashtag anymore
+    if(_searchType && !query) {
+      setSearchType();
+      updateChatSearchContext(undefined, undefined);
+      return;
+    }
 
     setLoadMore(() => undefined);
     setMessages();
@@ -503,24 +777,30 @@ export default function TopbarSearch(props: {
       threadId,
       query,
       fromPeerId,
-      reaction: _reaction
+      reaction: _reaction,
+      searchType: _searchType
     });
+
+    const isEmpty = createMemo(() => count() === 0 || (_isHashtag && count() === undefined));
 
     let ref: HTMLDivElement;
     const list = (
       <div
         ref={ref}
-        class="topbar-search-left-chatlist chatlist"
+        class={classNames(!untrack(isSmallScreen) && 'topbar-search-left-chatlist', 'chatlist', isEmpty() && 'is-empty')}
       >
-        {count() === 0 ? (
+        {isEmpty() ? (
           <div class="topbar-search-left-results-empty">
-            {isEmptyQuery && fromPeerId ?
+            {_isHashtag && (count() === undefined ?
+              i18n('Search.HelpHashtag') :
+              i18n('Search.EmptyHashtag', [wrapEmojiText(stringMiddleOverflow(query, 18))]))}
+            {!_isHashtag && (fromPeerId ?
               i18n('Search.EmptyFrom', [(() => {
                 const peerTitle = new PeerTitle({peerId: fromPeerId});
                 return peerTitle.element;
               })()]) :
               i18n('Search.Empty', [wrapEmojiText(stringMiddleOverflow(query, 18))])
-            }
+            )}
           </div>
         ) : (
           <>
@@ -534,30 +814,44 @@ export default function TopbarSearch(props: {
     );
 
     let first = true;
-    const onLoad = () => {
+    const onLoad = (firstElement?: HTMLElement) => {
       if(first) {
         inputSearch.toggleLoading(false);
         setList({element: ref, type: isSender ? 'senders' : 'messages'});
         scrollableDiv.scrollTop = 0;
         first = false;
+
+        // * jump to first target
+        if(untrack(isSmallScreen) && !isSender) {
+          setTarget(untrack(messages) && firstElement);
+        }
       }
     };
 
+    if(_searchType !== prev.searchType || (_searchType && query !== prev.query)) {
+      props.onSearchTypeChange?.();
+      updateChatSearchContext(_searchType, query);
+    }
+
+    const current = {searchType: _searchType, query};
+
     if(!isSender && !fromPeerId && !_reaction && isEmptyQuery) {
       setCount();
+      setTotalCount();
       onLoad();
-      return;
+      return current;
     }
 
     createEffect(
       on(
         () => loader(),
-        ({rendered, values, loadMore}) => {
+        ({rendered, values, count, loadMore}) => {
           setCount(rendered.length);
+          setTotalCount(count);
           setLoadMore(() => loadMore);
           if(isSender) setSendersPeerIds(values as any);
           else setMessages(values as any);
-          onLoad();
+          onLoad(rendered[0]);
         },
         {defer: true}
       )
@@ -565,8 +859,10 @@ export default function TopbarSearch(props: {
 
     inputSearch.toggleLoading(true);
     untrack(() => loader().loadMore());
+    return current;
   });
 
+  // * handle target change to jump to message
   createEffect(
     on(
       target,
@@ -576,7 +872,7 @@ export default function TopbarSearch(props: {
           return;
         }
 
-        if(filteringSender() && !filterPeerId()) {
+        if(choosingSender()) {
           const peerId = sendersPeerIds()[idx];
           batch(() => {
             setFilterPeerId(peerId);
@@ -592,8 +888,10 @@ export default function TopbarSearch(props: {
 
         target.classList.add('active');
 
+        setShowingSmallResults(false);
+
         const message = messages()[idx];
-        appImManager.chat.setMessageId({lastMsgId: message.mid});
+        appImManager.chat.setMessageId({lastMsgId: message.mid, lastMsgPeerId: message.peerId});
       },
       {defer: true}
     )
@@ -622,10 +920,7 @@ export default function TopbarSearch(props: {
 
     setSavedReactionTags(tags);
   };
-  rootScope.addEventListener('saved_tags', onSavedTags);
-  onCleanup(() => {
-    rootScope.removeEventListener('saved_tags', onSavedTags);
-  });
+  subscribeOn(rootScope)('saved_tags', onSavedTags);
 
   // * render saved reaction tags
   createEffect<HTMLElement>((previousLock) => {
@@ -773,9 +1068,7 @@ export default function TopbarSearch(props: {
       }
 
       appImManager.chat.setMessageId({
-        lastMsgId: undefined,
-        mediaTimestamp: undefined,
-        savedReaction: reaction ? [reaction] : undefined
+        savedReaction: reaction ? [reaction as Reaction.reactionCustomEmoji | Reaction.reactionEmoji] : undefined
       });
     }
   ));
@@ -786,7 +1079,93 @@ export default function TopbarSearch(props: {
       return;
     }
 
-    appImManager.chat.setMessageId({lastMsgId: undefined, mediaTimestamp: undefined, savedReaction: undefined});
+    appImManager.chat.setMessageId({lastMsgId: undefined, lastMsgPeerId: undefined, mediaTimestamp: undefined, savedReaction: undefined});
+  });
+
+  // * reset search on close
+  onCleanup(() => {
+    if(appImManager.chat.type !== ChatType.Search) {
+      return;
+    }
+
+    updateChatSearchContext(undefined, undefined);
+  });
+
+  // * mobile search
+  createEffect(() => {
+    inputSearch.setArrowBack(isSmallScreen());
+    if(!isSmallScreen()) {
+      return;
+    }
+
+    const index = () => whichChild(target());
+
+    const footerElement = SearchFooter({
+      index,
+      count: totalCount,
+      pickUserBtn,
+      pickDateBtn,
+      resultsShown: shouldShowResults,
+      onToggle: () => {
+        setShowingSmallResults((prev) => !prev);
+      },
+      choosingSender
+    }) as HTMLElement;
+
+    const resultsElement = SearchMobileResults({
+      scrollable
+    }) as HTMLElement;
+
+    const topElement = SearchMobileTop({
+      reactionsScrollable,
+      searchTypesScrollable,
+      hasReactions: () => !!calculateReactionsHeight(),
+      hasSearchTypes: () => !!calculateSearchTypesHeight()
+    }) as HTMLElement;
+
+    SearchMobileButtons({
+      index,
+      count: totalCount,
+      chat: props.chat,
+      onArrowButtonClick
+    });
+
+    const onShowingSmallResultsChange = (value = showingSmallResults()) => {
+      props.chat.bubbles.container.classList.toggle('search-results-active', value);
+      resultsElement.classList.toggle('active', value);
+    };
+
+    const onTopActive = (value?: boolean) => {
+      value ??= !!(calculateReactionsHeight() || calculateSearchTypesHeight());
+      props.chat.topbar.container.classList.toggle('search-top-active', value);
+      resultsElement.classList.toggle('search-top-active', value);
+      if(value) container.after(topElement);
+      else topElement.remove();
+    };
+
+    createEffect(() => onShowingSmallResultsChange());
+    createEffect(() => onTopActive());
+
+    createEffect(() => {
+      if(choosingSender()) {
+        setShowingSmallResults(true);
+      } else if(!filteringSender()) {
+        setShowingSmallResults(false);
+      }
+    });
+
+    onCleanup(() => {
+      footerElement.remove();
+      setShowingSmallResults(false);
+      onShowingSmallResultsChange();
+      onTopActive(false);
+
+      setTimeout(() => {
+        resultsElement.remove();
+      }, 400);
+    });
+
+    props.chat.input.chatInput.before(resultsElement, footerElement);
   });
 
   const calculateResultsHeight = createMemo(() => {
@@ -795,14 +1174,14 @@ export default function TopbarSearch(props: {
     }
 
     const length = count();
-    if(length === undefined) {
+    if(length === undefined && !isHashtag()) {
       return 0;
     }
 
     const paddingVertical = 8 * 2;
     let height: number;
-    if(length === 0) {
-      height = 43;
+    if(!length) {
+      height = MIN_HEIGHT;
     } else if(list().type === 'senders') {
       height = 1 + paddingVertical + length * 48;
     } else {
@@ -817,12 +1196,88 @@ export default function TopbarSearch(props: {
       return 0;
     }
 
-    return shouldShowReactions() ? 62 : 0;
+    return shouldShowReactions() ? 61 : 0;
   });
 
-  let scrollableDiv: HTMLDivElement, reactionsScrollableDiv: HTMLDivElement;
+  const calculateSearchTypesHeight = createMemo(() => {
+    if(!isActive()) {
+      return 0;
+    }
+
+    return shouldShowSearchTypes() ? 61 : 0;
+  });
+
+  const pickUserBtn = props.canFilterSender && (
+    <ButtonIconTsx
+      class={classNames(!isSmallScreen() && 'topbar-search-right-filter-button')}
+      icon="newprivate"
+      ref={(element) => {
+        const detach = attachClickEvent(element, (e) => {
+          cancelEvent(e);
+          inputSearch.onChange(inputSearch.value = '');
+          setFilteringSender(true);
+          placeCaretAtEnd(inputSearch.input, true);
+        }, {cancelMouseDown: true});
+        onCleanup(detach);
+      }}
+    />
+  );
+
+  const pickDateBtn = props.onDatePick && (
+    <ButtonIconTsx
+      icon="calendar"
+      onClick={() => {
+        PopupElement.createPopup(
+          PopupDatePicker,
+          new Date(),
+          props.onDatePick
+        ).show();
+      }}
+    />
+  );
+
+  let scrollableDiv: HTMLDivElement;
+  const scrollable = (
+    <ScrollableYTsx
+      ref={scrollableDiv}
+      {...(!isSmallScreen() && {
+        class: 'topbar-search-left-results topbar-search-left-collapsable',
+        style: calculateResultsHeight() ? {height: calculateResultsHeight() + 'px'} : undefined
+      })}
+      onScrolledBottom={() => {
+        loadMore()?.();
+      }}
+    >
+      {!isSmallScreen() && <div class="topbar-search-left-delimiter"></div>}
+      <Animated type="cross-fade">
+        {list()?.element}
+      </Animated>
+    </ScrollableYTsx>
+  );
+
+  let reactionsScrollableDiv: HTMLDivElement;
+  const reactionsScrollable = (
+    <ScrollableXTsx ref={reactionsScrollableDiv} class="topbar-search-left-reactions-scrollable">
+      <div class="topbar-search-left-reactions-padding"></div>
+      {reactionsElement()}
+      <div class="topbar-search-left-reactions-padding"></div>
+    </ScrollableXTsx>
+  );
+
+  let searchTypesScrollableDiv: HTMLDivElement;
+  const searchTypesScrollable = (
+    <ScrollableXTsx ref={searchTypesScrollableDiv} class="topbar-search-left-reactions-scrollable">
+      <div class="topbar-search-left-reactions-padding"></div>
+      <div class="topbar-search-left-search-types">
+        {SEARCH_TYPES.map((type) => (<SearchTypeEntity type={type} />))}
+      </div>
+      <div class="topbar-search-left-reactions-padding"></div>
+    </ScrollableXTsx>
+  );
+
+  let container: HTMLDivElement;
   return (
-    <div class="topbar-search-container">
+    <div ref={container} class="topbar-search-container">
       <div
         class={classNames('topbar-search-left-container', isActive() && 'is-focused')}
         // style={calculateHeight() ? {height: calculateHeight() + 'px'} : undefined}
@@ -831,68 +1286,40 @@ export default function TopbarSearch(props: {
           {/* <div class="topbar-search-left-background-shadow"></div> */}
         </div>
         {inputSearch.container}
-        {/* shouldShowReactions() &&  */(
+        {/* shouldShowReactions() &&  */!isSmallScreen() && (
           <div
             class="topbar-search-left-reactions-container topbar-search-left-collapsable"
             style={calculateReactionsHeight() ? {height: calculateReactionsHeight() + 'px'} : undefined}
           >
             <div class="topbar-search-left-delimiter"></div>
-            <ScrollableXTsx ref={reactionsScrollableDiv} class="topbar-search-left-reactions-scrollable">
-              <div class="topbar-search-left-reactions-padding"></div>
-              {reactionsElement()}
-              <div class="topbar-search-left-reactions-padding"></div>
-            </ScrollableXTsx>
+            {reactionsScrollable}
           </div>
         )}
-        <ScrollableYTsx
-          ref={scrollableDiv}
-          class="topbar-search-left-results topbar-search-left-collapsable"
-          style={calculateResultsHeight() ? {height: calculateResultsHeight() + 'px'} : undefined}
-          onScrolledBottom={() => {
-            loadMore()?.();
-          }}
-        >
-          <div class="topbar-search-left-delimiter"></div>
-          <AnimationList
-            animationOptions={{duration: 200, easing: 'ease-in-out'}}
-            keyframes={[{opacity: 0}, {opacity: 1}]}
-            animateOnlyReplacement
+        {/* shouldShowReactions() &&  */!isSmallScreen() && (
+          <div
+            class="topbar-search-left-reactions-container topbar-search-left-collapsable"
+            style={calculateSearchTypesHeight() ? {height: calculateSearchTypesHeight() + 'px'} : undefined}
           >
-            {list()?.element}
-          </AnimationList>
-        </ScrollableYTsx>
-      </div>
-      <div class="topbar-search-right-container">
-        {props.canFilterSender && (
-          <div class={classNames('topbar-search-right-filter', filteringSender() && 'is-hidden')}>
-            <ButtonIconTsx
-              class="topbar-search-right-filter-button"
-              icon="newprivate"
-              ref={(element) => {
-                const detach = attachClickEvent(element, (e) => {
-                  cancelEvent(e);
-                  inputSearch.onChange(inputSearch.value = '');
-                  setFilteringSender(true);
-                  placeCaretAtEnd(inputSearch.input, true);
-                }, {cancelMouseDown: true});
-                onCleanup(detach);
-              }}
-            />
+            <div class="topbar-search-left-delimiter"></div>
+            {searchTypesScrollable}
           </div>
         )}
-        {props.onDatePick && (
-          <ButtonIconTsx
-            icon="calendar"
-            onClick={() => {
-              PopupElement.createPopup(
-                PopupDatePicker,
-                new Date(),
-                props.onDatePick
-              ).show();
-            }}
-          />
-        )}
+        {!isSmallScreen() && scrollable}
       </div>
+      {!isSmallScreen() && (
+        <div class="topbar-search-right-container">
+          {pickUserBtn && (
+            <div class={classNames('topbar-search-right-filter', (filteringSender() || isHashtag()) && 'is-hidden')}>
+              {pickUserBtn}
+            </div>
+          )}
+          {pickDateBtn && (
+            <div class={classNames('topbar-search-right-filter', isHashtag() && 'is-hidden')}>
+              {pickDateBtn}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

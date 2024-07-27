@@ -44,6 +44,7 @@ import Icon from '../icon';
 import {SHOULD_HANDLE_VIDEO_LEAK, attachVideoLeakListeners, leakVideoFallbacks, onVideoLeak} from '../../helpers/dom/handleVideoLeak';
 import noop from '../../helpers/noop';
 import {IS_WEBM_SUPPORTED} from '../../environment/videoSupport';
+import toArray from '../../helpers/array/toArray';
 
 // https://github.com/telegramdesktop/tdesktop/blob/master/Telegram/SourceFiles/history/view/media/history_view_sticker.cpp#L40
 export const STICKER_EFFECT_MULTIPLIER = 1 + 0.245 * 2;
@@ -117,7 +118,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
   useCache?: boolean
 }) {
   const options = arguments[0];
-  div = Array.isArray(div) ? div : [div];
+  div = toArray(div);
 
   liteModeKey ??= 'stickers_panel';
 
@@ -774,7 +775,8 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
   return ret;
 }
 
-function attachStickerEffectHandler({container, doc, managers, middleware, isOut, width, loadPromise, relativeEffect, loopEffect, scrollable, showPremiumInfo}: {
+export async function fireStickerEffect({e, container, doc, managers, middleware, isOut, width, loadPromise, relativeEffect, loopEffect, scrollable, showPremiumInfo}: {
+  e: MouseEvent,
   container: HTMLElement,
   doc: MyDocument,
   managers: AppManagers,
@@ -787,44 +789,50 @@ function attachStickerEffectHandler({container, doc, managers, middleware, isOut
   scrollable?: Scrollable,
   showPremiumInfo?: () => void
 }) {
-  managers.appStickersManager.preloadSticker(doc.id, true);
+  const isAvailable = liteMode.isAvailable('effects_premiumstickers') || relativeEffect;
+  cancelEvent(e);
+  if(!e.isTrusted && !isAvailable) {
+    return;
+  }
 
-  attachClickEvent(container, async(e) => {
-    const isAvailable = liteMode.isAvailable('effects_premiumstickers') || relativeEffect;
-    cancelEvent(e);
-    if(!e.isTrusted && !isAvailable) {
-      return;
-    }
+  if(container.dataset.playing || !isAvailable) {
+    showPremiumInfo?.();
+    return;
+  }
 
-    if(container.dataset.playing || !isAvailable) {
-      showPremiumInfo?.();
-      return;
-    }
+  container.dataset.playing = '1';
 
-    container.dataset.playing = '1';
+  await loadPromise;
+  const {animationDiv, stickerPromise} = wrapStickerAnimation({
+    doc,
+    middleware,
+    side: isOut ? 'right' : 'left',
+    size: width * STICKER_EFFECT_MULTIPLIER,
+    target: container,
+    play: true,
+    fullThumb: getStickerEffectThumb(doc),
+    relativeEffect,
+    loopEffect,
+    scrollable
+  });
 
-    await loadPromise;
-    const {animationDiv, stickerPromise} = wrapStickerAnimation({
-      doc,
-      middleware,
-      side: isOut ? 'right' : 'left',
-      size: width * STICKER_EFFECT_MULTIPLIER,
-      target: container,
-      play: true,
-      fullThumb: getStickerEffectThumb(doc),
-      relativeEffect,
-      loopEffect,
-      scrollable
-    });
+  if(isOut !== undefined && !isOut/*  && !relativeEffect */) {
+    animationDiv.classList.add('reflect-x');
+  }
 
-    if(isOut !== undefined && !isOut/*  && !relativeEffect */) {
-      animationDiv.classList.add('reflect-x');
-    }
-
-    stickerPromise.then((player) => {
-      player.addEventListener('destroy', () => {
-        delete container.dataset.playing;
-      });
+  stickerPromise.then((player) => {
+    player.addEventListener('destroy', () => {
+      delete container.dataset.playing;
     });
   });
+}
+
+function attachStickerEffectHandler(options: Omit<Parameters<typeof fireStickerEffect>[0], 'e'>) {
+  options.managers.appStickersManager.preloadSticker(options.doc.id, true);
+
+  const detach = attachClickEvent(options.container, (e) => {
+    fireStickerEffect({...options, e});
+  });
+
+  options.middleware.onDestroy(detach);
 }

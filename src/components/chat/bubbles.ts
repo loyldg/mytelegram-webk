@@ -7,7 +7,6 @@
 import type {AppImManager, ChatSavedPosition, ChatSetPeerOptions} from '../../lib/appManagers/appImManager';
 import type {HistoryResult, MyMessage} from '../../lib/appManagers/appMessagesManager';
 import type {MyDocument} from '../../lib/appManagers/appDocsManager';
-import type {ChatRights} from '../../lib/appManagers/appChatsManager';
 import type Chat from './chat';
 import IS_TOUCH_SUPPORTED from '../../environment/touchSupport';
 import {logger} from '../../lib/logger';
@@ -22,15 +21,15 @@ import StickyIntersector from '../stickyIntersector';
 import animationIntersector from '../animationIntersector';
 import mediaSizes from '../../helpers/mediaSizes';
 import {IS_ANDROID, IS_APPLE, IS_MOBILE, IS_SAFARI} from '../../environment/userAgent';
-import I18n, {FormatterArguments, i18n, langPack, LangPackKey, UNSUPPORTED_LANG_PACK_KEY, _i18n, join} from '../../lib/langPack';
+import I18n, {FormatterArguments, i18n, langPack, LangPackKey, UNSUPPORTED_LANG_PACK_KEY, _i18n} from '../../lib/langPack';
 import ripple from '../ripple';
-import {MessageRender} from './messageRender';
+import {fireMessageEffectByBubble, MessageRender} from './messageRender';
 import LazyLoadQueue from '../lazyLoadQueue';
 import ListenerSetter from '../../helpers/listenerSetter';
-import PollElement from '../poll';
+import PollElement, {setQuizHint} from '../poll';
 import AudioElement from '../audio';
-import {ChannelParticipant, Chat as MTChat, ChatInvite, ChatParticipant, Document, GeoPoint, InputWebFileLocation, KeyboardButton, Message, MessageEntity,  MessageMedia,  MessageReplyHeader, Photo, PhotoSize, ReactionCount, ReplyMarkup, RequestPeerType, SponsoredMessage, Update, UrlAuthResult, User, WebPage, InlineQueryPeerType, WebPageAttribute, Reaction, ChatPhoto, MessageAction, BotApp} from '../../layer';
-import {BOT_START_PARAM, NULL_PEER_ID, REPLIES_PEER_ID, SEND_WHEN_ONLINE_TIMESTAMP} from '../../lib/mtproto/mtproto_config';
+import {ChannelParticipant, Chat as MTChat, ChatInvite, ChatParticipant, Document, Message, MessageEntity,  MessageMedia,  MessageReplyHeader, Photo, PhotoSize, ReactionCount, SponsoredMessage, User, WebPage, WebPageAttribute, Reaction, BotApp, DocumentAttribute, InputStickerSet, TextWithEntities, FactCheck, WebDocument, MessageExtendedMedia} from '../../layer';
+import {BOT_START_PARAM, NULL_PEER_ID, REPLIES_PEER_ID, SEND_WHEN_ONLINE_TIMESTAMP, STARS_CURRENCY} from '../../lib/mtproto/mtproto_config';
 import {FocusDirection, ScrollStartCallbackDimensions} from '../../helpers/fastSmoothScroll';
 import useHeavyAnimationCheck, {getHeavyAnimationPromise, dispatchHeavyAnimationEvent, interruptHeavyAnimation} from '../../hooks/useHeavyAnimationCheck';
 import {fastRaf, fastRafPromise} from '../../helpers/schedulers';
@@ -42,12 +41,11 @@ import PeerTitle from '../peerTitle';
 import findUpClassName from '../../helpers/dom/findUpClassName';
 import findUpTag from '../../helpers/dom/findUpTag';
 import {hideToast, toast, toastNew} from '../toast';
-import {getMiddleware, Middleware, MiddlewareHelper} from '../../helpers/middleware';
+import {getMiddleware, Middleware} from '../../helpers/middleware';
 import cancelEvent from '../../helpers/dom/cancelEvent';
 import {attachClickEvent, simulateClickEvent} from '../../helpers/dom/clickEvent';
 import htmlToDocumentFragment from '../../helpers/dom/htmlToDocumentFragment';
 import reflowScrollableElement from '../../helpers/dom/reflowScrollableElement';
-import replaceContent from '../../helpers/dom/replaceContent';
 import setInnerHTML, {setDirection} from '../../helpers/dom/setInnerHTML';
 import whichChild from '../../helpers/dom/whichChild';
 import {animateSingle, cancelAnimationByKey} from '../../helpers/animation';
@@ -76,7 +74,7 @@ import getObjectKeysAndSort from '../../helpers/object/getObjectKeysAndSort';
 import forEachReverse from '../../helpers/array/forEachReverse';
 import formatNumber from '../../helpers/number/formatNumber';
 import getViewportSlice from '../../helpers/dom/getViewportSlice';
-import SuperIntersectionObserver from '../../helpers/dom/superIntersectionObserver';
+import SuperIntersectionObserver, {IntersectionCallback} from '../../helpers/dom/superIntersectionObserver';
 import generateFakeIcon from '../generateFakeIcon';
 import copyFromElement from '../../helpers/dom/copyFromElement';
 import PopupElement from '../popups';
@@ -88,11 +86,11 @@ import wrapRichText from '../../lib/richTextProcessor/wrapRichText';
 import wrapMessageActionTextNew from '../wrappers/messageActionTextNew';
 import isMentionUnread from '../../lib/appManagers/utils/messages/isMentionUnread';
 import getMediaFromMessage from '../../lib/appManagers/utils/messages/getMediaFromMessage';
-import {getPeerColorIndexByPeer, getPeerColorsByPeer} from '../../lib/appManagers/utils/peers/getPeerColorById';
+import {getPeerColorIndexByPeer} from '../../lib/appManagers/utils/peers/getPeerColorById';
 import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
 import getServerMessageId from '../../lib/appManagers/utils/messageId/getServerMessageId';
 import {AppManagers} from '../../lib/appManagers/managers';
-import {Awaited, SendMessageEmojiInteractionData} from '../../types';
+import {Awaited} from '../../types';
 import idleController from '../../helpers/idleController';
 import overlayCounter from '../../helpers/overlayCounter';
 import {cancelContextMenuOpening} from '../../helpers/dom/attachContextMenuListener';
@@ -123,8 +121,7 @@ import {BatchProcessor} from '../../helpers/sortedList';
 import wrapUrl from '../../lib/richTextProcessor/wrapUrl';
 import getMessageThreadId from '../../lib/appManagers/utils/messages/getMessageThreadId';
 import wrapTopicNameButton from '../wrappers/topicNameButton';
-import wrapMediaSpoiler, {onMediaSpoilerClick, toggleMediaSpoiler} from '../wrappers/mediaSpoiler';
-import toggleDisability from '../../helpers/dom/toggleDisability';
+import wrapMediaSpoiler, {onMediaSpoilerClick} from '../wrappers/mediaSpoiler';
 import {copyTextToClipboard} from '../../helpers/clipboard';
 import liteMode from '../../helpers/liteMode';
 import getMediaDurationFromMessage from '../../lib/appManagers/utils/messages/getMediaDurationFromMessage';
@@ -133,18 +130,13 @@ import {LottieAssetName} from '../../lib/rlottie/lottieLoader';
 import getParticipantRank from '../../lib/appManagers/utils/chats/getParticipantRank';
 import wrapParticipantRank from '../wrappers/participantRank';
 import internalLinkProcessor from '../../lib/appManagers/internalLinkProcessor';
-import confirmationPopup from '../confirmationPopup';
 import wrapPeerTitle from '../wrappers/peerTitle';
-import PopupPickUser from '../popups/pickUser';
-import AppSelectPeers, {SelectSearchPeerType} from '../appSelectPeers';
 import getPeerActiveUsernames from '../../lib/appManagers/utils/peers/getPeerActiveUsernames';
-import hasRights from '../../lib/appManagers/utils/chats/hasRights';
-import tsNow from '../../helpers/tsNow';
 import SwipeHandler from '../swipeHandler';
 import getSelectedText from '../../helpers/dom/getSelectedText';
 import {createStoriesViewerWithPeer} from '../stories/viewer';
 import {render} from 'solid-js/web';
-import {createRoot, createEffect} from 'solid-js';
+import {createRoot, createEffect, createSignal} from 'solid-js';
 import {StoryPreview, wrapStoryMedia} from '../stories/preview';
 import wrapReply from '../wrappers/reply';
 import {modifyAckedPromise} from '../../helpers/modifyAckedResult';
@@ -173,7 +165,26 @@ import isForwardOfForward from '../../lib/appManagers/utils/messages/isForwardOf
 import {ReactionLayoutType} from './reaction';
 import reactionsEqual from '../../lib/appManagers/utils/reactions/reactionsEqual';
 import getMainGroupedMessage from '../../lib/appManagers/utils/messages/getMainGroupedMessage';
-import cancelNextClickIfNotClick from '../../helpers/dom/cancelNextClickIfNotClick';
+import cancelClickOrNextIfNotClick from '../../helpers/dom/cancelClickOrNextIfNotClick';
+import TranslatableMessage from '../translatableMessage';
+import getUnreadReactions from '../../lib/appManagers/utils/messages/getUnreadReactions';
+import {setPeerLanguageLoaded} from '../../stores/peerLanguage';
+import ButtonIcon from '../buttonIcon';
+import PopupAboutAd from '../popups/aboutAd';
+import numberThousandSplitter from '../../helpers/number/numberThousandSplitter';
+import wrapGeo from '../wrappers/geo';
+import wrapKeyboardButton from '../wrappers/keyboardButton';
+import safePlay from '../../helpers/dom/safePlay';
+import flatten from '../../helpers/array/flatten';
+import WebPageBox from '../wrappers/webPage';
+import showTooltip from '../tooltip';
+import wrapTextWithEntities from '../../lib/richTextProcessor/wrapTextWithEntities';
+import clearfix from '../../helpers/dom/clearfix';
+import {usePeer} from '../../stores/peers';
+import safeWindowOpen from '../../helpers/dom/safeWindowOpen';
+import findAndSplice from '../../helpers/array/findAndSplice';
+import generatePhotoForExtendedMediaPreview from '../../lib/appManagers/utils/photos/generatePhotoForExtendedMediaPreview';
+import icon from '../icon';
 
 export const USER_REACTIONS_INLINE = false;
 export const TEST_BUBBLES_DELETION = false;
@@ -196,8 +207,8 @@ if(IS_CALL_SUPPORTED) {
   SERVICE_AS_REGULAR.add('messageActionPhoneCall');
 }
 
-const TEST_SCROLL_TIMES: number = undefined;
-let TEST_SCROLL = TEST_SCROLL_TIMES;
+// const TEST_SCROLL_TIMES: number = undefined;
+// let TEST_SCROLL = TEST_SCROLL_TIMES;
 
 let queueId = 0;
 
@@ -258,23 +269,54 @@ function getMainMidForGrouped(mids: number[]) {
 }
 
 const getSponsoredPhoto = (sponsoredMessage: SponsoredMessage) => {
-  const peerId = getPeerId(sponsoredMessage.from_id);
-  if(peerId !== NULL_PEER_ID) {
-    return;
-  }
+  return sponsoredMessage.photo;
+  // const peerId = getPeerId(sponsoredMessage.from_id);
+  // if(peerId !== NULL_PEER_ID) {
+  //   return;
+  // }
 
-  let photo: Photo.photo | MTChat.channel;
-  const chatInvite = sponsoredMessage.chat_invite;
-  const webPage = sponsoredMessage.webpage;
-  if(chatInvite) {
-    photo = (chatInvite as ChatInvite.chatInvite).photo as Photo.photo;
-    photo ||= (chatInvite as ChatInvite.chatInvitePeek).chat as MTChat.channel;
-  } else if(webPage) {
-    photo = webPage.photo as Photo.photo;
-  }
+  // let photo: Photo.photo | MTChat.channel;
+  // const chatInvite = sponsoredMessage.chat_invite;
+  // const webPage = sponsoredMessage.webpage;
+  // if(chatInvite) {
+  //   photo = (chatInvite as ChatInvite.chatInvite).photo as Photo.photo;
+  //   photo ||= (chatInvite as ChatInvite.chatInvitePeek).chat as MTChat.channel;
+  // } else if(webPage) {
+  //   photo = webPage.photo as Photo.photo;
+  // }
 
-  return photo;
+  // return photo;
 };
+
+export type FullMid = `${PeerId}_${number}`;
+
+export function makeFullMid(peerId: PeerId | Message.message | Message.messageService, mid?: number): FullMid {
+  if(typeof(peerId) === 'object') {
+    mid = peerId.mid;
+    peerId = peerId.peerId;
+  }
+
+  return `${peerId}_${mid}`;
+}
+
+function getBubbleFullMid(bubble: HTMLElement) {
+  if(!bubble) return;
+  const mid = bubble.dataset.mid;
+  if(mid === undefined) return;
+  return makeFullMid(bubble.dataset.peerId.toPeerId(), +bubble.dataset.mid);
+}
+
+export function splitFullMid(fullMid: FullMid) {
+  const [peerId, mid] = fullMid.split('_');
+  return {peerId: peerId.toPeerId(), mid: +mid};
+}
+
+const EMPTY_FULL_MID = makeFullMid(NULL_PEER_ID, 0);
+
+function appendBubbleTime(bubble: HTMLElement, element: HTMLElement, callback: () => void) {
+  bubble.timeAppenders.unshift({element, callback});
+  callback();
+}
 
 export default class ChatBubbles {
   public container: HTMLDivElement;
@@ -287,10 +329,10 @@ export default class ChatBubbles {
   // public messagesCount: number = -1;
 
   private unreadOut = new Set<number>();
-  private needUpdate: {replyToPeerId: PeerId, replyMid?: number, replyStoryId?: number, mid: number}[] = []; // if need wrapSingleMessage
+  private needUpdate: {replyToPeerId: PeerId, replyMid?: number, replyStoryId?: number, mid: number, peerId: PeerId}[] = []; // if need wrapSingleMessage
 
-  public bubbles: {[mid: string]: HTMLElement} = {};
-  public skippedMids: Set<number> = new Set();
+  private bubbles: {[fullMid: string]: HTMLElement} = {};
+  public skippedMids: Set<string> = new Set();
   public bubblesNewByGroupedId: {[groupId: string]: Bubble} = {};
   public bubblesNew: {[mid: string]: Bubble} = {};
   private dateMessages: {[timestamp: number]: {
@@ -307,8 +349,11 @@ export default class ChatBubbles {
   private stickyIntersector: StickyIntersector;
 
   private unreaded: Map<HTMLElement, number> = new Map();
+  private unreadedContent: Map<HTMLElement, number> = new Map();
   private unreadedSeen: Set<number> = new Set();
+  private unreadedContentSeen: Set<number> = new Set();
   private readPromise: Promise<void>;
+  private readContentPromise: Promise<void>;
 
   private bubbleGroups: BubbleGroups;
 
@@ -328,7 +373,7 @@ export default class ChatBubbles {
 
   public listenerSetter: ListenerSetter;
 
-  private followStack: number[] = [];
+  private followStack: FullMid[] = [];
 
   private isHeavyAnimationInProgress = false;
   private scrollingToBubble: HTMLElement;
@@ -347,7 +392,7 @@ export default class ChatBubbles {
   private resolveLadderAnimation: () => Promise<any>;
   private emptyPlaceholderBubble: HTMLElement;
 
-  private viewsMids: Set<number> = new Set();
+  private viewsMids: Set<FullMid> = new Set();
   private sendViewCountersDebounced: () => Promise<void>;
 
   private isTopPaddingSet = false;
@@ -364,14 +409,14 @@ export default class ChatBubbles {
   private willScrollOnLoad: boolean;
   public observer: SuperIntersectionObserver;
 
-  private renderingMessages: Set<number> = new Set();
+  private renderingMessages: Set<FullMid> = new Set();
   private setPeerCached: boolean;
   private attachPlaceholderOnRender: () => void;
 
   private bubblesToEject: Set<HTMLElement> = new Set();
   private bubblesToReplace: Map<HTMLElement, HTMLElement> = new Map(); // TO -> FROM
   private updatePlaceholderPosition: () => void;
-  private setPeerOptions: {lastMsgId: number; topMessage: number; savedPosition: ChatSavedPosition};
+  private setPeerOptions: {lastMsgFullMid: FullMid, topMessageFullMid: FullMid, savedPosition: ChatSavedPosition};
 
   private setPeerTempId: number = 0;
 
@@ -393,6 +438,12 @@ export default class ChatBubbles {
 
   private remover: HTMLDivElement;
 
+  private lastPlayingVideo: HTMLVideoElement;
+
+  private batchingModifying: Array<() => void>;
+
+  private changedMids: Map<number, number>; // used when message is sent faster than temporary one was rendered
+
   constructor(
     private chat: Chat,
     private managers: AppManagers
@@ -411,12 +462,13 @@ export default class ChatBubbles {
       process: this.processBatch,
       possibleError: PEER_CHANGED_ERROR
     });
-    this.bubbleGroups = new BubbleGroups(this.chat);
     this.preloader = new ProgressivePreloader({
       cancelable: false
     });
     this.lazyLoadQueue = new LazyLoadQueue(undefined, true);
     this.lazyLoadQueue.queueId = ++queueId;
+
+    this.changedMids = new Map();
 
     // this.reactions = new Map();
 
@@ -432,7 +484,8 @@ export default class ChatBubbles {
       const log = false ? this.log.bindPrefix('history_update-' + mid) : undefined;
       log && log('start');
 
-      const bubble = this.bubbles[mid];
+      const fullMid = makeFullMid(message);
+      const bubble = this.getBubble(fullMid);
       if(!bubble) return;
 
       if(this.renderNewPromises.size) {
@@ -445,7 +498,7 @@ export default class ChatBubbles {
         await this.messagesQueuePromise;
       }
 
-      if(this.bubbles[mid] !== bubble) return;
+      if(this.getBubble(fullMid) !== bubble) return;
 
       // await getHeavyAnimationPromise();
 
@@ -460,7 +513,7 @@ export default class ChatBubbles {
 
       if(sequential) {
         const group = item.group;
-        const newItem = this.bubbleGroups.createItem(bubble, message);
+        const newItem = this.bubbleGroups.createItem(bubble, message, item.reverse);
         // newItem.mid = item.mid;
         const _items = this.bubbleGroups.itemsArr.slice();
         indexOfAndSplice(_items, item);
@@ -471,7 +524,7 @@ export default class ChatBubbles {
           (this.peerId === rootScope.myId && sequential && newItem.dateTimestamp === item.dateTimestamp)
         ) {
           log && log('item has correct position', item);
-          this.bubbleGroups.changeBubbleMid(bubble, mid);
+          this.bubbleGroups.changeBubbleMessage(bubble, message);
           return;
         }
       }
@@ -518,7 +571,7 @@ export default class ChatBubbles {
       //   }
       // }
 
-      const {groups} = this.groupBubbles([{bubble, message}]);
+      const {groups} = this.groupBubbles([{bubble, message, reverse: item.reverse}]);
       this.bubbleGroups.mountUnmountGroups(groups);
 
       if(this.scrollingToBubble) {
@@ -532,7 +585,7 @@ export default class ChatBubbles {
 
     this.listenerSetter.add(rootScope)('dialog_flush', ({peerId}) => {
       if(this.peerId === peerId) {
-        this.deleteMessagesByIds(Object.keys(this.bubbles).map((m) => +m));
+        this.deleteMessagesByIds(this.getRenderedHistory('asc'));
       }
     });
 
@@ -545,17 +598,21 @@ export default class ChatBubbles {
         return;
       }
 
-      const bubbles = this.bubbles;
-      let _bubble = bubbles[tempId];
+      this.changedMids.set(tempId, mid);
+
+      const fullTempMid = makeFullMid(tempMessage);
+      const fullMid = makeFullMid(message);
+
+      let _bubble = this.getBubble(fullTempMid);
       if(_bubble) {
-        const bubble = bubbles[tempId];
-        bubbles[mid] = bubble;
+        const bubble = _bubble;
+        delete this.bubbles[fullTempMid];
+        this.bubbles[fullMid] = bubble;
         bubble.dataset.mid = '' + mid;
-        delete bubbles[tempId];
 
         fastRaf(() => {
           const mid = +bubble.dataset.mid;
-          if(bubbles[mid] !== bubble || !bubble.classList.contains('is-outgoing')) {
+          if(this.getBubble(fullMid) !== bubble || !bubble.classList.contains('is-outgoing')) {
             return;
           }
 
@@ -585,7 +642,7 @@ export default class ChatBubbles {
         const timestamp = Date.now() / 1000 | 0;
         const maxTimestamp = tempMessage.date - 10;
         if(timestamp >= maxTimestamp) {
-          this.deleteMessagesByIds([mid]);
+          this.deleteMessagesByIds([fullMid]);
         }
       }
 
@@ -599,11 +656,15 @@ export default class ChatBubbles {
           return;
         }
 
-        _bubble = bubbles[getMainMidForGrouped(mids)];
+        _bubble = this.getBubble(message.peerId, getMainMidForGrouped(mids));
         tempIds = (Array.from(_bubble.querySelectorAll('.grouped-item')) as HTMLElement[]).map((el) => +el.dataset.mid);
+        (_bubble as any).maxBubbleMid = lastMid;
       } else {
         messages = [message];
         tempIds = [tempId];
+        if(_bubble) {
+          (_bubble as any).maxBubbleMid = mid;
+        }
       }
 
       if(!_bubble) {
@@ -706,11 +767,12 @@ export default class ChatBubbles {
     this.listenerSetter.add(rootScope)('message_edit', async({storageKey, message}) => {
       if(storageKey !== this.chat.messagesStorageKey) return;
 
-      const bubble = this.bubbles[message.mid];
+      const fullMid = makeFullMid(message);
+      const bubble = this.getBubble(fullMid);
       if(!bubble) return;
 
       await getHeavyAnimationPromise();
-      if(this.bubbles[message.mid] !== bubble) return;
+      if(this.getBubble(fullMid) !== bubble) return;
 
       const updateLocalOnEdit = this.updateLocationOnEdit.get(bubble);
       if(updateLocalOnEdit) {
@@ -730,23 +792,31 @@ export default class ChatBubbles {
       });
     });
 
-    this.listenerSetter.add(rootScope)('message_error', async({storageKey, tempId}) => {
+    this.listenerSetter.add(rootScope)('message_error', async({storageKey, tempId, peerId}) => {
       if(storageKey !== this.chat.messagesStorageKey) return;
 
-      const bubble = this.bubbles[tempId];
+      const fullTempMid = makeFullMid(peerId, tempId);
+      const bubble = this.getBubble(fullTempMid);
       if(!bubble) return;
 
       await getHeavyAnimationPromise();
-      if(this.bubbles[tempId] !== bubble) return;
+      if(this.getBubble(fullTempMid) !== bubble) return;
 
       bubble.classList.remove('is-outgoing');
       this.setBubbleSendingStatus(bubble, 'error');
     });
 
+    this.listenerSetter.add(rootScope)('replies_short_update', (message) => {
+      if(this.peerId !== message.peerId) return;
+      const bubble = this.getBubble(makeFullMid(message));
+      if(!bubble) return;
+      this.setBubbleRepliesCount(bubble, message.replies.replies);
+    });
+
     this.listenerSetter.add(rootScope)('message_transcribed', ({peerId, mid, text, pending}) => {
       if(peerId !== this.peerId) return;
 
-      const bubble = this.bubbles[mid];
+      const bubble = this.getBubble(makeFullMid(peerId, mid));
       if(!bubble) return;
 
       // TODO: Move it to AudioElement method `finishVoiceTranscription`
@@ -769,7 +839,7 @@ export default class ChatBubbles {
           transcribedText.append(document.createTextNode(''));
 
           if(speechTextDiv.classList.contains('document-wrapper')) {
-            audioElement.before(transcribedText);
+            audioElement.after(transcribedText);
           } else {
             speechTextDiv.append(transcribedText);
           }
@@ -814,12 +884,13 @@ export default class ChatBubbles {
       const mids = messages.map(({mid}) => mid);
       const oldMids = mids.concat(Array.from(deletedMids));
       const wasMainMid = getMainMidForGrouped(oldMids);
-      const bubble = this.bubbles[wasMainMid];
+      const wasFullMid = makeFullMid(peerId, wasMainMid);
+      const bubble = this.getBubble(wasFullMid);
       if(!bubble) {
         return;
       }
 
-      delete this.bubbles[wasMainMid];
+      delete this.bubbles[wasFullMid];
       const mainMid = getMainMidForGrouped(mids);
       const message = messages.find((message) => message.mid === mainMid);
       this.safeRenderMessage({
@@ -857,7 +928,7 @@ export default class ChatBubbles {
             return;
           }
 
-          const result = await this.getMountedBubble(message.mid, message);
+          const result = await this.getMountedBubble(message);
           if(!result) {
             return;
           }
@@ -878,16 +949,39 @@ export default class ChatBubbles {
             changedResults = [];
           }
 
+          const unreadReactions = getUnreadReactions(message);
+          if(unreadReactions) {
+            changedResults = [];
+          }
+
           const key = message.peerId + '_' + message.mid;
           const set = REACTIONS_ELEMENTS.get(key);
           if(set) {
             for(const element of set) {
               element.update(message, changedResults, waitPromise);
+              if(!message.reactions || !message.reactions.results.length) {
+                const parentElement = element.parentElement;
+                element.remove();
+
+                const timeSpan = element.querySelector('.time');
+                if(timeSpan) {
+                  findAndSplice(bubble.timeAppenders, ({element: el}) => el === element);
+                  bubble.timeAppenders[0].callback();
+                }
+
+                if(parentElement.classList.contains('document-message') && !parentElement.childNodes.length) {
+                  parentElement.remove();
+                }
+              }
             }
           } else if(!message.reactions || !message.reactions.results.length) {
             return;
           } else {
             this.appendReactionsElementToBubble(bubble, message, message, changedResults);
+          }
+
+          if(unreadReactions) {
+            this.setUnreadObserver('content', bubble, message.mid);
           }
         });
 
@@ -920,12 +1014,13 @@ export default class ChatBubbles {
           }
         });
 
-        const promises = filtered.map(async({mid, replyMid, replyToPeerId}) => {
-          const bubble = this.bubbles[mid];
+        const promises = filtered.map(async({peerId, mid, replyMid, replyToPeerId}) => {
+          const fullMid = makeFullMid(peerId, mid);
+          const bubble = this.getBubble(fullMid);
           if(!bubble) return;
 
           const [message, originalMessage] = await Promise.all([
-            this.chat.getMessage(mid) as Message.message,
+            this.chat.getMessage(fullMid) as Message.message,
             replyMid && this.managers.appMessagesManager.getMessageByPeer(replyToPeerId, replyMid) as Promise<Message.message>
           ]);
 
@@ -982,7 +1077,7 @@ export default class ChatBubbles {
       listenerSetter: this.listenerSetter,
       findTarget: (e) => {
         const target = e.target as HTMLElement;
-        const found = target.closest('.attachment.media-sticker-wrapper') || (findUpClassName(target, 'attachment') && target.closest('.custom-emoji'));
+        const found = target.closest('.attachment.media-sticker-wrapper, .attachment.media-gif-wrapper') || (findUpClassName(target, 'attachment') && target.closest('.custom-emoji'));
         return found as HTMLElement;
       }
     });
@@ -1122,13 +1217,13 @@ export default class ChatBubbles {
       this.listenerSetter.add(container)('dblclick', (e) => {
         const bubble = findUpClassName(e.target, 'grouped-item') || findUpClassName(e.target, 'bubble');
         if(bubble) {
-          const mid = +bubble.dataset.mid;
+          const fullMid = getBubbleFullMid(bubble);
 
           if(TEST_BUBBLES_DELETION) {
-            return this.deleteMessagesByIds([mid], true);
+            return this.deleteMessagesByIds([fullMid], true);
           }
 
-          this.log('debug message:', this.chat.getMessage(mid));
+          this.log('debug message:', this.chat.getMessage(fullMid));
           this.highlightBubble(bubble);
         }
       });
@@ -1136,17 +1231,22 @@ export default class ChatBubbles {
 
     if(!IS_MOBILE && !TEST_BUBBLES_DELETION) {
       this.listenerSetter.add(container)('dblclick', async(e) => {
-        if(this.chat.type === ChatType.Pinned ||
+        if(
+          this.chat.type === ChatType.Pinned ||
           this.chat.selection.isSelecting ||
-          !this.chat.input.canSendPlain()) {
+          !this.chat.input.canSendPlain()
+        ) {
           return;
         }
 
-        if(findUpClassName(e.target, 'attachment') ||
+        if(
+          findUpClassName(e.target, 'attachment') ||
           findUpClassName(e.target, 'audio') ||
           findUpClassName(e.target, 'document') ||
           findUpClassName(e.target, 'contact') ||
-          findUpClassName(e.target, 'time')) {
+          findUpClassName(e.target, 'time') ||
+          findUpClassName(e.target, 'code-header-button')
+        ) {
           return;
         }
 
@@ -1163,13 +1263,12 @@ export default class ChatBubbles {
         }
 
         if(bubble && !bubble.classList.contains('bubble-first')) {
-          const mid = +bubble.dataset.mid;
-          const message = this.chat.getMessage(mid);
+          const message = this.chat.getMessage(getBubbleFullMid(bubble));
           if(message.pFlags.is_outgoing || message.peerId !== this.peerId) {
             return;
           }
 
-          this.chat.input.initMessageReply({replyToMsgId: mid});
+          this.chat.input.initMessageReply({replyToMsgId: message.mid});
         }
       });
     } else if(IS_TOUCH_SUPPORTED) {
@@ -1299,6 +1398,15 @@ export default class ChatBubbles {
         return;
       }
 
+      // * if user sent a message inside a thread, do not scroll to it in a chat below
+      if(
+        !this.chat.threadId &&
+        this.chat.appImManager.chats.some((chat) => this.chat !== chat && chat.peerId === this.peerId && chat.threadId)
+      ) {
+        this.renderNewMessage(message);
+        return;
+      }
+
       if(!this.scrollable.loadedAll.bottom) {
         this.chat.setMessageId();
       } else {
@@ -1316,7 +1424,7 @@ export default class ChatBubbles {
         return;
       }
 
-      this.deleteMessagesByIds([...msgs.keys()]);
+      this.deleteMessagesByIds([...msgs.keys()].map((mid) => makeFullMid(peerId, mid)));
     });
 
     this.listenerSetter.add(rootScope)('history_delete_key', ({historyKey, mid}) => {
@@ -1324,7 +1432,7 @@ export default class ChatBubbles {
         return;
       }
 
-      this.deleteMessagesByIds([mid]);
+      this.deleteMessagesByIds([makeFullMid(this.peerId, mid)]);
     });
 
     this.listenerSetter.add(rootScope)('dialog_unread', ({peerId}) => {
@@ -1436,16 +1544,17 @@ export default class ChatBubbles {
       }
 
       // * filter local and outgoing
-      const mids = getObjectKeysAndSort(this.bubbles, 'desc').filter((mid) => mid > 0 && clearMessageId(mid, false) === mid);
+      const fullMids = this.getRenderedHistory('desc', true);
+      const mids = fullMids.map((fullMid) => splitFullMid(fullMid).mid);
       const middleware = this.getMiddleware();
-      this.managers.appMessagesManager.reloadMessages(this.peerId, mids).then((messages) => {
+      this.managers.appMessagesManager.reloadMessages(peerId, mids).then((messages) => {
         if(!middleware()) return;
 
-        const toDelete: number[] = [];
+        const toDelete: FullMid[] = [];
         messages.forEach((message, idx) => {
-          const mid = mids[idx];
+          const fullMid = fullMids[idx];
           if(message) {
-            const bubble = this.bubbles[message.mid];
+            const bubble = this.getBubble(peerId, message.mid);
             if(!bubble) return;
 
             this.safeRenderMessage({
@@ -1454,7 +1563,7 @@ export default class ChatBubbles {
               bubble
             });
           } else {
-            toDelete.push(mid);
+            toDelete.push(fullMid);
           }
         });
 
@@ -1468,12 +1577,13 @@ export default class ChatBubbles {
 
     this.listenerSetter.add(rootScope)('settings_updated', ({key}) => {
       if(key === 'settings.emoji.big') {
-        const middleware = this.getMiddleware();
-        const mids = getObjectKeysAndSort(this.bubbles, 'desc');
-        const m = mids.map((mid) => {
-          const bubble = this.bubbles[mid];
+        // const middleware = this.getMiddleware();
+        const fullMids = this.getRenderedHistory('desc');
+        const m = fullMids.map((fullMid) => {
+          const bubble = this.getBubble(fullMid);
           if(bubble.classList.contains('can-have-big-emoji')) {
-            return {bubble, message: this.chat.getMessage(mid)};
+            const {peerId, mid} = splitFullMid(fullMid);
+            return {bubble, message: this.chat.getMessageByPeer(peerId, mid), fullMid};
           }
         });
 
@@ -1482,8 +1592,8 @@ export default class ChatBubbles {
         //   return;
         // }
 
-        m.filter(Boolean).forEach(({bubble, message}) => {
-          if(this.bubbles[message.mid] !== bubble) {
+        m.filter(Boolean).forEach(({bubble, message, fullMid}) => {
+          if(this.getBubble(fullMid) !== bubble) {
             return;
           }
 
@@ -1504,7 +1614,7 @@ export default class ChatBubbles {
         for(const {peerId, views, mid} of arr) {
           if(this.peerId !== peerId && !GLOBAL_MIDS) continue;
 
-          const bubble = this.bubbles[mid];
+          const bubble = this.getBubble(peerId, mid);
           if(!bubble) continue;
 
           const postViewsElements = Array.from(bubble.querySelectorAll('.post-views')) as HTMLElement[];
@@ -1532,10 +1642,23 @@ export default class ChatBubbles {
     this.observer = new SuperIntersectionObserver({root: this.scrollable.container});
 
     this.sendViewCountersDebounced = debounce(() => {
-      const mids = [...this.viewsMids];
+      const fullMids = [...this.viewsMids];
       this.viewsMids.clear();
 
-      this.managers.appMessagesManager.incrementMessageViews(this.peerId, mids);
+      const byPeers: Map<PeerId, number[]> = new Map();
+      fullMids.forEach((fullMid) => {
+        const {peerId, mid} = splitFullMid(fullMid);
+        let mids = byPeers.get(peerId);
+        if(!mids) {
+          byPeers.set(peerId, mids = []);
+        }
+
+        mids.push(mid);
+      });
+
+      byPeers.forEach((mids, peerId) => {
+        this.managers.appMessagesManager.incrementMessageViews(peerId, mids);
+      });
     }, 1000, false, true);
 
     // * pinned part start
@@ -1546,7 +1669,7 @@ export default class ChatBubbles {
 
       if(mids) {
         if(!pinned) {
-          this.deleteMessagesByIds(mids);
+          this.deleteMessagesByIds(mids.map((mid) => makeFullMid(peerId, mid)));
         }
       }
     });
@@ -1567,7 +1690,7 @@ export default class ChatBubbles {
     this.listenerSetter.add(rootScope)('scheduled_delete', ({peerId, mids}) => {
       if(this.chat.type !== ChatType.Scheduled || peerId !== this.peerId) return;
 
-      this.deleteMessagesByIds(mids);
+      this.deleteMessagesByIds(mids.map((mid) => makeFullMid(peerId, mid)));
       onUpdate();
     });
     // * scheduled part end
@@ -1590,17 +1713,25 @@ export default class ChatBubbles {
     if(entry.isIntersecting) {
       const target = entry.target as HTMLElement;
       const mid = this.unreaded.get(target as HTMLElement);
-      this.onUnreadedInViewport(target, mid);
+      this.onUnreadedInViewport('history', target, mid);
+    }
+  };
+
+  private unreadedContentObserverCallback = (entry: IntersectionObserverEntry) => {
+    if(entry.isIntersecting) {
+      const target = entry.target as HTMLElement;
+      const mid = this.unreadedContent.get(target as HTMLElement);
+      this.onUnreadedInViewport('content', target, mid);
     }
   };
 
   private viewsObserverCallback = (entry: IntersectionObserverEntry) => {
     if(entry.isIntersecting) {
-      const mid = +(entry.target as HTMLElement).dataset.mid;
+      const fullMid = getBubbleFullMid(entry.target as HTMLElement);
       this.observer.unobserve(entry.target, this.viewsObserverCallback);
 
-      if(mid) {
-        this.viewsMids.add(mid);
+      if(fullMid) {
+        this.viewsMids.add(fullMid);
         this.sendViewCountersDebounced();
       } else {
         const {sponsoredMessage} = this;
@@ -1614,17 +1745,25 @@ export default class ChatBubbles {
     }
   };
 
-  private stickerEffectObserverCallback = (entry: IntersectionObserverEntry) => {
+  private _stickerEffectObserverCallback = (entry: IntersectionObserverEntry, callback: IntersectionCallback, selector: string) => {
     if(entry.isIntersecting) {
-      this.observer.unobserve(entry.target, this.stickerEffectObserverCallback);
+      this.observer.unobserve(entry.target, callback);
 
-      const attachmentDiv: HTMLElement = entry.target.querySelector('.attachment');
+      const attachmentDiv: HTMLElement = entry.target.querySelector(selector);
       getHeavyAnimationPromise().then(() => {
         if(isInDOM(attachmentDiv)) {
           simulateClickEvent(attachmentDiv);
         }
       });
     }
+  };
+
+  private stickerEffectObserverCallback = (entry: IntersectionObserverEntry) => {
+    this._stickerEffectObserverCallback(entry, this.stickerEffectObserverCallback, '.attachment');
+  };
+
+  private messageEffectObserverCallback = (entry: IntersectionObserverEntry) => {
+    this._stickerEffectObserverCallback(entry, this.messageEffectObserverCallback, '.time-inner .time-effect');
   };
 
   private createResizeObserver() {
@@ -1746,6 +1885,9 @@ export default class ChatBubbles {
   }
 
   private onBubblesMouseMove = async(e: MouseEvent) => {
+    const mediaVideoContainer = findUpClassName(e.target, 'media-video-mini');
+    (mediaVideoContainer as any)?.onMouseMove?.(e);
+
     const content = findUpClassName(e.target, 'bubble-content');
     if(!(
       this.chat.type !== ChatType.Scheduled &&
@@ -1794,7 +1936,7 @@ export default class ChatBubbles {
 
     content.append(hoverReaction);
 
-    let message = this.chat.getMessage(+bubble.dataset.mid);
+    let message = this.chat.getMessage(getBubbleFullMid(bubble));
     if(message?._ !== 'message') {
       this.unhoverPrevious();
       return;
@@ -1897,115 +2039,134 @@ export default class ChatBubbles {
   };
 
   public setStickyDateManually() {
-    return;
+    // const timestamps = Object.keys(this.dateMessages).map((k) => +k).sort((a, b) => b - a);
+    // let lastVisible: HTMLElement;
 
-    const timestamps = Object.keys(this.dateMessages).map((k) => +k).sort((a, b) => b - a);
-    let lastVisible: HTMLElement;
+    // // if(this.chatInner.classList.contains('is-scrolling')) {
+    // const {scrollTop} = this.scrollable.container;
+    // const isOverflown = scrollTop > 0;
+    // if(isOverflown) {
+    //   for(const timestamp of timestamps) {
+    //     const dateMessage = this.dateMessages[timestamp];
+    //     const visibleRect = getVisibleRect(dateMessage.container, this.scrollable.container);
+    //     if(visibleRect && visibleRect.overflow.top) {
+    //       lastVisible = dateMessage.div;
+    //     } else if(lastVisible) {
+    //       break;
+    //     }
+    //   }
+    // }
+    // // }
 
-    // if(this.chatInner.classList.contains('is-scrolling')) {
-    const {scrollTop} = this.scrollable.container;
-    const isOverflown = scrollTop > 0;
-    if(isOverflown) {
-      for(const timestamp of timestamps) {
-        const dateMessage = this.dateMessages[timestamp];
-        const visibleRect = getVisibleRect(dateMessage.container, this.scrollable.container);
-        if(visibleRect && visibleRect.overflow.top) {
-          lastVisible = dateMessage.div;
-        } else if(lastVisible) {
-          break;
-        }
-      }
-    }
+    // if(lastVisible === this.previousStickyDate) {
+    //   return;
     // }
 
-    if(lastVisible === this.previousStickyDate) {
-      return;
-    }
+    // if(lastVisible) {
+    //   const needReflow = /* !!this.chat.setPeerPromise ||  */!this.previousStickyDate;
+    //   if(needReflow) {
+    //     lastVisible.classList.add('no-transition');
+    //   }
 
-    if(lastVisible) {
-      const needReflow = /* !!this.chat.setPeerPromise ||  */!this.previousStickyDate;
-      if(needReflow) {
-        lastVisible.classList.add('no-transition');
-      }
+    //   lastVisible.classList.add('is-sticky');
 
-      lastVisible.classList.add('is-sticky');
+    //   if(needReflow) {
+    //     void lastVisible.offsetLeft; // reflow
+    //     lastVisible.classList.remove('no-transition');
+    //   }
+    // }
 
-      if(needReflow) {
-        void lastVisible.offsetLeft; // reflow
-        lastVisible.classList.remove('no-transition');
-      }
-    }
+    // if(this.previousStickyDate && this.previousStickyDate !== lastVisible) {
+    //   this.previousStickyDate.classList.remove('is-sticky');
+    // }
 
-    if(this.previousStickyDate && this.previousStickyDate !== lastVisible) {
-      this.previousStickyDate.classList.remove('is-sticky');
-    }
-
-    this.previousStickyDate = lastVisible;
+    // this.previousStickyDate = lastVisible;
   }
 
   public getRenderedLength() {
-    return Object.keys(this.bubbles).length - this.skippedMids.size;
+    return this.getRenderedHistory().length;
   }
 
-  private onUnreadedInViewport(target: HTMLElement, mid: number) {
-    this.unreadedSeen.add(mid);
-    this.observer.unobserve(target, this.unreadedObserverCallback);
-    this.unreaded.delete(target);
-    this.readUnreaded();
+  private onUnreadedInViewport(type: 'history' | 'content', target: HTMLElement, mid: number) {
+    let {unreadedSeen, unreadedObserverCallback, unreaded} = this;
+    if(type === 'content') {
+      unreadedSeen = this.unreadedContentSeen;
+      unreadedObserverCallback = this.unreadedContentObserverCallback;
+      unreaded = this.unreadedContent;
+    }
+
+    unreadedSeen.add(mid);
+    this.observer.unobserve(target, unreadedObserverCallback);
+    unreaded.delete(target);
+    this.readUnreaded(type);
   }
 
-  private readUnreaded() {
-    if(this.readPromise) return;
+  private readUnreaded(type: 'history' | 'content') {
+    const readPromiseKey = type === 'history' ? 'readPromise' : 'readContentPromise';
+    if(this[readPromiseKey]) return;
+
+    const unreadedSeenKey = type === 'history' ? 'unreadedSeen' : 'unreadedContentSeen';
 
     const middleware = this.getMiddleware();
-    this.readPromise = idleController.getFocusPromise().then(async() => {
+    this[readPromiseKey] = idleController.getFocusPromise().then(async() => {
       if(!middleware()) return;
       const {peerId, threadId} = this.chat;
-      let maxId = Math.max(...Array.from(this.unreadedSeen));
 
-      // ? if message with maxId is not rendered ?
-      if(this.scrollable.loadedAll.bottom) {
-        const bubblesMaxId = Math.max(...Object.keys(this.bubbles).map((i) => +i));
-        if(maxId >= bubblesMaxId) {
-          maxId = Math.max((await this.chat.getHistoryMaxId()) || 0, maxId);
-          if(!middleware()) return;
+      let callback: () => Promise<any>;
+      if(type === 'history') {
+        let maxId = Math.max(...Array.from(this[unreadedSeenKey]));
+
+        // ? if message with maxId is not rendered ?
+        if(this.scrollable.loadedAll.bottom) {
+          const rendered = this.getRenderedHistory('desc', true);
+          const bubblesMaxId = rendered ? splitFullMid(rendered[0]).mid : -1;
+          if(maxId >= bubblesMaxId) {
+            maxId = Math.max((await this.chat.getHistoryMaxId()) || 0, maxId);
+            if(!middleware()) return;
+          }
         }
+
+        this.unreaded.forEach((mid, target) => {
+          if(mid <= maxId) {
+            this.onUnreadedInViewport('history', target, mid);
+          }
+        });
+
+        if(DEBUG) {
+          this.log('will readHistory by maxId:', maxId);
+        }
+
+        callback = () => this.managers.appMessagesManager.readHistory(peerId, maxId, threadId);
+      } else {
+        const readContents: number[] = [];
+        for(const mid of this.unreadedContentSeen) {
+          const message: MyMessage = this.chat.getMessage(mid);
+          if(isMentionUnread(message) || getUnreadReactions(message)) {
+            readContents.push(mid);
+          }
+        }
+
+        if(DEBUG) {
+          this.log('will readMessages', readContents);
+        }
+
+        callback = () => this.managers.appMessagesManager.readMessages(peerId, readContents);
       }
 
-      this.unreaded.forEach((mid, target) => {
-        if(mid <= maxId) {
-          this.onUnreadedInViewport(target, mid);
-        }
-      });
-
-      const readContents: number[] = [];
-      for(const mid of this.unreadedSeen) {
-        const message: MyMessage = this.chat.getMessage(mid);
-        if(isMentionUnread(message)) {
-          readContents.push(mid);
-        }
-      }
-
-      this.managers.appMessagesManager.readMessages(peerId, readContents);
-
-      this.unreadedSeen.clear();
-
-      if(DEBUG) {
-        this.log('will readHistory by maxId:', maxId);
-      }
+      this[unreadedSeenKey].clear();
 
       // const promise = Promise.resolve();
-      const promise = this.managers.appMessagesManager.readHistory(peerId, maxId, threadId);
+      const promise = callback();
 
       return promise.catch((err: any) => {
-        this.log.error('readHistory err:', err);
-        this.managers.appMessagesManager.readHistory(peerId, maxId, threadId);
+        this.log.error('read err:', type, err);
+        callback();
       }).finally(() => {
         if(!middleware()) return;
-        this.readPromise = undefined;
+        this[readPromiseKey] = undefined;
 
-        if(this.unreadedSeen.size) {
-          this.readUnreaded();
+        if(this[unreadedSeenKey].size) {
+          this.readUnreaded(type);
         }
       });
     });
@@ -2013,9 +2174,12 @@ export default class ChatBubbles {
 
   public onBubblesClick = async(e: Event) => {
     let target = e.target as HTMLElement;
-    let bubble: HTMLElement = null;
+    let bubble: HTMLElement = null, bubbleFullMid: FullMid;
     try {
       bubble = findUpClassName(target, 'bubble');
+      if(bubble) {
+        bubbleFullMid = getBubbleFullMid(bubble);
+      }
     } catch(err) {}
 
     if(!bubble && !this.chat.selection.isSelecting) {
@@ -2065,6 +2229,12 @@ export default class ChatBubbles {
       return;
     }
 
+    const timeEffect = findUpClassName(target, 'time-effect');
+    if(timeEffect) {
+      fireMessageEffectByBubble({timeEffect, bubble, e, scrollable: this.scrollable});
+      return;
+    }
+
     if(!IS_TOUCH_SUPPORTED && findUpClassName(target, 'time')) {
       this.chat.selection.toggleByElement(bubble);
       return;
@@ -2072,7 +2242,7 @@ export default class ChatBubbles {
 
     // ! Trusted - due to audio autoclick
     if(this.chat.selection.isSelecting && e.isTrusted) {
-      if(bubble.classList.contains('service') && bubble.dataset.mid === undefined) {
+      if(bubble.classList.contains('service') && bubbleFullMid === undefined) {
         return;
       }
 
@@ -2086,15 +2256,6 @@ export default class ChatBubbles {
 
       // this.chatSelection.toggleByBubble(bubble);
       this.chat.selection.toggleByElement(findUpClassName(target, 'grouped-item') || bubble);
-      return;
-    }
-
-    const mediaSpoiler: HTMLElement = findUpClassName(target, 'media-spoiler-container');
-    if(mediaSpoiler) {
-      onMediaSpoilerClick({
-        event: e,
-        mediaSpoiler
-      });
       return;
     }
 
@@ -2125,18 +2286,46 @@ export default class ChatBubbles {
     if(buyButton) {
       cancelEvent(e);
 
-      const message = this.chat.getMessage(+bubble.dataset.mid);
+      const message = this.chat.getMessage(bubbleFullMid);
       if(!message) {
         return;
       }
 
-      PopupElement.createPopup(
-        PopupPayment,
-        {
-          message:message as Message.message,
-          inputInvoice: await this.managers.appPaymentsManager.getInputInvoiceByPeerId(message.peerId, message.mid)
-        }
-      );
+      const media = (message as Message.message).media;
+      const paidMedia = media?._ === 'messageMediaPaidMedia' ? media : undefined;
+
+      const popup = await PopupPayment.create({
+        message: message as Message.message,
+        inputInvoice: await this.managers.appPaymentsManager.getInputInvoiceByPeerId(message.peerId, message.mid),
+        paidMedia
+      });
+
+      if(paidMedia) {
+        popup.addEventListener('finish', async(result) => {
+          if(result === 'paid') {
+            setQuizHint({
+              icon: 'cash_circle',
+              title: i18n('StarsMediaPurchaseCompleted'),
+              textElement: i18n('StarsMediaPurchaseCompletedInfo', [
+                paidMedia.stars_amount,
+                await wrapPeerTitle({peerId: (message as Message.message).fwdFromId || message.peerId})
+              ]),
+              appendTo: this.container,
+              from: 'top',
+              duration: 5000
+            });
+          }
+        });
+      }
+      return;
+    }
+
+    const mediaSpoiler: HTMLElement = findUpClassName(target, 'media-spoiler-container');
+    if(mediaSpoiler) {
+      onMediaSpoilerClick({
+        event: e,
+        mediaSpoiler
+      });
       return;
     }
 
@@ -2184,16 +2373,65 @@ export default class ChatBubbles {
         managers: this.managers,
         middleware: this.getMiddleware(),
         peerId: this.peerId
+      }).then((firedAnimation) => {
+        if(firedAnimation) {
+          return;
+        }
+
+        this.openEmojiPackByTarget(stickerEmojiEl);
       });
 
       return;
+    } else if(stickerEmojiEl) {
+      this.openEmojiPackByTarget(stickerEmojiEl);
+      return;
+    }
+
+    const quoteDiv: HTMLElement = findUpClassName(target, 'quote-like-collapsable');
+    if(quoteDiv) {
+      const isTruncated = quoteDiv.classList.contains('is-truncated');
+      const isExpanded = quoteDiv.classList.contains('is-expanded');
+      const isGood = isTruncated || isExpanded;
+      if(isGood && window.getSelection().isCollapsed) {
+        cancelEvent(e);
+
+        const hasAnimations = liteMode.isAvailable('animations');
+        if(hasAnimations) {
+          (quoteDiv as any).ignoreQuoteResize = Infinity;
+        }
+
+        const scrollSaver = this.createScrollSaver(false);
+        scrollSaver.save();
+
+        let onTransitionEnd: (e: TransitionEvent) => void;
+
+        const animationPromise = hasAnimations ? Promise.race([
+          pause(1000).then(() => {
+            quoteDiv.removeEventListener('transitionend', onTransitionEnd);
+          }),
+          new Promise<void>((resolve) => {
+            onTransitionEnd = (e: TransitionEvent) => {
+              if(e.target === quoteDiv) {
+                resolve();
+                delete (quoteDiv as any).ignoreQuoteResize;
+              }
+            };
+
+            quoteDiv.addEventListener('transitionend', onTransitionEnd, {once: true});
+          })
+        ]) : Promise.resolve();
+
+        this.animateSomethingWithScroll(animationPromise, scrollSaver);
+        quoteDiv.classList.toggle('is-expanded');
+        quoteDiv.classList.toggle('is-truncated', isExpanded);
+        return;
+      }
     }
 
     const commentsDiv: HTMLElement = findUpClassName(target, 'replies');
     if(commentsDiv) {
-      const bubbleMid = +bubble.dataset.mid;
       if(this.peerId === REPLIES_PEER_ID) {
-        const message = this.chat.getMessage(bubbleMid) as Message.message;
+        const message = this.chat.getMessage(bubbleFullMid) as Message.message;
         const peerId = getPeerId((message.reply_to as MessageReplyHeader.messageReplyHeader).reply_to_peer_id);
         const threadId = (message.reply_to as MessageReplyHeader.messageReplyHeader).reply_to_top_id;
         const lastMsgId = message.fwd_from.saved_from_msg_id;
@@ -2203,7 +2441,7 @@ export default class ChatBubbles {
           threadId
         });
       } else {
-        const message1 = this.chat.getMessage(bubbleMid);
+        const message1 = this.chat.getMessage(bubbleFullMid);
         const message = await this.managers.appMessagesManager.getMessageWithReplies(message1 as Message.message);
         const replies = message.replies;
         if(replies) {
@@ -2238,15 +2476,15 @@ export default class ChatBubbles {
     if(nameDiv && nameDiv !== bubble) {
       target = nameDiv || target;
       const peerIdStr = target.dataset.peerId || target.getAttribute('peer') || target.dataset.key/*  || (target as AvatarElement).peerId */;
-      const savedFrom = target.dataset.savedFrom;
+      const savedFrom = target.dataset.savedFrom as FullMid;
       if(typeof(peerIdStr) === 'string' || savedFrom) {
         if(savedFrom) {
-          const [peerId, mid] = savedFrom.split('_');
+          const {peerId, mid} = splitFullMid(savedFrom);
           if(target.classList.contains('is-receipt-link')) {
             const message = await this.managers.appMessagesManager.getMessageByPeer(peerId.toPeerId(), +mid);
             if(message) {
-              const inputInvoice = await this.managers.appPaymentsManager.getInputInvoiceByPeerId(this.peerId, +bubble.dataset.mid);
-              PopupElement.createPopup(PopupPayment, {
+              const inputInvoice = await this.managers.appPaymentsManager.getInputInvoiceByPeerId(message.peerId, message.mid);
+              PopupPayment.create({
                 message: message as Message.message,
                 inputInvoice,
                 isReceipt: true
@@ -2284,25 +2522,49 @@ export default class ChatBubbles {
     } */
 
     if(bubble.classList.contains('sticker') && target.parentElement.classList.contains('attachment')) {
-      const messageId = +bubble.dataset.mid;
-      const message = this.chat.getMessage(messageId);
+      const message = this.chat.getMessage(bubbleFullMid);
 
       const doc = ((message as Message.message).media as MessageMedia.messageMediaDocument)?.document as Document.document;
 
       if(doc?.stickerSetInput) {
-        PopupElement.createPopup(PopupStickers, doc.stickerSetInput).show();
+        PopupElement.createPopup(PopupStickers, doc.stickerSetInput, undefined, this.chat.input).show();
       }
 
       return;
     }
 
+    const videoMini = findUpClassName(target, 'media-video-mini');
+    if(videoMini && false) {
+      if(findUpClassName(target, 'video-to-viewer')) {
+        if(this.checkTargetForMediaViewer(videoMini.querySelector('video'), e)) {
+          cancelClickOrNextIfNotClick(e);
+          return;
+        }
+      } else if(findUpClassName(target, 'media-photo')) {
+        simulateClickEvent(videoMini.querySelector('video'));
+      }
+
+      cancelEvent(e);
+      // if(findUpClassName(target, 'ckin__controls')) {
+      //   return;
+      // }
+
+      // // console.log('video click', e);
+      // cancelEvent(e);
+      return;
+    }
+
     if(this.checkTargetForMediaViewer(target, e)) {
-      cancelNextClickIfNotClick(e);
+      cancelClickOrNextIfNotClick(e);
       return;
     }
 
     const webPageContainer = findUpClassName(target, 'webpage') as HTMLAnchorElement;
     if(webPageContainer) {
+      if(findUpClassName(target, 'webpage-name-tip')) {
+        return;
+      }
+
       if(findUpClassName(target, 'webpage-preview-resizer')) {
         e.preventDefault();
         return;
@@ -2323,17 +2585,15 @@ export default class ChatBubbles {
 
     if(['DIV', 'SPAN'].indexOf(target.tagName) !== -1/*  || target.tagName === 'A' */) {
       if(target.classList.contains('goto-original')) {
-        const savedFrom = bubble.dataset.savedFrom;
-        const [peerId, mid] = savedFrom.split('_');
-        // //this.log('savedFrom', peerId, msgID);
+        const savedFrom = bubble.dataset.savedFrom as FullMid;
+        const {peerId, mid} = splitFullMid(savedFrom);
         this.chat.appImManager.setInnerPeer({
           peerId: peerId.toPeerId(),
           lastMsgId: +mid
         });
         return;
       } else if(target.classList.contains('forward')) {
-        const mid = +bubble.dataset.mid;
-        const message = await this.managers.appMessagesManager.getMessageByPeer(this.peerId, mid);
+        const message = this.chat.getMessage(bubbleFullMid);
         PopupElement.createPopup(PopupForward, {
           [this.peerId]: await this.managers.appMessagesManager.getMidsByMessage(message)
         });
@@ -2348,8 +2608,7 @@ export default class ChatBubbles {
       } catch(err) {}
 
       if(isReplyClick && bubble.classList.contains('is-reply')/*  || bubble.classList.contains('forwarded') */) {
-        const bubbleMid = +bubble.dataset.mid;
-        const message = this.chat.getMessage(bubbleMid) as Message.message;
+        const message = this.chat.getMessage(bubbleFullMid) as Message.message;
         const replyTo = message.reply_to;
 
         if(replyTo._ === 'messageReplyStoryHeader') {
@@ -2369,25 +2628,25 @@ export default class ChatBubbles {
           return;
         }
 
-        let replyToPeerId = replyTo.reply_to_peer_id ? getPeerId(replyTo.reply_to_peer_id) : this.peerId;
+        let replyToPeerId = replyTo.reply_to_peer_id ? getPeerId(replyTo.reply_to_peer_id) : message.peerId;
         if(this.chat.type === ChatType.Discussion && !this.chat.isForum) {
           const historyResult = await this.managers.appMessagesManager.getHistory({
-            peerId: this.chat.peerId,
+            peerId: replyToPeerId,
             threadId: this.chat.threadId,
             limit: 1,
             offsetId: 1,
             addOffset: -1
           });
 
-          const message = this.chat.getMessage(historyResult.history[0]) as Message.message;
+          const message = this.chat.getMessageByPeer(replyToPeerId, historyResult.history[0]) as Message.message;
           const fwdFrom = message.fwd_from;
-          if(fwdFrom.channel_post === replyToMid) {
+          if(fwdFrom?.channel_post === replyToMid) {
             replyToMid = message.mid;
-            replyToPeerId = this.peerId;
+            replyToPeerId = message.peerId;
           }
         }
 
-        this.followStack.push(bubbleMid);
+        this.followStack.push(bubbleFullMid);
 
         this.chat.appImManager.setInnerPeer({
           peerId: replyToPeerId,
@@ -2399,17 +2658,36 @@ export default class ChatBubbles {
     }
   };
 
+  private openEmojiPackByTarget(stickerEmojiEl: HTMLElement) {
+    this.managers.appEmojiManager.getCustomEmojiDocument(stickerEmojiEl.dataset.docId).then((doc) => {
+      const attribute = doc.attributes.find((attribute) => attribute._ === 'documentAttributeCustomEmoji') as DocumentAttribute.documentAttributeCustomEmoji;
+      if(!attribute) {
+        return;
+      }
+
+      const inputStickerSet = attribute.stickerset as InputStickerSet.inputStickerSetID;
+      PopupElement.createPopup(
+        PopupStickers,
+        inputStickerSet,
+        true,
+        this.chat.input
+      ).show();
+    });
+  }
+
   public checkTargetForMediaViewer(target: HTMLElement, e?: Event, mediaTimestamp?: number) {
     const bubble = findUpClassName(target, 'bubble');
     const documentDiv = findUpClassName(target, 'document-with-thumb');
 
-    if((target.tagName === 'IMG' && !target.classList.contains('emoji') && !target.classList.contains('document-thumb')) ||
+    if(
+      (target.tagName === 'IMG' && !target.classList.contains('emoji') && !target.classList.contains('document-thumb')) ||
       target.classList.contains('album-item') ||
       target.classList.contains('album-item-media') ||
       // || isVideoComponentElement
       (target.tagName === 'VIDEO' && !bubble.classList.contains('round')) ||
       (documentDiv && !documentDiv.querySelector('.preloader-container')) ||
-      target.classList.contains('canvas-thumbnail')) {
+      target.classList.contains('canvas-thumbnail')
+    ) {
       const groupedItem = findUpClassName(target, 'album-item') || findUpClassName(target, 'document-container');
       const preloader = (groupedItem || bubble).querySelector<HTMLElement>('.preloader-container');
       if(preloader && e) {
@@ -2419,10 +2697,11 @@ export default class ChatBubbles {
       }
 
       cancelEvent(e);
-      const messageId = +(groupedItem || bubble).dataset.mid;
-      const message = this.chat.getMessage(messageId);
+      const groupedItemIndex = groupedItem ? +(groupedItem.dataset.index ?? -1) : -1;
+      const fullMessageId = getBubbleFullMid(groupedItemIndex !== -1 ? bubble : groupedItem || bubble);
+      const message = this.chat.getMessage(fullMessageId);
       if(!message) {
-        this.log.warn('no message by messageId:', messageId);
+        this.log.warn('no message by messageId:', fullMessageId);
         return;
       }
 
@@ -2438,7 +2717,7 @@ export default class ChatBubbles {
         return;
       }
 
-      const SINGLE_MEDIA_CLASSNAME = 'has-webpage';
+      const SINGLE_MEDIA_CLASSNAME = 'single-media';
       const isSingleMedia = bubble.classList.contains(SINGLE_MEDIA_CLASSNAME);
 
       const f = documentDiv ? (media: any) => {
@@ -2447,27 +2726,23 @@ export default class ChatBubbles {
         return media._ === 'photo' || ['video', 'gif'].includes(media.type);
       };
 
-      const targets: {element: HTMLElement, mid: number, peerId: PeerId}[] = [];
-      const ids = isSingleMedia ? [messageId] : (Object.keys(this.bubbles).map((k) => +k).map((mid) => {
-        const bubble = this.bubbles[mid];
+      const targets: {element: HTMLElement, mid: number, peerId: PeerId, fullMid: string, index?: number}[] = [];
+      const fullMids = isSingleMedia ? [fullMessageId] : this.getRenderedHistory('asc').map((fullMid) => {
+        const bubble = this.getBubble(fullMid);
         if(!isSingleMedia && bubble.classList.contains(SINGLE_MEDIA_CLASSNAME)) {
           return;
         }
-        /* if(isSingleMedia && !this.bubbles[id].classList.contains(SINGLE_MEDIA_CLASSNAME)) {
-          return false;
-        }  */
-        // if(!this.scrollable.visibleElements.find((e) => e.element === this.bubbles[id])) return false;
 
-        const message = this.chat.getMessage(mid);
+        const message = this.chat.getMessage(fullMid);
         const media = getMediaFromMessage(message);
 
-        return media && f(media) && mid;
-      })).filter(Boolean).sort((a, b) => a - b);
+        return media && f(media) && fullMid;
+      }).filter(Boolean) as FullMid[];
 
-      ids.forEach((id) => {
-        let bubble = this.skippedMids.has(id) ? undefined : this.bubbles[id];
+      fullMids.forEach((fullMid) => {
+        let bubble = this.skippedMids.has(fullMid) ? undefined : this.getBubble(fullMid);
         if(!bubble) {
-          bubble = this.chatInner.querySelector(`.grouped-item:not(.album-item)[data-mid="${id}"]`);
+          bubble = this.chatInner.querySelector(`.grouped-item:not(.album-item)[data-mid="${fullMid}"]`);
           if(bubble) {
             bubble = findUpClassName(bubble, 'bubble');
           }
@@ -2499,7 +2774,8 @@ export default class ChatBubbles {
             targets.push({
               element: element.querySelector('.document-ico'),
               mid: +element.dataset.mid,
-              peerId: this.peerId
+              peerId: this.peerId,
+              fullMid: getBubbleFullMid(element)
             });
           });
         } else {
@@ -2511,10 +2787,13 @@ export default class ChatBubbles {
             const parent = albumItem || element.parentElement;
             if(parents.has(parent)) return;
             parents.add(parent);
+            const _fullMid = groupedItemIndex !== -1 ? fullMid : getBubbleFullMid(albumItem || element) || fullMid;
             targets.push({
               element,
-              mid: albumItem ? +albumItem.dataset.mid : id,
-              peerId: this.peerId
+              mid: splitFullMid(_fullMid).mid,
+              peerId: this.peerId,
+              fullMid: _fullMid,
+              index: albumItem && +(albumItem.dataset.index ?? -1)
             });
           });
         }
@@ -2528,12 +2807,12 @@ export default class ChatBubbles {
         }
       });
 
-      targets.sort((a, b) => a.mid - b.mid);
+      // targets.sort((a, b) => a.mid - b.mid);
 
-      const idx = targets.findIndex((t) => t.mid === messageId);
+      const idx = groupedItemIndex === -1 ? targets.findIndex((t) => t.fullMid === fullMessageId) : targets.findIndex((t) => t.index === groupedItemIndex);
 
       if(DEBUG) {
-        this.log('open mediaViewer single with ids:', ids, idx, targets);
+        this.log('open mediaViewer single with ids:', fullMids, idx, targets);
       }
 
       if(!targets[idx]) {
@@ -2551,6 +2830,7 @@ export default class ChatBubbles {
       })
       .openMedia({
         message: message,
+        index: targets[idx].index,
         target: targets[idx].element,
         fromRight: 0,
         reverse: true,
@@ -2580,13 +2860,13 @@ export default class ChatBubbles {
 
     const middleware = this.getMiddleware();
     const slice = this.followStack.slice();
-    const messages = await Promise.all(slice.map((mid) => this.chat.getMessage(mid)));
+    const messages = await Promise.all(slice.map((fullMid) => this.chat.getMessage(fullMid)));
     if(!middleware()) return;
 
-    slice.forEach((mid, idx) => {
+    slice.forEach((fullMid, idx) => {
       const message = messages[idx];
 
-      const bubble = this.bubbles[mid];
+      const bubble = this.getBubble(fullMid);
       let bad = true;
       if(bubble) {
         const rect = bubble.getBoundingClientRect();
@@ -2596,13 +2876,15 @@ export default class ChatBubbles {
       }
 
       if(bad) {
-        this.followStack.splice(this.followStack.indexOf(mid), 1);
+        this.followStack.splice(this.followStack.indexOf(fullMid), 1);
       }
     });
 
-    this.followStack.sort((a, b) => b - a);
+    // ! WARNING
+    this.followStack.sort((a, b) => splitFullMid(b).mid - splitFullMid(a).mid);
 
-    const mid = this.followStack.pop();
+    const fullMid = this.followStack.pop();
+    const {mid} = splitFullMid(fullMid);
     this.chat.setMessageId({lastMsgId: mid});
   }
 
@@ -2612,14 +2894,17 @@ export default class ChatBubbles {
     return item?.element;
   }
 
-  public async getGroupedBubble(groupId: string) {
+  public async getGroupedBubble(peerId: PeerId, groupId: string) {
     const mids = await this.managers.appMessagesManager.getMidsByGroupedId(groupId);
     for(const mid of mids) {
-      if(this.bubbles[mid] && !this.skippedMids.has(mid)) {
+      const fullMid = makeFullMid(peerId, mid);
+      const bubble = this.getBubble(fullMid);
+      if(bubble && !this.skippedMids.has(fullMid)) {
         // const maxId = Math.max(...mids); // * because in scheduled album can be rendered by lowest mid during sending
         return {
-          bubble: this.bubbles[mid],
-          mid: mid
+          bubble,
+          peerId,
+          mid
           // message: await this.chat.getMessage(maxId) as Message.message
         };
       }
@@ -2630,9 +2915,18 @@ export default class ChatBubbles {
     return Array.from(bubble.querySelectorAll('.grouped-item')) as HTMLElement[];
   }
 
-  public async getMountedBubble(mid: number, message?: Message.message | Message.messageService) {
-    if(message === undefined) {
-      message = this.chat.getMessage(mid);
+  public async getMountedBubble(fullMid: FullMid | Message.message | Message.messageService) {
+    let message: Message.message | Message.messageService, peerId: PeerId, mid: number;
+    if(typeof(fullMid) === 'string') {
+      const d = splitFullMid(fullMid);
+      peerId = d.peerId;
+      mid = d.mid;
+      message = this.chat.getMessageByPeer(peerId, mid);
+    } else {
+      message = fullMid;
+      peerId = message.peerId;
+      mid = message.mid;
+      fullMid = makeFullMid(peerId, mid);
     }
 
     if(!message) {
@@ -2641,32 +2935,59 @@ export default class ChatBubbles {
 
     const groupedId = (message as Message.message).grouped_id;
     if(groupedId) {
-      const a = await this.getGroupedBubble(groupedId);
+      const a = await this.getGroupedBubble(peerId, groupedId);
       if(a) {
         a.bubble = a.bubble.querySelector(`.document-container[data-mid="${mid}"]`) || a.bubble;
         return a;
       }
     }
 
-    const bubble = this.bubbles[mid];
-    if(!bubble || this.skippedMids.has(mid)) return;
+    const bubble = this.getBubble(fullMid);
+    if(!bubble || this.skippedMids.has(fullMid)) return;
 
-    return {bubble, mid};
+    return {bubble, peerId, mid};
   }
 
-  private findNextMountedBubbleByMsgId(mid: number, prev?: boolean) {
-    const mids = getObjectKeysAndSort(this.bubbles, prev ? 'desc' : 'asc');
+  private findNextMountedBubbleByMsgId(fullMid: FullMid, prev?: boolean) {
+    if(this.chat.type === ChatType.Search) {
+      const fullMids = this.getRenderedHistory('desc', true);
+      const idx = fullMids.indexOf(fullMid);
+      if(idx === -1) return;
+      const nextFullMid = fullMids[idx + (prev ? -1 : 1)];
+      return this.getBubble(nextFullMid);
+    }
 
-    let filterCallback: (_mid: number) => boolean;
-    if(prev) filterCallback = (_mid) => _mid < mid;
-    else filterCallback = (_mid) => mid < _mid;
+    const fullMids = this.getRenderedHistory(prev ? 'desc' : 'asc');
 
-    const foundMid = mids.find((_mid) => {
-      if(!filterCallback(_mid)) return false;
-      return !!this.bubbles[_mid]?.parentElement;
+    let filterCallback: (_mid: FullMid) => boolean;
+    if(prev) filterCallback = (_mid) => splitFullMid(_mid).mid < splitFullMid(fullMid).mid;
+    else filterCallback = (_mid) => splitFullMid(fullMid).mid < splitFullMid(_mid).mid;
+
+    const foundMid = fullMids.find((fullMid) => {
+      if(!filterCallback(fullMid)) return false;
+      return !!this.getBubble(fullMid)?.parentElement;
     });
 
-    return this.bubbles[foundMid];
+    return this.getBubble(foundMid);
+  }
+
+  public getRenderedHistory(sort: 'asc' | 'desc' = 'desc', onlyReal?: boolean) {
+    let history = flatten(
+      this.bubbleGroups.groups.map((group) => group.items.map((item) => makeFullMid(item.message)))
+    );
+
+    if(sort === 'asc') {
+      history.reverse();
+    }
+
+    if(onlyReal) {
+      history = history.filter((fullMid) => {
+        const {mid} = splitFullMid(fullMid);
+        return mid > 0 && clearMessageId(mid, false) === mid;
+      });
+    }
+
+    return history;
   }
 
   public loadMoreHistory(top: boolean, justLoad = false) {
@@ -2682,15 +3003,10 @@ export default class ChatBubbles {
       return;
     }
 
-    // warning, если иды только отрицательные то вниз не попадёт (хотя мб и так не попадёт)
-    // some messages can have negative id (such as sponsored message)
-    const history = Object.keys(this.bubbles)
-    .map((id) => +id)
-    .filter((id) => id > 0 && !this.skippedMids.has(id))
-    .sort((a, b) => a - b);
+    const history = this.getRenderedHistory('asc');
 
     if(!history.length) {
-      history.push(0);
+      history.push(EMPTY_FULL_MID);
     }
 
     if(top) {
@@ -2717,7 +3033,7 @@ export default class ChatBubbles {
     }
   }
 
-  public onScroll = (ignoreHeavyAnimation?: boolean, scrollDimensions?: ScrollStartCallbackDimensions, forceDown?: boolean) => {
+  private onScroll = (ignoreHeavyAnimation?: boolean, scrollDimensions?: ScrollStartCallbackDimensions, forceDown?: boolean) => {
     // return;
 
     if(this.isHeavyAnimationInProgress) {
@@ -2737,6 +3053,40 @@ export default class ChatBubbles {
 
     if(scrollDimensions && scrollDimensions.distanceToEnd < SCROLLED_DOWN_THRESHOLD && this.scrolledDown) {
       return;
+    }
+
+    const intersecting = this.observer?.getIntersecting();
+    if(intersecting) {
+      const videos = Array.from(intersecting).filter((el) => el instanceof HTMLVideoElement && (el as any).mini);
+      const centerY = windowSize.height / 2;
+      const distances = videos.map((video) => {
+        // const bubble = findUpClassName(video, 'bubble');
+        const rect = video.getBoundingClientRect();
+        const distanceToVerticalCenter = Math.abs(rect.top + rect.height / 2 - centerY);
+        return {video/* , bubble */, distance: distanceToVerticalCenter};
+      }).sort((a, b) => a.distance - b.distance);
+      let closest = distances[0];
+      if(closest && closest.distance > 150) {
+        closest = undefined;
+      }
+
+      const video = closest?.video as HTMLVideoElement;
+      if(this.lastPlayingVideo !== video) {
+        const animationItem = animationIntersector.getAnimations(this.lastPlayingVideo)[0];
+        if(animationItem) {
+          animationIntersector.toggleItemLock(animationItem, true);
+          this.lastPlayingVideo.pause();
+        }
+
+        this.lastPlayingVideo = video;
+
+        if(video) {
+          // console.log('video', video);
+          const animationItem = animationIntersector.getAnimations(video)[0];
+          animationIntersector.toggleItemLock(animationItem, false);
+          safePlay(video);
+        }
+      }
     }
 
     const distanceToEnd = forceDown ? 0 : scrollDimensions?.distanceToEnd ?? this.scrollable.getDistanceToEnd();
@@ -2820,28 +3170,29 @@ export default class ChatBubbles {
     const historyStorage = await this.chat.getHistoryStorage();
     const maxId = this.peerId === rootScope.myId ? historyStorage.readMaxId : historyStorage.readOutboxMaxId;
 
-    // /////this.log('updateUnreadByDialog', maxId, dialog, this.unreadOut);
-
-    for(const msgId of this.unreadOut) {
-      if(msgId > 0 && msgId <= maxId) {
-        const bubble = this.bubbles[msgId];
-        if(bubble) {
-          this.unreadOut.delete(msgId);
-
-          if(bubble.classList.contains('is-outgoing') || bubble.classList.contains('is-error')) {
-            continue;
-          }
-
-          this.setBubbleSendingStatus(bubble, 'read');
+    for(const mid of this.unreadOut) {
+      if(mid > 0 && mid <= maxId) {
+        const fullMid = makeFullMid(this.peerId, mid);
+        const bubble = this.getBubble(fullMid);
+        if(!bubble) {
+          continue;
         }
+
+        this.unreadOut.delete(mid);
+
+        if(bubble.classList.contains('is-outgoing') || bubble.classList.contains('is-error')) {
+          continue;
+        }
+
+        this.setBubbleSendingStatus(bubble, 'read');
       }
     }
   }
 
   public destroyBubble(
     bubble: HTMLElement,
-    mid = +bubble.dataset.mid,
-    animate?: boolean
+    animate?: boolean,
+    fullMid = getBubbleFullMid(bubble)
   ) {
     let placeholder: HTMLElement, canBeDeleted: {
       element: HTMLElement,
@@ -2881,11 +3232,11 @@ export default class ChatBubbles {
     /* const mounted = this.getMountedBubble(mid);
     if(!mounted) return; */
 
-    if(this.bubbles[mid] === bubble) { // have to check because can clear bubble with same id later
-      delete this.bubbles[mid];
+    if(this.getBubble(fullMid) === bubble) { // have to check because can clear bubble with same id later
+      delete this.bubbles[fullMid];
     }
 
-    this.skippedMids.delete(mid);
+    this.skippedMids.delete(fullMid);
 
     if(this.firstUnreadBubble === bubble) {
       this.firstUnreadBubble = null;
@@ -2899,11 +3250,17 @@ export default class ChatBubbles {
       this.observer.unobserve(bubble, this.unreadedObserverCallback);
       this.unreaded.delete(bubble);
 
+      this.observer.unobserve(bubble, this.unreadedContentObserverCallback);
+      this.unreadedContent.delete(bubble);
+
       this.observer.unobserve(bubble, this.viewsObserverCallback);
-      this.viewsMids.delete(mid);
+      this.viewsMids.delete(fullMid);
 
       this.observer.unobserve(bubble, this.stickerEffectObserverCallback);
+      this.observer.unobserve(bubble, this.messageEffectObserverCallback);
     }
+
+    bubble.timeAppenders = bubble.timeSpan = undefined;
 
     if(canBeDeleted) {
       let deletingItem: typeof canBeDeleted[0];
@@ -3012,24 +3369,35 @@ export default class ChatBubbles {
     }, this.scrollable.container);
   }
 
-  public deleteMessagesByIds(mids: number[], permanent = true, ignoreOnScroll?: boolean) {
-    let deleted = false;
-    mids.slice().sort((a, b) => b - a).forEach((mid) => {
-      const bubble = this.bubbles[mid];
-      if(!bubble) return;
-
-      this.destroyBubble(bubble, mid, permanent && liteMode.isAvailable('animations'));
-
-      deleted = true;
+  public deleteMessagesByIds(fullMids: FullMid[], permanent = true, ignoreOnScroll?: boolean) {
+    fullMids = fullMids.filter((fullMid) => {
+      return !!this.getBubble(fullMid);
     });
 
-    if(!deleted) {
+    if(!fullMids.length) {
       return;
     }
 
+    const rendered = this.getRenderedHistory('desc');
+    const indexes: Record<FullMid, number> = {};
+    rendered.forEach((mid, idx) => indexes[mid] = idx);
+
+    fullMids
+    .slice()
+    .sort((a, b) => (indexes[a] ?? 0) - (indexes[b] ?? 0))
+    .forEach((fullMid) => {
+      const bubble = this.getBubble(fullMid);
+      this.destroyBubble(bubble, permanent && liteMode.isAvailable('animations'));
+    });
+
     this.scrollable.ignoreNextScrollEvent();
     if(permanent && this.chat.selection.isSelecting) {
-      this.chat.selection.deleteSelectedMids(this.peerId, mids);
+      let releaseBatch: () => void;
+      fullMids.forEach((fullMid) => {
+        const {peerId, mid} = splitFullMid(fullMid);
+        releaseBatch = this.chat.selection.deleteSelectedMids(peerId, [mid], true);
+      });
+      releaseBatch?.();
     }
 
     animationIntersector.checkAnimations(false, this.chat.animationGroup);
@@ -3111,7 +3479,7 @@ export default class ChatBubbles {
         const middleware = this.getMiddleware();
         setPeerPromise.then(() => {
           if(!middleware()) return;
-          const newMessage = this.chat.getMessage(message.mid);
+          const newMessage = this.chat.getMessageByPeer(message.peerId, message.mid);
           this.renderNewMessage(newMessage);
         });
       }
@@ -3135,7 +3503,8 @@ export default class ChatBubbles {
       }
     }
 
-    if(this.bubbles[message.mid]) {
+    const fullMid = makeFullMid(message);
+    if(this.getBubble(fullMid)) {
       return;
     }
     // ! should scroll even without new messages
@@ -3160,11 +3529,10 @@ export default class ChatBubbles {
         if(!middleware()) return;
         // this.log('renderNewMessagesByIDs: messagesQueuePromise after', this.scrollable.isScrolledDown);
         // this.scrollable.scrollTo(this.scrollable.scrollHeight, 'top', true, true, 5000);
-        // const bubble = this.bubbles[Math.max(...mids)];
 
         let bubble: HTMLElement;
         if(this.chat.type === ChatType.Scheduled) {
-          bubble = this.bubbles[message.mid];
+          bubble = this.getBubble(fullMid);
         }
 
         const promise = bubble ? this.scrollToBubbleEnd(bubble) : this.scrollToEnd();
@@ -3451,17 +3819,19 @@ export default class ChatBubbles {
     // do not wait ending of previous scale animation
     interruptHeavyAnimation();
 
-    if(TEST_SCROLL !== undefined) {
-      TEST_SCROLL = TEST_SCROLL_TIMES;
-    }
+    // if(TEST_SCROLL !== undefined) {
+    //   TEST_SCROLL = TEST_SCROLL_TIMES;
+    // }
 
     this.skippedMids.clear();
     this.dateMessages = {};
-    this.bubbleGroups.cleanup();
+    this.bubbleGroups?.cleanup();
+    this.bubbleGroups = new BubbleGroups(this.chat);
     this.unreadOut.clear();
     this.needUpdate = [];
     this.lazyLoadQueue.clear();
     this.renderNewPromises.clear();
+    this.changedMids.clear();
 
     // clear messages
     if(bubblesToo) {
@@ -3488,8 +3858,11 @@ export default class ChatBubbles {
       this.observer.disconnect();
 
       this.unreaded.clear();
+      this.unreadedContent.clear();
       this.unreadedSeen.clear();
+      this.unreadedContentSeen.clear();
       this.readPromise = undefined;
+      this.readContentPromise = undefined;
 
       this.viewsMids.clear();
     }
@@ -3545,10 +3918,12 @@ export default class ChatBubbles {
     });
   }
 
-  public async setPeer(options: ChatSetPeerOptions & {samePeer: boolean, sameReactions: boolean}): Promise<{cached?: boolean, promise: Chat['setPeerPromise']}> {
-    const {samePeer, sameReactions, peerId, stack} = options;
-    let {lastMsgId, startParam} = options;
+  public async setPeer(options: ChatSetPeerOptions & {samePeer: boolean, sameSearch: boolean}): Promise<{cached?: boolean, promise: Chat['setPeerPromise']}> {
+    const {samePeer, sameSearch, peerId, stack} = options;
+    let {lastMsgId, lastMsgPeerId, startParam} = options;
     const tempId = ++this.setPeerTempId;
+
+    let lastMsgFullMid: FullMid, topMessageFullMid: FullMid;
 
     if(!peerId) {
       this.cleanup(true);
@@ -3578,12 +3953,22 @@ export default class ChatBubbles {
     const chatType = this.chat.type;
 
     if(chatType === ChatType.Scheduled || this.chat.isRestricted) {
-      lastMsgId = 0;
+      lastMsgFullMid = EMPTY_FULL_MID;
+    } else if(lastMsgId) {
+      lastMsgFullMid = makeFullMid(lastMsgPeerId ?? peerId, lastMsgId);
+    } else {
+      lastMsgFullMid = EMPTY_FULL_MID;
     }
 
     const historyStorage = await m(this.chat.getHistoryStorage());
-    const topMessage = chatType === ChatType.Pinned ? await m(this.managers.appMessagesManager.getPinnedMessagesMaxId(peerId, this.chat.threadId)) : historyStorage.maxId ?? 0;
-    const isTarget = lastMsgId !== undefined;
+    if(chatType === ChatType.Pinned) {
+      topMessageFullMid = makeFullMid(peerId, await m(this.managers.appMessagesManager.getPinnedMessagesMaxId(peerId, this.chat.threadId)));
+    } else if(historyStorage.searchHistory) {
+      topMessageFullMid = (historyStorage.searchHistory.first[0] as FullMid) ?? EMPTY_FULL_MID;
+    } else {
+      topMessageFullMid = historyStorage.maxId ? makeFullMid(peerId, historyStorage.maxId) : EMPTY_FULL_MID;
+    }
+    const isTarget = lastMsgFullMid !== EMPTY_FULL_MID;
 
     // * this one will fix topMessage for null message in history (e.g. channel comments with only 1 comment and it is a topMessage)
     /* if(chatType !== 'pinned' && topMessage && !historyStorage.history.slice.includes(topMessage)) {
@@ -3603,7 +3988,9 @@ export default class ChatBubbles {
 
       if(savedPosition) {
 
-      } else if(topMessage) {
+      } else if(this.chat.type === ChatType.Search) {
+        lastMsgFullMid = topMessageFullMid;
+      } else if(topMessageFullMid !== EMPTY_FULL_MID) {
         let dialog: Awaited<ReturnType<Chat['getDialogOrTopic']>>;
         if(!options.savedReaction) {
           [readMaxId, dialog] = await m(Promise.all([
@@ -3623,22 +4010,21 @@ export default class ChatBubbles {
           }
 
           followingUnread = !isTarget;
-          lastMsgId = readMaxId;
+          lastMsgFullMid = makeFullMid(peerId, readMaxId);
         } else {
-          lastMsgId = topMessage;
-          // lastMsgID = topMessage;
+          lastMsgFullMid = topMessageFullMid;
         }
       }
     }
 
-    const isGoingToBottomEnd = lastMsgId === topMessage || (!lastMsgId && !followingUnread);
-    const isJump = lastMsgId !== topMessage/*  && overrideAdditionMsgId === undefined */;
+    const isGoingToBottomEnd = lastMsgFullMid === topMessageFullMid || (lastMsgFullMid === EMPTY_FULL_MID && !followingUnread);
+    const isJump = lastMsgFullMid !== topMessageFullMid/*  && overrideAdditionMsgId === undefined */;
 
-    if(isGoingToBottomEnd && lastMsgId) {
-      const message = this.chat.getMessage(lastMsgId);
+    if(isGoingToBottomEnd && lastMsgFullMid !== EMPTY_FULL_MID) {
+      const message = this.chat.getMessage(lastMsgFullMid);
       if(!message) {
-        this.log('fix going to bottom end without existing message', lastMsgId);
-        lastMsgId = 0;
+        this.log('fix going to bottom end without existing message', lastMsgFullMid);
+        lastMsgFullMid = EMPTY_FULL_MID;
       }
     }
 
@@ -3646,15 +4032,15 @@ export default class ChatBubbles {
       startParam = BOT_START_PARAM;
     }
 
-    if(samePeer && sameReactions) {
-      if(stack && lastMsgId) {
-        this.followStack.push(stack.mid);
+    if(samePeer && sameSearch) {
+      if(stack && lastMsgFullMid !== EMPTY_FULL_MID) {
+        this.followStack.push(makeFullMid(stack.peerId, stack.mid));
       }
 
-      const mounted = await m(this.getMountedBubble(lastMsgId));
+      const mounted = await m(this.getMountedBubble(lastMsgFullMid));
       let bubble = mounted?.bubble;
-      if(!bubble && this.skippedMids.has(lastMsgId)) {
-        bubble = this.findNextMountedBubbleByMsgId(lastMsgId, false) || this.findNextMountedBubbleByMsgId(lastMsgId, true);
+      if(!bubble && this.skippedMids.has(lastMsgFullMid)) {
+        bubble = this.findNextMountedBubbleByMsgId(lastMsgFullMid, false) || this.findNextMountedBubbleByMsgId(lastMsgFullMid, true);
       }
 
       if(bubble) {
@@ -3662,7 +4048,7 @@ export default class ChatBubbles {
           this.scrollToBubble(bubble, 'center');
           this.highlightBubble(bubble);
           this.chat.dispatchEvent('setPeer', lastMsgId, false);
-        } else if(topMessage && !isJump) {
+        } else if(topMessageFullMid !== EMPTY_FULL_MID && !isJump) {
           // log('will scroll down', this.scroll.scrollTop, this.scroll.scrollHeight);
           // scrollable.setScrollTopSilently(scrollable.scrollHeight);
           this.scrollToEnd();
@@ -3677,7 +4063,7 @@ export default class ChatBubbles {
         if(options.mediaTimestamp) {
           getHeavyAnimationPromise().then(() => {
             this.playMediaWithTimestampAndMid({
-              lastMsgId,
+              lastMsgFullMid,
               middleware,
               mediaTimestamp: options.mediaTimestamp
             });
@@ -3700,22 +4086,24 @@ export default class ChatBubbles {
     }
 
     if(DEBUG) {
-      log('setPeer peerId:', peerId, historyStorage, lastMsgId, topMessage);
+      log('setPeer peerId:', peerId, historyStorage, lastMsgFullMid, topMessageFullMid);
     }
 
     // add last message, bc in getHistory will load < max_id
-    const additionMsgId = overrideAdditionMsgId ?? (isJump || chatType === ChatType.Scheduled || this.chat.isRestricted ? 0 : topMessage);
+    const additionalMid = isJump || [ChatType.Search, ChatType.Scheduled].includes(chatType) || this.chat.isRestricted ? undefined : overrideAdditionMsgId ?? splitFullMid(topMessageFullMid).mid;
+    const additionalFullMid = additionalMid ? makeFullMid(peerId, additionalMid) : undefined;
 
-    let maxBubbleId = 0;
+    let maxBubbleFullMid = EMPTY_FULL_MID;
     if(samePeer) {
       const el = this.getBubbleByPoint('bottom'); // ! this may not work if being called when chat is hidden
       // this.chat.log('[PM]: setCorrectIndex: get last element perf:', performance.now() - perf, el);
       if(el) {
-        maxBubbleId = +el.dataset.mid;
+        maxBubbleFullMid = getBubbleFullMid(el);
       }
 
-      if(maxBubbleId <= 0) {
-        maxBubbleId = Math.max(...Object.keys(this.bubbles).map((mid) => +mid));
+      if(!maxBubbleFullMid) {
+        const rendered = this.getRenderedHistory('desc', true);
+        maxBubbleFullMid = rendered[0] || EMPTY_FULL_MID;
       }
     } else {
       this.isFirstLoad = true;
@@ -3735,17 +4123,27 @@ export default class ChatBubbles {
 
     this.lazyLoadQueue.lock();
 
-    const canScroll = samePeer && sameReactions;
+    const canScroll = samePeer && sameSearch;
     // const haveToScrollToBubble = (topMessage && (isJump || samePeer)) || isTarget;
-    const haveToScrollToBubble = canScroll || (topMessage && isJump) || isTarget;
-    const fromUp = maxBubbleId > 0 && (!lastMsgId || maxBubbleId < lastMsgId || lastMsgId < 0);
+    const haveToScrollToBubble = canScroll || (topMessageFullMid !== EMPTY_FULL_MID && isJump) || isTarget;
+    const fromUp = maxBubbleFullMid !== EMPTY_FULL_MID && (lastMsgFullMid === EMPTY_FULL_MID/*  || lastMsgId < 0 */ || await (async() => {
+      const historyStorage = await this.chat.getHistoryStorage();
+      const slicedArray = historyStorage.searchHistory || historyStorage.history;
+      if(slicedArray === historyStorage.searchHistory) {
+        const lastIndex = slicedArray.first.indexOf(lastMsgFullMid);
+        const maxIndex = slicedArray.first.indexOf(maxBubbleFullMid);
+        return lastIndex < maxIndex;
+      } else {
+        return splitFullMid(maxBubbleFullMid).mid < splitFullMid(lastMsgFullMid).mid;
+      }
+    })());
     const scrollFromDown = !fromUp && canScroll;
     const scrollFromUp = !scrollFromDown && fromUp && canScroll/*  && (samePeer || forwardingUnread) */;
     this.willScrollOnLoad = scrollFromDown || scrollFromUp;
 
     this.setPeerOptions = {
-      lastMsgId,
-      topMessage,
+      lastMsgFullMid,
+      topMessageFullMid,
       savedPosition
     };
 
@@ -3806,7 +4204,12 @@ export default class ChatBubbles {
 
     let result: Awaited<ReturnType<ChatBubbles['getHistory']>>;
     if(!savedPosition) {
-      result = await m(this.getHistory1(lastMsgId, true, isJump, additionMsgId));
+      result = await m(this.getHistory1(
+        !isJump && !additionalFullMid && lastMsgFullMid === topMessageFullMid ? EMPTY_FULL_MID : lastMsgFullMid,
+        true,
+        isJump,
+        additionalFullMid
+      ));
     } else {
       result = {
         promise: getHeavyAnimationPromise().then(() => {
@@ -3836,19 +4239,14 @@ export default class ChatBubbles {
     if(!cached && !samePeer) {
       await m(this.chat.finishPeerChange(finishPeerChangeOptions));
       this.scrollable.replaceChildren();
-      // oldContainer.textContent = '';
-      // oldChatInner.remove();
       this.preloader.attach(this.container);
     }
-
-    /* this.ladderDeferred && this.ladderDeferred.resolve();
-    this.ladderDeferred = deferredPromise<void>(); */
 
     animationIntersector.lockGroup(this.chat.animationGroup);
     const setPeerPromise = m(promise).then(async() => {
       log.warn('promise fulfilled');
 
-      const mountedByLastMsgId = haveToScrollToBubble ? await m(lastMsgId ? this.getMountedBubble(lastMsgId) : {bubble: this.getLastBubble()}) : undefined;
+      const mountedByLastMsgId = haveToScrollToBubble ? await m(lastMsgFullMid !== EMPTY_FULL_MID ? this.getMountedBubble(lastMsgFullMid) : {bubble: this.getLastBubble()}) : undefined;
       if(cached && !samePeer) {
         log.warn('finishing peer change');
         await m(this.chat.finishPeerChange(finishPeerChangeOptions)); // * костыль
@@ -3864,13 +4262,10 @@ export default class ChatBubbles {
 
       this.setPeerCached = undefined;
 
-      // this.ladderDeferred.resolve();
-
       const scrollable = this.scrollable;
       scrollable.lastScrollDirection = 0;
       scrollable.lastScrollPosition = 0;
       scrollable.replaceChildren(chatInner);
-      // this.chat.topbar.container.nextElementSibling.replaceWith(container);
 
       if(oldPlaceholderBubble) {
         this.cleanupPlaceholders(oldPlaceholderBubble);
@@ -3901,17 +4296,6 @@ export default class ChatBubbles {
       // if(dialog && lastMsgID && lastMsgID !== topMessage && (this.bubbles[lastMsgID] || this.firstUnreadBubble)) {
       if(savedPosition) {
         scrollable.setScrollPositionSilently(savedPosition.top);
-        /* const mountedByLastMsgId = this.getMountedBubble(lastMsgId);
-        let bubble: HTMLElement = mountedByLastMsgId?.bubble;
-        if(!bubble?.parentElement) {
-          bubble = this.findNextMountedBubbleByMsgId(lastMsgId);
-        }
-
-        if(bubble) {
-          const top = bubble.getBoundingClientRect().top;
-          const distance = savedPosition.top - top;
-          scrollable.scrollTop += distance;
-        } */
       } else if(haveToScrollToBubble) {
         let unsetPadding: () => void;
         if(scrollFromDown) {
@@ -3929,7 +4313,7 @@ export default class ChatBubbles {
         let bubble: HTMLElement = (followingUnread && this.firstUnreadBubble) || mountedByLastMsgId?.bubble;
         const foundTarget = !!bubble?.parentElement;
         if(!foundTarget) {
-          bubble = this.findNextMountedBubbleByMsgId(lastMsgId, false) || this.findNextMountedBubbleByMsgId(lastMsgId, true);
+          bubble = this.findNextMountedBubbleByMsgId(lastMsgFullMid, false) || this.findNextMountedBubbleByMsgId(lastMsgFullMid, true);
         }
 
         let promise: Promise<void>;
@@ -3987,7 +4371,7 @@ export default class ChatBubbles {
             Promise.resolve();
           p.then(() => {
             return this.playMediaWithTimestampAndMid({
-              lastMsgId,
+              lastMsgFullMid,
               middleware,
               mediaTimestamp: options.mediaTimestamp
             });
@@ -4007,15 +4391,12 @@ export default class ChatBubbles {
         this.setFetchReactionsInterval(afterSetPromise),
         this.setFetchHistoryInterval({
           afterSetPromise,
-          lastMsgId,
           samePeer,
-          savedPosition,
-          topMessage
+          savedPosition
         })
       ]).then(() => {
         log('scrolledAllDown:', scrollable.loadedAll.bottom);
-        // if(!this.unreaded.length && dialog) { // lol
-        if(scrollable.loadedAll.bottom && topMessage && !this.unreaded.size) { // lol
+        if(scrollable.loadedAll.bottom && topMessageFullMid !== EMPTY_FULL_MID && !this.unreaded.size) {
           this.onScrolledAllDown();
         }
       });
@@ -4042,14 +4423,14 @@ export default class ChatBubbles {
 
   public playMediaWithTimestampAndMid({
     middleware,
-    lastMsgId,
+    lastMsgFullMid,
     mediaTimestamp
   }: {
     middleware: () => boolean,
-    lastMsgId: number,
+    lastMsgFullMid: FullMid,
     mediaTimestamp: number
   }) {
-    this.getMountedBubble(lastMsgId).then((mounted) => {
+    this.getMountedBubble(lastMsgFullMid).then((mounted) => {
       if(!middleware() || !mounted) {
         return;
       }
@@ -4100,18 +4481,30 @@ export default class ChatBubbles {
       const fetchReactions = () => {
         if(!middleware()) return;
 
-        const mids: number[] = [];
-        for(const mid in this.bubbles) {
-          let message = this.chat.getMessage(+mid);
+        const rendered = this.getRenderedHistory(undefined, true);
+        const map: Map<PeerId, Set<number>> = new Map();
+        for(const fullMid of rendered) {
+          let message = this.chat.getMessage(fullMid);
           if(message?._ !== 'message') {
             continue;
           }
 
           message = apiManagerProxy.getGroupsFirstMessage(message);
-          mids.push(message.mid);
+          const {peerId, mid} = message;
+
+          let mids = map.get(peerId);
+          if(!mids) {
+            map.set(peerId, mids = new Set());
+          }
+
+          mids.add(mid);
         }
 
-        const promise = mids.length ? this.managers.appReactionsManager.getMessagesReactions(this.peerId, mids) : Promise.resolve();
+        const promises = [...map.entries()].map(([peerId, mids]) => {
+          return this.managers.appReactionsManager.getMessagesReactions(peerId, [...mids]);
+        });
+
+        const promise = Promise.all(promises);
         promise.then(() => {
           setTimeout(fetchReactions, 10e3);
         });
@@ -4124,14 +4517,14 @@ export default class ChatBubbles {
   }
 
   private async setFetchHistoryInterval({
-    lastMsgId,
-    topMessage,
+    // lastMsgId,
+    // topMessage,
     afterSetPromise,
     savedPosition,
     samePeer
   }: {
-    lastMsgId: number,
-    topMessage: number,
+    // lastMsgId: number,
+    // topMessage: number,
     afterSetPromise: Promise<any>,
     savedPosition: ChatSavedPosition,
     samePeer: boolean
@@ -4236,7 +4629,9 @@ export default class ChatBubbles {
     const filterQueue = (queue: typeof loadQueue) => {
       return queue.filter((details) => {
         // message can be deleted during rendering
-        return details && this.bubbles[details.bubble.dataset.mid] === details.bubble;
+        return details &&
+          this.getBubble(makeFullMid(details.message)) === details.bubble &&
+          !this.changedMids.has(details.message.mid);
       });
     };
 
@@ -4397,7 +4792,8 @@ export default class ChatBubbles {
   public groupBubbles(items: Array<{
     // Awaited<ReturnType<ChatBubbles['safeRenderMessage']>> &
     bubble: HTMLElement,
-    message: Message.message | Message.messageService
+    message: Message.message | Message.messageService,
+    reverse: boolean
   }/*  & {
     unmountIfFound?: boolean
   } */>) {
@@ -4415,8 +4811,8 @@ export default class ChatBubbles {
       });
     }
 
-    items.forEach(({bubble, message}) => {
-      this.bubbleGroups.prepareForGrouping(bubble, message);
+    items.forEach(({bubble, message, reverse}) => {
+      this.bubbleGroups.prepareForGrouping(bubble, message, reverse);
     });
 
     const groups = this.bubbleGroups.groupUngrouped();
@@ -4477,6 +4873,17 @@ export default class ChatBubbles {
     attachmentDiv.append(container);
   }
 
+  public getBubble(peerId: PeerId | string, mid?: number) {
+    let fullMid: string;
+    if(mid) {
+      fullMid = makeFullMid(peerId as PeerId, mid);
+    } else {
+      fullMid = peerId as string;
+    }
+
+    return this.bubbles[fullMid];
+  }
+
   private async safeRenderMessage({
     message,
     reverse,
@@ -4492,7 +4899,8 @@ export default class ChatBubbles {
     processResult?: (result: ReturnType<ChatBubbles['renderMessage']>, bubble: HTMLElement) => typeof result,
     canAnimateLadder?: boolean
   }) {
-    if(!message || this.renderingMessages.has(message.mid) || (this.bubbles[message.mid] && !bubble)) {
+    const fullMid = makeFullMid(message);
+    if(!message || this.renderingMessages.has(fullMid) || (this.getBubble(fullMid) && !bubble)) {
       return;
     }
 
@@ -4510,7 +4918,7 @@ export default class ChatBubbles {
       canAnimateLadder?: boolean
     };
     try {
-      this.renderingMessages.add(message.mid);
+      this.renderingMessages.add(fullMid);
 
       // const groupedId = (message as Message.message).grouped_id;
       const newBubble = document.createElement('div');
@@ -4529,7 +4937,7 @@ export default class ChatBubbles {
 
       if(bubble) {
         bubble.middlewareHelper.destroy();
-        this.skippedMids.delete(message.mid);
+        this.skippedMids.delete(fullMid);
 
         this.bubblesToEject.add(bubble);
         this.bubblesToReplace.delete(bubble);
@@ -4537,7 +4945,7 @@ export default class ChatBubbles {
         this.bubbleGroups.changeBubbleByBubble(bubble, newBubble);
       }
 
-      bubble = this.bubbles[message.mid] = newBubble;
+      bubble = this.bubbles[fullMid] = newBubble;
       let originalPromise = this.renderMessage(message, reverse, bubble, middleware);
       if(processResult) {
         originalPromise = processResult(originalPromise, bubble);
@@ -4553,7 +4961,7 @@ export default class ChatBubbles {
       }
 
       if(!result) {
-        this.skippedMids.add(+message.mid);
+        this.skippedMids.add(fullMid);
       }
     } catch(err) {
       this.log.error('renderMessage error:', err);
@@ -4563,355 +4971,15 @@ export default class ChatBubbles {
       return;
     }
 
-    this.renderingMessages.delete(message.mid);
+    this.renderingMessages.delete(fullMid);
     return result;
-  }
-
-  public wrapKeyboardButton({
-    button,
-    message,
-    noTextInject,
-    replyMarkup
-  }: {
-    button: KeyboardButton,
-    message?: Message.message,
-    replyMarkup?: ReplyMarkup,
-    noTextInject?: boolean
-  }) {
-    let text: DocumentFragment | HTMLElement = wrapRichText(button.text, {noLinks: true, noLinebreaks: true});
-    let buttonEl: HTMLButtonElement | HTMLAnchorElement;
-    let buttonIcon: HTMLElement;
-    let onClick: (e: Event) => void;
-
-    const {peerId} = this;
-    const messageMedia = message?.media;
-    const messageMid = (replyMarkup as ReplyMarkup.replyKeyboardMarkup)?.mid || message?.mid;
-    const botId = (replyMarkup as ReplyMarkup.replyKeyboardMarkup)?.fromId || message?.viaBotId || message?.fromId;
-
-    switch(button._) {
-      case 'keyboardButtonUrl': {
-        const r = wrapRichText(' ', {
-          entities: [{
-            _: 'messageEntityTextUrl',
-            length: 1,
-            offset: 0,
-            url: button.url
-          }]
-        });
-
-        buttonEl = htmlToDocumentFragment(r).firstElementChild as HTMLAnchorElement;
-        buttonEl.classList.add('is-link');
-        buttonIcon = Icon('arrow_next');
-
-        break;
-      }
-
-      case 'keyboardButtonSwitchInline': {
-        buttonEl = document.createElement('button');
-        buttonEl.classList.add('is-switch-inline');
-        buttonIcon = Icon('forward_filled');
-        onClick = (e) => {
-          cancelEvent(e);
-
-          let promise: Promise<PeerId>;
-          if(button.pFlags.same_peer) promise = Promise.resolve(peerId);
-          else promise = this.managers.appInlineBotsManager.checkSwitchReturn(botId).then((peerId) => {
-            if(peerId) {
-              return peerId;
-            }
-
-            let types: TelegramChoosePeerType[];
-            if(button.peer_types) {
-              const map: {[type in InlineQueryPeerType['_']]?: TelegramChoosePeerType} = {
-                inlineQueryPeerTypePM: 'users',
-                inlineQueryPeerTypeBotPM: 'bots',
-                inlineQueryPeerTypeBroadcast: 'channels',
-                inlineQueryPeerTypeChat: 'groups',
-                inlineQueryPeerTypeMegagroup: 'groups'
-              };
-
-              types = button.peer_types.map((type) => map[type._]);
-            }
-
-            return PopupPickUser.createPicker(types, ['send_inline']);
-          });
-
-          promise.then(async(chosenPeerId) => {
-            const threadId = peerId === chosenPeerId ? this.chat.threadId : undefined;
-            await this.chat.appImManager.setInnerPeer({peerId: chosenPeerId, threadId});
-            this.managers.appInlineBotsManager.switchInlineQuery(chosenPeerId, threadId, botId, button.query);
-          });
-        };
-        break;
-      }
-
-      case 'keyboardButtonBuy': {
-        const mediaInvoice = messageMedia._ === 'messageMediaInvoice' ? messageMedia : undefined;
-        if(mediaInvoice?.extended_media) {
-          break;
-        }
-
-        buttonEl = document.createElement('button');
-        buttonEl.classList.add('is-buy');
-        buttonIcon = Icon('card');
-
-        if(mediaInvoice?.receipt_msg_id) {
-          text = i18n('Message.ReplyActionButtonShowReceipt');
-        }
-
-        break;
-      }
-
-      case 'keyboardButtonUrlAuth': {
-        buttonEl = document.createElement('button');
-        buttonEl.classList.add('is-url-auth');
-
-        const {url, button_id} = button;
-
-        onClick = () => {
-          const toggle = toggleDisability([buttonEl], true);
-          this.chat.appImManager.handleUrlAuth({
-            peerId,
-            mid: messageMid,
-            url,
-            buttonId: button_id
-          }).then(() => {
-            toggle();
-          });
-        };
-        break;
-      }
-
-      case 'keyboardButtonSimpleWebView':
-      case 'keyboardButtonWebView': {
-        buttonEl = document.createElement('button');
-        buttonEl.classList.add('is-web-view');
-        buttonIcon = Icon('webview');
-
-        onClick = () => {
-          const toggle = toggleDisability([buttonEl], true);
-          this.chat.openWebApp({
-            botId,
-            url: button.url,
-            isSimpleWebView: button._ === 'keyboardButtonSimpleWebView',
-            buttonText: button.text
-          }).finally(() => {
-            toggle();
-          });
-        };
-        break;
-      }
-
-      case 'keyboardButtonRequestPhone': {
-        buttonEl = document.createElement('button');
-        buttonEl.classList.add('is-request-phone');
-
-        onClick = () => {
-          this.chat.appImManager.requestPhone(peerId);
-        };
-        break;
-      }
-
-      case 'keyboardButtonCallback': {
-        buttonEl = document.createElement('button');
-        onClick = () => {
-          this.managers.appInlineBotsManager.callbackButtonClick(peerId, messageMid, button)
-          .then((callbackAnswer) => {
-            if(typeof callbackAnswer.message === 'string' && callbackAnswer.message.length) {
-              toast(wrapRichText(callbackAnswer.message, {noLinks: true, noLinebreaks: true}));
-            }
-          });
-        };
-
-        break;
-      }
-
-      case 'keyboardButtonRequestPeer': {
-        buttonEl = document.createElement('button');
-        onClick = async() => {
-          let filterPeerTypeBy: AppSelectPeers['filterPeerTypeBy'];
-          const peerType = button.peer_type;
-
-          const isRequestingUser = peerType._ === 'requestPeerTypeUser';
-          const isRequestingChannel = peerType._ === 'requestPeerTypeBroadcast';
-          const isRequestingGroup = peerType._ === 'requestPeerTypeChat';
-
-          const _peerType: SelectSearchPeerType[] = ['dialogs'];
-          if(isRequestingUser) {
-            filterPeerTypeBy = (peer) => {
-              if(peer._ !== 'user') {
-                return false;
-              }
-
-              if(peerType.bot !== undefined && peerType.bot !== !!peer.pFlags.bot) {
-                return false;
-              }
-
-              if(peerType.premium !== undefined && peerType.premium !== !!peer.pFlags.premium) {
-                return false;
-              }
-
-              return true;
-            };
-
-            _peerType.push('contacts');
-          } else {
-            let commonChatIds: ChatId[];
-            if(isRequestingGroup) {
-              const messagesChats = await this.managers.appUsersManager.getCommonChats(peerId, 100);
-              commonChatIds = messagesChats.chats.map((chat) => chat.id);
-            }
-
-            filterPeerTypeBy = (peer) => {
-              if(peer._ !== 'channel' && (isRequestingChannel ? true : peer._ !== 'chat')) {
-                return false;
-              }
-
-              if(!!(peer as MTChat.channel).pFlags.broadcast !== isRequestingChannel) {
-                return false;
-              }
-
-              if(peerType.pFlags.creator && !(peer as MTChat.chat).pFlags.creator) {
-                return false;
-              }
-
-              if(peerType.has_username !== undefined && !!getPeerActiveUsernames(peer)[0] !== !!peerType.has_username) {
-                return false;
-              }
-
-              if((peerType as RequestPeerType.requestPeerTypeChat).forum !== undefined &&
-                (peerType as RequestPeerType.requestPeerTypeChat).forum !== !!(peer as MTChat.channel).pFlags.forum) {
-                return false;
-              }
-
-              if(peerType.user_admin_rights) {
-                for(const action in peerType.user_admin_rights.pFlags) {
-                  if(!hasRights(peer as MTChat.channel, action as ChatRights)) {
-                    return false;
-                  }
-                }
-              }
-
-              if((peerType as RequestPeerType.requestPeerTypeChat).pFlags.bot_participant) {
-                if(!commonChatIds.includes(peer.id) && !hasRights(peer as MTChat.chat, 'invite_users')) {
-                  return false;
-                }
-              }
-
-              // don't have bot's rights in particular channel
-              // const botAdminRights = peerType.bot_admin_rights;
-              // if(botAdminRights) {
-              //   for(const action in botAdminRights.pFlags) {
-              //     if(!hasRights(peer, action as ChatRights, botAdminRights)) {
-              //       return false;
-              //     }
-              //   }
-              // }
-
-              return true;
-            };
-          }
-
-          const requestedPeerIds = await PopupPickUser.createPicker2({
-            peerType: _peerType,
-            filterPeerTypeBy,
-            multiSelect: true,
-            limit: button.max_quantity,
-            limitCallback: () => {
-              toastNew({
-                langPackKey: 'RequestPeer.MultipleLimit',
-                langPackArguments: [
-                  i18n(
-                    isRequestingUser ? 'RequestPeer.MultipleLimit.Users' : (isRequestingChannel ? 'RequestPeer.MultipleLimit.Channels' : 'RequestPeer.MultipleLimit.Groups'),
-                    [button.max_quantity]
-                  )
-                ]
-              });
-            },
-            titleLangKey: isRequestingUser ? 'RequestPeer.Title.Users' : (isRequestingChannel ? 'RequestPeer.Title.Channels' : 'RequestPeer.Title.Groups')
-          });
-
-          if(!isRequestingUser) {
-            type P = Parameters<typeof confirmationPopup>[0];
-            const requestedPeerTitles = await Promise.all(requestedPeerIds.map((peerId) => wrapPeerTitle({peerId})));
-            const joinedTitles = join(requestedPeerTitles, false);
-            let joinedTitlesElement: HTMLElement;
-            if(joinedTitles.length === 1) {
-              joinedTitlesElement = joinedTitles[0] as HTMLElement;
-            } else {
-              joinedTitlesElement = document.createElement('span');
-              joinedTitlesElement.append(...joinedTitles);
-            }
-            const descriptionLangArgs: P['descriptionLangArgs'] = [
-              joinedTitlesElement,
-              await wrapPeerTitle({peerId})
-            ];
-
-            const descriptionLangKey: P['descriptionLangKey'] = 'Chat.Service.PeerRequest.Confirm.Plain';
-
-            // if(peerType.bot_admin_rights) {
-            //   descriptionLangKey = 'Chat.Service.PeerRequest.Confirm.Permission';
-            //   descriptionLangArgs.push(
-            //     await wrapPeerTitle({peerId}),
-            //     await wrapPeerTitle({peerId: requestedPeerId})
-            //   );
-            // }
-
-            await confirmationPopup({
-              descriptionLangKey,
-              descriptionLangArgs,
-              button: {
-                langKey: 'Chat.Service.PeerRequest.Confirm.Ok'
-              }
-            });
-          }
-
-          this.managers.appMessagesManager.sendBotRequestedPeer(
-            peerId,
-            messageMid,
-            button.button_id,
-            requestedPeerIds
-          ).catch((err: ApiError) => {
-            if(err.type === 'CHAT_ADMIN_INVITE_REQUIRED') {
-              toastNew({
-                langPackKey: isRequestingChannel ? 'Error.RequestPeer.NoRights.Channel' : 'Error.RequestPeer.NoRights.Group'
-              });
-            }
-          });
-        };
-
-        break;
-      }
-
-      default: {
-        buttonEl = document.createElement('button');
-
-        if(!message) {
-          onClick = () => {
-            this.managers.appMessagesManager.sendText({peerId, text: button.text});
-          };
-        }
-
-        break;
-      }
-    }
-
-    if(buttonIcon) {
-      buttonIcon.classList.add('reply-markup-button-icon');
-    }
-
-    if(!noTextInject) {
-      buttonEl?.append(text);
-    }
-
-    return {text, buttonEl, buttonIcon, onClick};
   }
 
   private setBubbleSendingStatus(bubble: HTMLElement, status?: 'sending' | 'error' | 'sent' | 'read', first?: boolean) {
     !first && bubble.classList.remove('is-sending', 'is-error', 'is-sent', 'is-read');
     status && bubble.classList.add('is-' + status);
     bubble.querySelectorAll('.time, .time-inner').forEach((element) => {
-      const isReplacingFirst = element.firstElementChild.classList.contains('time-sending-status');
+      const isReplacingFirst = !!element.querySelector('.time-sending-status');
       if(!status) {
         if(isReplacingFirst) {
           element.firstElementChild.remove();
@@ -4934,6 +5002,52 @@ export default class ChatBubbles {
       }
     });
   }
+
+  private setBubbleRepliesCount(bubble: HTMLElement, count: number) {
+    if(this.chat.threadId) return;
+    bubble.querySelectorAll('.time, .time-inner').forEach((element) => {
+      let previous = element.querySelector('.time-replies');
+      if(!count) {
+        previous?.remove();
+        return;
+      }
+
+      if(!previous) {
+        previous = document.createElement('span');
+        previous.classList.add('time-replies');
+        previous.append(document.createTextNode(''), Icon('reply_filled', 'time-replies-icon', 'time-icon'));
+      }
+
+      previous.firstChild.textContent = numberThousandSplitter(count);
+
+      if(!previous.parentElement) {
+        element.prepend(previous);
+      }
+    });
+  }
+
+  private setUnreadObserver(type: 'history' | 'content', bubble: HTMLElement, mid?: number, element: HTMLElement = bubble) {
+    mid ??= (bubble as any).maxBubbleMid;
+    // this.log('not our message', message, message.pFlags.unread);
+    this.observer.observe(element, type === 'history' ? this.unreadedObserverCallback : this.unreadedContentObserverCallback);
+    (type === 'history' ? this.unreaded : this.unreadedContent).set(element, mid);
+  }
+
+  private modifyBubble = async(callback: () => void) => {
+    const setBatch = !this.batchingModifying;
+    (this.batchingModifying ??= []).push(callback);
+    if(setBatch) {
+      pause(0).then(async() => {
+        await getHeavyAnimationPromise();
+        const callbacks = this.batchingModifying;
+        const scrollSaver = this.createScrollSaver(false);
+        scrollSaver.save();
+        callbacks.forEach((callback) => callback());
+        scrollSaver.restore();
+        this.batchingModifying = undefined;
+      });
+    }
+  };
 
   // reverse means top
   private async renderMessage(
@@ -4968,6 +5082,7 @@ export default class ChatBubbles {
     }
 
     const maxBubbleMid = groupedMids ? Math.max(...groupedMids) : message.mid;
+    (bubble as any).maxBubbleMid = maxBubbleMid;
 
     if(isMessage) {
       reactionsMessage = groupedId ? getMainGroupedMessage(groupedMessages) : message;
@@ -4989,12 +5104,13 @@ export default class ChatBubbles {
     contentWrapper.append(bubbleContainer);
     bubble.append(contentWrapper);
 
+
     let isInUnread = !our &&
       !message.pFlags.out &&
-      (
-        message.pFlags.unread ||
-        isMentionUnread(message)
-      );
+      message.pFlags.unread;
+
+    const unreadMention = isMentionUnread(message);
+    const unreadReactions = getUnreadReactions(message);
 
     if(!isInUnread && this.chat.peerId.isAnyChat()) {
       const readMaxId = await this.managers.appMessagesManager.getReadMaxIdIfUnread(this.chat.peerId, this.chat.threadId);
@@ -5339,11 +5455,7 @@ export default class ChatBubbles {
       returnService = true;
     }
 
-    const setUnreadObserver = isInUnread && this.observer ? (element: HTMLElement = bubble) => {
-      // this.log('not our message', message, message.pFlags.unread);
-      this.observer.observe(element, this.unreadedObserverCallback);
-      this.unreaded.set(element, maxBubbleMid);
-    } : undefined;
+    const setUnreadObserver = isInUnread && this.observer ? this.setUnreadObserver.bind(this, 'history', bubble, maxBubbleMid) : undefined;
 
     const isBroadcast = this.chat.isBroadcast;
     if(returnService) {
@@ -5355,22 +5467,29 @@ export default class ChatBubbles {
       setUnreadObserver?.();
     }
 
+    if(this.observer && (unreadMention || unreadReactions)) {
+      this.setUnreadObserver('content', bubble, reactionsMessage.mid);
+    }
+
     const isSponsored = (message as Message.message).pFlags.sponsored;
     const sponsoredMessage = (message as Message.message).sponsoredMessage;
+    const factCheck = /* !!isSponsored === !sponsoredMessage &&  */isMessage && message.factcheck;
 
     let messageMedia: MessageMedia = isMessage && message.media;
     let needToSetHTML = true;
-    let messageMessage: string, totalEntities: MessageEntity[], groupedTextMessage: Message.message;
+    let messageMessage: string, totalEntities: MessageEntity[], messageWithMessage: Message.message, groupedTextMessage: Message.message;
     if(isMessage) {
       if(groupedId && groupedMustBeRenderedFull) {
         const t = groupedTextMessage = getGroupedText(groupedMessages);
         messageMessage = t?.message || '';
         // totalEntities = t.entities;
         totalEntities = t?.totalEntities || [];
+        messageWithMessage = groupedTextMessage;
       } else {
         messageMessage = message.message;
         // totalEntities = message.entities;
         totalEntities = message.totalEntities;
+        messageWithMessage = message;
       }
 
       const document = (messageMedia as MessageMedia.messageMediaDocument)?.document as MyDocument;
@@ -5391,7 +5510,7 @@ export default class ChatBubbles {
     }
 
     let bigEmojis = 0, customEmojiSize: MediaSize;
-    if(totalEntities && !messageMedia) {
+    if(totalEntities && !messageMedia && !factCheck) {
       const emojiEntities: (MessageEntity.messageEntityCustomEmoji | MessageEntity.messageEntityEmoji)[] = [];
       for(let i = 0, length = totalEntities.length; i < length; ++i) {
         const entity = totalEntities[i];
@@ -5460,7 +5579,27 @@ export default class ChatBubbles {
       passMaskedLinks: !!(message as Message.message).sponsoredMessage
     });
 
-    const richText = messageMessage ? wrapRichText(messageMessage, getRichTextOptions(totalEntities)) : undefined;
+    const canTranslate = !bigEmojis && !our && this.chat.type !== ChatType.Search;
+    const translatableParams: Parameters<typeof TranslatableMessage>[0] = canTranslate ? {
+      peerId: message.peerId,
+      middleware,
+      observeElement: bubble,
+      observer: this.observer,
+      onTranslation: this.modifyBubble,
+      richTextOptions: getRichTextOptions()
+    } : undefined;
+
+    const richText = messageMessage ? (
+      !canTranslate ?
+        wrapRichText(messageMessage, getRichTextOptions(totalEntities)) :
+        TranslatableMessage({
+          message: messageWithMessage,
+          ...translatableParams
+        })
+      ) : undefined;
+
+    let isMessageEmpty = !messageMessage && !isSponsored && !factCheck/*  && (!topicNameButtonContainer || isStandaloneMedia) */;
+    let mediaRequiresMessageDiv = false;
 
     let canHaveTail = true;
     let canHavePlainMediaTail = false;
@@ -5486,7 +5625,8 @@ export default class ChatBubbles {
           bubbleContainer.append(attachmentDiv);
         }
 
-        bubble.classList.add('is-message-empty', 'emoji-big');
+        isMessageEmpty = true;
+        bubble.classList.add('emoji-big');
         isStandaloneMedia = true;
         canHaveTail = false;
         needToSetHTML = false;
@@ -5504,15 +5644,21 @@ export default class ChatBubbles {
 
     let timeSpan: HTMLElement;
     if(!isSponsored) {
-      timeSpan = MessageRender.setTime({
+      timeSpan = bubble.timeSpan = MessageRender.setTime({
         chat: this.chat,
         chatType: this.chat.type,
         message,
         reactionsMessage,
-        isOut
+        isOut,
+        middleware,
+        loadPromises
       });
 
-      messageDiv.append(timeSpan);
+      bubble.timeAppenders = [];
+      let _clearfix: HTMLElement;
+      appendBubbleTime(bubble, messageDiv, () => {
+        messageDiv.append(timeSpan, _clearfix ??= clearfix());
+      });
 
       if(I18n.isRTL ? !endsWithRTL(messageMessage) : haveRTLChar) {
         timeSpan.classList.add('is-block');
@@ -5526,18 +5672,19 @@ export default class ChatBubbles {
     }
 
     bubbleContainer.prepend(messageDiv);
-    // bubble.prepend(timeSpan, messageDiv); // that's bad
 
     let topicNameButtonContainer: HTMLElement;
-    if(isMessage && this.chat.isAllMessagesForum) {
+    if(isMessage && (this.chat.isAllMessagesForum || (this.chat.hashtagType === 'my' && isOut))) {
       const result = await wrapTopicNameButton({
-        peerId: this.peerId,
+        peerId: message.peerId,
         threadId: getMessageThreadId(message, this.chat.isForum),
         lastMsgId: message.mid,
         wrapOptions: {
           middleware
         },
-        withIcons: true
+        withIcons: true,
+        dialog: true,
+        noLink: this.chat.type === ChatType.Search
       });
 
       const {element} = result;
@@ -5557,7 +5704,7 @@ export default class ChatBubbles {
         const forward = document.createElement('div');
         forward.classList.add('bubble-beside-button', 'with-hover', 'forward');
         forward.append(Icon('forward_filled'));
-        bubbleContainer.prepend(forward);
+        bubbleContainer.append(forward);
         bubble.classList.add('with-beside-button');
       }
 
@@ -5586,8 +5733,9 @@ export default class ChatBubbles {
         buttons.forEach((button, idx, arr) => {
           const isFirst = idx === 0;
           const isLast = idx === arr.length - 1;
-          const {text, buttonEl, buttonIcon, onClick} = this.wrapKeyboardButton({
+          const {text, buttonEl, buttonIcon, onClick} = wrapKeyboardButton({
             button,
+            chat: this.chat,
             message: message as Message.message,
             noTextInject: true
           });
@@ -5674,38 +5822,100 @@ export default class ChatBubbles {
 
     const canHideNameIfMedia = !message.viaBotId &&
       (message.fromId === rootScope.myId || !message.pFlags.out) &&
-      !(message as Message.message).post_author &&
+      (!(message as Message.message).post_author || !fwdFrom) &&
       !_isForwardOfForward/*  &&
       !fwdFromId */;
       // (!getFwdFromName(fwdFrom) || !fwdFromId);
-
-    const isMessageEmpty = !messageMessage && !isSponsored/*  && (!topicNameButtonContainer || isStandaloneMedia) */;
 
     const invertMedia = isMessage && message.pFlags.invert_media;
     if(invertMedia) {
       bubble.classList.add('invert-media');
     }
 
-    let storyFromPeerId: PeerId;
+    let factCheckBox: HTMLElement;
+    if(factCheck) {
+      createRoot((dispose) => {
+        middleware.onDestroy(dispose);
+
+        const getCountry = () => I18n.countriesList.find((country) => country.iso2 === factCheck.country);
+        const getCountryName = () => {
+          const country = getCountry();
+          return country.name || country.default_name;
+        };
+
+        const [textWithEntities, setTextWithEntities] = createSignal<TextWithEntities>();
+
+        const onFactCheck = (factCheck: FactCheck) => {
+          setTextWithEntities(factCheck.text);
+        };
+
+        if(!factCheck.text) {
+          this.managers.appMessagesManager.getFactCheck(message.peerId, message.mid)
+          .then((factCheck) => {
+            this.modifyBubble(() => {
+              onFactCheck(factCheck);
+            });
+          });
+        } else {
+          onFactCheck(factCheck);
+        }
+
+        WebPageBox({
+          footer: {
+            content: i18n('FactCheckFooter', [getCountryName()]),
+            text: true
+          },
+          name: {
+            content: i18n('FactCheck'),
+            tip: {
+              content: i18n('FactCheckWhat'),
+              onClick: (e) => {
+                showTooltip({
+                  element: e.target as HTMLElement,
+                  container: this.container,
+                  vertical: 'top',
+                  textElement: i18n('FactCheckToast', [getCountryName()])
+                });
+              }
+            }
+          },
+          get text() {
+            if(!textWithEntities()) {
+              return i18n('Loading');
+            }
+
+            const {text, entities} = wrapTextWithEntities(textWithEntities());
+            return wrapRichText(text, {entities});
+          },
+          ref: (box) => {
+            factCheckBox = box;
+            if(timeSpan) {
+              timeSpan.before(box);
+            } else {
+              messageDiv.append(box);
+            }
+          },
+          minContent: true
+        });
+      });
+      const box = document.createElement('div');
+      box.classList.add('bubble-fact-check', 'quote-like', 'quote-like-hoverable');
+    }
+
+    const canPossiblyHavePlainMediaTail = isMessageEmpty || invertMedia;
+
+    let storyFromPeerId: PeerId, noAttachmentDivNeeded = false, processedWebPage = false;
     // media
-    if(messageMedia/*  && messageMedia._ === 'messageMediaPhoto' */) {
+    if(messageMedia) {
       attachmentDiv = document.createElement('div');
       attachmentDiv.classList.add('attachment');
 
-      if(isMessageEmpty) {
-        bubble.classList.add('is-message-empty');
-      }
-
-      let processingWebPage = false;
-
-      /* if(isMessage)  */switch(messageMedia._) {
+      switch(messageMedia._) {
         case 'messageMediaPhotoExternal':
         case 'messageMediaPhoto': {
           const photo = messageMedia.photo;
 
-          if(isMessageEmpty) {
-            canHavePlainMediaTail = true;
-          }
+          canHavePlainMediaTail = canPossiblyHavePlainMediaTail;
 
           if(canHideNameIfMedia) {
             bubble.classList.add('hide-name');
@@ -5756,8 +5966,7 @@ export default class ChatBubbles {
         }
 
         case 'messageMediaWebPage': {
-          const className = 'webpage';
-          processingWebPage = true;
+          noAttachmentDivNeeded = true;
           attachmentDiv = undefined;
 
           const webPage: WebPage = messageMedia.webpage;
@@ -5765,6 +5974,7 @@ export default class ChatBubbles {
             break;
           }
 
+          processedWebPage = true;
           const storyAttribute = webPage.attributes?.find((attribute) => attribute._ === 'webPageAttributeStory') as WebPageAttribute.webPageAttributeStory;
           const storyPeerId = storyAttribute && getPeerId(storyAttribute.peer);
           const storyId = storyAttribute?.id;
@@ -5779,145 +5989,85 @@ export default class ChatBubbles {
             }
           }
 
-          const box = document.createElement('a');
-          box.classList.add(className, 'quote-like', 'quote-like-hoverable');
-          ripple(box);
+          const props: Parameters<typeof WebPageBox>[0] = {};
+          const boxRefs: ((box: HTMLAnchorElement) => void)[] = [];
 
-          const quoteClassName = `${className}-quote`;
           const wrapped = wrapUrl(webPage.url);
-          let viewButton: HTMLElement;
-          // if(sponsoredMessage) sponsoredMessage.pFlags.show_peer_photo = true;
-          if((wrapped.onclick && !UNSAFE_ANCHOR_LINK_TYPES.has(wrapped.onclick)) || isSponsored) {
-            viewButton = document.createElement('div');
-            viewButton.classList.add(`${className}-button`);
-            setDirection(viewButton);
-
+          const hasSafeUrl = (wrapped.onclick && !UNSAFE_ANCHOR_LINK_TYPES.has(wrapped.onclick)) || isSponsored;
+          if(hasSafeUrl) {
             if(isSponsored) {
-              const peerId = getPeerId(sponsoredMessage.from_id);
-              const isBot = peerId !== NULL_PEER_ID ? peerId.isUser() : this.chat.isBot;
-              const webPage = sponsoredMessage.webpage;
+              messageDiv.classList.add('margin-bigger');
+              const wrapped = wrapUrl(sponsoredMessage.url);
 
-              let text: LangPackKey,
-                mid: number,
-                startParam: string,
-                callback: () => void,
-                link: string;
-              if(sponsoredMessage.app) {
-                text = 'Chat.Message.ViewApp';
-              } else if(webPage) {
-                text = 'OpenUrlTitle';
-              } else if(sponsoredMessage.channel_post) {
-                text = 'OpenChannelPost';
-                mid = sponsoredMessage.channel_post;
-              } else if(sponsoredMessage.start_param || isBot) {
-                text = 'Chat.Message.ViewBot';
-                startParam = sponsoredMessage.start_param;
-              } else {
-                const peer = apiManagerProxy.getPeer(peerId);
-                text = !(peer as MTChat.channel)?.pFlags?.broadcast ? 'Chat.Message.ViewGroup' : 'Chat.Message.ViewChannel';
-              }
-
-              const chatInvite = sponsoredMessage.chat_invite, chatInviteHash = sponsoredMessage.chat_invite_hash;
-              if(sponsoredMessage.app) {
-                callback = () => {
-                  const user = apiManagerProxy.getUser(peerId.toUserId());
-                  // this.chat.appImManager.openWebApp({
-                  //   app: sponsoredMessage.app as BotApp.botApp,
-                  // });
-                  const link: InternalLink = {
-                    _: INTERNAL_LINK_TYPE.WEB_APP,
-                    appname: (sponsoredMessage.app as BotApp.botApp).short_name,
-                    domain: getPeerActiveUsernames(user)[0],
-                    startapp: sponsoredMessage.start_param
-                  };
-
-                  internalLinkProcessor.processInternalLink(link);
-                };
-              } else if(webPage) {
-                link = webPage.url;
-                box.href = link;
-                setBlankToAnchor(box);
-                // callback = () => {
-                //   window.open(webPage.url, '_blank');
-                // };
-              } else if(chatInvite) {
-                if((chatInvite as ChatInvite.chatInvite).pFlags?.broadcast ||
-                  ((chatInvite as ChatInvite.chatInviteAlready).chat as MTChat.channel)?.pFlags?.broadcast) {
-                  text = 'Chat.Message.ViewChannel';
-                }
-                callback = () => {
-                  PopupJoinChatInvite.open(chatInviteHash, chatInvite);
-                };
-              } else if(chatInviteHash) {
-                callback = () => {
-                  const link: InternalLink = {
-                    _: INTERNAL_LINK_TYPE.JOIN_CHAT,
-                    invite: chatInviteHash
-                  };
-
-                  internalLinkProcessor.processInternalLink(link);
-                };
-              } else {
-                callback = () => {
-                  this.chat.appImManager.setInnerPeer({
-                    peerId,
-                    lastMsgId: mid,
-                    startParam
-                  });
-                };
-              }
-
-              if(callback) (box as any).callback = () => {
-                this.chat.appImManager.clickIfSponsoredMessage(message as Message.message);
-                callback();
+              props.footer = {
+                content: wrapEmojiText(sponsoredMessage.button_text),
+                link: !wrapped.onclick,
+                ref: (viewButton) => this.observer.observe(viewButton, this.viewsObserverCallback)
               };
 
-              viewButton.append(sponsoredMessage.button_text ? wrapEmojiText(sponsoredMessage.button_text) : i18n(text));
-              this.observer.observe(viewButton, this.viewsObserverCallback);
+              boxRefs.push((box) => {
+                // if(!wrapped.onclick) {
+                //   box.href = wrapped.url;
+                //   setBlankToAnchor(box);
+                // }
+
+                (box as any).callback = () => {
+                  this.chat.appImManager.clickIfSponsoredMessage(message as Message.message);
+
+                  if(wrapped.onclick) {
+                    this.chat.appImManager.openUrl(sponsoredMessage.url);
+                  } else {
+                    safeWindowOpen(wrapped.url);
+                  }
+                };
+              });
             } else {
               const langPackKey = webPageTypes[webPage.type] || 'OpenMessage';
-              viewButton.append(i18n(langPackKey));
-              box.dataset.callback = wrapped.onclick;
+
+              props.footer = {
+                content: i18n(langPackKey)
+              };
+
+              boxRefs.push((box) => {
+                box.dataset.callback = wrapped.onclick;
+              });
             }
           } else {
-            setBlankToAnchor(box);
+            const isUnsafe = !messageMedia.pFlags.safe;
+            boxRefs.push((box) => {
+              setBlankToAnchor(box);
 
-            if(!messageMedia.pFlags.safe) {
-              box.dataset.callback = 'showMaskedAlert';
-            }
+              if(isUnsafe) {
+                box.dataset.callback = 'showMaskedAlert';
+              }
+            });
           }
 
           if(wrapped?.url && !isSponsored) {
-            box.href = wrapped.url;
+            boxRefs.push((box) => {
+              box.href = wrapped.url;
+            });
           }
 
-          bubble.classList.add('has-webpage');
+          bubble.classList.add('has-webpage', 'single-media');
 
-          const quote = document.createElement('div');
-          quote.classList.add(quoteClassName, 'quote-like-border');
-
-          if(viewButton) {
-            quote.classList.add('has-button');
-          }
-
-          let previewResizer: HTMLDivElement, preview: HTMLDivElement;
-          const photo: Photo.photo = webPage.photo as any;
+          let preview: HTMLDivElement;
           const doc = webPage.document as MyDocument;
           const hasLargeMedia = !!webPage.pFlags.has_large_media;
           const hasSmallMedia = !!(hasLargeMedia && messageMedia.pFlags.force_small_media);
           const sponsoredPhoto = sponsoredMessage && getSponsoredPhoto(sponsoredMessage);
-          const willHaveSponsoredAvatar = sponsoredMessage && (getPeerId(sponsoredMessage.from_id) !== NULL_PEER_ID || sponsoredPhoto);
-          const willHaveSponsoredPhoto = sponsoredMessage && sponsoredMessage.pFlags.show_peer_photo && willHaveSponsoredAvatar;
-          if(photo || doc || storyAttribute || willHaveSponsoredPhoto) {
-            previewResizer = document.createElement('div');
-            previewResizer.classList.add(`${className}-preview-resizer`);
+          const photo = (sponsoredPhoto || webPage.photo) as Photo.photo;
+          // const willHaveSponsoredAvatar = sponsoredMessage && (getPeerId(sponsoredMessage.from_id) !== NULL_PEER_ID || sponsoredPhoto);
+          // const willHaveSponsoredPhoto = sponsoredMessage && sponsoredMessage.pFlags.show_peer_photo && willHaveSponsoredAvatar;
+          const willHaveSponsoredPhoto = !!sponsoredPhoto;
+          const willHaveMedia = !!(photo || doc || storyAttribute || willHaveSponsoredPhoto);
+          if(willHaveMedia) {
             preview = document.createElement('div');
-            preview.classList.add(`${className}-preview`);
-            previewResizer.append(preview);
+            props.media = {
+              content: preview,
+              position: 'top'
+            };
           }
-
-          const contentDiv = document.createElement('div');
-          contentDiv.classList.add(`${className}-content`);
 
           if(doc) {
             if(doc.type === 'gif' || doc.type === 'video' || doc.type === 'round') {
@@ -5941,7 +6091,9 @@ export default class ChatBubbles {
                 group: this.chat.animationGroup,
                 loadPromises,
                 autoDownload: this.chat.autoDownload,
-                noInfo: message.mid < 0
+                noInfo: message.mid < 0,
+                observer: this.observer,
+                setShowControlsOn: bubble
               });
             } else {
               const docDiv = await wrapDocument({
@@ -5961,109 +6113,49 @@ export default class ChatBubbles {
                 canTranscribeVoice: true
               });
               preview.append(docDiv);
-              preview.classList.add(`${className}-preview-with-document`);
-              contentDiv.classList.add('has-document');
+              props.media.hasDocument = true;
             }
           }
 
-          const textElements: HTMLElement[] = [];
           if(webPage.site_name || sponsoredMessage) {
-            let a: HTMLElement;
+            let smth: HTMLElement | DocumentFragment;
             if(sponsoredMessage) {
-              a = document.createElement('div');
-            } else {
-              const html = wrapRichText(webPage.url);
-              a = htmlToDocumentFragment(html).firstElementChild as any;
-            }
-
-            a.classList.add(`${className}-name`);
-            const strong = document.createElement('strong');
-            if(sponsoredMessage) {
-              strong.append(i18n(sponsoredMessage.pFlags.recommended ? 'SponsoredMessageRecommended' : 'SponsoredMessage'));
-              strong.classList.add('text-capitalize');
+              smth = i18n(sponsoredMessage.pFlags.recommended ? 'SponsoredMessageRecommended' : 'SponsoredMessage');
+              smth.classList.add('text-capitalize');
             } else if(webPageTypesSiteNames[webPage.type]) {
-              strong.append(i18n(webPageTypesSiteNames[webPage.type]));
+              smth = i18n(webPageTypesSiteNames[webPage.type]);
             } else {
-              strong.append(wrapEmojiText(webPage.site_name));
+              smth = wrapEmojiText(webPage.site_name);
             }
 
-            a.replaceChildren(strong);
-            setDirection(a);
-            contentDiv.append(a);
-            textElements.push(a);
+            if(!sponsoredMessage) {
+              const html = wrapRichText(webPage.url);
+              const a = htmlToDocumentFragment(html).firstElementChild as any;
+              a.replaceChildren(smth);
+              smth = a;
+            }
+
+            props.name = {
+              content: smth,
+              tip: sponsoredMessage && sponsoredMessage.pFlags.can_report && {
+                content: i18n('SponsoredMessageAdWhatIsThis'),
+                onClick: (e) => {
+                  cancelEvent(e);
+                  PopupElement.createPopup(PopupAboutAd);
+                }
+              }
+            };
           }
 
           const title = wrapWebPageTitle(webPage);
           if(title.textContent || sponsoredMessage) {
-            const titleDiv = document.createElement('div');
-            titleDiv.classList.add(`${className}-title`);
-            const strong = document.createElement('strong');
-
-            if(sponsoredMessage) {
-              if(sponsoredMessage.webpage || sponsoredMessage.chat_invite) {
-                let fragment: DocumentFragment;
-                const chatInvite = sponsoredMessage.chat_invite,
-                  webPage = sponsoredMessage.webpage;
-                if(webPage) {
-                  fragment = wrapEmojiText(webPage.site_name);
-                } else if(chatInvite) {
-                  let chatTitle: string;
-                  if(chatInvite._ !== 'chatInvite') {
-                    chatTitle = (chatInvite.chat as MTChat.channel).title;
-                    // noColor = false;
-                    // peerIdForColor = (chatInvite.chat as MTChat.channel).id.toPeerId(true);
-                  } else {
-                    chatTitle = chatInvite.title;
-                  }
-
-                  fragment = wrapEmojiText(chatTitle);
-                }
-
-                if(fragment) {
-                  strong.append(fragment);
-                }
-
-                // if(fragment) {
-                //   title = document.createElement('span');
-                //   title.classList.add('peer-title');
-                //   title.append(fragment);
-                // }
-
-                // noColor ??= true;
-              } else {
-                strong.append(await wrapPeerTitle({
-                  peerId: message.fromId,
-                  withPremiumIcon: true,
-                  wrapOptions
-                }));
-              }
-            } else {
-              strong.append(title);
-            }
-
-            titleDiv.append(strong);
-            setDirection(titleDiv);
-            contentDiv.append(titleDiv);
-            textElements.push(titleDiv);
+            props.title = sponsoredMessage ? wrapEmojiText(sponsoredMessage.title) : title;
           }
 
           const description = wrapWebPageDescription(webPage, getRichTextOptions(webPage.entities), isSponsored);
           if(description.textContent) {
-            const textDiv = document.createElement('div');
-            textDiv.classList.add(`${className}-text`);
-            setInnerHTML(textDiv, description);
-            contentDiv.append(textDiv);
-            textElements.push(textDiv);
+            props.text = description;
           }
-
-          // if(textElements.length) {
-          //   textElements.slice(1).forEach((element) => element.classList.add(`${className}-text-margin-top`));
-          // }
-
-          // const border = document.createElement('div');
-          // border.classList.add(`${className}-border`, 'quote-like-border');
-
-          quote.append(contentDiv);
 
           let isSquare = false;
           if(willHaveSponsoredPhoto || (photo && !doc)) {
@@ -6071,9 +6163,9 @@ export default class ChatBubbles {
 
             const squareBoxSize = 48;
             const size: PhotoSize.photoSize = !sponsoredMessage && photo.sizes[photo.sizes.length - 1] as any;
-            if((!size || (size.w === size.h && !hasLargeMedia) || hasSmallMedia) && textElements[0]) {
+            if((!size || (size.w === size.h && !hasLargeMedia) || hasSmallMedia) && (props.name || props.title || props.text)) {
               bubble.classList.add('is-square-photo');
-              box.classList.add('has-square-photo');
+              props.media.photoSize = 'square';
               isSquare = true;
               preview.style.width = preview.style.height = `${squareBoxSize}px`;
               // setAttachmentSize({
@@ -6085,10 +6177,10 @@ export default class ChatBubbles {
               // });
             } else if(size.h > size.w && !hasLargeMedia) {
               bubble.classList.add('is-vertical-photo');
-              box.classList.add('has-vertical-photo');
+              props.media.photoSize = 'vertical';
             }
 
-            const p = sponsoredPhoto?._ === 'photo' ? sponsoredPhoto : photo;
+            /* const p = sponsoredPhoto?._ === 'photo' ? sponsoredPhoto : photo;
 
             if(!p) {
               const photoIsPeer = sponsoredPhoto && sponsoredPhoto._ !== 'photo';
@@ -6102,8 +6194,8 @@ export default class ChatBubbles {
               node.classList.add('avatar-full');
               preview.append(node);
               readyThumbPromise && loadPromises.push(readyThumbPromise);
-            } else wrapPhoto({
-              photo: p,
+            } else  */wrapPhoto({
+              photo/* : p */,
               message,
               container: preview,
               boxWidth: isSquare ? 0 : mediaSizes.active.webpage.width,
@@ -6142,7 +6234,7 @@ export default class ChatBubbles {
               element: preview,
               boxWidth: size.width,
               boxHeight: size.height,
-              message
+              message: message as Message.message
             });
 
             this.wrapStory({
@@ -6158,18 +6250,30 @@ export default class ChatBubbles {
             });
           }
 
-          previewResizer && contentDiv[invertMedia || isSquare ? 'prepend' : 'append'](previewResizer);
-          if(viewButton) {
-            contentDiv.append(viewButton);
+          if(preview) {
+            props.media.position = invertMedia || isSquare ? 'top' : 'bottom';
           }
 
-          box.append(quote);
-          if(timeSpan) {
-            if(invertMedia) timeSpan.parentElement.prepend(box);
-            else timeSpan.before(box);
-          } else {
-            messageDiv.append(box);
-          }
+          createRoot((dispose) => {
+            middleware.onDestroy(dispose);
+            WebPageBox({
+              ...props,
+              ref: (box) => {
+                boxRefs.forEach((ref) => ref(box));
+                if(factCheckBox && !invertMedia) {
+                  factCheckBox.before(box);
+                } else if(timeSpan) {
+                  if(invertMedia) {
+                    timeSpan.parentElement.prepend(box);
+                    box.parentElement.classList.add('mt-bigger');
+                  } else timeSpan.before(box);
+                } else {
+                  messageDiv.append(box);
+                }
+              },
+              clickable: true
+            });
+          });
 
           break;
         }
@@ -6219,7 +6323,7 @@ export default class ChatBubbles {
               showPremiumInfo: () => {
                 const a = anchorCallback(() => {
                   hideToast();
-                  PopupElement.createPopup(PopupStickers, doc.stickerSetInput).show();
+                  PopupElement.createPopup(PopupStickers, doc.stickerSetInput, undefined, this.chat.input).show();
                 });
 
                 toastNew({
@@ -6243,8 +6347,8 @@ export default class ChatBubbles {
 
             if(isRound/*  || isMessageEmpty */) {
               canHaveTail = false;
-            } else if(isMessageEmpty) {
-              canHavePlainMediaTail = true;
+            } else {
+              canHavePlainMediaTail = canPossiblyHavePlainMediaTail;
             }
 
             if(canHideNameIfMedia) {
@@ -6289,7 +6393,9 @@ export default class ChatBubbles {
                   isScheduled: (message as Message.message).pFlags.is_scheduled
                 } : undefined,
                 noInfo: message.mid <= 0,
-                noAutoplayAttribute: !!messageMedia.pFlags.spoiler
+                noAutoplayAttribute: !!messageMedia.pFlags.spoiler,
+                observer: this.observer,
+                setShowControlsOn: bubble
               });
 
               if(messageMedia.pFlags.spoiler) {
@@ -6320,28 +6426,40 @@ export default class ChatBubbles {
               } : undefined,
               sizeType: 'documentName',
               fontSize: rootScope.settings.messagesTextSize,
-              richTextFragment: typeof(richText) === 'string' ? undefined : richText,
+              richTextFragment: richText,
               richTextOptions: getRichTextOptions(),
-              canTranscribeVoice: true
+              canTranscribeVoice: true,
+              translatableParams,
+              factCheckBox,
+              isOut
             });
+
+            const bubbleBackground = document.createElement('div');
+            bubbleBackground.classList.add('bubble-content-background');
+            bubbleContainer.prepend(bubbleBackground);
 
             if(newNameContainer) {
               nameContainer = newNameContainer;
             }
 
-            const lastContainer = messageDiv.lastElementChild.querySelector('.document-message, .document, .audio');
-            // lastContainer && lastContainer.append(timeSpan.cloneNode(true));
-            lastContainer && lastContainer.append(timeSpan);
+            const lastContainer = messageDiv.lastElementChild.querySelector('.document-message') || messageDiv.lastElementChild.querySelector('.document, .audio');
+            if(lastContainer) {
+              appendBubbleTime(bubble, lastContainer as HTMLElement, () => lastContainer.append(timeSpan));
+            }
 
-            bubble.classList.remove('is-message-empty');
+            mediaRequiresMessageDiv = true;
             const addClassName = (!(['photo', 'pdf'] as MyDocument['type'][]).includes(doc.type) ? doc.type || 'document' : 'document') + '-message';
-            messageDiv.classList.add(addClassName);
+            bubble.classList.add(addClassName);
 
-            if(doc.type === 'audio' || doc.type === 'voice') {
+            if(addClassName !== 'document-message') {
               bubble.classList.add('min-content');
             }
 
-            processingWebPage = true;
+            if(!bubble.classList.contains('is-multiple-documents')) {
+              bubble.classList.add('is-single-document');
+            }
+
+            noAttachmentDivNeeded = true;
           }
 
           break;
@@ -6391,10 +6509,10 @@ export default class ChatBubbles {
 
           div.append(title, subtitle);
 
-          processingWebPage = true;
+          noAttachmentDivNeeded = true;
 
-          bubble.classList.remove('is-message-empty');
-          messageDiv.classList.add('call-message');
+          mediaRequiresMessageDiv = true;
+          bubble.classList.add('call-message');
           messageDiv.append(div);
 
           break;
@@ -6406,7 +6524,7 @@ export default class ChatBubbles {
           contactDiv.classList.add('contact');
           contactDiv.dataset.peerId = '' + contact.user_id;
 
-          processingWebPage = true;
+          noAttachmentDivNeeded = true;
 
           const contactDetails = document.createElement('div');
           contactDetails.className = 'contact-details';
@@ -6437,46 +6555,80 @@ export default class ChatBubbles {
 
           contactDiv.prepend(avatarElem.node);
 
-          bubble.classList.remove('is-message-empty');
-          messageDiv.classList.add('contact-message');
+          mediaRequiresMessageDiv = true;
+          bubble.classList.add('contact-message');
           messageDiv.append(contactDiv);
 
           break;
         }
 
         case 'messageMediaPoll': {
-          bubble.classList.remove('is-message-empty');
+          mediaRequiresMessageDiv = true;
 
-          const pollElement = wrapPoll(message, undefined, middleware);
+          const pollElement = wrapPoll({
+            message: message as Message.message,
+            managers: this.managers,
+            middleware,
+            translatableParams,
+            richTextOptions: getRichTextOptions()
+          });
           messageDiv.prepend(pollElement);
-          messageDiv.classList.add('poll-message');
+          bubble.classList.add('poll-message');
 
           break;
         }
 
+        case 'messageMediaPaidMedia':
         case 'messageMediaInvoice': {
-          const isTest = messageMedia.pFlags.test;
-          const extendedMedia = messageMedia.extended_media;
-          const isAlreadyPaid = extendedMedia?._ === 'messageExtendedMedia';
-          const isNotPaid = extendedMedia?._ === 'messageExtendedMediaPreview';
-          let innerMedia = isAlreadyPaid ?
-            (extendedMedia.media as MessageMedia.messageMediaPhoto).photo as Photo.photo ||
-              (extendedMedia.media as MessageMedia.messageMediaDocument).document as Document.document :
-            messageMedia.photo;
+          type I = MessageMedia.messageMediaInvoice;
+          type P = MessageMedia.messageMediaPaidMedia;
+          type M = Photo.photo | Document.document | WebDocument;
+          const pFlags = (messageMedia as I).pFlags || {};
+          const isTest = pFlags.test;
+          const isInvoice = messageMedia._ === 'messageMediaInvoice';
+          const extendedMedia = (Array.isArray(messageMedia.extended_media) ? messageMedia.extended_media : [messageMedia.extended_media]).filter(Boolean);
+          const isAlreadyPaid = extendedMedia[0]?._ === 'messageExtendedMedia';
+          const isNotPaid = extendedMedia[0]?._ === 'messageExtendedMediaPreview';
 
-          const wrappedPrice = paymentsWrapCurrencyAmount(messageMedia.total_amount, messageMedia.currency);
+          if(!isInvoice) {
+            bubble.classList.add('single-media');
+            if(canHideNameIfMedia) {
+              bubble.classList.add('hide-name');
+            }
+
+            canHavePlainMediaTail = canPossiblyHavePlainMediaTail;
+          }
+
+          let innerMedia: M | M[], videoTimes: HTMLElement[];
+          if(isInvoice) {
+            innerMedia = (messageMedia as I).photo;
+          } else if(isAlreadyPaid) {
+            innerMedia = extendedMedia.map((media) => {
+              return getMediaFromMessage(media as any as Message.message) as M;
+            });
+          }
+
+          const wrappedPrice = isInvoice ?
+            paymentsWrapCurrencyAmount((messageMedia as I).total_amount, (messageMedia as I).currency) :
+            paymentsWrapCurrencyAmount((messageMedia as P).stars_amount, STARS_CURRENCY);
           let priceEl: HTMLElement;
-          if(!extendedMedia) {
+          if(!extendedMedia.length || (!isInvoice && isAlreadyPaid)) {
             priceEl = document.createElement(innerMedia ? 'span' : 'div');
             const f = document.createDocumentFragment();
-            const l = i18n(messageMedia.receipt_msg_id ? 'PaymentReceipt' : (isTest ? 'PaymentTestInvoice' : 'PaymentInvoice'));
+            const l = i18n((messageMedia as I).receipt_msg_id ? 'PaymentReceipt' : (isTest ? 'PaymentTestInvoice' : 'PaymentInvoice'));
             l.classList.add('text-uppercase');
             const joiner = ' ' + NBSP;
             const p = document.createElement('span');
             p.classList.add('text-bold');
-            p.textContent = wrappedPrice + joiner;
-            f.append(p, l);
-            if(isTest && messageMedia.receipt_msg_id) {
+            p.append(wrappedPrice);
+            f.append(p);
+            if(isInvoice) {
+              p.append(joiner);
+              f.append(l);
+            } else {
+              priceEl.classList.add('other-side');
+            }
+            if(isTest && (messageMedia as I).receipt_msg_id) {
               const a = document.createElement('span');
               a.classList.add('text-uppercase', 'pre-wrap');
               a.append(joiner + '(Test)');
@@ -6484,38 +6636,64 @@ export default class ChatBubbles {
             }
             setInnerHTML(priceEl, f);
           } else if(isNotPaid) {
+            attachmentDiv.classList.add('is-buy');
             priceEl = document.createElement('span');
             priceEl.classList.add('extended-media-buy');
-            priceEl.append(Icon('premium_lock', 'extended-media-buy-icon'));
-            attachmentDiv.classList.add('is-buy');
-            _i18n(priceEl, 'Checkout.PayPrice', [wrappedPrice]);
+            if(isInvoice) {
+              priceEl.append(
+                Icon('premium_lock', 'extended-media-buy-icon'),
+                i18n('Checkout.PayPrice', [wrappedPrice])
+              );
+            } else {
+              priceEl.append(i18n('PaidMedia.Unlock', [wrappedPrice]));
+            }
 
-            if(extendedMedia.video_duration !== undefined) {
+            videoTimes = extendedMedia.map((extendedMedia) => {
+              const videoDuration = (extendedMedia as MessageExtendedMedia.messageExtendedMediaPreview).video_duration;
+              if(videoDuration === undefined) {
+                return;
+              }
+
               const videoTime = document.createElement('span');
               videoTime.classList.add('video-time');
-              videoTime.textContent = toHHMMSS(extendedMedia.video_duration, false);
-              attachmentDiv.append(videoTime);
+              videoTime.textContent = toHHMMSS(videoDuration, false);
+              return videoTime;
+            });
+
+            if(videoTimes.length === 1 && videoTimes[0]) {
+              attachmentDiv.append(videoTimes[0]);
             }
           }
 
           if(isNotPaid) {
-            (extendedMedia.thumb as PhotoSize.photoStrippedSize).w = extendedMedia.w;
-            (extendedMedia.thumb as PhotoSize.photoStrippedSize).h = extendedMedia.h;
-            innerMedia = {
-              _: 'photo',
-              access_hash: '',
-              pFlags: {},
-              date: 0,
-              dc_id: 0,
-              file_reference: [],
-              id: 0,
-              sizes: [extendedMedia.thumb]
-            };
+            type P = MessageExtendedMedia.messageExtendedMediaPreview;
+            innerMedia = extendedMedia.map((extendedMedia) => {
+              return generatePhotoForExtendedMediaPreview(extendedMedia as P);
+            });
+          }
+
+          if(Array.isArray(innerMedia) && innerMedia.length === 1) {
+            innerMedia = innerMedia[0];
           }
 
           if(innerMedia) {
-            const mediaSize = extendedMedia ? mediaSizes.active.extendedInvoice : mediaSizes.active.invoice;
-            if(innerMedia._ === 'document') {
+            const mediaSize = extendedMedia.length ? mediaSizes.active.extendedInvoice : mediaSizes.active.invoice;
+            if(Array.isArray(innerMedia)) {
+              bubble.classList.add('is-album', 'photo');
+              wrapAlbum({
+                media: innerMedia as (Photo.photo | Document.document)[],
+                attachmentDiv,
+                middleware: this.getMiddleware(),
+                isOut: our,
+                lazyLoadQueue: this.lazyLoadQueue,
+                chat: this.chat,
+                loadPromises,
+                autoDownload: this.chat.autoDownload,
+                spoilered: !isAlreadyPaid,
+                videoTimes,
+                uploadingFileName: (message as Message.message).uploadingFileName
+              });
+            } else if(innerMedia._ === 'document') {
               wrapVideo({
                 doc: innerMedia,
                 container: attachmentDiv,
@@ -6527,7 +6705,10 @@ export default class ChatBubbles {
                 boxWidth: mediaSize.width,
                 boxHeight: mediaSize.height,
                 group: this.chat.animationGroup,
-                message: message as Message.message
+                message: message as Message.message,
+                observer: this.observer,
+                setShowControlsOn: bubble,
+                uploadingFileName: (message as Message.message).uploadingFileName[0]
               });
               bubble.classList.add('video');
             } else {
@@ -6547,7 +6728,7 @@ export default class ChatBubbles {
             }
 
             if(priceEl) {
-              if(!extendedMedia) {
+              if(!extendedMedia.length || (!isInvoice && isAlreadyPaid)) {
                 priceEl.classList.add('video-time');
               }
 
@@ -6565,29 +6746,37 @@ export default class ChatBubbles {
             });
             this.setExtendedMediaMessagesPollInterval();
 
-            const {width, height} = attachmentDiv.style;
-            const {dotRenderer, readyResult} = DotRenderer.create({
-              width: parseInt(width),
-              height: parseInt(height),
-              middleware,
-              animationGroup: this.chat.animationGroup
-            });
-            loadPromises?.push(readyResult as Promise<any>);
-            attachmentDiv.append(dotRenderer.canvas);
+            if(extendedMedia.length === 1) {
+              const {width, height} = attachmentDiv.style;
+              const {canvas, readyResult} = DotRenderer.create({
+                width: parseInt(width),
+                height: parseInt(height),
+                middleware,
+                animationGroup: this.chat.animationGroup
+              });
+              loadPromises?.push(readyResult as Promise<any>);
+              attachmentDiv.append(canvas);
+            }
           }
 
           let titleDiv: HTMLElement;
-          if(!extendedMedia) {
+          if(isInvoice) {
             titleDiv = document.createElement('div');
             titleDiv.classList.add('bubble-primary-color');
-            setInnerHTML(titleDiv, wrapEmojiText(messageMedia.title));
+            setInnerHTML(titleDiv, wrapEmojiText((messageMedia as I).title));
           }
 
-          const richText = isAlreadyPaid ? undefined : wrapEmojiText(messageMedia.description);
-          messageDiv.prepend(...[titleDiv, !innerMedia && priceEl, richText].filter(Boolean));
+          let richText: HTMLElement | DocumentFragment;
+          if(isInvoice) {
+            richText = isAlreadyPaid ? undefined : wrapEmojiText((messageMedia as I).description);
+          }
 
-          if(!richText) canHaveTail = false;
-          else bubble.classList.remove('is-message-empty');
+          messageDiv.prepend(...[titleDiv, richText].filter(Boolean));
+          attachmentDiv.append(...[(!innerMedia || !isInvoice) && priceEl].filter(Boolean));
+
+          if(!isInvoice) {}
+          else if(!richText) canHaveTail = false;
+          else mediaRequiresMessageDiv = true;
           bubble.classList.add('is-invoice');
 
           break;
@@ -6596,288 +6785,21 @@ export default class ChatBubbles {
         case 'messageMediaGeoLive':
         case 'messageMediaVenue':
         case 'messageMediaGeo': {
-          bubble.classList.add('photo');
+          const _canHaveTail = wrapGeo({
+            attachmentDiv,
+            bubble,
+            loadPromises,
+            message: message as Message.message,
+            messageDiv,
+            messageMedia,
+            middleware,
+            timeSpan,
+            updateLocationOnEdit: this.updateLocationOnEdit,
+            wrapOptions
+          });
 
-          const container = document.createElement('a');
-          container.classList.add('geo-container', 'shimmer-bright');
-
-          const isVenue = messageMedia._ === 'messageMediaVenue';
-          const isLive = messageMedia._ === 'messageMediaGeoLive';
-          const {geo} = messageMedia;
-          assumeType<GeoPoint.geoPoint>(geo);
-
-          const svgWidth = 277;
-          const svgHeight = 195;
-
-          container.innerHTML = `
-          <svg class="geo-svg" width="${svgWidth}px" height="${svgHeight}px" viewBox="0 0 277 195" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-            <g id="Artboard" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
-              <path class="geo-svg-path" d="M274.275109,103.333333 C275.780025,103.333333 277,104.567636 277,106.090226 L277,195 L201.724891,195 C200.219975,195 199,193.765697 199,192.243108 L199,109.536341 C199,106.110514 201.744944,103.333333 205.131004,103.333333 L274.275109,103.333333 Z M71.8689956,103.333333 C75.2550558,103.333333 78,106.110514 78,109.536341 L78,192.243108 C78,193.765697 76.7800248,195 75.2751092,195 L3.05533376e-13,195 L3.05533376e-13,106.090226 C3.05533376e-13,104.567636 1.21997518,103.333333 2.72489083,103.333333 L71.8689956,103.333333 Z M179.467331,145 C185.100269,145 190,149.937497 190,155.617021 L190,192.257683 C190,193.772223 188.448961,195 186.946844,195 L90.0531561,195 C88.5510395,195 87,193.772223 87,192.257683 L87,155.617021 C87,149.937497 91.8997314,145 97.5326689,145 L179.467331,145 Z M141.438333,165.734879 L136.933333,167.553888 L136.933333,166.559118 C136.933333,166.237002 136.805833,166.000152 136.550833,165.848568 C136.295833,165.696983 136.026667,165.678035 135.743333,165.791724 L130.02,168.236016 C129.698889,168.368652 129.448611,168.581817 129.269167,168.875512 C129.089722,169.169206 129,169.486585 129,169.827649 L129,180.628013 C129,181.101713 129.165278,181.504358 129.495833,181.835948 C129.826389,182.167538 130.227778,182.333333 130.7,182.333333 L149.966667,182.333333 C150.438889,182.333333 150.840278,182.167538 151.170833,181.835948 C151.501389,181.504358 151.666667,181.101713 151.666667,180.628013 L151.666667,168.690769 L142.6,168.690769 L142.6,166.530696 C142.6,166.227528 142.477222,165.990678 142.231667,165.820146 C141.986111,165.649613 141.721667,165.621191 141.438333,165.734879 Z M140.5,173.333333 C140.740741,173.333333 140.939815,173.410069 141.097222,173.563542 C141.25463,173.717014 141.333333,173.911111 141.333333,174.145833 L141.333333,176.854167 C141.333333,177.088889 141.25463,177.282986 141.097222,177.436458 C140.939815,177.589931 140.740741,177.666667 140.5,177.666667 C140.259259,177.666667 140.060185,177.589931 139.902778,177.436458 C139.74537,177.282986 139.666667,177.088889 139.666667,176.854167 L139.666667,174.145833 C139.666667,173.911111 139.74537,173.717014 139.902778,173.563542 C140.060185,173.410069 140.259259,173.333333 140.5,173.333333 Z M135.833333,173.333333 C136.074074,173.333333 136.273148,173.410069 136.430556,173.563542 C136.587963,173.717014 136.666667,173.911111 136.666667,174.145833 L136.666667,176.854167 C136.666667,177.088889 136.587963,177.282986 136.430556,177.436458 C136.273148,177.589931 136.074074,177.666667 135.833333,177.666667 C135.592593,177.666667 135.393519,177.589931 135.236111,177.436458 C135.078704,177.282986 135,177.088889 135,176.854167 L135,174.145833 C135,173.911111 135.078704,173.717014 135.236111,173.563542 C135.393519,173.410069 135.592593,173.333333 135.833333,173.333333 Z M144.833333,173.333333 C145.074074,173.333333 145.273148,173.410069 145.430556,173.563542 C145.587963,173.717014 145.666667,173.911111 145.666667,174.145833 L145.666667,176.854167 C145.666667,177.088889 145.587963,177.282986 145.430556,177.436458 C145.273148,177.589931 145.074074,177.666667 144.833333,177.666667 C144.592593,177.666667 144.393519,177.589931 144.236111,177.436458 C144.078704,177.282986 144,177.088889 144,176.854167 L144,174.145833 C144,173.911111 144.078704,173.717014 144.236111,173.563542 C144.393519,173.410069 144.592593,173.333333 144.833333,173.333333 Z M149.658824,159.666667 L148.341176,159.666667 C148.139869,159.666667 147.966013,159.735119 147.819608,159.872024 C147.673203,160.008929 147.581699,160.177778 147.545098,160.378571 L146.666667,167.333333 L151.333333,167.333333 L150.454902,160.378571 C150.418301,160.177778 150.326797,160.008929 150.180392,159.872024 C150.033987,159.735119 149.860131,159.666667 149.658824,159.666667 Z M249.919094,140.666667 L238.414239,140.666667 C237.928803,140.666667 237.516181,140.839506 237.176375,141.185185 C236.83657,141.530864 236.666667,141.950617 236.666667,142.444444 L236.666667,144.518519 L242.812298,148.903704 C243.02589,149.061728 243.200647,149.298765 243.33657,149.614815 C243.472492,149.930864 243.540453,150.237037 243.540453,150.533333 L243.540453,162 L249.919094,162 C250.404531,162 250.817152,161.82716 251.156958,161.481481 C251.496764,161.135802 251.666667,160.716049 251.666667,160.222222 L251.666667,142.444444 C251.666667,141.950617 251.496764,141.530864 251.156958,141.185185 C250.817152,140.839506 250.404531,140.666667 249.919094,140.666667 Z M233.681454,145 C233.306839,145 232.961799,145.109357 232.646334,145.32807 L226.406038,149.831579 C226.169439,149.990643 225.987061,150.204386 225.858903,150.472807 C225.730746,150.741228 225.666667,151.01462 225.666667,151.292982 L225.666667,161.105263 C225.666667,161.363743 225.750462,161.577485 225.918053,161.746491 C226.085644,161.915497 226.297597,162 226.553913,162 L231.315465,162 L231.315465,155.408772 L236.047443,155.408772 L236.047443,162 L240.779421,162 C241.035736,162 241.247689,161.915497 241.41528,161.746491 C241.582871,161.577485 241.666667,161.363743 241.666667,161.105263 L241.666667,151.292982 C241.666667,151.01462 241.602588,150.741228 241.47443,150.472807 C241.346272,150.204386 241.163894,149.990643 240.927295,149.831579 L234.716574,145.32807 C234.401109,145.109357 234.056069,145 233.681454,145 Z M28.1107355,151 C26.7011204,151.535116 25.6080384,152.177255 24.8314897,152.926418 C24.054941,153.67558 23.6666667,154.507839 23.6666667,155.423195 C23.6666667,156.313825 24.0383266,157.128954 24.7816465,157.868583 C25.5249664,158.608212 26.5730748,159.243985 27.9259717,159.775903 L28.3614887,159.946655 C29.6189312,160.436878 31.0759356,160.969375 32.7325021,161.229902 C34.5839587,161.521079 36.6177601,161.666667 38.8339062,161.666667 C41.0575639,161.666667 43.0932432,161.521079 44.940944,161.229902 C46.7886449,160.938725 48.3905989,160.30782 49.746806,159.775903 C51.1030131,159.243985 52.1509305,158.608212 52.8905583,157.868583 C53.6301861,157.128954 54,156.313825 54,155.423195 C54,154.74612 53.7747506,154.109424 53.3242518,153.513108 C52.8737529,152.916792 52.232252,152.376601 51.399749,151.892537 C51.0481091,152.042615 50.6745076,152.157696 50.2789446,152.237779 C49.8833815,152.317862 49.4585364,152.366145 49.0044091,152.382629 C48.0792219,153.944799 46.7901408,155.168707 45.137166,156.054355 C43.4841911,156.940003 41.5781488,157.382827 39.4190391,157.382827 L38.373477,157.382827 C36.7571047,157.382827 35.2762577,157.12145 33.9309359,156.598697 C32.5856141,156.075944 31.4161441,155.337853 30.4225259,154.384424 C29.4289077,153.430995 28.6583108,152.302854 28.1107355,151 Z M246.666667,155.666667 L246.666667,157.333333 L245,157.333333 L245,155.666667 L246.666667,155.666667 Z M38.9247583,138.333333 C36.8805223,138.333333 35.0878837,138.524784 33.5468423,138.907687 C32.005801,139.290589 30.807178,139.825485 29.9509735,140.512377 C29.0947689,141.199268 28.6666667,142.000558 28.6666667,142.916248 L28.6666667,145.217011 C28.6666667,146.65308 28.8977785,147.968639 29.3600021,149.163689 C29.8222257,150.358738 30.4832473,151.391681 31.343067,152.262516 C32.2028866,153.133352 33.2290636,153.807308 34.421598,154.284385 C35.6141324,154.761462 36.9411543,155 38.4026637,155 L39.4443793,155 C41.3903102,155 43.0928254,154.597401 44.5519248,153.792202 C46.0110242,152.987003 47.1473979,151.850115 47.961046,150.381537 C48.0380117,150.24262 48.1113372,150.101439 48.1810225,149.957994 L48.8310449,149.957752 C50.1301926,149.957752 51.1498054,149.643464 51.8898832,149.014889 C52.6299611,148.386314 53,147.516781 53,146.406291 C53,145.303865 52.6297708,144.436566 51.8893124,143.804392 C51.2166514,143.230102 50.3137723,142.916665 49.1810488,142.863979 C49.1649624,141.970034 48.735209,141.186167 47.8917885,140.512377 C47.0319689,139.825485 45.8315067,139.290589 44.2904019,138.907687 C42.7492971,138.524784 40.9607493,138.333333 38.9247583,138.333333 Z M246.666667,150.333333 L246.666667,152 L245,152 L245,150.333333 L246.666667,150.333333 Z M49.3462947,144.666667 C49.9216674,144.707967 50.3794206,144.850985 50.719554,145.095721 C51.1287402,145.390142 51.3333333,145.798671 51.3333333,146.321307 C51.3333333,146.844067 51.1285423,147.254623 50.7189604,147.552974 C50.312817,147.848821 49.7398788,147.997986 49,148 C49.2305654,147.116215 49.3458481,146.164212 49.3458481,145.143993 L49.3462947,144.666667 Z M246.666667,145.333333 L246.666667,147 L245,147 L245,145.333333 L246.666667,145.333333 Z M39.0006663,140.333333 C40.5947307,140.333333 42.0207584,140.451406 43.2787493,140.687551 C44.5367403,140.923696 45.527002,141.243793 46.2495345,141.647842 C46.9720671,142.051891 47.3333333,142.502395 47.3333333,142.999356 C47.3333333,143.49558 46.9718767,143.9459 46.2489634,144.350317 C45.5260501,144.754734 44.5357884,145.07523 43.2781782,145.311805 C42.020568,145.548379 40.5947307,145.666667 39.0006663,145.666667 C37.406475,145.666667 35.9822242,145.548379 34.7279138,145.311805 C33.4736034,145.07523 32.4831513,144.754734 31.7565574,144.350317 C31.0299636,143.9459 30.6666667,143.49558 30.6666667,142.999356 C30.6666667,142.502395 31.0297732,142.051891 31.7559863,141.647842 C32.4821994,141.243793 33.4724611,140.923696 34.7267715,140.687551 C35.9810819,140.451406 37.4057135,140.333333 39.0006663,140.333333 Z M176.83043,52 C183.919688,52 190,58.1245592 190,65.2683983 L190,122.398268 C190,129.542107 183.919688,135 176.83043,135 L100.16957,135 C93.0803124,135 87,129.542107 87,122.398268 L87,65.2683983 C87,58.1245592 93.0803124,52 100.16957,52 L176.83043,52 Z M138.333333,80.3333333 C135.511111,80.3333333 133.027778,81.3372814 130.883333,83.3451777 C128.738889,85.3530739 127.666667,88.0490694 127.666667,91.4331641 C127.666667,93.6215454 128.488889,95.9791314 130.133333,98.5059222 C131.777778,101.032713 134.255556,103.77383 137.566667,106.729272 C137.677778,106.819515 137.8,106.887197 137.933333,106.932318 C138.066667,106.977439 138.211111,107 138.366667,107 C138.5,107 138.627778,106.977439 138.75,106.932318 C138.872222,106.887197 138.988889,106.819515 139.1,106.729272 C142.411111,103.77383 144.888889,101.032713 146.533333,98.5059222 C148.177778,95.9791314 149,93.6215454 149,91.4331641 C149,88.0490694 147.927778,85.3530739 145.783333,83.3451777 C143.638889,81.3372814 141.155556,80.3333333 138.333333,80.3333333 Z M138,88 C138.920635,88 139.706349,88.3253968 140.357143,88.9761905 C141.007937,89.6269841 141.333333,90.4126984 141.333333,91.3333333 C141.333333,92.2539683 141.007937,93.0396825 140.357143,93.6904762 C139.706349,94.3412698 138.920635,94.6666667 138,94.6666667 C137.079365,94.6666667 136.293651,94.3412698 135.642857,93.6904762 C134.992063,93.0396825 134.666667,92.2539683 134.666667,91.3333333 C134.666667,90.4126984 134.992063,89.6269841 135.642857,88.9761905 C136.293651,88.3253968 137.079365,88 138,88 Z M277,0 L277,91.2454212 C277,92.7667331 275.781665,94 274.278772,94 L205.227621,94 C201.846113,94 199.104859,91.2251494 199.104859,87.8021978 L199.104859,66.7985348 C199.104859,54.8182041 189.51047,41.6630037 177.675192,41.6630037 L149.102302,41.6630037 C146.284378,41.6630037 144,39.3506282 144,36.4981685 L144,2.75457875 C144,1.23326692 145.218335,0 146.721228,0 L277,0 Z M129.945299,0 C131.448269,0 132.666667,1.23326692 132.666667,2.75457875 L132.666667,36.4981685 C132.666667,39.3506282 130.382171,41.6630037 127.564103,41.6630037 L99.3299145,41.6630037 C87.4940275,41.6630037 77.8991453,54.8182041 77.8991453,66.7985348 L77.8991453,87.8021978 C77.8991453,91.2251494 75.1577504,94 71.7760684,94 L2.72136752,94 C1.21839774,94 0,92.7667331 0,91.2454212 L0,0 L129.945299,0 Z M237.333333,28.6666667 C235.486111,28.6666667 233.875868,29.2909326 232.502604,30.5394645 C231.12934,31.7879963 230.333333,33.3393899 230.114583,35.1936451 C228.753472,35.7622834 227.671875,36.6708685 226.869792,37.9194003 C226.067708,39.1679322 225.666667,40.5339002 225.666667,42.0173044 C225.666667,44.0693469 226.377604,45.8185276 227.799479,47.2648467 C229.221354,48.7111658 230.940972,49.4343254 232.958333,49.4343254 L236.239583,49.4343254 L236.239583,55.0331916 L232.958333,55.0331916 C232.642361,55.0331916 232.381076,55.1382661 232.174479,55.348415 C231.967882,55.5585639 231.864583,56.5660426 231.864583,56.8874469 C231.864583,57.2088511 231.967882,57.4746277 232.174479,57.6847766 C232.381076,57.8949255 232.642361,58 232.958333,58 L241.34375,58 C241.659722,58 241.921007,57.8949255 242.127604,57.6847766 C242.334201,57.4746277 242.4375,57.2088511 242.4375,56.8874469 C242.4375,56.5660426 242.334201,55.5585639 242.127604,55.348415 C241.921007,55.1382661 241.659722,55.0331916 241.34375,55.0331916 L238.427083,55.0331916 L238.427083,49.4343254 L241.708333,49.4343254 C243.725694,49.4343254 245.445312,48.7111658 246.867188,47.2648467 C248.289062,45.8185276 249,44.0693469 249,42.0173044 C249,40.5339002 248.598958,39.1679322 247.796875,37.9194003 C246.994792,36.6708685 245.913194,35.7622834 244.552083,35.1936451 C244.333333,33.3393899 243.537326,31.7879963 242.164062,30.5394645 C240.790799,29.2909326 239.180556,28.6666667 237.333333,28.6666667 Z M39.3280935,33 C39.2243891,33 39.1258699,33.0154494 39.0325359,33.0463483 C38.9392019,33.0772472 38.8510531,33.1235955 38.7680896,33.1853933 L31.8613745,38.3405982 L31.8613745,37.6966292 L31.8583795,37.640264 C31.8289402,37.347262 31.5754523,36.7755434 30.7901174,36.7755434 L30.6207017,36.7767977 L30.4578933,36.7810704 C29.9778294,36.7994331 29.824306,36.8638758 29.6931536,36.9792263 L29.6369144,37.0323034 C29.4606169,37.207397 29.3724681,37.428839 29.3724681,37.6966292 L29.3724681,40.2921348 L26.3857805,42.5477528 C26.1783716,42.7125468 26.0539263,42.9185393 26.0124445,43.1657303 C25.9709628,43.4129213 26.0331854,43.6395131 26.1991125,43.8455056 C26.3650396,44.0514981 26.5724485,44.1750936 26.8213391,44.2162921 C27.0702297,44.2574906 27.2983795,44.1956929 27.5057883,44.0308989 L29.3724681,42.6095506 L29.3724681,54.0730337 C29.3724681,54.340824 29.4606169,54.5622659 29.6369144,54.7373596 C29.8132119,54.9124532 30.0361765,55 30.305808,55 L36.866591,55 C37.3669257,55 37.7725271,54.5921805 37.7725271,54.0891096 L37.7725271,49.1292135 C37.7725271,48.8614232 37.8606758,48.6399813 38.0369734,48.4648876 C38.2132709,48.289794 39.058462,47.9008773 39.3280935,47.9008773 C39.5977251,47.9008773 40.4429162,48.289794 40.6192137,48.4648876 C40.7955112,48.6399813 40.88366,48.8614232 40.88366,49.1292135 L40.88366,54.0891096 C40.88366,54.5921805 41.2892614,55 41.7895961,55 L48.3503791,55 C48.6200106,55 48.8429751,54.9124532 49.0192726,54.7373596 C49.1955702,54.5622659 49.283719,54.340824 49.283719,54.0730337 L49.283719,42.6095506 L51.2441994,44.0774017 C51.4336674,44.2081039 51.6357355,44.2595506 51.8504036,44.2317416 C52.0889238,44.2008427 52.2911475,44.082397 52.4570746,43.8764045 C52.6230016,43.670412 52.6904095,43.4438202 52.6592982,43.1966292 C52.6281869,42.9494382 52.5089268,42.7434457 52.3015179,42.5786517 L39.8880975,33.1853933 C39.8051339,33.1235955 39.7169851,33.0772472 39.6236512,33.0463483 C39.5303172,33.0154494 39.431798,33 39.3280935,33 Z" id="Shape" fill="#FFFFFF"></path>
-            </g>
-          </svg>`;
-          setBlankToAnchor(container);
-
-          const svgPlaceholder = container.firstElementChild;
-
-          attachmentDiv.append(container);
-
-          const zoom = 16;
-
-          const setAnchorURL = (geo: GeoPoint.geoPoint) => {
-            container.href = 'https://maps.google.com/maps?q=' + geo.lat + ',' + geo.long;
-          };
-
-          const width = mediaSizes.isMobile ? svgWidth : 420;
-          const getWebFileLocation = (geo: GeoPoint.geoPoint): InputWebFileLocation.inputWebFileGeoPointLocation => {
-            return {
-              _: 'inputWebFileGeoPointLocation',
-              access_hash: geo.access_hash,
-              geo_point: {
-                _: 'inputGeoPoint',
-                lat: geo.lat,
-                long: geo.long
-              },
-              w: width,
-              h: width / (svgWidth / svgHeight),
-              scale: window.devicePixelRatio,
-              zoom
-            };
-          };
-
-          let wrapTempId = 0;
-          const wrapGeo = (
-            media: MessageMedia.messageMediaGeo | MessageMedia.messageMediaGeoLive | MessageMedia.messageMediaVenue,
-            loadPromises?: Promise<any>[]
-          ) => {
-            const geo = media.geo as GeoPoint.geoPoint;
-            const _wrapTempId = ++wrapTempId;
-
-            const oldImageContainer = container.querySelector('.geo-image-container');
-            if(oldImageContainer) {
-              if(liteMode.isAvailable('animations')) {
-                oldImageContainer.classList.add('fade-out');
-              } else {
-                oldImageContainer.remove();
-              }
-            }
-
-            container.classList.add('shimmer');
-            container.prepend(svgPlaceholder);
-
-            const newWrapOptions: WrapSomethingOptions = {
-              ...wrapOptions,
-              ...(_wrapTempId !== 0 ? {lazyLoadQueue: undefined} : {})
-            };
-
-            const imageContainer = document.createElement('div');
-            imageContainer.classList.add('geo-image-container');
-            if(isLive) {
-              const pin = document.createElement('div');
-              pin.classList.add('geo-live-pin');
-
-              const heading = document.createElement('div');
-              heading.classList.add('geo-live-pin-heading');
-              pin.append(heading);
-
-              pin.insertAdjacentHTML('beforeend', `
-                <svg version="1.1" class="geo-live-pin-svg" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 64 64" style="enable-background:new 0 0 64 64;" xml:space="preserve">
-                  <g>
-                    <circle cx="32" cy="32" r="24.5"/>
-                    <path d="M32,8c13.23,0,24,10.77,24,24S45.23,56,32,56S8,45.23,8,32S18.77,8,32,8 M32,7C18.19,7,7,18.19,7,32s11.19,25,25,25 s25-11.19,25-25S45.81,7,32,7L32,7z"/>
-                  </g>
-                  <g>
-                    <polygon points="29.38,57.67 27.4,56.08 30.42,54.42 32,51.54 33.58,54.42 36.6,56.08 34.69,57.61 32,60.73"></polygon>
-                    <path d="M32,52.58l1.07,1.95l0.14,0.26l0.26,0.14l2.24,1.22l-1.33,1.06l-0.07,0.06l-0.06,0.07L32,59.96l-2.24-2.61l-0.06-0.07 l-0.07-0.06l-1.33-1.06l2.24-1.22l0.26-0.14l0.14-0.26L32,52.58 M32,50.5l-1.94,3.56L26.5,56l2.5,2l3,3.5l3-3.5l2.5-2l-3.56-1.94 L32,50.5L32,50.5z"/>
-                  </g>
-                </svg>
-              `);
-
-              const avatar = avatarNew({
-                middleware,
-                size: 54,
-                peerId: message.fromId,
-                isDialog: false,
-                wrapOptions: newWrapOptions
-              });
-              avatar.node.classList.add('geo-live-pin-avatar');
-              loadPromises?.push(avatar.readyThumbPromise);
-
-              pin.append(avatar.node);
-
-              imageContainer.append(pin);
-            } else {
-              imageContainer.innerHTML = `
-                <svg class="geo-pin" xmlns="http://www.w3.org/2000/svg" width="21.333" height="37.218" viewBox="0 0 20 34.892">
-                  <g transform="translate(-965.773 -331.784) scale(1.18559)">
-                    <path d="M817.112 282.971c-1.258 1.343-2.046 3.299-2.015 5.139.064 3.845 1.797 5.3 4.568 10.592.999 2.328 2.04 4.792 3.031 8.873.138.602.272 1.16.335 1.21.062.048.196-.513.334-1.115.99-4.081 2.033-6.543 3.031-8.871 2.771-5.292 4.504-6.748 4.568-10.592.031-1.84-.759-3.798-2.017-5.14-1.437-1.535-3.605-2.67-5.916-2.717-2.312-.048-4.481 1.087-5.919 2.621z" style="fill:#ea4336;stroke:#ea4336;stroke-width:1;"/>
-                    <circle r="3.035" cy="288.253" cx="823.031" style="fill:#970a0a;stroke-width:0"/>
-                  </g>
-                </svg>
-              `;
-            }
-
-            wrapPhoto({
-              photo: getWebFileLocation(geo),
-              container: imageContainer,
-              fadeInElement: imageContainer,
-              onRender: () => {
-                if(_wrapTempId !== wrapTempId) return;
-                container.append(imageContainer);
-              },
-              onRenderFinish: () => {
-                if(_wrapTempId !== wrapTempId) return;
-                container.classList.remove('shimmer');
-                svgPlaceholder.remove();
-                oldImageContainer?.remove();
-              },
-              loadPromises,
-              ...newWrapOptions
-            });
-          };
-
-          function getMetersPerPixel(lat: number, zoom: number) {
-            // https://groups.google.com/g/google-maps-js-api-v3/c/hDRO4oHVSeM/m/osOYQYXg2oUJ
-            return (156543.03392 * Math.cos(lat * (Math.PI / 180))) / 2 ** zoom;
-          }
-
-          setAnchorURL(geo);
-          wrapGeo(messageMedia, loadPromises);
-
-          let liveExpiration = isLive ? (message.date + (messageMedia as MessageMedia.messageMediaGeoLive).period) * 1000 : undefined;
-          const isLiveExpired = isLive && Date.now() >= liveExpiration;
-
-          let footer: HTMLElement, title: HTMLElement, address: HTMLElement;
-          if(isVenue || (isLive && !isLiveExpired)) {
-            bubble.classList.remove('is-message-empty');
-
-            footer = document.createElement('div');
-            footer.classList.add('geo-footer');
-
-            title = document.createElement('div');
-            title.classList.add('geo-footer-title');
-
-            address = document.createElement('div');
-            address.classList.add('geo-footer-address');
-
-            footer.append(title, address);
-            messageDiv.append(footer);
-          } else {
-            canHaveTail = false;
-          }
-
-          if(isLive) {
-            container.classList.add('is-live');
-            container.classList.toggle('is-expired', isLiveExpired);
-          }
-
-          if(isVenue) {
-            title.append(wrapEmojiText((messageMedia as MessageMedia.messageMediaVenue).title));
-            address.append(wrapEmojiText((messageMedia as MessageMedia.messageMediaVenue).address));
-          } else if(isLive && !isLiveExpired) {
-            timeSpan.classList.add('hide');
-            title.classList.add('disable-hover');
-            address.classList.add('disable-hover');
-            footer.classList.add('is-live');
-
-            const updatedI18n = new I18n.IntlElement();
-            title.append(i18n('AttachLiveLocation'));
-            address.append(updatedI18n.element);
-
-            const timer = document.createElement('div');
-            timer.classList.add('geo-footer-timer');
-
-            const radius = 13;
-            const size = (radius + 2) * 2;
-            const circumference = radius * 2 * Math.PI;
-
-            const timerTextI18n = new I18n.IntlElement();
-            timer.append(timerTextI18n.element);
-            timer.insertAdjacentHTML('beforeend', `
-              <svg class="geo-footer-timer-svg" width="${size}px" height="${size}px">
-                <circle cx="${size / 2}" cy="${size / 2}" r="${radius}" class="geo-footer-timer-circle" transform="rotate(-90, ${size / 2}, ${size / 2})" stroke-dasharray="${circumference} ${circumference}"></circle>
-              </svg>
-            `);
-            const timerCircle = timer.lastElementChild.firstElementChild as SVGCircleElement;
-            const timerShadowCircle = timerCircle.cloneNode(true) as SVGCircleElement;
-            timerShadowCircle.classList.add('geo-footer-timer-circle-shadow');
-            timer.lastElementChild.append(timerShadowCircle);
-
-            footer.append(timer);
-
-            let lastMessage = message as Message.message, cleaned = false;
-            const update = (message = lastMessage, isExpired?: boolean) => {
-              if(cleaned) {
-                return;
-              }
-
-              const messageMedia = message.media as MessageMedia.messageMediaGeoLive;
-              const {period} = messageMedia;
-              const newGeo = messageMedia.geo as GeoPoint.geoPoint;
-              liveExpiration = isExpired ? 0 : (message.date + period) * 1000;
-
-              if(lastMessage !== message) {
-                if(lastMessage && (geo.lat !== newGeo.lat || geo.long !== newGeo.long)) {
-                  setAnchorURL(newGeo);
-                  wrapGeo(messageMedia);
-                }
-
-                lastMessage = message;
-              }
-
-              if(Date.now() >= liveExpiration) {
-                bubble.classList.add('is-message-empty');
-                container.classList.add('is-expired');
-                timeSpan.classList.remove('hide');
-                footer.replaceWith(timeSpan);
-                clean();
-                return;
-              }
-
-              container.style.setProperty('--heading', `${messageMedia.heading}deg`);
-
-              if(newGeo.accuracy_radius !== undefined) {
-                const accuracyRadiusPx = newGeo.accuracy_radius / getMetersPerPixel(newGeo.lat, zoom);
-                container.style.setProperty('--accuracy-size', `${accuracyRadiusPx * 2}px`);
-              }
-
-              let langPackKey: LangPackKey, langPackArgs: FormatterArguments;
-              if((tsNow(true) - (message.edit_date ?? message.date)) < 60) {
-                langPackKey = 'LocationUpdatedJustNow';
-              } else {
-                langPackKey = 'UpdatedMinutes';
-                langPackArgs = [Math.floor((tsNow(true) - message.edit_date) / 60)];
-              }
-
-              const timeLeft = (liveExpiration - Date.now()) / 1000;
-              const strokeDashOffset = (1 - timeLeft / period) * circumference;
-              timerCircle.setAttribute('stroke-dashoffset', `-${strokeDashOffset}`);
-
-              updatedI18n.compareAndUpdate({
-                key: langPackKey,
-                args: langPackArgs
-              });
-
-              timerTextI18n.compareAndUpdate({
-                key: timeLeft < 3600 ? 'JustArgument' : 'MessageTimer.ShortHours',
-                args: [Math.round(timeLeft < 3600 ? timeLeft / 60 : timeLeft / 3600)]
-              });
-            };
-
-            const interval = setInterval(update, 1000);
-            update();
-
-            const clean = () => {
-              cleaned = true;
-              this.updateLocationOnEdit.delete(bubble);
-              clearInterval(interval);
-            };
-
-            this.updateLocationOnEdit.set(bubble, update);
-            middleware.onClean(clean);
-          }
-
-          if(address) {
-            address.append(timeSpan);
+          if(_canHaveTail !== undefined) {
+            canHaveTail = _canHaveTail;
           }
 
           break;
@@ -6891,7 +6813,7 @@ export default class ChatBubbles {
           if(replyContainer) {
             bubble.classList.add('is-expired-story');
             // attachmentDiv = replyContainer;
-            bubble.classList.remove('is-message-empty');
+            mediaRequiresMessageDiv = true;
             messageDiv.append(replyContainer);
             messageDiv.classList.add('expired-story-message', 'is-empty');
             break;
@@ -6936,12 +6858,12 @@ export default class ChatBubbles {
             replyTo = undefined;
           }
 
-          bubble.classList.remove('is-message-empty');
+          mediaRequiresMessageDiv = true;
           bubble.classList.add('is-giveaway');
-          processingWebPage = true;
+          noAttachmentDivNeeded = true;
           const button = this.makeViewButton({text: 'BoostingHowItWork'});
           const container = document.createElement('div');
-          bubbleContainer.append(button, container);
+          messageDiv.before(container, button);
           attachClickEvent(button, () => {
             onGiveawayClick(message as Message.message);
           });
@@ -6958,38 +6880,47 @@ export default class ChatBubbles {
 
         default:
           attachmentDiv = undefined;
-          bubble.classList.remove('is-message-empty');
-          messageDiv.append(i18n(UNSUPPORTED_LANG_PACK_KEY), timeSpan);
+          mediaRequiresMessageDiv = true;
+          noAttachmentDivNeeded = true;
+          messageDiv.replaceChildren(i18n(UNSUPPORTED_LANG_PACK_KEY));
+          bubble.timeAppenders[0].callback();
           this.log.warn('unrecognized media type:', messageMedia._, message);
           break;
       }
 
-      if(processingWebPage) {
+      if(noAttachmentDivNeeded) {
         attachmentDiv = undefined;
-      }
+      } else {
+        if(invertMedia) messageDiv.after(attachmentDiv);
+        else messageDiv.before(attachmentDiv);
 
-      if(!processingWebPage && attachmentDiv) {
-        bubbleContainer.append(attachmentDiv);
-      }
-
-      if(attachmentDiv) {
         const width = attachmentDiv.style.width;
         if(width) {
-          bubbleContainer.style.maxWidth = width;
+          bubbleContainer.style.maxWidth = `min(100%, ${width})`;
         }
       }
 
       if(canHavePlainMediaTail && !withReplies) {
         bubble.classList.add('has-plain-media-tail');
       }
+    }
 
-      /* if(bubble.classList.contains('is-message-empty') && (bubble.classList.contains('photo') || bubble.classList.contains('video'))) {
-        bubble.classList.add('no-tail');
+    const isFloatingTime = timeSpan && ((isMessageEmpty && !mediaRequiresMessageDiv) || (invertMedia && !processedWebPage));
+    if(isMessageEmpty && !mediaRequiresMessageDiv) {
+      messageDiv.remove();
+      bubble.classList.add('is-message-empty');
+    } else {
+      if(attachmentDiv) {
+        attachmentDiv.classList.add(invertMedia ? 'no-brt' : 'no-brb');
+        messageDiv.classList.add(invertMedia ? 'mb-shorter' : 'mt-shorter');
+      }
+    }
 
-        if(!bubble.classList.contains('with-media-tail')) {
-          bubble.classList.add('use-border-radius');
-        }
-      } */
+    if(isFloatingTime) {
+      timeSpan.classList.add('is-floating');
+      bubble.classList.add('has-floating-time');
+      bubble.timeAppenders = [];
+      appendBubbleTime(bubble, bubbleContainer, () => bubbleContainer.append(timeSpan));
     }
 
     if(isStandaloneMedia) {
@@ -6997,12 +6928,29 @@ export default class ChatBubbles {
     }
 
     if(sponsoredMessage) {
-      const button = document.createElement('div');
-      button.classList.add('bubble-beside-button', 'bubble-beside-button-top', 'bubble-sponsored-hide');
-      button.append(Icon('close'));
-      bubbleContainer.prepend(button);
+      const canReport = sponsoredMessage.pFlags.can_report;
+      const buttons = document.createElement('div');
+      buttons.classList.add('bubble-beside-button', 'bubble-beside-button-top');
+      let hideButton: HTMLElement;
+      if(canReport) {
+        buttons.classList.add('bubble-sponsored-buttons');
+        hideButton = ButtonIcon('close bubble-sponsored-buttons-button', {noRipple: true});
+        const hr = document.createElement('div');
+        hr.classList.add('bubble-sponsored-buttons-delimiter');
+        const menu = ButtonIcon('more bubble-sponsored-buttons-button', {noRipple: true});
+        buttons.append(hideButton, hr, menu);
+
+        attachClickEvent(menu, (e) => {
+          this.chat.contextMenu.onContextMenu(e as MouseEvent);
+        });
+      } else {
+        hideButton = buttons;
+        hideButton.append(Icon('close'));
+        buttons.classList.add('bubble-sponsored-hide');
+      }
+      bubbleContainer.prepend(buttons);
       bubble.classList.add('with-beside-button');
-      attachClickEvent(button, () => {
+      attachClickEvent(hideButton, () => {
         PopupPremium.show({feature: 'no_ads'});
       });
     }
@@ -7014,7 +6962,8 @@ export default class ChatBubbles {
         peerId: (message as Message.message).fwdFromId || message.fromId,
         element: bubble,
         messageHighlighting: isStandaloneMedia,
-        colorAsOut: isOut
+        colorAsOut: isOut,
+        color: sponsoredMessage?.color
       });
     }
 
@@ -7072,12 +7021,13 @@ export default class ChatBubbles {
           bubbleContainer,
           message,
           appendCallback: (container) => {
+            nameContainer.prepend(container);
+            if(!isMessageEmpty && (!attachmentDiv || invertMedia)) {
+              container.classList.add('mb-shorter');
+            }
+
             if(attachmentDiv) {
-              attachmentDiv.after(container);
-            } else if(bubble.classList.contains('is-message-empty')) {
-              bubbleContainer.append(container);
-            } else {
-              messageDiv.prepend(container);
+              attachmentDiv.classList.add('no-brt');
             }
           },
           middleware,
@@ -7103,7 +7053,8 @@ export default class ChatBubbles {
         }
 
         nameDiv = document.createElement('div');
-        title.dataset.peerId = '' + (storyFromPeerId || fwdFromId);
+        const titlePeerId = storyFromPeerId || fwdFromId;
+        title.dataset.peerId = '' + titlePeerId;
 
         if(
           (isRegularSaved || this.peerId === REPLIES_PEER_ID || isForwardFromChannel) &&
@@ -7116,8 +7067,26 @@ export default class ChatBubbles {
           nameDiv.append(title);
         } else {
           mustHaveName ||= true;
+          bubble.classList.remove('hide-name');
           const firstArgs: FormatterArguments = [title];
-          if(isStandaloneMedia) {
+
+          if(titlePeerId) {
+            const avatar = avatarNew({
+              middleware,
+              size: 20,
+              lazyLoadQueue: this.lazyLoadQueue,
+              peerId: titlePeerId,
+              isDialog: false
+            });
+
+            avatar.node.classList.add('bubble-name-forwarded-avatar');
+            // loadPromises.push(avatar.readyThumbPromise);
+            firstArgs.unshift(avatar.node);
+          } else {
+            title.classList.add('text-normal');
+          }
+
+          if(isStandaloneMedia || true) {
             const br = document.createElement('br');
             br.classList.add('hide-ol');
             firstArgs.unshift(br);
@@ -7126,15 +7095,17 @@ export default class ChatBubbles {
           let nameKey: LangPackKey;
           const nameArgs: FormatterArguments = [firstArgs];
           if(fwdFrom?.post_author) {
-            nameKey = storyFromPeerId ? 'ForwardedStoryFromAuthor' : 'ForwardedFromAuthor';
+            nameKey = storyFromPeerId ? 'ForwardedStoryFromAuthor1' : 'ForwardedFromAuthor';
             const s = document.createElement('span');
             s.append(wrapEmojiText(fwdFrom.post_author));
             nameArgs.push(s);
           } else {
-            nameKey = storyFromPeerId ? 'ForwardedStoryFrom' : 'ForwardedFrom';
+            nameKey = storyFromPeerId ? 'ForwardedStoryFrom1' : 'ForwardedFrom';
           }
 
-          nameDiv.append(i18n(nameKey, nameArgs));
+          const span = i18n(nameKey, nameArgs);
+          span.classList.add('bubble-name-forwarded');
+          nameDiv.append(span);
 
           if(hasTwoTitles) {
             let title: HTMLElement;
@@ -7208,21 +7179,33 @@ export default class ChatBubbles {
         }
       }
 
-      if(nameDiv) {
+      if(nameDiv && !bubble.classList.contains('hide-name')) {
         nameDiv.classList.add('name');
         setDirection(nameDiv);
 
+        const updateMessageDiv = (insertedElement: HTMLElement) => {
+          if(messageDiv && insertedElement.nextElementSibling === messageDiv) {
+            insertedElement.classList.add('next-is-message');
+          }
+        };
+
         if(isStandaloneMedia) {
-          nameContainer.append(nameContainer = document.createElement('div'));
-          nameContainer.classList.add('name-with-reply', 'floating-part');
+          const newNameContainer = document.createElement('div');
+          newNameContainer.classList.add('name-with-reply', 'floating-part');
+          nameContainer.prepend(newNameContainer);
+          updateMessageDiv(newNameContainer);
+          nameContainer = newNameContainer;
         } else {
           nameDiv.classList.add('floating-part');
         }
 
-        nameContainer.append(nameDiv);
+        nameContainer.prepend(nameDiv);
+        if(!isStandaloneMedia) {
+          updateMessageDiv(nameDiv);
+        }
 
         if(isStandaloneMedia && replyContainer) {
-          nameContainer.append(replyContainer);
+          nameDiv.after(replyContainer);
         }
       } else if(isStandaloneMedia && replyContainer) {
         replyContainer.classList.add('floating-part');
@@ -7279,7 +7262,7 @@ export default class ChatBubbles {
     }
 
     if(this.chat.type === ChatType.Pinned) {
-      savedFrom = `${this.chat.peerId}_${message.mid}`;
+      savedFrom = makeFullMid(this.chat.peerId, message.mid);
     }
 
     const isThreadStarter = messageWithReplies && messageWithReplies.mid === this.chat.threadId;
@@ -7314,17 +7297,14 @@ export default class ChatBubbles {
       } else {
         bubble.classList.add('with-beside-replies');
       }
+    } else if(isMessage && message.replies && this.chat.isAnyGroup) {
+      const replies = message.replies;
+      this.setBubbleRepliesCount(bubble, replies.replies);
     }
 
     if(isMessage) {
-      this.appendReactionsElementToBubble(bubble, message, reactionsMessage);
+      this.appendReactionsElementToBubble(bubble, message, reactionsMessage, undefined, loadPromises);
     }
-
-    /* if(isMessage) {
-      const reactionHover = document.createElement('div');
-      reactionHover.classList.add('bubble-reaction-hover');
-      contentWrapper.append(reactionHover);
-    } */
 
     if(canHaveTail) {
       bubble.classList.add('can-have-tail');
@@ -7344,14 +7324,45 @@ export default class ChatBubbles {
       }
     }
 
+    if(isMessage) {
+      createRoot((dispose) => {
+        middleware.onDestroy(dispose);
+
+        createEffect(() => {
+          bubble.classList.toggle('no-forwards', !this.canForward(message));
+        });
+      });
+    }
+
+    if(isMessage && message.effect && (isInUnread || isOutgoing)) {
+      this.observer.observe(bubble, this.messageEffectObserverCallback);
+    }
+
     return ret;
+  }
+
+  public canForward(message: Message.message | Message.messageService) {
+    if(message?._ !== 'message' || message.pFlags.noforwards) {
+      return false;
+    }
+
+    if(message.peerId.isUser()) {
+      return true;
+    }
+
+    if((usePeer(message.peerId) as MTChat.channel).pFlags.noforwards) {
+      return false;
+    }
+
+    return true;
   }
 
   private appendReactionsElementToBubble(
     bubble: HTMLElement,
     message: Message.message,
     reactionsMessage: Message.message,
-    changedResults?: ReactionCount[]
+    changedResults?: ReactionCount[],
+    loadPromises?: Promise<any>[]
   ) {
     if(this.peerId.isUser() && USER_REACTIONS_INLINE/*  || true */) {
       return;
@@ -7373,38 +7384,26 @@ export default class ChatBubbles {
     });
     reactionsElement.render(changedResults);
 
-    if(bubble.classList.contains('is-message-empty')) {
+    if(bubble.classList.contains('has-floating-time')) {
       bubble.querySelector('.bubble-content-wrapper').append(reactionsElement);
     } else {
+      const timeSpan = bubble.timeSpan;
       const messageDiv = bubble.querySelector('.message');
+
+      appendBubbleTime(bubble, reactionsElement, () => reactionsElement.append(timeSpan));
+
       if(bubble.classList.contains('is-multiple-documents')) {
         const documentContainer = messageDiv.lastElementChild as HTMLElement;
         let documentMessageDiv = documentContainer.querySelector('.document-message');
 
-        let timeSpan: HTMLElement = documentMessageDiv && documentMessageDiv.querySelector('.time');
-        if(!timeSpan) {
-          timeSpan = MessageRender.setTime({
-            chat: this.chat,
-            chatType: this.chat.type,
-            message,
-            reactionsMessage,
-            isOut: bubble.classList.contains('is-out')
-          });
-        }
-
-        reactionsElement.append(timeSpan);
-
         if(!documentMessageDiv) {
           documentMessageDiv = document.createElement('div');
           documentMessageDiv.classList.add('document-message');
-          documentContainer.querySelector('.document-wrapper').prepend(documentMessageDiv);
+          documentContainer.querySelector('.document-wrapper').append(documentMessageDiv);
         }
 
         documentMessageDiv.append(reactionsElement);
       } else {
-        const timeSpan = Array.from(bubble.querySelectorAll('.time')).pop();
-        reactionsElement.append(timeSpan);
-
         messageDiv.append(reactionsElement);
       }
     }
@@ -7533,21 +7532,12 @@ export default class ChatBubbles {
         canAutoplay: false,
         onExpiredStory: async() => {
           await getHeavyAnimationPromise(); // wait for scroll to end
-          message = this.chat.getMessage(message.mid) as Message.message;
+          message = this.chat.getMessageByPeer(message.peerId, message.mid) as Message.message;
           this.safeRenderMessage({
             message,
             reverse: true,
             bubble
           });
-
-          // await fillPromise;
-
-          // const bubble = findUpClassName(container, 'bubble');
-          // bubble.classList.remove('is-message-empty', 'photo', 'story');
-          // const nameDiv = bubble.querySelector('.name');
-          // nameDiv?.remove();
-
-          // container.replaceWith(replyContainer);
         },
         withPreloader: true
       });
@@ -7630,7 +7620,7 @@ export default class ChatBubbles {
     const log = false || true ? this.log.bindPrefix('perform-' + (Math.random() * 1000 | 0)) : undefined;
     log?.('start', this.chatInner.parentElement, historyResult);
 
-    let history = historyResult.history;
+    let history = (historyResult as HistoryResult).messages || historyResult.history;
     history = history.slice(); // need
 
     if(this.needReflowScroll) {
@@ -7652,7 +7642,7 @@ export default class ChatBubbles {
       }
     };
 
-    const messages = await Promise.all(history.map((mid) => {
+    const messages = /* await Promise.all */(history.map((mid) => {
       return typeof(mid) === 'number' ? this.chat.getMessage(mid) : mid;
     }));
 
@@ -7674,9 +7664,10 @@ export default class ChatBubbles {
       }
 
       if(!isEnd.bottom && this.setPeerOptions) {
-        const {lastMsgId, topMessage, savedPosition} = this.setPeerOptions;
+        const {lastMsgFullMid, topMessageFullMid, savedPosition} = this.setPeerOptions;
         this.setPeerOptions = undefined;
-        if((!lastMsgId && !savedPosition) || this.bubbles[topMessage] || lastMsgId === topMessage) {
+        // ! warning
+        if((lastMsgFullMid === EMPTY_FULL_MID && !savedPosition) || (topMessageFullMid !== EMPTY_FULL_MID && this.getBubble(topMessageFullMid)) || lastMsgFullMid === topMessageFullMid) {
           isEnd.bottom = true;
         }
       }
@@ -7685,16 +7676,21 @@ export default class ChatBubbles {
       if(isEnd.bottom) setLoadedPromises.push(this.setLoaded('bottom', true));
     }
 
-    await Promise.all(setLoadedPromises);
+    if(setLoadedPromises.length) {
+      await Promise.all(setLoadedPromises);
+    }
 
-    // ! it is important to insert bubbles to group reversed way
-    // const length = history.length, promises: Promise<any>[] = [];
-    // if(reverse) for(let i = 0; i < length; ++i) promises.push(cb(messages[i]));
-    // else for(let i = length - 1; i >= 0; --i) promises.push(cb(messages[i]));
-    const promises = messages.map(cb);
+    let promises: Promise<any>[] = [];
+    if(this.chat.type === ChatType.Search && false) {
+      const length = history.length;
+      if(reverse) for(let i = 0; i < length; ++i) promises.push(cb(messages[i]));
+      else for(let i = length - 1; i >= 0; --i) promises.push(cb(messages[i]));
+    } else {
+      promises = messages.map(cb);
+    }
 
     // cannot combine them into one promise
-    await Promise.all(promises);
+    promises.length && await Promise.all(promises);
     await this.messagesQueuePromise;
 
     // * have to check again, because it can be skipped above
@@ -7769,11 +7765,19 @@ export default class ChatBubbles {
     });
   };
 
-  public requestHistory(offsetId: number, limit: number, backLimit: number): Promise<AckedResult<HistoryResult>>  {
+  public requestHistory(offsetId: number | FullMid, limit: number, backLimit: number): Promise<AckedResult<HistoryResult>>  {
+    let offsetPeerId: PeerId;
+    if(typeof(offsetId) === 'string') {
+      const {peerId, mid} = splitFullMid(offsetId);
+      offsetPeerId = peerId;
+      offsetId = mid;
+    }
+
     // const middleware = this.getMiddleware();
-    if(this.chat.type === ChatType.Chat || this.chat.type === ChatType.Discussion || this.chat.type === ChatType.Saved) {
+    if([ChatType.Chat, ChatType.Discussion, ChatType.Saved, ChatType.Search].includes(this.chat.type)) {
       return this.managers.acknowledged.appMessagesManager.getHistory({
         ...this.chat.requestHistoryOptionsPart,
+        offsetPeerId,
         offsetId,
         limit,
         backLimit
@@ -7782,6 +7786,7 @@ export default class ChatBubbles {
       return this.managers.acknowledged.appMessagesManager.getHistory({
         peerId: this.peerId,
         inputFilter: {_: 'inputMessagesFilterPinned'},
+        offsetPeerId,
         offsetId,
         limit,
         backLimit
@@ -7806,7 +7811,7 @@ export default class ChatBubbles {
     }
   }
 
-  private async animateAsLadder(additionMsgId: number, additionMsgIds: number[], isAdditionRender: boolean, backLimit: number, maxId: number) {
+  private async animateAsLadder(additionalFullMid: FullMid, additionalFullMids: FullMid[], isAdditionalRender: boolean, backLimit: number, maxId: FullMid) {
     /* const middleware = this.getMiddleware();
     await this.ladderDeferred; */
 
@@ -7814,7 +7819,7 @@ export default class ChatBubbles {
     if(this.chat.setPeerPromise && !this.resolveLadderAnimation) {
       log.warn('will be delayed');
       // @ts-ignore
-      this.resolveLadderAnimation = this.animateAsLadder.bind(this, additionMsgId, additionMsgIds, isAdditionRender, backLimit, maxId);
+      this.resolveLadderAnimation = this.animateAsLadder.bind(this, additionalFullMid, additionalFullMids, isAdditionalRender, backLimit, maxId);
       return;
     }
 
@@ -7822,50 +7827,50 @@ export default class ChatBubbles {
       return;
     } */
 
-    if(!Object.keys(this.bubbles).length) {
+    const fullMids = this.getRenderedHistory('desc');
+
+    if(!fullMids.length) {
       log.warn('no bubbles');
       return;
     }
 
-    let sortedMids = getObjectKeysAndSort(this.bubbles, 'desc');
+    let sortedFullMids = fullMids.slice();
 
-    if(isAdditionRender && additionMsgIds.length) {
-      sortedMids = sortedMids.filter((mid) => !additionMsgIds.includes(mid));
+    if(isAdditionalRender && additionalFullMids.length) {
+      sortedFullMids = sortedFullMids.filter((fullMid) => !additionalFullMids.includes(fullMid));
     }
 
-    let targetMid: number;
+    let targetMid: FullMid;
     if(backLimit) {
-      targetMid = maxId || Math.max(...sortedMids); // * on discussion enter
+      targetMid = maxId || sortedFullMids[0]; // * on discussion enter
     } else {
-      if(additionMsgId) {
-        targetMid = additionMsgId;
+      if(additionalFullMid) {
+        targetMid = additionalFullMid;
       } else { // * if maxId === 0
-        targetMid = Math.max(...sortedMids);
+        targetMid = sortedFullMids[0];
       }
     }
 
-    const topIds = sortedMids.slice(sortedMids.findIndex((mid) => targetMid > mid));
-    const middleIds = isAdditionRender ? [] : [targetMid];
-    const bottomIds = isAdditionRender ? [] : sortedMids.slice(0, sortedMids.findIndex((mid) => targetMid >= mid)).reverse();
+    const topIds = sortedFullMids.slice(sortedFullMids.findIndex((mid) => targetMid > mid));
+    const middleIds = isAdditionalRender ? [] : [targetMid];
+    const bottomIds = isAdditionalRender ? [] : sortedFullMids.slice(0, sortedFullMids.findIndex((mid) => targetMid >= mid)).reverse();
 
     if(DEBUG) {
-      log('targeting mid:', targetMid, maxId, additionMsgId,
-        topIds.map((m) => getServerMessageId(m)),
-        bottomIds.map((m) => getServerMessageId(m)));
+      log('targeting mid:', targetMid, maxId, additionalFullMid, topIds, bottomIds);
     }
 
     const setBubbles: HTMLElement[] = [];
 
     this.chatInner.classList.add('zoom-fading');
-    const delay = isAdditionRender ? 10 : 40;
-    const offsetIndex = isAdditionRender ? 0 : 1;
-    const animateAsLadder = (mids: number[], offsetIndex = 0) => {
+    const delay = isAdditionalRender ? 10 : 40;
+    const offsetIndex = isAdditionalRender ? 0 : 1;
+    const animateAsLadder = (fullMids: string[], offsetIndex = 0) => {
       const animationPromise = deferredPromise<void>();
       let lastMsDelay = 0;
-      mids.forEach((mid, idx) => {
-        const bubble = this.bubbles[mid];
-        if(!bubble || this.skippedMids.has(mid)) {
-          log.warn('no bubble by mid:', mid);
+      fullMids.forEach((fullMid, idx) => {
+        const bubble = this.getBubble(fullMid);
+        if(!bubble || this.skippedMids.has(fullMid)) {
+          log.warn('no bubble by mid:', fullMid);
           return;
         }
 
@@ -7875,7 +7880,7 @@ export default class ChatBubbles {
 
         const contentWrapper = bubble.lastElementChild as HTMLElement;
         if(!contentWrapper) {
-          log.warn('bubble not ready yet', mid, this.batchProcessor);
+          log.warn('bubble not ready yet', fullMid, this.batchProcessor);
           return;
         }
 
@@ -7890,7 +7895,7 @@ export default class ChatBubbles {
           element.style.setProperty('transition-delay', lastMsDelay + 'ms', 'important');
         });
 
-        if(idx === (mids.length - 1)) {
+        if(idx === (fullMids.length - 1)) {
           const onTransitionEnd = (e: TransitionEvent) => {
             if(e.target !== contentWrapper) {
               return;
@@ -7906,7 +7911,7 @@ export default class ChatBubbles {
         setBubbles.push(...elementsToAnimate);
       });
 
-      if(!mids.length) {
+      if(!fullMids.length) {
         animationPromise.resolve();
       }
 
@@ -7931,7 +7936,6 @@ export default class ChatBubbles {
       });
     });
 
-    const perf = performance.now();
     let promise: Promise<any>;
     if(topIds.length || middleIds.length || bottomIds.length) {
       promise = Promise.all(promises);
@@ -8154,6 +8158,8 @@ export default class ChatBubbles {
         return result;
       }
 
+      const fullMid = makeFullMid(message);
+
       const middleware = bubble.middlewareHelper.get();
       const m = middlewarePromise(middleware);
 
@@ -8166,7 +8172,7 @@ export default class ChatBubbles {
           this.updatePlaceholderPosition = undefined;
         }
 
-        if(!middleware() || this.bubbles[bubble.dataset.mid] !== bubble) {
+        if(!middleware() || this.getBubble(fullMid) !== bubble) {
           onClearedBefore();
           return;
         }
@@ -8293,9 +8299,9 @@ export default class ChatBubbles {
 
       if(!isWaitingForAnimation && animate) {
         await m(getHeavyAnimationPromise());
-        const additionMsgIds = getObjectKeysAndSort(this.bubbles);
-        indexOfAndSplice(additionMsgIds, message.mid);
-        this.animateAsLadder(message.mid, additionMsgIds, false, 0, 0);
+        const additionalFullMids = this.getRenderedHistory('asc');
+        indexOfAndSplice(additionalFullMids, fullMid);
+        this.animateAsLadder(fullMid, additionalFullMids, false, 0, EMPTY_FULL_MID);
       }
 
       bubble.middlewareHelper.onDestroy(() => {
@@ -8406,7 +8412,7 @@ export default class ChatBubbles {
       log('will slice bottom', invisible);
     }
 
-    const mids = invisible.map(({element}) => +element.dataset.mid);
+    const fullMids = invisible.map(({element}) => getBubbleFullMid(element));
 
     let scrollSaver: ScrollSaver;
     if(/* !!invisibleTop.length !== !!invisibleBottom.length &&  */!ignoreScrollSaving) {
@@ -8414,8 +8420,8 @@ export default class ChatBubbles {
       scrollSaver.save();
     }
 
-    log('slicing mids', mids);
-    this.deleteMessagesByIds(mids, false, true);
+    log('slicing mids', fullMids);
+    this.deleteMessagesByIds(fullMids, false, true);
 
     if(scrollSaver) {
       scrollSaver.restore();
@@ -8451,12 +8457,16 @@ export default class ChatBubbles {
     this.scrollable.onScroll(); // ! WARNING
     // return;
 
+    if(this.scrollable.loadedAll.bottom && this.scrollable.loadedAll.top) {
+      setPeerLanguageLoaded(this.peerId);
+    }
+
     if(!checkPlaceholders) {
       return;
     }
 
     if(!this.chat.isRestricted) {
-      if(side === 'bottom' && this.chat.isBroadcast/*  && false */) {
+      if(side === 'bottom' && this.chat.isBroadcast && this.chat.type === ChatType.Chat/*  && false */) {
         this.toggleSponsoredMessage(value);
       }
 
@@ -8472,6 +8482,7 @@ export default class ChatBubbles {
     const log = this.log.bindPrefix('sponsored-' + (Math.random() * 1000 | 0));
     log('checking', value);
     const {mid} = this.generateLocalMessageId(SPONSORED_MESSAGE_ID_OFFSET);
+    const fullMid = makeFullMid(this.peerId, mid);
     if(value) {
       const middleware = this.getMiddleware(() => {
         return this.scrollable.loadedAll.bottom && this.getSponsoredMessagePromise === promise;
@@ -8491,7 +8502,7 @@ export default class ChatBubbles {
 
         const messagePromise = this.generateLocalFirstMessage(false, (message) => {
           message.message = '';
-          message.from_id = sponsoredMessage.from_id;
+          message.from_id = {_: 'peerUser', user_id: NULL_PEER_ID};
           message.pFlags.sponsored = true;
           message.sponsoredMessage = sponsoredMessage;
 
@@ -8531,7 +8542,7 @@ export default class ChatBubbles {
     } else {
       log('clearing rendered', mid);
       this.getSponsoredMessagePromise = undefined;
-      this.deleteMessagesByIds([mid], false);
+      this.deleteMessagesByIds([fullMid], false);
     }
   }
 
@@ -8587,7 +8598,7 @@ export default class ChatBubbles {
           Object.keys(this.bubbles).length &&
           !this.getRenderedLength()
         ) ||
-        (this.chat.type === ChatType.Scheduled && !Object.keys(this.bubbles).length) ||
+        (this.chat.type === ChatType.Scheduled && !this.getRenderedLength()) ||
         !(await this.chat.getHistoryStorage()).count
       )
     ) {
@@ -8598,12 +8609,12 @@ export default class ChatBubbles {
     }
   }
 
-  public getHistory1(maxId?: number, reverse?: boolean, isBackLimit?: boolean, additionMsgId?: number, justLoad?: boolean) {
+  public getHistory1(maxId?: FullMid, reverse?: boolean, isBackLimit?: boolean, additionalFullMid?: FullMid, justLoad?: boolean) {
     const middleware = this.getMiddleware(justLoad ? undefined : () => {
       return (reverse ? this.getHistoryTopPromise : this.getHistoryBottomPromise) === waitPromise;
     });
 
-    const result = this.getHistory(maxId, reverse, isBackLimit, additionMsgId, justLoad, middleware);
+    const result = this.getHistory(maxId, reverse, isBackLimit, additionalFullMid, justLoad, middleware);
     const waitPromise = result.then((res) => res && (res.waitPromise || res.promise));
 
     (reverse ? this.getHistoryTopPromise = waitPromise : this.getHistoryBottomPromise = waitPromise);
@@ -8649,14 +8660,14 @@ export default class ChatBubbles {
    * @param maxId max message id
    * @param reverse 'true' means up
    * @param isBackLimit is search
-   * @param additionMsgId for the last message
+   * @param additionalFullMid for the last message
    * @param justLoad do not render
    */
   public async getHistory(
-    maxId = 0,
+    maxId: FullMid = EMPTY_FULL_MID,
     reverse = false,
     isBackLimit = false,
-    additionMsgId = 0,
+    additionalFullMid?: FullMid,
     justLoad = false,
     middleware?: () => boolean
   ): Promise<{cached: boolean, promise: Promise<void>, waitPromise: Promise<any>}> {
@@ -8666,7 +8677,7 @@ export default class ChatBubbles {
     // console.time('appImManager call getHistory');
     const pageCount = Math.min(40, windowSize.height / 40/*  * 1.25 */ | 0);
     // const loadCount = Object.keys(this.bubbles).length > 0 ? 50 : pageCount;
-    const realLoadCount = isBroadcast ? 20 : (Object.keys(this.bubbles).length > 0 ? Math.max(35, pageCount) : pageCount);
+    const realLoadCount = isBroadcast ? 20 : (this.getRenderedHistory(undefined, true).length > 0 ? Math.max(35, pageCount) : pageCount);
     // const realLoadCount = pageCount;//const realLoadCount = 50;
     let loadCount = realLoadCount;
 
@@ -8675,15 +8686,15 @@ export default class ChatBubbles {
       if(Object.keys(this.bubbles).length > 0)
       return {cached: false, promise: Promise.resolve(true)};
     } */
-    if(TEST_SCROLL !== undefined) {
-      if(TEST_SCROLL) {
-        if(Object.keys(this.bubbles).length > 0) {
-          --TEST_SCROLL;
-        }
-      } else {
-        return {cached: false, promise: Promise.resolve(), waitPromise: Promise.resolve()};
-      }
-    }
+    // if(TEST_SCROLL !== undefined) {
+    //   if(TEST_SCROLL) {
+    //     if(Object.keys(this.bubbles).length > 0) {
+    //       --TEST_SCROLL;
+    //     }
+    //   } else {
+    //     return {cached: false, promise: Promise.resolve(), waitPromise: Promise.resolve()};
+    //   }
+    // }
 
     // //console.time('render history total');
 
@@ -8697,31 +8708,32 @@ export default class ChatBubbles {
       }
     }
 
-    let additionMsgIds: number[];
-    if(additionMsgId && !isBackLimit) {
+    let additionalFullMids: FullMid[];
+    if(additionalFullMid && !isBackLimit) {
       if(this.chat.type === ChatType.Pinned) {
-        additionMsgIds = [additionMsgId];
+        additionalFullMids = [additionalFullMid];
       } else {
         const historyStorage = await this.chat.getHistoryStorage();
-        const slice = historyStorage.history.slice;
-        // if(slice.length < loadCount && !slice.isEnd(SliceEnd.Both)) {
+        const slicedArray = historyStorage.history;
+        const slice = slicedArray.slice;
         if(slice.isEnd(SliceEnd.Bottom) && !slice.isEnd(SliceEnd.Both)) {
-          const sliced = historyStorage.history.sliceMe(additionMsgId, 0, loadCount);
+          const {mid, peerId} = splitFullMid(additionalFullMid);
+          const sliced = slicedArray.sliceMe(mid, 0, loadCount);
           if(sliced) {
-            additionMsgIds = [additionMsgId, ...sliced.slice];
+            additionalFullMids = [additionalFullMid, ...sliced.slice.map((mid) => makeFullMid(peerId, mid))];
           } else {
-            additionMsgIds = slice.slice(0, loadCount);
+            additionalFullMids = slice.slice(0, loadCount).map((mid) => makeFullMid(peerId, mid));
           }
 
           // * filter last album, because we don't know is it the last item
-          for(let i = additionMsgIds.length - 1; i >= 0; --i) {
-            const message = this.chat.getMessage(additionMsgIds[i]);
-            if((message as Message.message)?.grouped_id) additionMsgIds.splice(i, 1);
+          for(let i = additionalFullMids.length - 1; i >= 0; --i) {
+            const message = this.chat.getMessage(additionalFullMids[i]);
+            if((message as Message.message)?.grouped_id) additionalFullMids.splice(i, 1);
             else break;
           }
 
-          loadCount = Math.max(0, loadCount - additionMsgIds.length);
-          maxId = additionMsgIds[additionMsgIds.length - 1] || maxId;
+          loadCount = Math.max(0, loadCount - additionalFullMids.length);
+          maxId = additionalFullMids[additionalFullMids.length - 1] || maxId;
         }
       }
     }
@@ -8736,7 +8748,7 @@ export default class ChatBubbles {
 
     // const isFirstMessageRender = !!additionMsgID && result.cached && !appMessagesManager.getMessage(additionMsgID).grouped_id;
     // const isAdditionRender = additionMsgIds?.length && !result.cached;
-    const isAdditionRender = !!additionMsgIds?.length;
+    const isAdditionRender = !!additionalFullMids?.length;
     // const isFirstMessageRender = (this.isFirstLoad && backLimit && !result.cached) || (isAdditionRender && loadCount > 0);
     const isFirstMessageRender = this.isFirstLoad && !result.cached && (isAdditionRender || loadCount > 0);
     if(isAdditionRender) {
@@ -8744,7 +8756,7 @@ export default class ChatBubbles {
 
       result = {
         cached: true,
-        result: Promise.resolve({history: additionMsgIds})
+        result: Promise.resolve({history: additionalFullMids.map((fullMid) => splitFullMid(fullMid).mid)})
       };
 
       // additionMsgID = 0;
@@ -8765,8 +8777,8 @@ export default class ChatBubbles {
       return getHeavyAnimationPromise().then(() => {
         return processResult(historyResult);
       }).then(() => {
-        if(!isAdditionRender && additionMsgId) {
-          historyResult.history.unshift(additionMsgId);
+        if(!isAdditionRender && additionalFullMid) {
+          historyResult.history.unshift(splitFullMid(additionalFullMid).mid);
         }
 
         return this.performHistoryResult(historyResult, reverse);
@@ -8821,7 +8833,7 @@ export default class ChatBubbles {
 
         this.messagesQueueOnRenderAdditional = undefined;
 
-        const promise = this.animateAsLadder(additionMsgId, additionMsgIds, isAdditionRender, backLimit, maxId);
+        const promise = this.animateAsLadder(additionalFullMid, additionalFullMids, isAdditionRender, backLimit, maxId);
         promise.then(() => {
           setTimeout(() => { // preload messages
             this.loadMoreHistory(reverse, true);
@@ -8848,30 +8860,39 @@ export default class ChatBubbles {
       return;
     }
 
+    const middleware = this.getMiddleware();
+
+    const {peerId, threadId} = this.chat;
+
     const historyMaxId = await this.chat.getHistoryMaxId();
-    let readMaxId = await this.managers.appMessagesManager.getReadMaxIdIfUnread(this.peerId, this.chat.threadId);
-    if(!readMaxId) return;
+    let readMaxId = await this.managers.appMessagesManager.getReadMaxIdIfUnread(peerId, threadId);
+    if(!readMaxId || !middleware()) return;
 
-    readMaxId = Object.keys(this.bubbles)
-    .filter((mid) => !this.bubbles[mid].classList.contains('is-out'))
-    .map((i) => +i)
-    .sort((a, b) => a - b)
-    .find((i) => i > readMaxId);
+    readMaxId = this.getRenderedHistory('asc', true)
+    .filter((fullMid) => !this.getBubble(fullMid).classList.contains('is-out'))
+    .map((fullMid) => splitFullMid(fullMid).mid)
+    .find((mid) => mid > readMaxId);
 
-    if(readMaxId && this.bubbles[readMaxId]) {
-      const bubble = this.bubbles[readMaxId];
-      if(this.firstUnreadBubble && this.firstUnreadBubble !== bubble) {
-        this.firstUnreadBubble.classList.remove('is-first-unread');
-        this.firstUnreadBubble = null;
-      }
-
-      if(readMaxId !== historyMaxId) {
-        bubble.classList.add('is-first-unread');
-      }
-
-      this.firstUnreadBubble = bubble;
-      this.attachedUnreadBubble = true;
+    if(!readMaxId) {
+      return;
     }
+
+    const bubble = this.getBubble(peerId, readMaxId);
+    if(!bubble) {
+      return;
+    }
+
+    if(this.firstUnreadBubble && this.firstUnreadBubble !== bubble) {
+      this.firstUnreadBubble.classList.remove('is-first-unread');
+      this.firstUnreadBubble = null;
+    }
+
+    if(readMaxId !== historyMaxId) {
+      bubble.classList.add('is-first-unread');
+    }
+
+    this.firstUnreadBubble = bubble;
+    this.attachedUnreadBubble = true;
   }
 
   public deleteEmptyDateGroups() {

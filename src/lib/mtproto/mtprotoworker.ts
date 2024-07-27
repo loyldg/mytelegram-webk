@@ -35,8 +35,7 @@ import ServiceMessagePort from '../serviceWorker/serviceMessagePort';
 import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
 import {makeWorkerURL} from '../../helpers/setWorkerProxy';
 import ServiceWorkerURL from '../../../sw?worker&url';
-import {IS_SAFARI} from '../../environment/userAgent';
-import setDeepProperty from '../../helpers/object/setDeepProperty';
+import setDeepProperty, {splitDeepPath} from '../../helpers/object/setDeepProperty';
 import getThumbKey from '../storages/utils/thumbs/getThumbKey';
 import {NULL_PEER_ID, THUMB_TYPE_FULL} from './mtproto_config';
 import generateEmptyThumb from '../storages/utils/thumbs/generateEmptyThumb';
@@ -46,6 +45,7 @@ import isLegacyMessageId from '../appManagers/utils/messageId/isLegacyMessageId'
 import {MTAppConfig} from './appConfig';
 import {setAppStateSilent} from '../../stores/appState';
 import getObjectKeysAndSort from '../../helpers/object/getObjectKeysAndSort';
+import {reconcilePeer, reconcilePeers} from '../../stores/peers';
 
 const TEST_NO_STREAMING = false;
 
@@ -136,7 +136,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
           mid = message.mid;
           groupedId = (message as Message.message).grouped_id;
         } else {
-          const [key, _mid] = payload.key.split('.');
+          const [key, _mid] = splitDeepPath(payload.key);
           mid = +_mid;
           const previousMessage = this.mirrors.messages[key]?.[mid];
           if(!previousMessage) {
@@ -151,7 +151,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
         }
 
         const map = this.mirrors.groupedMessages[groupedId] ??= new Map();
-        if(!payload.value) {
+        if(!message) {
           map.delete(mid);
 
           if(!map.size) {
@@ -164,9 +164,17 @@ class ApiManagerProxy extends MTProtoMessagePort {
 
       state: (payload) => {
         if(payload.key) {
-          setAppStateSilent({[payload.key]: payload.value});
+          setAppStateSilent(payload.key, payload.value);
         } else {
           console.error(payload);
+        }
+      },
+
+      peers: (payload) => {
+        if(payload.key) {
+          reconcilePeer(payload.key.toPeerId(), payload.value as any);
+        } else {
+          reconcilePeers(payload.value);
         }
       }
     };

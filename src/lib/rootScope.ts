@@ -98,7 +98,7 @@ export type BroadcastEvents = {
   'messages_downloaded': {peerId: PeerId, mids: number[]},
   'messages_media_read': {peerId: PeerId, mids: number[]},
 
-  'story_update': {peerId: PeerId, story: StoryItem, modifiedPinned?: boolean, modifiedArchive?: boolean},
+  'story_update': {peerId: PeerId, story: StoryItem, modifiedPinned?: boolean, modifiedArchive?: boolean, modifiedPinnedToTop?: boolean},
   'story_deleted': {peerId: PeerId, id: number},
   'story_expired': {peerId: PeerId, id: number},
   'story_new': {peerId: PeerId, story: StoryItem, cacheType: StoriesCacheType, maxReadId: number},
@@ -108,6 +108,7 @@ export type BroadcastEvents = {
   'stories_position': {peerId: PeerId, position: StoriesListPosition},
 
   'replies_updated': Message.message,
+  'replies_short_update': Message.message,
 
   'scheduled_new': Message.message,
   'scheduled_delete': {peerId: PeerId, mids: number[]},
@@ -120,6 +121,9 @@ export type BroadcastEvents = {
   'stickers_top': Long,
   'stickers_order': {type: 'masks' | 'emojis' | 'stickers', order: Long[]},
   'sticker_updated': {type: 'recent' | 'faved', document: MyDocument, faved: boolean},
+
+  'gifs_updated': MyDocument[],
+  'gif_updated': {document: MyDocument, saved: boolean},
 
   'state_cleared': void,
   'state_synchronized': void,
@@ -153,7 +157,7 @@ export type BroadcastEvents = {
 
   'media_play': void,
 
-  'emoji_recent': AppEmoji,
+  'emoji_recent': {emoji: AppEmoji, deleted?: boolean},
 
   'download_progress': Progress,
   'document_downloading': DocId,
@@ -185,6 +189,10 @@ export type BroadcastEvents = {
 
   'saved_tags': {savedPeerId: PeerId, tags: SavedReactionTag[]},
   'saved_tags_clear': void,
+
+  'stars_balance': Long,
+
+  'file_speed_limited': {increaseTimes: number, isUpload: boolean},
 
   'config': Config,
   'app_config': MTAppConfig,

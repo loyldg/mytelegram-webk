@@ -8,7 +8,7 @@ import {IS_SAFARI} from '../../environment/userAgent';
 import {IS_H265_SUPPORTED} from '../../environment/videoSupport';
 import {animateSingle} from '../../helpers/animation';
 import {ChatAutoDownloadSettings} from '../../helpers/autoDownload';
-import deferredPromise from '../../helpers/cancellablePromise';
+import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
 import cancelEvent from '../../helpers/dom/cancelEvent';
 import {attachClickEvent} from '../../helpers/dom/clickEvent';
 import createVideo from '../../helpers/dom/createVideo';
@@ -21,7 +21,7 @@ import getMediaThumbIfNeeded from '../../helpers/getStrippedThumbIfNeeded';
 import liteMode from '../../helpers/liteMode';
 import makeError from '../../helpers/makeError';
 import mediaSizes, {ScreenSize} from '../../helpers/mediaSizes';
-import {Middleware} from '../../helpers/middleware';
+import {getMiddleware, Middleware, MiddlewareHelper} from '../../helpers/middleware';
 import noop from '../../helpers/noop';
 import onMediaLoad, {shouldIgnoreVideoError} from '../../helpers/onMediaLoad';
 import {fastRaf} from '../../helpers/schedulers';
@@ -38,15 +38,22 @@ import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
 import rootScope from '../../lib/rootScope';
 import {ThumbCache} from '../../lib/storages/thumbs';
 import animationIntersector, {AnimationItemGroup} from '../animationIntersector';
-import appMediaPlaybackController, {MediaSearchContext} from '../appMediaPlaybackController';
+import appMediaPlaybackController, {AppMediaPlaybackController, MediaSearchContext} from '../appMediaPlaybackController';
 import AudioElement, {findMediaTargets} from '../audio';
 import Button from '../button';
 import Icon from '../icon';
 import LazyLoadQueue from '../lazyLoadQueue';
 import ProgressivePreloader from '../preloader';
 import wrapPhoto from './photo';
+import SuperIntersectionObserver, {IntersectionCallback} from '../../helpers/dom/superIntersectionObserver';
+import VideoPlayer from '../../lib/mediaPlayer';
+import debounce from '../../helpers/schedulers/debounce';
+import {isFullScreen} from '../../helpers/dom/fullScreen';
+import ButtonIcon from '../buttonIcon';
+import overlayCounter from '../../helpers/overlayCounter';
 
 const MAX_VIDEO_AUTOPLAY_SIZE = 50 * 1024 * 1024; // 50 MB
+const USE_OBSERVER = false;
 
 let roundVideoCircumference = 0;
 mediaSizes.addEventListener('changeScreen', (from, to) => {
@@ -71,7 +78,11 @@ mediaSizes.addEventListener('changeScreen', (from, to) => {
   }
 });
 
-export default async function wrapVideo({doc, altDoc, container, message, boxWidth, boxHeight, withTail, isOut, middleware, lazyLoadQueue, noInfo, group, onlyPreview, noPreview, withoutPreloader, loadPromises, noPlayButton, photoSize, videoSize, searchContext, autoDownload, managers = rootScope.managers, noAutoplayAttribute, ignoreStreaming, canAutoplay, useBlur}: {
+// let onAnotherSingleMedia: () => void;
+
+let turnedObserverOn = false;
+
+export default async function wrapVideo({doc, altDoc, container, message, boxWidth, boxHeight, withTail, isOut, middleware, lazyLoadQueue, noInfo, group, onlyPreview, noPreview, withoutPreloader, loadPromises, noPlayButton, photoSize, videoSize, searchContext, autoDownload, managers = rootScope.managers, noAutoplayAttribute, ignoreStreaming, canAutoplay, useBlur, observer, setShowControlsOn, uploadingFileName}: {
   doc: MyDocument,
   altDoc?: MyDocument,
   container?: HTMLElement,
@@ -80,7 +91,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
   boxHeight?: number,
   withTail?: boolean,
   isOut?: boolean,
-  middleware?: Middleware,
+  middleware: Middleware,
   lazyLoadQueue?: LazyLoadQueue,
   noInfo?: boolean,
   noPlayButton?: boolean,
@@ -98,11 +109,19 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
   ignoreStreaming?: boolean,
   canAutoplay?: boolean,
   useBlur?: boolean | number,
+  observer?: SuperIntersectionObserver,
+  setShowControlsOn?: HTMLElement,
+  uploadingFileName?: string
 }) {
   const supportsStreaming = doc.supportsStreaming && !ignoreStreaming;
   if(!supportsStreaming && altDoc && !onlyPreview && !IS_H265_SUPPORTED) {
     doc = altDoc;
     altDoc = undefined;
+  }
+
+  if(doc.type === 'gif' && container) {
+    container.classList.add('media-gif-wrapper');
+    container.dataset.docId = '' + doc.id;
   }
 
   const autoDownloadSize = autoDownload?.video;
@@ -118,6 +137,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
   );
   let spanTime: HTMLElement, spanPlay: HTMLElement;
 
+  let willObserveSound = false, noSoundIcon: HTMLElement, myMiddlewareHelper: MiddlewareHelper, originalMiddleware: Middleware;
   if(!noInfo && container) {
     spanTime = document.createElement('span');
     spanTime.classList.add('video-time');
@@ -129,8 +149,15 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
 
       if(!noPlayButton && doc.type !== 'round') {
         if(canAutoplay && !noAutoDownload) {
-          spanTime.classList.add('can-autoplay');
-          spanTime.append(Icon('nosound', 'video-time-icon'));
+          if(observer && USE_OBSERVER) {
+            willObserveSound = true;
+            // noAutoplayAttribute = true;
+            originalMiddleware = middleware;
+            myMiddlewareHelper = getMiddleware();
+            middleware = myMiddlewareHelper.get();
+          }
+
+          spanTime.append(noSoundIcon = Icon('nosound', 'video-time-icon'));
         } else {
           needPlayButton = true;
         }
@@ -172,7 +199,8 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
       autoDownloadSize,
       size: photoSize,
       managers,
-      useBlur
+      useBlur,
+      uploadingFileName
     });
 
     res.thumb = photoRes;
@@ -187,7 +215,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
 
   let preloader: ProgressivePreloader; // it must be here, otherwise will get error before initialization in round onPlay
 
-  const video = createVideo({middleware});
+  const video = createVideo({middleware, pip: willObserveSound});
   video.classList.add('media-video');
   video.muted = true;
   if(doc.type === 'round') {
@@ -393,7 +421,9 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
       autoDownloadSize: autoDownload?.photo,
       size: photoSize,
       managers,
-      useBlur
+      useBlur,
+      canHaveVideoPlayer: willObserveSound,
+      uploadingFileName
     });
 
     res.thumb = photoRes;
@@ -458,13 +488,13 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
 
   getCacheContext();
 
-  const uploadFileName = message?.uploadingFileName;
-  if(uploadFileName) { // means upload
+  uploadingFileName ??= message?.uploadingFileName?.[0];
+  if(uploadingFileName) { // means upload
     preloader = new ProgressivePreloader({
       attachMethod: 'prepend',
       isUpload: true
     });
-    preloader.attachPromise(appDownloadManager.getUpload(uploadFileName));
+    preloader.attachPromise(appDownloadManager.getUpload(uploadingFileName));
     preloader.attach(container, false);
     noAutoDownload = undefined;
   } else if(!cacheContext.downloaded && !supportsStreaming && !withoutPreloader) {
@@ -488,7 +518,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
       console.error('Error ' + video.error.code + '; details: ' + video.error.message);
     }
 
-    if(preloader && !uploadFileName) {
+    if(preloader && !uploadingFileName) {
       preloader.detach();
     }
 
@@ -537,7 +567,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
 
     getCacheContext();
     let loadPromise: Promise<any> = Promise.resolve();
-    if((preloader && !uploadFileName) || withoutPreloader) {
+    if((preloader && !uploadingFileName) || withoutPreloader) {
       if(!cacheContext.downloaded && !supportsStreaming) {
         const promise = loadPromise = appDownloadManager.downloadMediaURL({
           media: doc,
@@ -600,11 +630,12 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
             animation: video,
             group,
             observeElement: video,
-            type: 'video'
+            type: 'video',
+            locked: willObserveSound
           });
         }
 
-        if(preloader && !uploadFileName) {
+        if(preloader && !uploadingFileName) {
           preloader.detach();
         }
 
@@ -621,6 +652,8 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
         } else {
           renderDeferred.resolve();
         }
+
+        attachSoundObserver?.();
       }, onError);
 
       if(altDoc && altCacheContext) {
@@ -645,7 +678,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
     return {download: loadPromise, render: Promise.all([loadPromise, renderDeferred])};
   };
 
-  if(preloader && !uploadFileName) {
+  if(preloader && !uploadingFileName) {
     preloader.setDownloadFunction(load);
   }
 
@@ -670,6 +703,229 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
   if(video) {
     res.video = video;
   }
+
+  const attachSoundObserver = willObserveSound ? () => {
+    (video as any).mini = true;
+    video.pause();
+    // const button = ButtonIcon('zoomin video-to-viewer', {noRipple: true});
+    // container.append(button);
+
+    // const updateIcon = (muted: boolean) => {
+    //   replaceButtonIcon(button, muted ? 'speakeroff' : 'speaker');
+    // };
+
+    // updateIcon(video.muted);
+
+    const onMuted = () => {
+      return;
+
+      releaseSingleMedia?.(true);
+      releaseSingleMedia = undefined;
+      // video.muted = true;
+    };
+
+    const onUnmute = () => {
+      return;
+
+      // if(onAnotherSingleMedia !== _onAnotherSingleMedia) {
+      //   onAnotherSingleMedia?.();
+      // }
+
+      releaseSingleMedia = appMediaPlaybackController.setSingleMedia({
+        media: video,
+        message,
+        standalone: true
+      });
+      // onAnotherSingleMedia = _onAnotherSingleMedia = () => {
+      //   mute();
+      // };
+    };
+
+    const mute = () => {
+      if(!releaseSingleMedia) {
+        return;
+      }
+
+      noSoundIcon.classList.remove('hide');
+      onMuted();
+    };
+
+    const unmute = () => {
+      if(releaseSingleMedia) {
+        return;
+      }
+
+      noSoundIcon.classList.add('hide');
+      onUnmute();
+    };
+
+    // const toggle = (_unmute?: boolean) => {
+    //   if(_unmute !== undefined) (_unmute ? unmute : mute)();
+    //   else (releaseSingleMedia ? mute : unmute)();
+    //   updateIcon(video.muted);
+    // };
+
+    let releaseSingleMedia: ReturnType<AppMediaPlaybackController['setSingleMedia']>/* , _onAnotherSingleMedia: () => void */;
+    // const detachClickEvent = attachClickEvent(button, (e) => {
+    //   cancelEvent(e);
+    //   toggle();
+    // });
+
+    const onIntersection: IntersectionCallback = (entry) => {
+      if(!entry.isIntersecting) {
+        destroyPlayer();
+      }
+
+      if(!entry.isIntersecting && !video.muted) {
+        // toggle(false);
+        onMuted();
+      }
+    };
+
+    container.classList.add('media-video-container', 'media-video-mini');
+    observer.observe(video, onIntersection);
+
+    const destroyPlayer = () => {
+      debouncedDestroy.clearTimeout();
+      if(
+        !videoPlayer ||
+        !middleware() ||
+        isFullScreen() ||
+        videoPlayer.inPip
+      ) {
+        return;
+      }
+
+      videoPlayer.unmount();
+      videoPlayer.cleanup();
+      videoPlayer = undefined;
+      setShowControlsOn.classList.remove('show-controls');
+    };
+
+    const debouncedDestroy = debounce(destroyPlayer, 1000, false, true);
+
+    let videoPlayer: VideoPlayer, releasePromise: CancellablePromise<void>/* , changedVolume = false */;
+    (container as any).onMouseMove = (e: MouseEvent) => {
+      if(videoPlayer) {
+        return;
+      }
+
+      const toggleReleasePromise = (active: boolean) => {
+        if(active) releasePromise = deferredPromise();
+        else releasePromise?.resolve();
+      };
+
+      const onLock = (active: boolean) => {
+        if(ignoreNextEvents && ignoreNextEvents--) {
+          return;
+        }
+
+        const animationItem = animationIntersector.getAnimations(video)[0];
+        animationIntersector.toggleItemLock(animationItem, active);
+        toggleReleasePromise(active);
+      };
+
+      let ignoreNextEvents = 0;
+      videoPlayer = new VideoPlayer({
+        video,
+        container,
+        duration: video.duration,
+        streamable: true,
+        listenKeyboardEvents: 'fullscreen',
+        useGlobalVolume: 'no-init',
+        // shouldEnableSoundOnClick: () => !changedVolume,
+        onVolumeChange: (type) => {
+          const noVolume = !video.volume || video.muted;
+          let newValue: boolean;
+          if(noVolume) {
+            newValue = turnedObserverOn = false;
+          } else if(type === 'click') {
+            newValue = turnedObserverOn = true;
+          }
+
+          if(newValue !== turnedObserverOn && newValue !== undefined) {
+            appMediaPlaybackController.dispatchEvent('toggleVideoAutoplaySound', newValue);
+          }
+
+          // changedVolume = true;
+          // (!video.volume || video.muted ? mute : unmute)();
+        },
+        onFullScreen: (active) => {
+          onLock(active);
+          overlayCounter.isDarkOverlayActive = active;
+        },
+        onFullScreenToPip: () => {
+          ignoreNextEvents = 2;
+        },
+        onPip: onLock/* ,
+        onPipClose: () => {
+          if(!setShowControlsOn.classList.contains('show-controls')) {
+            debouncedDestroy();
+          }
+        } */
+      });
+
+      videoPlayer.volumeSelector.setVolume({muted: !turnedObserverOn, volume: video.volume});
+
+      videoPlayer.addEventListener('toggleControls', (show) => {
+        setShowControlsOn.classList.toggle('show-controls', show);
+        if(show) {
+          debouncedDestroy.clearTimeout();
+        } else {
+          debouncedDestroy();
+        }
+      });
+    };
+
+    // * mute video when other media is playing
+    const onAutoplaySound = (enabled: boolean) => {
+      if(videoPlayer) {
+        return;
+      }
+
+      video.muted = appMediaPlaybackController.muted;
+      video.volume = appMediaPlaybackController.volume;
+    };
+
+    const onSingleMedia = (media: HTMLMediaElement) => {
+      if(media !== video && !video.muted) {
+        if(videoPlayer) {
+          videoPlayer.volumeSelector.setVolume({muted: true, volume: video.volume});
+        } else {
+          video.muted = true;
+        }
+      }
+    };
+
+    const onPlaybackMediaParams = (params: ReturnType<AppMediaPlaybackController['getPlaybackParams']>) => {
+      if(videoPlayer) {
+        return;
+      }
+
+      video.muted = turnedObserverOn ? params.muted : true;
+      video.playbackRate = params.playbackRate;
+      video.volume = params.volume;
+    };
+
+    appMediaPlaybackController.addEventListener('toggleVideoAutoplaySound', onAutoplaySound);
+    // appMediaPlaybackController.addEventListener('singleMedia', onSingleMedia);
+    appMediaPlaybackController.addEventListener('playbackParams', onPlaybackMediaParams);
+
+    middleware.onClean(() => {
+      // detachClickEvent();
+      releaseSingleMedia?.();
+      observer.unobserve(video, onIntersection);
+      delete (container as any).onMouseMove;
+      appMediaPlaybackController.removeEventListener('toggleVideoAutoplaySound', onAutoplaySound);
+      // appMediaPlaybackController.removeEventListener('singleMedia', onSingleMedia);
+      appMediaPlaybackController.removeEventListener('playbackParams', onPlaybackMediaParams);
+    });
+
+    originalMiddleware.onClean(async() => {
+      await releasePromise;
+      myMiddlewareHelper.destroy();
+    });
+  } : undefined;
 
   return res;
 }

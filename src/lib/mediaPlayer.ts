@@ -28,30 +28,101 @@ import setCurrentTime from '../helpers/dom/setCurrentTime';
 import {i18n} from './langPack';
 import {numberThousandSplitterForWatching} from '../helpers/number/numberThousandSplitter';
 import createCanvasStream from '../helpers/canvas/createCanvasStream';
+import simulateEvent from '../helpers/dom/dispatchEvent';
+import indexOfAndSplice from '../helpers/array/indexOfAndSplice';
+
+export const PlaybackRateButton = (options: {
+  onPlaybackRateMenuToggle?: (open: boolean) => void,
+  direction: string
+}) => {
+  const PLAYBACK_RATES = [0.5, 1, 1.5, 2];
+  const PLAYBACK_RATES_ICONS: Icon[] = ['playback_05', 'playback_1x', 'playback_15', 'playback_2x'];
+  const button = ButtonIcon(` btn-menu-toggle`, {noRipple: true});
+
+  const setIcon = () => {
+    const playbackRateButton = button;
+
+    let idx = PLAYBACK_RATES.indexOf(appMediaPlaybackController.playbackRate);
+    if(idx === -1) idx = PLAYBACK_RATES.indexOf(1);
+
+    const icon = Icon(PLAYBACK_RATES_ICONS[idx]);
+    if(playbackRateButton.firstElementChild) {
+      playbackRateButton.firstElementChild.replaceWith(icon);
+    } else {
+      playbackRateButton.append(icon);
+    }
+  };
+
+  const setBtnMenuToggle = () => {
+    const buttons = PLAYBACK_RATES.map((rate, idx) => {
+      const buttonOptions: Parameters<typeof ButtonMenuSync>[0]['buttons'][0] = {
+        // icon: PLAYBACK_RATES_ICONS[idx],
+        regularText: rate + 'x',
+        onClick: () => {
+          appMediaPlaybackController.playbackRate = rate;
+        }
+      };
+
+      return buttonOptions;
+    });
+    const btnMenu = ButtonMenuSync({buttons});
+    btnMenu.classList.add(options.direction, 'playback-rate-menu');
+    ButtonMenuToggleHandler({
+      el: button,
+      onOpen: options.onPlaybackRateMenuToggle ? () => {
+        options.onPlaybackRateMenuToggle(true);
+      } : undefined,
+      onClose: options.onPlaybackRateMenuToggle ? () => {
+        options.onPlaybackRateMenuToggle(false);
+      } : undefined
+    });
+    setIcon();
+    button.append(btnMenu);
+  };
+
+  const addRate = (add: number) => {
+    const playbackRate = appMediaPlaybackController.playbackRate;
+    const idx = PLAYBACK_RATES.indexOf(playbackRate);
+    const nextIdx = idx + add;
+    if(nextIdx >= 0 && nextIdx < PLAYBACK_RATES.length) {
+      appMediaPlaybackController.playbackRate = PLAYBACK_RATES[nextIdx];
+    }
+  };
+
+  const isMenuOpen = () => {
+    return button.classList.contains('menu-open');
+  };
+
+  setBtnMenuToggle();
+  return {element: button, setIcon, addRate, isMenuOpen};
+};
 
 export default class VideoPlayer extends ControlsHover {
-  private static PLAYBACK_RATES = [0.5, 1, 1.5, 2];
-  private static PLAYBACK_RATES_ICONS: Icon[] = ['playback_05', 'playback_1x', 'playback_15', 'playback_2x'];
-
   public video: HTMLVideoElement;
-  protected wrapper: HTMLDivElement;
+  protected wrapper: HTMLElement;
   protected progress: MediaProgressLine;
   protected skin: 'default';
   protected live: boolean;
 
   protected listenerSetter: ListenerSetter;
-  protected playbackRateButton: HTMLElement;
+  protected playbackRateButton: ReturnType<typeof PlaybackRateButton>;
   protected pipButton: HTMLElement;
   protected liveMenuButton: HTMLElement;
   protected toggles: HTMLElement[];
+  protected mainToggle: HTMLElement;
+  protected controls: HTMLElement;
+  protected gradient: HTMLElement;
   public liveEl: HTMLElement;
 
   /* protected videoParent: HTMLElement;
   protected videoWhichChild: number; */
 
-  protected onPlaybackRackMenuToggle?: (open: boolean) => void;
+  protected onPlaybackRateMenuToggle?: (open: boolean) => void;
   protected onPip?: (pip: boolean) => void;
   protected onPipClose?: () => void;
+  protected onVolumeChange: VolumeSelector['onVolumeChange'];
+  protected onFullScreen: (active: boolean) => void;
+  protected onFullScreenToPip: () => void;
 
   protected canPause: boolean;
   protected canSeek: boolean;
@@ -66,34 +137,55 @@ export default class VideoPlayer extends ControlsHover {
   protected debouncePipTime: number;
   public emptyPipVideoSource: CanvasImageSource;
 
+  protected listenKeyboardEvents: 'always' | 'fullscreen';
+  protected hadContainer: boolean;
+  protected useGlobalVolume: VolumeSelector['useGlobalVolume'];
+  public volumeSelector: VolumeSelector;
+  protected isPlaying: boolean;
+  protected shouldEnableSoundOnClick: () => boolean;
+
   constructor({
     video,
+    container,
     play = false,
     streamable = false,
     duration,
     live,
     width,
     height,
-    onPlaybackRackMenuToggle,
+    onPlaybackRateMenuToggle,
     onPip,
-    onPipClose
+    onPipClose,
+    listenKeyboardEvents,
+    useGlobalVolume,
+    onVolumeChange,
+    onFullScreen,
+    onFullScreenToPip,
+    shouldEnableSoundOnClick
   }: {
     video: HTMLVideoElement,
+    container?: HTMLElement,
     play?: boolean,
     streamable?: boolean,
     duration?: number,
     live?: boolean,
     width?: number,
     height?: number,
-    onPlaybackRackMenuToggle?: VideoPlayer['onPlaybackRackMenuToggle'],
+    onPlaybackRateMenuToggle?: VideoPlayer['onPlaybackRateMenuToggle'],
     onPip?: VideoPlayer['onPip'],
-    onPipClose?: VideoPlayer['onPipClose']
+    onPipClose?: VideoPlayer['onPipClose'],
+    listenKeyboardEvents?: VideoPlayer['listenKeyboardEvents'],
+    useGlobalVolume?: VolumeSelector['useGlobalVolume'],
+    onVolumeChange?: VideoPlayer['onVolumeChange'],
+    onFullScreen?: (active: boolean) => void,
+    onFullScreenToPip?: VideoPlayer['onFullScreenToPip'],
+    shouldEnableSoundOnClick?: VideoPlayer['shouldEnableSoundOnClick']
   }) {
     super();
 
     this.video = video;
     this.video.classList.add('ckin__video');
-    this.wrapper = document.createElement('div');
+    this.wrapper = container ?? document.createElement('div');
     this.wrapper.classList.add('ckin__player');
     this.live = live;
     this.canPause = !live;
@@ -101,9 +193,17 @@ export default class VideoPlayer extends ControlsHover {
     this._width = width;
     this._height = height;
 
-    this.onPlaybackRackMenuToggle = onPlaybackRackMenuToggle;
+    this.onPlaybackRateMenuToggle = onPlaybackRateMenuToggle;
     this.onPip = onPip;
     this.onPipClose = onPipClose;
+    this.onVolumeChange = onVolumeChange;
+    this.onFullScreen = onFullScreen;
+    this.onFullScreenToPip = onFullScreenToPip;
+
+    this.listenKeyboardEvents = listenKeyboardEvents;
+    this.hadContainer = !!container;
+    this.useGlobalVolume = useGlobalVolume;
+    this.shouldEnableSoundOnClick = shouldEnableSoundOnClick;
 
     this.listenerSetter = new ListenerSetter();
 
@@ -111,22 +211,24 @@ export default class VideoPlayer extends ControlsHover {
       element: this.wrapper,
       listenerSetter: this.listenerSetter,
       canHideControls: () => {
-        return !this.video.paused && (!this.playbackRateButton || !this.playbackRateButton.classList.contains('menu-open'));
+        return !this.video.paused && (!this.playbackRateButton || !this.playbackRateButton.isMenuOpen());
       },
       showOnLeaveToClassName: 'media-viewer-caption',
       ignoreClickClassName: 'ckin__controls'
     });
 
-    video.parentNode.insertBefore(this.wrapper, video);
-    this.wrapper.appendChild(video);
+    if(!this.hadContainer) {
+      video.parentNode.insertBefore(this.wrapper, video);
+      this.wrapper.appendChild(video);
+    }
 
     this.skin = 'default';
 
     this.stylePlayer(duration);
-    this.setBtnMenuToggle();
 
     if(this.skin === 'default' && !live) {
-      const controls = this.wrapper.querySelector('.default__controls.ckin__controls') as HTMLDivElement;
+      const controls = this.controls = this.wrapper.querySelector('.default__controls.ckin__controls') as HTMLDivElement;
+      this.gradient = this.controls.previousElementSibling as HTMLElement;
       this.progress = new MediaProgressLine({
         onSeekStart: () => {
           this.wrapper.classList.add('is-seeking');
@@ -153,6 +255,8 @@ export default class VideoPlayer extends ControlsHover {
       }).finally(() => { // due to autoplay, play will not call
         this.setIsPlaing(!this.video.paused);
       });
+    } else {
+      this.setIsPlaing(!this.video.paused);
     }
   }
 
@@ -165,6 +269,16 @@ export default class VideoPlayer extends ControlsHover {
   }
 
   private setIsPlaing(isPlaying: boolean) {
+    if(this.isPlaying === isPlaying) {
+      return;
+    }
+
+    this.isPlaying = isPlaying;
+
+    if(this.live && !isPlaying) {
+      return;
+    }
+
     this.wrapper.classList.toggle('is-playing', isPlaying);
     this.toggles.forEach((toggle) => {
       toggle.replaceChildren(Icon(isPlaying ? 'pause' : 'play'));
@@ -181,9 +295,10 @@ export default class VideoPlayer extends ControlsHover {
     wrapper.insertAdjacentHTML('beforeend', html);
     let timeDuration: HTMLElement;
 
+    const onPlayCallbacks: (() => void)[] = [], onPauseCallbacks: (() => void)[] = [];
     if(skin === 'default') {
       if(this.canPause) {
-        const mainToggle = Button(`${skin}__button--big toggle`, {noRipple: true, icon: 'play'});
+        const mainToggle = this.mainToggle = Button(`${skin}__button--big toggle`, {noRipple: true, icon: 'play'});
         wrapper.firstElementChild.after(mainToggle);
       }
 
@@ -198,18 +313,25 @@ export default class VideoPlayer extends ControlsHover {
 
       const rightControls = wrapper.querySelector('.right-controls') as HTMLElement;
       if(!live) {
-        this.playbackRateButton = ButtonIcon(` ${skin}__button btn-menu-toggle`, {noRipple: true});
+        this.playbackRateButton = PlaybackRateButton({direction: 'top-left', onPlaybackRateMenuToggle: this.onPlaybackRateMenuToggle});
+        this.playbackRateButton.element.classList.add(`${skin}__button`);
       }
       if(!IS_MOBILE && document.pictureInPictureEnabled) {
         this.pipButton = ButtonIcon(`pip ${skin}__button`, {noRipple: true});
       }
       const fullScreenButton = ButtonIcon(` ${skin}__button`, {noRipple: true});
-      rightControls.append(...[this.playbackRateButton, this.pipButton, fullScreenButton].filter(Boolean));
+      rightControls.append(...[this.playbackRateButton?.element, this.pipButton, fullScreenButton].filter(Boolean));
 
-      const timeElapsed = wrapper.querySelector('#time-elapsed');
-      timeDuration = wrapper.querySelector('#time-duration') as HTMLElement;
+      const timeElapsed = wrapper.querySelector('.ckin__time-elapsed');
+      timeDuration = wrapper.querySelector('.ckin__time-duration') as HTMLElement;
 
-      const volumeSelector = new VolumeSelector(listenerSetter, false, video);
+      const volumeSelector = this.volumeSelector = new VolumeSelector({
+        listenerSetter,
+        vertical: false,
+        media: video,
+        useGlobalVolume: this.useGlobalVolume,
+        onVolumeChange: this.onVolumeChange
+      });
 
       volumeSelector.btn.classList.remove('btn-icon');
       if(timeElapsed) {
@@ -236,12 +358,20 @@ export default class VideoPlayer extends ControlsHover {
       if(!IS_TOUCH_SUPPORTED) {
         if(this.canPause) {
           attachClickEvent(video, () => {
+            if(this.checkInteraction()) {
+              return;
+            }
+
             this.togglePlay();
           }, {listenerSetter: this.listenerSetter});
         }
 
-        listenerSetter.add(document)('keydown', (e: KeyboardEvent) => {
-          if(overlayCounter.overlaysActive > 1 || document.pictureInPictureElement === video) { // forward popup is active, etc
+        if(this.listenKeyboardEvents) listenerSetter.add(document)('keydown', (e: KeyboardEvent) => {
+          if(
+            overlayCounter.overlaysActive > 1 ||
+            document.pictureInPictureElement === video ||
+            (this.listenKeyboardEvents === 'fullscreen' && !this.isFullScreen())
+          ) { // forward popup is active, etc
             return;
           }
 
@@ -256,12 +386,7 @@ export default class VideoPlayer extends ControlsHover {
             this.togglePlay();
           } else if(e.altKey && (code === 'Equal' || code === 'Minus') && this.canSeek) {
             const add = code === 'Equal' ? 1 : -1;
-            const playbackRate = appMediaPlaybackController.playbackRate;
-            const idx = VideoPlayer.PLAYBACK_RATES.indexOf(playbackRate);
-            const nextIdx = idx + add;
-            if(nextIdx >= 0 && nextIdx < VideoPlayer.PLAYBACK_RATES.length) {
-              appMediaPlaybackController.playbackRate = VideoPlayer.PLAYBACK_RATES[nextIdx];
-            }
+            this.playbackRateButton.addRate(add);
           } else if(wrapper.classList.contains('ckin__fullscreen') && (key === 'ArrowLeft' || key === 'ArrowRight') && this.canSeek) {
             if(key === 'ArrowLeft') appMediaPlaybackController.seekBackward({action: 'seekbackward'});
             else appMediaPlaybackController.seekForward({action: 'seekforward'});
@@ -286,33 +411,43 @@ export default class VideoPlayer extends ControlsHover {
         this.toggleFullScreen();
       }, {listenerSetter: this.listenerSetter});
 
-      addFullScreenListener(wrapper, this.onFullScreen.bind(this, fullScreenButton), listenerSetter);
-      this.onFullScreen(fullScreenButton);
+      addFullScreenListener(wrapper, () => this._onFullScreen(fullScreenButton), listenerSetter);
+      this._onFullScreen(fullScreenButton, true);
 
       if(timeElapsed) {
         listenerSetter.add(video)('timeupdate', () => {
+          if(!video.paused && !this.isPlaying) {
+            console.warn('video: fixing missing play event');
+            simulateEvent(video, 'play');
+          }
+
           timeElapsed.textContent = toHHMMSS(video.currentTime | 0);
         });
       }
 
-      listenerSetter.add(video)('play', () => {
+      const onPlay = () => {
         wrapper.classList.add('played');
 
-        if(!IS_TOUCH_SUPPORTED) {
-          listenerSetter.add(video)('play', () => {
-            if(!live) {
-              this.hideControls(true);
-            }
+        if(!IS_TOUCH_SUPPORTED && !live) {
+          onPlayCallbacks.push(() => {
+            this.hideControls(true);
           });
         }
-      }, {once: true});
 
-      listenerSetter.add(video)('pause', () => {
+        indexOfAndSplice(onPlayCallbacks, onPlay);
+      };
+
+      if(this.hadContainer) {
+        onPlay();
+      }
+
+      onPlayCallbacks.push(onPlay);
+      onPauseCallbacks.push(() => {
         this.showControls(false);
       });
 
       listenerSetter.add(appMediaPlaybackController)('playbackParams', () => {
-        this.setPlaybackRateIcon();
+        this.playbackRateButton.setIcon();
       });
 
       if(live) {
@@ -324,13 +459,13 @@ export default class VideoPlayer extends ControlsHover {
 
     listenerSetter.add(video)('play', () => {
       this.setIsPlaing(true);
+      onPlayCallbacks.forEach((cb) => cb());
     });
 
-    if(!live) {
-      listenerSetter.add(video)('pause', () => {
-        this.setIsPlaing(false);
-      });
-    }
+    listenerSetter.add(video)('pause', () => {
+      this.setIsPlaing(false);
+      onPauseCallbacks.forEach((cb) => cb());
+    });
 
     if(timeDuration) {
       if(video.duration || initDuration) {
@@ -341,6 +476,15 @@ export default class VideoPlayer extends ControlsHover {
         });
       }
     }
+  }
+
+  protected checkInteraction() {
+    if(this.shouldEnableSoundOnClick?.()) {
+      this.volumeSelector.setVolume({volume: 1, muted: false});
+      return true;
+    }
+
+    return false;
   }
 
   protected _onPip = (pip: boolean) => {
@@ -376,7 +520,12 @@ export default class VideoPlayer extends ControlsHover {
 
   public requestPictureInPicture = async() => {
     if(this.video.duration) {
+      if(this.isFullScreen()) {
+        this.onFullScreenToPip?.();
+      }
+
       this.video.requestPictureInPicture();
+      this.checkInteraction();
       return;
     }
 
@@ -415,66 +564,23 @@ export default class VideoPlayer extends ControlsHover {
       const time = this.live ? `
       <span class="left-controls-watching"></span>
       ` : `
-      <time id="time-elapsed">0:00</time>
+      <time class="ckin__time-elapsed">0:00</time>
       <span> / </span>
-      <time id="time-duration">0:00</time>
+      <time class="ckin__time-duration">0:00</time>
       `
 
       return `
       <div class="${skin}__gradient-bottom ckin__controls"></div>
-      <div class="${skin}__controls ckin__controls night">
-        <div class="bottom-controls">
+      <div class="${skin}__controls ckin__controls">
+        <div class="bottom-controls night">
           <div class="left-controls">
-            <div class="time">
+            <div class="ckin__time">
               ${time}
             </div>
           </div>
           <div class="right-controls"></div>
         </div>
       </div>`;
-    }
-  }
-
-  protected setBtnMenuToggle() {
-    if(!this.playbackRateButton) return;
-    const buttons = VideoPlayer.PLAYBACK_RATES.map((rate, idx) => {
-      const buttonOptions: Parameters<typeof ButtonMenuSync>[0]['buttons'][0] = {
-        // icon: VideoPlayer.PLAYBACK_RATES_ICONS[idx],
-        regularText: rate + 'x',
-        onClick: () => {
-          appMediaPlaybackController.playbackRate = rate;
-        }
-      };
-
-      return buttonOptions;
-    });
-    const btnMenu = ButtonMenuSync({buttons});
-    btnMenu.classList.add('top-left');
-    ButtonMenuToggleHandler({
-      el: this.playbackRateButton,
-      onOpen: this.onPlaybackRackMenuToggle ? () => {
-        this.onPlaybackRackMenuToggle(true);
-      } : undefined,
-      onClose: this.onPlaybackRackMenuToggle ? () => {
-        this.onPlaybackRackMenuToggle(false);
-      } : undefined
-    });
-    this.setPlaybackRateIcon();
-    this.playbackRateButton.append(btnMenu);
-  }
-
-  protected setPlaybackRateIcon() {
-    if(!this.playbackRateButton) return;
-    const playbackRateButton = this.playbackRateButton;
-
-    let idx = VideoPlayer.PLAYBACK_RATES.indexOf(appMediaPlaybackController.playbackRate);
-    if(idx === -1) idx = VideoPlayer.PLAYBACK_RATES.indexOf(1);
-
-    const icon = Icon(VideoPlayer.PLAYBACK_RATES_ICONS[idx]);
-    if(playbackRateButton.firstElementChild) {
-      playbackRateButton.firstElementChild.replaceWith(icon);
-    } else {
-      playbackRateButton.append(icon);
     }
   }
 
@@ -507,6 +613,7 @@ export default class VideoPlayer extends ControlsHover {
       } */
 
       requestFullScreen(player);
+      this.checkInteraction();
     } else {
       /* if(this.videoParent) {
         const {videoWhichChild, videoParent} = this;
@@ -524,7 +631,11 @@ export default class VideoPlayer extends ControlsHover {
     }
   }
 
-  protected onFullScreen(fullScreenButton: HTMLElement) {
+  public isFullScreen() {
+    return isFullScreen();
+  }
+
+  protected _onFullScreen(fullScreenButton: HTMLElement, noEvent?: boolean) {
     const isFull = isFullScreen();
     this.wrapper.classList.toggle('ckin__fullscreen', isFull);
     if(!isFull) {
@@ -534,6 +645,8 @@ export default class VideoPlayer extends ControlsHover {
       fullScreenButton.replaceChildren(Icon('smallscreen'));
       fullScreenButton.setAttribute('title', 'Exit Full Screen');
     }
+
+    !noEvent && this.onFullScreen?.(isFull);
   }
 
   public dimBackground() {
@@ -549,7 +662,20 @@ export default class VideoPlayer extends ControlsHover {
     super.cleanup();
     this.listenerSetter.removeAll();
     this.progress?.removeListeners();
-    this.onPlaybackRackMenuToggle = this.onPip = undefined;
+    this.volumeSelector?.removeListeners();
+    this.onPlaybackRateMenuToggle =
+      this.onPip =
+      this.onVolumeChange =
+      this.onFullScreen =
+      this.onFullScreenToPip =
+      this.shouldEnableSoundOnClick =
+      undefined;
+  }
+
+  public unmount() {
+    [this.mainToggle, this.gradient, this.controls].forEach((element) => {
+      element.remove();
+    });
   }
 
   public setupLiveMenu(buttons: ButtonMenuItemOptionsVerifiable[]) {

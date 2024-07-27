@@ -13,12 +13,17 @@ import {attachClickEvent, simulateClickEvent} from '../helpers/dom/clickEvent';
 import replaceContent from '../helpers/dom/replaceContent';
 import safeWindowOpen from '../helpers/dom/safeWindowOpen';
 import setInnerHTML from '../helpers/dom/setInnerHTML';
+import getWebFileLocation from '../helpers/getWebFileLocation';
 import ListenerSetter from '../helpers/listenerSetter';
 import makeError from '../helpers/makeError';
+import makeGoogleMapsUrl from '../helpers/makeGoogleMapsUrl';
 import {makeMediaSize} from '../helpers/mediaSize';
 import {getMiddleware, Middleware, MiddlewareHelper} from '../helpers/middleware';
 import middlewarePromise from '../helpers/middlewarePromise';
-import {BusinessWeeklyOpen, BusinessWorkHours, Chat, ChatFull, HelpTimezonesList, Timezone, User, UserFull, UserStatus} from '../layer';
+import numberThousandSplitter from '../helpers/number/numberThousandSplitter';
+import pause from '../helpers/schedulers/pause';
+import {BusinessLocation, BusinessWorkHours, Chat, ChatFull, GeoPoint, HelpTimezonesList, Timezone, UserFull, UserStatus} from '../layer';
+import appDialogsManager from '../lib/appManagers/appDialogsManager';
 import appImManager from '../lib/appManagers/appImManager';
 import {AppManagers} from '../lib/appManagers/managers';
 import getServerMessageId from '../lib/appManagers/utils/messageId/getServerMessageId';
@@ -27,11 +32,13 @@ import I18n, {i18n, join} from '../lib/langPack';
 import {MTAppConfig} from '../lib/mtproto/appConfig';
 import {HIDDEN_PEER_ID} from '../lib/mtproto/mtproto_config';
 import apiManagerProxy from '../lib/mtproto/mtprotoworker';
+import wrapEmojiText from '../lib/richTextProcessor/wrapEmojiText';
 import wrapRichText from '../lib/richTextProcessor/wrapRichText';
 import rootScope from '../lib/rootScope';
 import {avatarNew} from './avatarNew';
 import BusinessHours from './businessHours';
 import CheckboxField from './checkboxField';
+import confirmationPopup from './confirmationPopup';
 import {generateDelimiter} from './generateDelimiter';
 import PeerProfileAvatars, {SHOW_NO_AVATAR} from './peerProfileAvatars';
 import PopupElement from './popups';
@@ -39,11 +46,17 @@ import PopupToggleReadDate from './popups/toggleReadDate';
 import Row from './row';
 import Scrollable from './scrollable';
 import SettingSection from './settingSection';
-import {toast} from './toast';
+import {Skeleton} from './skeleton';
+import {toast, toastNew} from './toast';
 import formatUserPhone from './wrappers/formatUserPhone';
 import wrapPeerTitle from './wrappers/peerTitle';
+import wrapPhoto from './wrappers/photo';
 import wrapTopicNameButton from './wrappers/topicNameButton';
-import {batch, createRoot, createSignal} from 'solid-js';
+import {batch, createMemo, createRoot, createSignal, JSX} from 'solid-js';
+import {render} from 'solid-js/web';
+import detectLanguageForTranslation from '../helpers/detectLanguageForTranslation';
+import PopupPremium from './popups/premium';
+import PopupTranslate from './popups/translate';
 
 const setText = (text: Parameters<typeof setInnerHTML>[1], row: Row) => {
   setInnerHTML(row.title, text || undefined);
@@ -64,6 +77,7 @@ export default class PeerProfile {
   private location: Row;
   private link: Row;
   private businessHours: Row;
+  private businessLocation: Row;
 
   private setBusinessHours: (hours: BusinessWorkHours) => void;
   private setTimezones: (timezones: Timezone[]) => void;
@@ -75,14 +89,24 @@ export default class PeerProfile {
   private peerId: PeerId;
   private threadId: number;
 
+  private _businessLocation: BusinessLocation;
+
   private middlewareHelper: MiddlewareHelper;
+
+  private personalChannelSection: SettingSection;
+  private personalChannel: Row;
+  private personalChannelCounter: HTMLSpanElement;
+
+  private bioLanguage: Promise<TranslatableLanguageISO>;
+  private bioText: string;
 
   constructor(
     private managers: AppManagers,
     private scrollable: Scrollable,
     private listenerSetter?: ListenerSetter,
     private isDialog = true,
-    private setCollapsedOn?: HTMLElement
+    private setCollapsedOn?: HTMLElement,
+    private onPersonalChannel?: (has: boolean) => void
   ) {
     if(!IS_PARALLAX_SUPPORTED) {
       this.scrollable.container.classList.add('no-parallax');
@@ -100,6 +124,25 @@ export default class PeerProfile {
 
     this.element = document.createElement('div');
     this.element.classList.add('profile-content');
+
+    const personalChannelName = document.createElement('span');
+    personalChannelName.append(i18n('AccDescrChannel'));
+    personalChannelName.classList.add('personal-channel-name');
+    this.personalChannelCounter = document.createElement('span');
+    this.personalChannelCounter.classList.add('personal-channel-counter');
+    personalChannelName.append(this.personalChannelCounter);
+    this.personalChannelSection = new SettingSection({
+      name: personalChannelName
+    });
+
+    appDialogsManager.setListClickListener({
+      list: this.personalChannelSection.content,
+      autonomous: false,
+      openInner: true
+    });
+
+    // this.personalChannel = new Row({});
+    // this.channelSection.content.append(this.personalChannel.container);
 
     this.section = new SettingSection({
       noDelimiter: true
@@ -141,6 +184,25 @@ export default class PeerProfile {
             simulateClickEvent(this.bio.container);
           },
           verify: () => this.peerId.isUser()
+        }, {
+          icon: 'premium_translate',
+          text: 'TranslateMessage',
+          onClick: async() => {
+            if(!rootScope.premium) {
+              PopupPremium.show({feature: 'translations'});
+            } else {
+              PopupElement.createPopup(PopupTranslate, {
+                peerId: this.peerId,
+                textWithEntities: {
+                  _: 'textWithEntities',
+                  text: this.bioText,
+                  entities: []
+                },
+                detectedLanguage: await this.bioLanguage
+              });
+            }
+          },
+          verify: async() => !!(await this.bioLanguage)
         }]
       }
     });
@@ -209,7 +271,7 @@ export default class PeerProfile {
       subtitleLangKey: 'SetUrlPlaceholder',
       icon: 'link',
       clickable: () => {
-        const url = this.link.title.textContent;
+        const url = 'https://' + this.link.title.textContent;
         copyTextToClipboard(url);
         // Promise.resolve(appProfileManager.getChatFull(this.peerId.toChatId())).then((chatFull) => {
         // copyTextToClipboard(chatFull.exported_invite.link);
@@ -244,13 +306,51 @@ export default class PeerProfile {
       return BusinessHours({hours, timezones});
     });
 
+    const copyLocationAddress = () => {
+      copyTextToClipboard(this._businessLocation.address);
+      toastNew({langPackKey: 'BusinessLocationCopied'});
+    };
+
+    this.businessLocation = new Row({
+      title: true,
+      subtitleLangKey: 'BusinessProfileLocation',
+      icon: 'location',
+      clickable: async() => {
+        const location = this._businessLocation;
+        if(!location.geo_point) {
+          copyLocationAddress();
+          return;
+        }
+
+        await confirmationPopup({
+          descriptionLangKey: 'Popup.OpenInGoogleMaps',
+          button: {
+            langKey: 'Open'
+          }
+        });
+
+        safeWindowOpen(makeGoogleMapsUrl(location.geo_point as GeoPoint.geoPoint));
+      },
+      contextMenu: {
+        buttons: [{
+          icon: 'copy',
+          text: 'Copy',
+          onClick: copyLocationAddress
+        }]
+      },
+      listenerSetter: this.listenerSetter
+    });
+
+    this.businessLocation.container.classList.add('business-location');
+
     this.section.content.append(
       this.phone.container,
       this.username.container,
       this.location.container,
       this.bio.container,
       this.link.container,
-      this.businessHours.container
+      this.businessHours.container,
+      this.businessLocation.container
     );
 
     const {listenerSetter} = this;
@@ -281,7 +381,7 @@ export default class PeerProfile {
       this.section.content.append(this.notifications.container);
     }
 
-    this.element.append(this.section.container);
+    this.element.append(this.personalChannelSection.container, this.section.container);
 
     if(IS_PARALLAX_SUPPORTED) {
       this.element.append(generateDelimiter());
@@ -435,7 +535,9 @@ export default class PeerProfile {
       this.username,
       this.location,
       this.link,
-      this.businessHours
+      this.businessHours,
+      this.businessLocation,
+      this.personalChannelSection
     ].forEach((row) => {
       row.container.style.display = 'none';
     });
@@ -494,6 +596,8 @@ export default class PeerProfile {
           if(IS_PARALLAX_SUPPORTED) {
             this.scrollable.container.classList.add('parallax');
           }
+
+          this.section.content.classList.remove('has-simple-avatar');
         };
       }
     }
@@ -533,6 +637,7 @@ export default class PeerProfile {
       if(this.avatar) this.avatar.node.remove();
       this.avatar = avatar;
 
+      this.section.content.classList.add('has-simple-avatar');
       this.section.content.prepend(this.avatar.node, this.name, this.subtitle);
     };
   }
@@ -656,12 +761,18 @@ export default class PeerProfile {
     };
   }
 
-  private async _setMoreDetails(peerId: PeerId, peerFull: ChatFull | UserFull, appConfig: MTAppConfig, timezones: Timezone[]) {
+  private async _setMoreDetails(
+    peerId: PeerId,
+    peerFull: ChatFull | UserFull,
+    appConfig: MTAppConfig,
+    timezones: Timezone[]
+  ) {
+    const middleware = this.middlewareHelper.get().create().get();
     const m = this.getMiddlewarePromise();
     const isTopic = !!(this.threadId && await m(this.managers.appPeersManager.isForum(peerId)));
     const isPremium = peerId.isUser() ? await m(this.managers.appUsersManager.isPremium(peerId.toUserId())) : undefined;
     if(isTopic) {
-      let url = 'https://t.me/';
+      let url = 't.me/';
       const threadId = getServerMessageId(this.threadId);
       const username = await m(this.managers.appPeersManager.getPeerUsername(peerId));
       if(username) {
@@ -682,6 +793,7 @@ export default class PeerProfile {
       setText(peerFull.about ? wrapRichText(peerFull.about, {
         whitelistedDomains: isPremium ? undefined : appConfig.whitelisted_domains
       }) : undefined, this.bio);
+      this.bioLanguage = detectLanguageForTranslation(this.bioText = peerFull.about);
     });
     // }
 
@@ -691,11 +803,11 @@ export default class PeerProfile {
       let also: HTMLElement;
       if(usernames.length) {
         also = this.getUsernamesAlso(usernames);
-        callbacks.push(() => setText('https://t.me/' + usernames[0], this.link));
+        callbacks.push(() => setText('t.me/' + usernames[0], this.link));
       } else {
         const exportedInvite = (peerFull as ChatFull.channelFull).exported_invite;
         if(exportedInvite?._ === 'chatInviteExported') {
-          callbacks.push(() => setText(exportedInvite.link, this.link));
+          callbacks.push(() => setText(exportedInvite.link.slice(exportedInvite.link.indexOf('t.me/')), this.link));
         }
       }
 
@@ -717,6 +829,136 @@ export default class PeerProfile {
 
     callbacks.push(() => {
       this.businessHours.container.style.display = workHours ? '' : 'none';
+    });
+
+    const businessLocation = (peerFull as UserFull).business_location;
+    this._businessLocation = businessLocation;
+    if(businessLocation) {
+      const geo = businessLocation.geo_point as GeoPoint.geoPoint;
+      callbacks.push(() => {
+        setText(wrapEmojiText(businessLocation.address), this.businessLocation);
+        if(!geo) {
+          this.businessLocation.media?.remove();
+        }
+      });
+
+      if(geo) {
+        const media = this.businessLocation.createMedia('big');
+        media.remove();
+        const loadPromises: Promise<any>[] = [];
+        wrapPhoto({
+          photo: getWebFileLocation(geo, 48, 48, 16),
+          container: media,
+          middleware,
+          onRender: () => {
+            if(!middleware() || this._businessLocation !== businessLocation) {
+              return;
+            }
+
+            this.businessLocation.container.append(media);
+          },
+          loadPromises
+        });
+
+        await Promise.all(loadPromises);
+      }
+    }
+
+    callbacks.push(() => {
+      this.businessLocation.container.style.display = businessLocation ? '' : 'none';
+    });
+
+    const personalChannelId = (peerFull as UserFull).personal_channel_id;
+    if(personalChannelId) {
+      const peerId = personalChannelId.toPeerId(true);
+      const mid = (peerFull as UserFull).personal_channel_message;
+      const chat = apiManagerProxy.getChat(personalChannelId) as Chat.channel;
+
+      const loadPromises: Promise<any>[] = [];
+      const list = appDialogsManager.createChatList();
+      const dialogElement = appDialogsManager.addDialogNew({
+        peerId: peerId,
+        container: list,
+        rippleEnabled: true,
+        avatarSize: 'abitbigger',
+        append: true,
+        wrapOptions: {middleware},
+        withStories: true,
+        loadPromises
+      });
+
+      dialogElement.container.classList.add('personal-channel');
+
+      const makeSkeleton = (props: {
+        element: HTMLElement,
+        middleware: Middleware
+      }) => {
+        const [children, setChildren] = createSignal<JSX.Element>();
+        const dispose = render(() => {
+          return Skeleton({
+            children,
+            loading: createMemo(() => !children())
+          });
+        }, props.element);
+
+        props.element.classList.add('skeleton-container');
+        props.middleware.onDestroy(dispose);
+
+        return setChildren;
+      };
+
+      const TEST = false;
+      const isCached = !!apiManagerProxy.getMessageByPeer(peerId, mid) && !TEST;
+      const messagePromise = this.managers.appMessagesManager.reloadMessages(peerId, mid);
+      const readyPromise = messagePromise.then(async(message) => {
+        TEST && await pause(1000);
+        await appDialogsManager.setLastMessageN({
+          dialog: {
+            _: 'dialog',
+            peerId
+          } as any,
+          lastMessage: message,
+          dialogElement
+        });
+
+        setSubtitleChildren?.(dialogElement.subtitle);
+        setTimeChildren?.(dialogElement.dom.lastTimeSpan);
+      });
+
+      let setSubtitleChildren: (children: JSX.Element) => void, setTimeChildren: (children: JSX.Element) => void;
+      if(!isCached) {
+        const _subtitle = dialogElement.subtitle.cloneNode(true) as HTMLElement;
+        dialogElement.subtitle.replaceWith(_subtitle);
+        setSubtitleChildren = makeSkeleton({
+          element: _subtitle,
+          middleware
+        });
+
+        const timeSpan = dialogElement.dom.lastTimeSpan.cloneNode(true) as HTMLElement;
+        dialogElement.dom.lastTimeSpan.replaceWith(timeSpan);
+        setTimeChildren = makeSkeleton({
+          element: timeSpan,
+          middleware
+        });
+      }
+
+      if(isCached) {
+        loadPromises.push(readyPromise);
+      }
+
+      callbacks.push(() => {
+        this.personalChannelCounter.replaceChildren(i18n('Subscribers', [numberThousandSplitter(chat.participants_count)]));
+        const oldList = this.personalChannelSection.content.querySelector('.chatlist');
+        oldList?.remove();
+        this.personalChannelSection.content.append(list);
+      });
+
+      await Promise.all(loadPromises);
+    }
+
+    callbacks.push(() => {
+      this.personalChannelSection.container.style.display = personalChannelId ? '' : 'none';
+      this.onPersonalChannel?.(!!personalChannelId);
     });
 
     this.setMoreDetailsTimeout = window.setTimeout(() => this.setMoreDetails(true), 60e3);

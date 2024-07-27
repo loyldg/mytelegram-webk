@@ -24,7 +24,9 @@ export type ReferenceContext =
   ReferenceContext.referenceContextPremiumPromo |
   ReferenceContext.referenceContextWebPage |
   ReferenceContext.referenceContextBotApp |
-  ReferenceContext.referenceContextChatInvite;
+  ReferenceContext.referenceContextChatInvite |
+  ReferenceContext.referenceContextEffects |
+  ReferenceContext.referenceContextStarsTransaction;
 
 export namespace ReferenceContext {
   export type referenceContextProfilePhoto = {
@@ -90,6 +92,16 @@ export namespace ReferenceContext {
   export type referenceContextChatInvite = {
     type: 'chatInvite',
     hash: string
+  };
+
+  export type referenceContextEffects = {
+    type: 'effects'
+  };
+
+  export type referenceContextStarsTransaction = {
+    type: 'starsTransaction',
+    peerId: PeerId,
+    mid: number
   };
 }
 
@@ -242,6 +254,11 @@ export class ReferenceDatabase extends AppManager {
 
       case 'chatInvite': {
         promise = Promise.resolve(this.appChatInvitesManager.checkChatInvite(context.hash));
+        break;
+      }
+
+      case 'effects': {
+        promise = Promise.resolve(this.appReactionsManager.getAvailableEffects(true));
         break;
       }
 

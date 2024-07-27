@@ -16,7 +16,7 @@ import clamp from '../../helpers/number/clamp';
 import QueryableWorker from './queryableWorker';
 import IS_IMAGE_BITMAP_SUPPORTED from '../../environment/imageBitmapSupport';
 import framesCache, {FramesCache, FramesCacheItem} from '../../helpers/framesCache';
-import customProperties, {CustomProperty} from '../../helpers/dom/customProperties';
+import customProperties from '../../helpers/dom/customProperties';
 
 export type RLottieOptions = {
   container: HTMLElement | HTMLElement[],
@@ -690,7 +690,7 @@ export default class RLottiePlayer extends EventListenerBase<{
     this.addEventListener('enterFrame', () => {
       this.dispatchEvent('firstFrame');
 
-      if(!this.canvas[0].parentNode && this.el && !this.overrideRender) {
+      if(!this.canvas[0].parentNode && this.el?.[0] && !this.overrideRender) {
         this.el.forEach((container, idx) => container.append(this.canvas[idx]));
       }
 

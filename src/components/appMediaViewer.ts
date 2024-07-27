@@ -32,12 +32,15 @@ import AppSharedMediaTab from './sidebarRight/tabs/sharedMedia';
 import PopupElement from './popups';
 import {ChatType} from './chat/chat';
 import getFwdFromName from '../lib/appManagers/utils/messages/getFwdFromName';
+import TranslatableMessage from './translatableMessage';
+import {MAX_FILE_SAVE_SIZE} from '../lib/mtproto/mtproto_config';
 
 type AppMediaViewerTargetType = {
   element: HTMLElement,
   mid: number,
   peerId: PeerId,
-  message?: MyMessage
+  message?: MyMessage,
+  index?: number
 };
 
 export const onMediaCaptionClick = (caption: HTMLElement, e: MouseEvent) => {
@@ -70,7 +73,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     return this.listLoader.searchContext;
   }
 
-  constructor() {
+  constructor(protected local?: boolean) {
     super(new SearchListLoader({
       processItem: (item) => {
         const isForDocument = this.searchContext.inputFilter._ === 'inputMessagesFilterDocument';
@@ -189,7 +192,8 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
 
   onPrevClick = async(target: AppMediaViewerTargetType) => {
     this.openMedia({
-      message: await this.getMessageByPeer(target.peerId, target.mid),
+      message: this.local ? target.message : await this.getMessageByPeer(target.peerId, target.mid),
+      index: target.index,
       target: target.element,
       fromRight: -1
     });
@@ -197,7 +201,8 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
 
   onNextClick = async(target: AppMediaViewerTargetType) => {
     this.openMedia({
-      message: await this.getMessageByPeer(target.peerId, target.mid),
+      message: this.local ? target.message : await this.getMessageByPeer(target.peerId, target.mid),
+      index: target.index,
       target: target.element,
       fromRight: 1
     });
@@ -230,10 +235,10 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
   };
 
   onAuthorClick = async(e: MouseEvent) => {
-    const {mid, peerId} = this.target;
+    let {mid, peerId, message} = this.target;
     if(mid && mid !== Number.MAX_SAFE_INTEGER) {
       const threadId = this.searchContext.threadId;
-      const message = await this.getMessageByPeer(peerId, mid);
+      message ||= await this.getMessageByPeer(peerId, mid);
       this.close(e)
       // .then(() => mediaSizes.isMobile ? appSidebarRight.sharedMediaTab.closeBtn.click() : Promise.resolve())
       .then(async() => {
@@ -254,8 +259,8 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
   };
 
   onDownloadClick = () => {
-    const {message} = this.target;
-    const media = getMediaFromMessage(message, true);
+    const {message, index} = this.target;
+    const media = getMediaFromMessage(message, true, index);
     if(!media) return;
     appDownloadManager.downloadToDisc({media, queueId: appImManager.chat.bubbles.lazyLoadQueue.queueId});
   };
@@ -266,10 +271,14 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     if(caption) {
       const media = getMediaFromMessage(message, true);
 
-      html = wrapRichText(caption, {
-        entities: (message as Message.message).totalEntities,
-        maxMediaTimestamp: ((media as MyDocument)?.type === 'video' && (media as MyDocument).duration) || undefined,
-        textColor: 'white'
+      html = TranslatableMessage({
+        peerId: message.peerId,
+        message: message as Message.message,
+        middleware: this.content.mover.middlewareHelper.get(),
+        richTextOptions: {
+          maxMediaTimestamp: ((media as MyDocument)?.type === 'video' && (media as MyDocument).duration) || undefined,
+          textColor: 'white'
+        }
       });
     }
 
@@ -287,6 +296,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
 
   public async openMedia({
     message,
+    index,
     target,
     fromRight = 0,
     reverse = false,
@@ -295,6 +305,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     mediaTimestamp
   }: {
     message: MyMessage,
+    index?: number,
     target?: HTMLElement,
     fromRight?: number,
     reverse?: boolean,
@@ -307,7 +318,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
 
     const mid = message.mid;
     const fromId = (message as Message.message).fwd_from && !message.fromId ? getFwdFromName((message as Message.message).fwd_from) : message.fromId;
-    const media = getMediaFromMessage(message, true);
+    const media = getMediaFromMessage(message, true, index);
 
     const noForwards = await this.managers.appPeersManager.noForwards(message.peerId);
     const isServiceMessage = message._ === 'messageService';
@@ -348,11 +359,12 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     this.target.mid = mid;
     this.target.peerId = message.peerId;
     this.target.message = message;
+    this.target.index = index;
 
     return promise;
   }
 
   public static isMediaCompatibleForDocumentViewer(media: MyPhoto | MyDocument) {
-    return media._ === 'photo' || MEDIA_MIME_TYPES_SUPPORTED.has(media.mime_type);
+    return (media._ === 'photo' || MEDIA_MIME_TYPES_SUPPORTED.has(media.mime_type) && media.size <= MAX_FILE_SAVE_SIZE);
   }
 }

@@ -178,6 +178,13 @@ export class AppProfileManager extends AppManager {
 
         userFull.business_intro = this.appBusinessManager.saveBusinessIntro(id, userFull.business_intro);
 
+        if(userFull.personal_channel_message) {
+          userFull.personal_channel_message = this.appMessagesIdsManager.generateMessageId(
+            userFull.personal_channel_message,
+            userFull.personal_channel_id
+          );
+        }
+
         this.appNotificationsManager.savePeerSettings({
           peerId,
           settings: userFull.notify_settings
@@ -213,6 +220,29 @@ export class AppProfileManager extends AppManager {
 
   public getCachedProfileByPeerId(peerId: PeerId) {
     return peerId.isUser() ? this.getCachedFullUser(peerId.toUserId()) : this.getCachedFullChat(peerId.toChatId());
+  }
+
+  public modifyCachedFullChat<T extends ChatFull = ChatFull>(chatId: ChatId, modify: (fullChat: T) => boolean | void) {
+    this.modifyCachedFullPeer(chatId.toPeerId(true), modify as any);
+  }
+
+  public modifyCachedFullUser(userId: UserId, modify: (fullUser: UserFull) => boolean | void) {
+    this.modifyCachedFullPeer(userId.toPeerId(true), modify as any);
+  }
+
+  public modifyCachedFullPeer(peerId: PeerId, modify: (fullPeer: UserFull | ChatFull) => boolean | void) {
+    const fullPeer = this.getCachedProfileByPeerId(peerId);
+    if(fullPeer) {
+      if(modify(fullPeer) === false) {
+        return;
+      }
+
+      if(peerId.isUser()) {
+        this.rootScope.dispatchEvent('user_full_update', peerId.toUserId());
+      } else {
+        this.rootScope.dispatchEvent('chat_full_update', peerId.toChatId());
+      }
+    }
   }
 
   public isUserBlocked(userId: UserId) {

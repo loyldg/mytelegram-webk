@@ -53,7 +53,9 @@ import type AppBotsManager from './appBotsManager';
 import type AppBoostsManager from './appBoostsManager';
 import type AppStatisticsManager from './appStatisticsManager';
 import type AppBusinessManager from './appBusinessManager';
+import type AppTranslationsManager from './appTranslationsManager';
 import type {AppManagers} from './managers';
+import AppGifsManager from './appGifsManager';
 
 export class AppManager {
   protected appPeersManager: AppPeersManager;
@@ -106,6 +108,8 @@ export class AppManager {
   protected appBoostsManager: AppBoostsManager;
   protected appStatisticsManager: AppStatisticsManager;
   protected appBusinessManager: AppBusinessManager;
+  protected appTranslationsManager: AppTranslationsManager;
+  protected appGifsManager: AppGifsManager;
 
   public clear: (init?: boolean) => void;
 

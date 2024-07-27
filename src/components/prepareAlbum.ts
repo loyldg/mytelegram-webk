@@ -13,7 +13,8 @@ export default function prepareAlbum(options: {
   minWidth: number,
   spacing: number,
   maxHeight?: number,
-  forMedia?: true
+  forMedia?: true,
+  noGroupedItem?: boolean
 }) {
   const layouter = new Layouter(options.items, options.maxWidth, options.minWidth, options.spacing, options.maxHeight);
   const layout = layouter.layout();
@@ -37,7 +38,8 @@ export default function prepareAlbum(options: {
       container.append(div);
     }
 
-    div.classList.add('album-item', 'grouped-item');
+    div.classList.add('album-item');
+    if(!options.noGroupedItem) div.classList.add('grouped-item');
 
     div.style.width = (geometry.width / width * 100) + '%';
     div.style.height = (geometry.height / height * 100) + '%';
@@ -45,19 +47,19 @@ export default function prepareAlbum(options: {
     div.style.left = (geometry.x / width * 100) + '%';
 
     if(sides & RectPart.Left && sides & RectPart.Top) {
-      div.style.borderTopLeftRadius = 'inherit';
+      div.style.borderStartStartRadius = `calc(var(--border-start-start-radius) - ${options.spacing}px)`;
     }
 
     if(sides & RectPart.Left && sides & RectPart.Bottom) {
-      div.style.borderBottomLeftRadius = 'inherit';
+      div.style.borderEndStartRadius =  `calc(var(--border-end-start-radius) - ${options.spacing}px)`;
     }
 
     if(sides & RectPart.Right && sides & RectPart.Top) {
-      div.style.borderTopRightRadius = 'inherit';
+      div.style.borderStartEndRadius =  `calc(var(--border-start-end-radius) - ${options.spacing}px)`;
     }
 
     if(sides & RectPart.Right && sides & RectPart.Bottom) {
-      div.style.borderBottomRightRadius = 'inherit';
+      div.style.borderEndEndRadius =  `calc(var(--border-end-end-radius) - ${options.spacing}px)`;
     }
 
     if(options.forMedia) {

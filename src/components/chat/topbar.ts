@@ -64,6 +64,7 @@ import {appState} from '../../stores/appState';
 import assumeType from '../../helpers/assumeType';
 import PinnedContainer from './pinnedContainer';
 import IS_LIVE_STREAM_SUPPORTED from '../../environment/liveStreamSupport';
+import ChatTranslation from './translation';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
 
@@ -92,6 +93,7 @@ export default class ChatTopbar {
   private chatRequests: ChatRequests;
   private chatAudio: ChatAudio;
   private chatLive: ChatLive;
+  private chatTranslation: ChatTranslation;
   public pinnedMessage: ChatPinnedMessage;
   private pinnedContainers: PinnedContainer[];
 
@@ -171,6 +173,7 @@ export default class ChatTopbar {
     this.chatRequests = new ChatRequests(this, this.chat, this.managers);
     this.chatActions = new ChatActions(this, this.chat, this.managers);
     if(IS_LIVE_STREAM_SUPPORTED) this.chatLive = new ChatLive(this, this.chat, this.managers);
+    this.chatTranslation = new ChatTranslation(this, this.chat, this.managers);
 
     if(this.menuButtons.length) {
       this.btnMore = ButtonMenuToggle({
@@ -215,7 +218,8 @@ export default class ChatTopbar {
       this.chatAudio,
       this.chatRequests,
       this.chatActions,
-      this.chatLive
+      this.chatLive,
+      this.chatTranslation
     ].filter(Boolean);
     this.container.append(...pinnedContainers.map((pinnedContainer) => pinnedContainer.container));
 
@@ -227,7 +231,12 @@ export default class ChatTopbar {
     this.listenerSetter.add(mediaSizes)('changeScreen', this.onChangeScreen);
 
     attachClickEvent(this.container, (e) => {
-      if(findUpClassName(e.target, 'topbar-search-container') || !(e.target as HTMLElement).isConnected) {
+      if(
+        findUpClassName(e.target, 'topbar-search-container') ||
+        !(e.target as HTMLElement).isConnected ||
+        findUpClassName(e.target, 'pinned-translation') ||
+        findUpClassName(e.target, 'chat-search-top')
+      ) {
         return;
       }
 
@@ -274,6 +283,11 @@ export default class ChatTopbar {
     const onBtnBackClick = (e?: Event) => {
       if(e) {
         cancelEvent(e);
+      }
+
+      if(this.chat.type === ChatType.Search) {
+        this.chat.resetSearch();
+        return;
       }
 
       // const item = appNavigationController.findItemByType('chat');
@@ -866,7 +880,7 @@ export default class ChatTopbar {
     this.status?.destroy();
     this.titleMiddlewareHelper?.destroy();
     this.avatarMiddlewareHelper?.destroy();
-    this.pinnedMessage?.destroy(); // * возможно это можно не делать
+    this.pinnedMessage?.destroy();
     this.pinnedContainers?.forEach((pinnedContainer) => pinnedContainer.destroy());
 
     delete this.pinnedMessage;
@@ -874,6 +888,7 @@ export default class ChatTopbar {
     delete this.chatRequests;
     delete this.chatActions;
     delete this.chatLive;
+    delete this.chatTranslation;
   }
 
   public cleanup() {
@@ -901,14 +916,17 @@ export default class ChatTopbar {
 
     let newAvatar: ChatTopbar['avatar'], newAvatarMiddlewareHelper: ChatTopbar['avatarMiddlewareHelper'];
     const isSaved = this.chat.type === ChatType.Saved;
-    if(this.chat.type === ChatType.Chat || isSaved) {
+    const needArrowBack = this.chat.type === ChatType.Search;
+    if([ChatType.Chat].includes(this.chat.type) || isSaved) {
       const usePeerId = isSaved ? threadId : peerId;
       const useThreadId = isSaved ? undefined : threadId;
       const avatar = this.avatar;
-      if(!avatar ||
-          avatar.node.dataset.peerId.toPeerId() !== usePeerId ||
-          avatar.node.dataset.threadId !== (useThreadId ? '' + useThreadId : undefined) ||
-          peerId === rootScope.myId) {
+      if(
+        !avatar ||
+        avatar.node.dataset.peerId.toPeerId() !== usePeerId ||
+        avatar.node.dataset.threadId !== (useThreadId ? '' + useThreadId : undefined) ||
+        peerId === rootScope.myId
+      ) {
         newAvatar = avatarNew({
           middleware: (newAvatarMiddlewareHelper = getMiddleware()).get(),
           isDialog: true,
@@ -1037,6 +1055,7 @@ export default class ChatTopbar {
       }
 
       this.chatLive?.setPeerId(peerId);
+      this.chatTranslation?.setPeerId(peerId);
 
       callbackify(setRequestsCallback.result, (callback) => {
         if(!middleware()) {
@@ -1053,6 +1072,8 @@ export default class ChatTopbar {
 
         callback();
       });
+
+      this.container.classList.toggle('show-back-button', needArrowBack);
     };
   }
 
@@ -1092,11 +1113,11 @@ export default class ChatTopbar {
     } else if(this.chat.type === ChatType.Scheduled) {
       titleEl = i18n(peerId === rootScope.myId ? 'Reminders' : 'ScheduledMessages');
     } else if(this.chat.type === ChatType.Discussion) {
-      const el = this.messagesCounter(middleware, 'Chat.Title.Comments');
+      const el = this.messagesCounter(middleware, 'Chat.Title.Comments', this.chat.isForum);
       if(count === undefined) {
         const historyStorage = await this.chat.getHistoryStorage();
         if(!middleware()) return;
-        el.compareAndUpdate(historyStorage.count === null ? {key: 'Loading', args: undefined} : {args: [historyStorage.count]});
+        el.compareAndUpdate(historyStorage.count === null ? {key: 'Loading', args: undefined} : {args: [historyStorage.count - (this.chat.isForum ? 1 : 0)]});
       }
 
       titleEl = el.element;
@@ -1195,7 +1216,7 @@ export default class ChatTopbar {
     this.container.style.setProperty('--pinned-floating-height', `calc(${floatingHeight}px + var(--topbar-floating-call-height)`);
   };
 
-  private messagesCounter(middleware: Middleware, key: LangPackKey) {
+  private messagesCounter(middleware: Middleware, key: LangPackKey, minusFirst?: boolean) {
     const el = new I18n.IntlElement({
       key,
       args: [1]
@@ -1204,15 +1225,15 @@ export default class ChatTopbar {
     const historyStorageKey = this.chat.historyStorageKey;
     const onHistoryCount: (data: BroadcastEvents['history_count']) => void = ({historyKey, count}) => {
       if(historyStorageKey === historyKey) {
-        el.compareAndUpdate({key, args: [count]});
+        el.compareAndUpdate({key, args: [count - (minusFirst ? 1 : 0)]});
       }
     };
 
     rootScope.addEventListener('history_count', onHistoryCount);
-    this.managers.appMessagesManager.toggleHistoryMaxIdSubscription(historyStorageKey, true);
+    this.managers.appMessagesManager.toggleHistoryKeySubscription(historyStorageKey, true);
     middleware.onDestroy(() => {
       rootScope.removeEventListener('history_count', onHistoryCount);
-      this.managers.appMessagesManager.toggleHistoryMaxIdSubscription(historyStorageKey, false);
+      this.managers.appMessagesManager.toggleHistoryKeySubscription(historyStorageKey, false);
     });
 
     return el;
@@ -1277,7 +1298,7 @@ export default class ChatTopbar {
     });
 
     const setAuto = () => {
-      prepare(false).then((callback) => middleware() && callback());
+      prepare(false).then((callback) => middleware() && callback?.());
     };
 
     return {

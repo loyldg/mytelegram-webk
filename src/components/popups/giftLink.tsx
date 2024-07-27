@@ -30,6 +30,7 @@ import anchorCallback from '../../helpers/dom/anchorCallback';
 import wrapPeerTitle from '../wrappers/peerTitle';
 import DotRenderer from '../dotRenderer';
 import themeController from '../../helpers/themeController';
+import Table, {TablePeer} from '../table';
 
 export default class PopupGiftLink extends PopupElement {
   private isInChat: boolean;
@@ -76,22 +77,16 @@ export default class PopupGiftLink extends PopupElement {
       inviteLink.container.appendChild(dotsCanvas);
     }
 
-    const makePeer = (peerId: PeerId) => {
-      const avatar = AvatarNew({peerId, size: 24});
-      return (
-        <div
-          class="popup-gift-link-peer"
-          onClick={() => {
-            this.hideWithCallback(() => {
-              appImManager.setInnerPeer({peerId});
-            });
-          }}
-        >
-          {avatar.element}
-          <PeerTitleTsx peerId={peerId} />
-        </div>
-      );
-    };
+    const makePeer = (peerId: PeerId) => (
+      <TablePeer
+        peerId={peerId}
+        onClick={() => {
+          this.hideWithCallback(() => {
+            appImManager.setInnerPeer({peerId});
+          });
+        }}
+      />
+    );
 
     const isGiveaway = this.checkedGiftCode.pFlags.via_giveaway;
 
@@ -152,18 +147,7 @@ export default class PopupGiftLink extends PopupElement {
           </div>
         </div>
         {inviteLink.container}
-        <table class="popup-gift-link-table">
-          <For each={content}>
-            {([key, value]) => {
-              return (
-                <tr class="popup-gift-link-table-row">
-                  <td class="popup-gift-link-table-cell popup-gift-link-table-key">{i18n(key)}</td>
-                  <td class="popup-gift-link-table-cell">{value}</td>
-                </tr>
-              );
-            }}
-          </For>
-        </table>
+        <Table content={content} />
         {(!this.isInChat || !isUsed) && (
           <div class="popup-gift-link-share">
             {isUsed ?
@@ -211,7 +195,7 @@ export default class PopupGiftLink extends PopupElement {
 
     let dotsCanvas: HTMLElement;
     if(this.isInChat && !this.checkedGiftCode.used_date) {
-      const {dotRenderer, readyResult} = DotRenderer.create({
+      const {canvas, readyResult} = DotRenderer.create({
         width: 320,
         height: 32,
         middleware: this.middlewareHelper.get(),
@@ -223,7 +207,7 @@ export default class PopupGiftLink extends PopupElement {
       });
 
       await readyResult;
-      dotsCanvas = dotRenderer.canvas;
+      dotsCanvas = canvas;
     }
 
     const div = document.createElement('div');

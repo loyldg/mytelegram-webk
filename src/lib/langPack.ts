@@ -20,6 +20,7 @@ import matchUrlProtocol from './richTextProcessor/matchUrlProtocol';
 import wrapUrl from './richTextProcessor/wrapUrl';
 import {setDirection} from '../helpers/dom/setInnerHTML';
 import setBlankToAnchor from './richTextProcessor/setBlankToAnchor';
+import {createSignal} from 'solid-js';
 
 export const langPack: {[actionType: string]: LangPackKey} = {
   'messageActionChatCreate': 'ActionCreateGroup',
@@ -91,6 +92,8 @@ namespace I18n {
   export let timeFormat: State['settings']['timeFormat'];
   export let isRTL = false;
 
+  export const [langCodeNormalized, setLangCodeNormalized] = createSignal<TranslatableLanguageISO>();
+
   export function setRTL(rtl: boolean) {
     isRTL = rtl;
   }
@@ -98,6 +101,7 @@ namespace I18n {
   function setLangCode(langCode: string) {
     lastRequestedLangCode = langCode;
     lastRequestedNormalizedLangCode = langCode.split('-')[0];
+    setLangCodeNormalized(lastRequestedNormalizedLangCode.split('-')[0] as any);
   }
 
   export function getCacheLangPack(): Promise<LangPackDifference> {
@@ -362,7 +366,7 @@ namespace I18n {
     }
 
     const out: ReturnType<typeof superFormatter> = [];
-    const regExp = /(\*\*|__)(.+?)\1|(\n)|(\[.+?\]\(.*?\))|un\d|%\d\$.|%./g;
+    const regExp = /(\*\*|__)(.+?)\1|(\n)|(\[.+?\]\(.*?\))|un\d|%\d\$.|%\S/g;
 
     let lastIndex = 0;
     input.replace(regExp, (match, p1: any, p2: any, p3: any, p4: string, offset: number, string: string) => {

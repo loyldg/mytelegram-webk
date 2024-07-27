@@ -46,7 +46,7 @@ rootScope.addEventListener('document_downloading', (docId) => {
   });
 });
 
-export default async function wrapDocument({message, withTime, fontWeight, voiceAsMusic, showSender, searchContext, loadPromises, autoDownloadSize, lazyLoadQueue, sizeType, managers = rootScope.managers, cacheContext, fontSize, getSize, canTranscribeVoice}: {
+export default async function wrapDocument({message, withTime, fontWeight, voiceAsMusic, showSender, searchContext, loadPromises, autoDownloadSize, lazyLoadQueue, sizeType, managers = rootScope.managers, cacheContext, fontSize, getSize, canTranscribeVoice, isOut, uploadingFileName}: {
   message: Message.message,
   withTime?: boolean,
   fontWeight?: number,
@@ -61,7 +61,9 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
   cacheContext?: ThumbCache,
   fontSize?: number,
   getSize?: () => number,
-  canTranscribeVoice?: boolean
+  canTranscribeVoice?: boolean,
+  isOut?: boolean,
+  uploadingFileName?: string
 }): Promise<HTMLElement> {
   fontWeight ??= 500;
   sizeType ??= '' as any;
@@ -69,7 +71,7 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
   const noAutoDownload = autoDownloadSize === 0;
 
   const doc = ((message.media as MessageMedia.messageMediaDocument).document || ((message.media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage).document) as MyDocument;
-  const uploadFileName = message?.uploadingFileName;
+  uploadingFileName ??= message?.uploadingFileName?.[0];
   if(doc.type === 'audio' || doc.type === 'voice' || doc.type === 'round') {
     const audioElement = new AudioElement();
     audioElement.withTime = withTime;
@@ -77,6 +79,7 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
     audioElement.noAutoDownload = noAutoDownload;
     audioElement.lazyLoadQueue = lazyLoadQueue;
     audioElement.loadPromises = loadPromises;
+    audioElement.uploadingFileName = uploadingFileName;
     if(canTranscribeVoice && doc.type === 'voice') audioElement.transcriptionState = 0;
     (audioElement as any).getSize = getSize;
 
@@ -87,6 +90,7 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
     audioElement.dataset.fontWeight = '' + fontWeight;
     audioElement.dataset.fontSize = '' + fontSize;
     audioElement.dataset.sizeType = sizeType;
+    if(isOut) audioElement.classList.add('is-out');
     await audioElement.render();
     return audioElement;
   }
@@ -179,7 +183,7 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
   }
 
   docDiv.innerHTML = `
-  ${(cacheContext.downloaded && !uploadFileName) || !message.mid || !hasThumb ? '' : `<div class="document-download"></div>`}
+  ${(cacheContext.downloaded && !uploadingFileName) || !message.mid || !hasThumb ? '' : `<div class="document-download"></div>`}
   <div class="document-name"></div>
   <div class="document-size"></div>
   `;
@@ -210,15 +214,17 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
 
   docDiv.prepend(icoDiv);
 
-  if(!uploadFileName && message.pFlags.is_outgoing && !message.mid) {
+  if(!uploadingFileName && message.pFlags.is_outgoing && !message.mid) {
     return docDiv;
   }
+
+  const canSaveToCache = doc.size <= MAX_FILE_SAVE_SIZE;
 
   let downloadDiv: HTMLElement, preloader: ProgressivePreloader = null;
   const onLoad = () => {
     docDiv.classList.remove('downloading');
 
-    if(/* !hasThumb ||  */(doc.size > MAX_FILE_SAVE_SIZE && !uploadFileName)) {
+    if(/* !hasThumb ||  */(doc.size > MAX_FILE_SAVE_SIZE && !uploadingFileName)) {
       preloader.setManual();
       preloader.attach(downloadDiv);
       preloader.preloader.classList.add('manual');
@@ -226,7 +232,7 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
       return;
     }
 
-    if(doc.size <= MAX_FILE_SAVE_SIZE) {
+    if(canSaveToCache) {
       docDiv.classList.add('downloaded');
     }
 
@@ -295,7 +301,11 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
           }, liteMode.isAvailable('animations') ? 250 : 0);
         });
       }
-    } else if(MEDIA_MIME_TYPES_SUPPORTED.has(doc.mime_type) && doc.thumbs?.length) {
+    } else if(
+      MEDIA_MIME_TYPES_SUPPORTED.has(doc.mime_type) &&
+      doc.thumbs?.length &&
+      canSaveToCache
+    ) {
       download = appDownloadManager.downloadMediaURL({media: doc, queueId});
     } else {
       download = appDownloadManager.downloadToDisc({media: doc, queueId});
@@ -330,13 +340,13 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
     preloader.attach(downloadDiv, false, promise);
     preloader.setDownloadFunction(load);
     addByteProgress(promise);
-  } else if(!cacheContext.downloaded || uploadFileName) {
+  } else if(!cacheContext.downloaded || uploadingFileName) {
     downloadDiv = docDiv.querySelector('.document-download') || icoDiv;
     preloader = new ProgressivePreloader({
-      isUpload: !!uploadFileName
+      isUpload: !!uploadingFileName
     });
 
-    if(!uploadFileName) {
+    if(!uploadingFileName) {
       preloader.construct();
       preloader.setManual();
       preloader.attach(downloadDiv);
@@ -346,7 +356,7 @@ export default async function wrapDocument({message, withTime, fontWeight, voice
         simulateClickEvent(preloader.preloader);
       }
     } else {
-      const uploadPromise = appDownloadManager.getUpload(uploadFileName);
+      const uploadPromise = appDownloadManager.getUpload(uploadingFileName);
       preloader.attachPromise(uploadPromise);
       preloader.attach(downloadDiv);
       addByteProgress(uploadPromise);

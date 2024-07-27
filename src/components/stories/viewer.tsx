@@ -100,6 +100,11 @@ import {ButtonIconTsx} from '../buttonIconTsx';
 import {IconTsx} from '../iconTsx';
 import {Transition} from 'solid-transition-group';
 import {TransitionGroup} from '../../helpers/solid/transitionGroup';
+import makeGoogleMapsUrl from '../../helpers/makeGoogleMapsUrl';
+import createMiddleware from '../../helpers/solid/createMiddleware';
+import showTooltip from '../tooltip';
+import safeWindowOpen from '../../helpers/dom/safeWindowOpen';
+import wrapUrl from '../../lib/richTextProcessor/wrapUrl';
 
 export const STORY_DURATION = 5e3;
 const STORY_HEADER_AVATAR_SIZE = 32;
@@ -115,18 +120,6 @@ rootScope.addEventListener('app_config', (appConfig) => {
 });
 
 const x = new OverlayClickHandler(undefined, true);
-
-const createCleaner = () => {
-  const [clean, setClean] = createSignal(false);
-  onCleanup(() => setClean(true));
-  return clean;
-};
-
-export const createMiddleware = () => {
-  const middleware = getMiddleware();
-  onCleanup(() => middleware.destroy());
-  return middleware;
-};
 
 const MessageInputField = (props: {}) => {
   const inputField = new InputFieldAnimated({
@@ -560,136 +553,6 @@ const StoryInput = (props: {
 
 const JOINER = ' • ';
 
-const KEEP_TOOLTIP = true;
-const tooltipOverlayClickHandler = new OverlayClickHandler(undefined, true);
-export const showTooltip = ({
-  element,
-  container = element.parentElement,
-  vertical,
-  text,
-  textElement,
-  paddingX = 0,
-  centerVertically,
-  onClose,
-  icon,
-  auto
-}: {
-  element: HTMLElement,
-  container?: HTMLElement,
-  vertical: 'top' | 'bottom',
-  text?: LangPackKey,
-  textElement?: HTMLElement,
-  paddingX?: number,
-  centerVertically?: boolean,
-  onClose?: () => void,
-  icon?: Icon,
-  auto?: boolean
-}) => {
-  const containerRect = container.getBoundingClientRect();
-  const elementRect = element.getBoundingClientRect();
-
-  const mountOn = document.body;
-  let close: () => void;
-  createRoot((dispose) => {
-    const [getRect, setRect] = createSignal<DOMRect>();
-
-    const getStyle = (): JSX.CSSProperties => {
-      const css: JSX.CSSProperties = {
-        'max-width': Math.min(containerRect.width - paddingX * 2, 320) + 'px'
-      };
-
-      const rect = getRect();
-      if(!rect) {
-        return css;
-      }
-
-      const minX = Math.min(containerRect.left + paddingX, containerRect.right);
-      const maxX = Math.max(containerRect.left, containerRect.right - Math.min(containerRect.width, rect.width) - paddingX);
-
-      const centerX = elementRect.left + (elementRect.width - rect.width) / 2;
-      const left = clamp(centerX, minX, maxX);
-      const verticalOffset = 12;
-      if(vertical === 'top') css.top = (centerVertically ? elementRect.top + elementRect.height / 2 : elementRect.top) - rect.height - verticalOffset + 'px';
-      else css.top = elementRect.bottom + verticalOffset + 'px';
-      css.left = left + 'px';
-
-      const notchCenterX = elementRect.left + (elementRect.width - 19) / 2;
-      css['--notch-offset'] = notchCenterX - left + 'px';
-
-      return css;
-    };
-
-    let div: HTMLDivElement;
-    const tooltip = (
-      <div
-        ref={div}
-        class={classNames('tooltip', 'tooltip-' + vertical, icon && 'tooltip-with-icon')}
-        style={getStyle()}
-      >
-        <div class="tooltip-part tooltip-background"></div>
-        <span class="tooltip-part tooltip-notch"></span>
-        <div class="tooltip-part tooltip-text">
-          {icon && <IconTsx icon={icon} class="tooltip-icon" />}
-          {textElement}
-        </div>
-      </div>
-    );
-
-    <Portal mount={mountOn}>
-      {tooltip}
-    </Portal>
-
-    onMount(() => {
-      setRect(div.getBoundingClientRect());
-      div.classList.add('mounted');
-      SetTransition({
-        element: div,
-        className: 'is-visible',
-        duration: 200,
-        useRafs: 2,
-        forwards: true
-      });
-    });
-
-    let closed = false;
-    const onToggle = (open: boolean) => {
-      if(open) {
-        return;
-      }
-
-      closed = true;
-      clearTimeout(timeout);
-      SetTransition({
-        element: div,
-        className: 'is-visible',
-        duration: 200,
-        forwards: false,
-        onTransitionEnd: () => {
-          onClose?.();
-          dispose();
-        }
-      });
-    };
-
-    close = () => {
-      if(closed) {
-        return;
-      }
-
-      tooltipOverlayClickHandler.close();
-    };
-
-    const timeout = KEEP_TOOLTIP && !auto ? 0 : window.setTimeout(close, 3000);
-
-    Promise.resolve().then(() => {
-      tooltipOverlayClickHandler.open(mountOn);
-      tooltipOverlayClickHandler.addEventListener('toggle', onToggle, {once: true});
-    });
-  });
-
-  return {close};
-};
-
 const renderStoryReaction = async(props: {
   reaction: Reaction,
   uReaction: ReturnType<typeof createUnifiedSignal<JSX.Element>>,
@@ -771,10 +634,11 @@ const StoryMediaArea = (props: {
   const isLocation = createMemo(() => props.mediaArea._ === 'mediaAreaGeoPoint' || props.mediaArea._ === 'mediaAreaVenue');
   const isReaction = createMemo(() => props.mediaArea._ === 'mediaAreaSuggestedReaction');
   const isPost = createMemo(() => props.mediaArea._ === 'mediaAreaChannelPost');
+  const isLink = createMemo(() => props.mediaArea._ === 'mediaAreaUrl');
 
   const onLocationClick = async() => {
     const geoPoint = (props.mediaArea as MediaArea.mediaAreaGeoPoint).geo as GeoPoint.geoPoint;
-    const href = 'https://maps.google.com/maps?q=' + geoPoint.lat + ',' + geoPoint.long;
+    const href = makeGoogleMapsUrl(geoPoint);
 
     const onAnchorClick = async(e: MouseEvent) => {
       if(ignoreClickEvent) {
@@ -853,22 +717,15 @@ const StoryMediaArea = (props: {
     });
   };
 
-  const onPostClick = () => {
-    const openPost = () => {
-      props.close(() => {
-        const mediaArea = props.mediaArea as MediaArea.mediaAreaChannelPost;
-        appImManager.setInnerPeer({
-          peerId: mediaArea.channel_id.toPeerId(true),
-          lastMsgId: mediaArea.msg_id
-        });
-      });
-    };
-
+  const showNotCenteredTooltip = (_props: {
+    callback: () => void,
+    text: HTMLElement
+  }) => {
     const a = anchorCallback(() => {
       close();
-      openPost();
+      _props.callback();
     });
-    a.append(i18n('Story.ViewPost'));
+    a.append(_props.text);
     const wasPlaying = !stories.paused;
     actions.pause();
     const {close} = showTooltip({
@@ -883,6 +740,39 @@ const StoryMediaArea = (props: {
       }
     });
     props.setTooltipCloseCallback(() => close);
+  };
+
+  const onPostClick = () => {
+    const openPost = () => {
+      props.close(() => {
+        const mediaArea = props.mediaArea as MediaArea.mediaAreaChannelPost;
+        appImManager.setInnerPeer({
+          peerId: mediaArea.channel_id.toPeerId(true),
+          lastMsgId: mediaArea.msg_id
+        });
+      });
+    };
+
+    showNotCenteredTooltip({
+      callback: openPost,
+      text: i18n('Story.ViewPost')
+    });
+  };
+
+  const onLinkClick = () => {
+    showNotCenteredTooltip({
+      callback: () => {
+        const url = (props.mediaArea as MediaArea.mediaAreaUrl).url;
+        if(wrapUrl(url).onclick) {
+          props.close(() => {
+            appImManager.openUrl(url);
+          });
+        } else {
+          safeWindowOpen(url);
+        }
+      },
+      text: i18n('OpenUrlTitle')
+    });
   };
 
   const onClick = (e: MouseEvent) => {
@@ -970,6 +860,9 @@ const StoryMediaArea = (props: {
     props.setReady(true);
   } else if(isPost()) {
     onTypeClick = onPostClick;
+    props.setReady(true);
+  } else if(isLink()) {
+    onTypeClick = onLinkClick;
     props.setReady(true);
   } else {
     props.setReady(true);

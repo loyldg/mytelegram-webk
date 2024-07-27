@@ -19,7 +19,7 @@ import findUpClassName from '../../helpers/dom/findUpClassName';
 import cancelEvent from '../../helpers/dom/cancelEvent';
 import {attachClickEvent, simulateClickEvent} from '../../helpers/dom/clickEvent';
 import isSelectionEmpty from '../../helpers/dom/isSelectionEmpty';
-import {Message, Poll, Chat as MTChat, MessageMedia, AvailableReaction, MessageEntity, InputStickerSet, StickerSet, Document, Reaction, Photo, SponsoredMessage, ChannelParticipant} from '../../layer';
+import {Message, Poll, Chat as MTChat, MessageMedia, AvailableReaction, MessageEntity, InputStickerSet, StickerSet, Document, Reaction, Photo, SponsoredMessage, ChannelParticipant, TextWithEntities} from '../../layer';
 import PopupReportMessages from '../popups/reportMessages';
 import assumeType from '../../helpers/assumeType';
 import PopupSponsored from '../popups/sponsored';
@@ -49,16 +49,12 @@ import getMediaFromMessage from '../../lib/appManagers/utils/messages/getMediaFr
 import canSaveMessageMedia from '../../lib/appManagers/utils/messages/canSaveMessageMedia';
 import getGroupedText from '../../lib/appManagers/utils/messages/getGroupedText';
 import PopupElement from '../popups';
-import getParticipantPeerId from '../../lib/appManagers/utils/chats/getParticipantPeerId';
-import confirmationPopup from '../confirmationPopup';
-import wrapPeerTitle from '../wrappers/peerTitle';
+import confirmationPopup, {PopupConfirmationOptions} from '../confirmationPopup';
 import Icon from '../icon';
 import cloneDOMRect from '../../helpers/dom/cloneDOMRect';
 import PopupPremium from '../popups/premium';
-import getRichValueWithCaret from '../../helpers/dom/getRichValueWithCaret';
 import {ChatInputReplyTo} from './input';
-import {TEST_BUBBLES_DELETION} from './bubbles';
-import cancelSelection from '../../helpers/dom/cancelSelection';
+import {FullMid, makeFullMid, TEST_BUBBLES_DELETION} from './bubbles';
 import AppStatisticsTab from '../sidebarRight/tabs/statistics';
 import {ChatType} from './chat';
 import {formatFullSentTime} from '../../helpers/date';
@@ -67,6 +63,18 @@ import rootScope from '../../lib/rootScope';
 import ReactionElement from './reaction';
 import InputField from '../inputField';
 import getMainGroupedMessage from '../../lib/appManagers/utils/messages/getMainGroupedMessage';
+import PopupTranslate from '../popups/translate';
+import getRichSelection from '../../helpers/dom/getRichSelection';
+import detectLanguageForTranslation from '../../helpers/detectLanguageForTranslation';
+import usePeerTranslation from '../../hooks/usePeerTranslation';
+import wrapRichText from '../../lib/richTextProcessor/wrapRichText';
+import documentFragmentToHTML from '../../helpers/dom/documentFragmentToHTML';
+import PopupReportAd from '../popups/reportAd';
+import PopupAboutAd from '../popups/aboutAd';
+import getRichValueWithCaret from '../../helpers/dom/getRichValueWithCaret';
+import deepEqual from '../../helpers/object/deepEqual';
+import wrapDraftText from '../../lib/richTextProcessor/wrapDraftText';
+import flatten from '../../helpers/array/flatten';
 
 type ChatContextMenuButton = ButtonMenuItemOptions & {
   verify: () => boolean | Promise<boolean>,
@@ -95,6 +103,7 @@ export default class ChatContextMenu {
   private peerId: PeerId;
   private mid: number;
   private message: Message.message | Message.messageService;
+  private mainMessage: Message.message | Message.messageService;
   private sponsoredMessage: SponsoredMessage;
   private noForwards: boolean;
 
@@ -109,7 +118,7 @@ export default class ChatContextMenu {
   private emojiInputsPromise: CancellablePromise<InputStickerSet.inputStickerSetID[]>;
   private groupedMessages: Message.message[];
   private linkToMessage: Awaited<ReturnType<ChatContextMenu['getUrlToMessage']>>;
-  private selectedMessagesText: string;
+  private selectedMessagesText: Awaited<ReturnType<ChatContextMenu['getSelectedMessagesText']>>;
   private selectedMessages: MyMessage[];
   private avatarPeerId: number;
 
@@ -117,6 +126,7 @@ export default class ChatContextMenu {
   private messagePeerId: number;
 
   private canViewReadTime: boolean;
+  private messageLanguage: TranslatableLanguageISO;
 
   constructor(
     private chat: Chat,
@@ -206,9 +216,8 @@ export default class ChatContextMenu {
     const r = async() => {
       const isSponsored = this.isSponsored = mid < 0;
       this.isSelectable = this.chat.selection.canSelectBubble(bubble);
-      this.peerId = this.chat.peerId;
       this.messagePeerId = bubble ? bubble.dataset.peerId.toPeerId() : undefined;
-      // this.msgID = msgID;
+      this.peerId = this.messagePeerId ?? this.chat.peerId;
       this.target = e.target as HTMLElement;
       this.isTextSelected = !isSelectionEmpty();
       this.isAnchorTarget = this.target.tagName === 'A' && (
@@ -233,7 +242,7 @@ export default class ChatContextMenu {
 
       this.sponsoredMessage = isSponsored ? (bubble as any).message.sponsoredMessage : undefined;
 
-      const mids = avatar ? [] : await this.chat.getMidsByMid(mid);
+      const mids = avatar ? [] : await this.chat.getMidsByMid(this.messagePeerId, mid);
       // * если открыть контекстное меню для альбома не по бабблу, и последний элемент не выбран, чтобы показать остальные пункты
       if(this.chat.selection.isSelecting && !contentWrapper && mid) {
         if(isSponsored) {
@@ -264,15 +273,17 @@ export default class ChatContextMenu {
 
       this.isLegacy = this.messagePeerId && this.messagePeerId !== this.peerId;
       this.isSelected = this.chat.selection.isMidSelected(this.messagePeerId, this.mid);
-      this.message = avatar ? undefined : (bubble as any).message || this.chat.getMessage(this.mid);
+      this.message = avatar ? undefined : (bubble as any).message || this.chat.getMessageByPeer(this.messagePeerId, this.mid);
       this.groupedMessages = (this.message as Message.message)?.grouped_id ? await this.managers.appMessagesManager.getMessagesByGroupedId((this.message as Message.message).grouped_id) : undefined;
       if(!groupedItem && this.groupedMessages) this.message = getMainGroupedMessage(this.groupedMessages);
-      this.noForwards = this.message && !isSponsored && !(await this.managers.appMessagesManager.canForward(this.message));
+      this.mainMessage = this.groupedMessages ? getMainGroupedMessage(this.groupedMessages) : this.message;
+      this.selectedMessages = this.chat.selection.isSelecting && !avatar ? await this.chat.selection.getSelectedMessages() : undefined;
+      this.noForwards = this.message && !isSponsored && !(await Promise.all((this.selectedMessages || [this.message]).map((message) => this.managers.appMessagesManager.canForward(message)))).every(Boolean);
       this.viewerPeerId = undefined;
       this.canOpenReactedList = undefined;
       this.linkToMessage = await this.getUrlToMessage();
       this.selectedMessagesText = await this.getSelectedMessagesText();
-      this.selectedMessages = this.chat.selection.isSelecting && !avatar ? await this.chat.selection.getSelectedMessages() : undefined;
+      this.messageLanguage = this.selectedMessages || !this.message ? undefined : await detectLanguageForTranslation((this.message as Message.message).message);
 
       const initResult = await this.init();
       if(!initResult) {
@@ -281,41 +292,7 @@ export default class ChatContextMenu {
 
       element = initResult.element;
       const {cleanup, destroy, menuPadding, reactionsMenu, reactionsMenuPosition} = initResult;
-      let isReactionsMenuVisible = false;
-      if(reactionsMenu) {
-        const className = 'is-visible';
-        isReactionsMenuVisible = reactionsMenu.container.classList.contains(className);
-        if(isReactionsMenuVisible) reactionsMenu.container.classList.remove(className);
-
-        if(reactionsMenuPosition === 'horizontal') {
-          const offsetSize = element[/* reactionsMenuPosition === 'vertical' ? 'offsetHeight' :  */'offsetWidth'];
-          // if(reactionsMenu.scrollable.container.scrollWidth > offsetWidth) {
-          const INNER_CONTAINER_PADDING = 8;
-          const visibleLength = (offsetSize - INNER_CONTAINER_PADDING) / REACTION_CONTAINER_SIZE;
-          const nextVisiblePart = visibleLength % 1;
-          const MIN_NEXT_VISIBLE_PART = 0.65;
-          if(nextVisiblePart < MIN_NEXT_VISIBLE_PART) {
-            const minSize = (offsetSize + (MIN_NEXT_VISIBLE_PART - nextVisiblePart) * REACTION_CONTAINER_SIZE) | 0;
-            element.style[/* reactionsMenuPosition === 'vertical' ? 'minHeight' :  */'minWidth'] = minSize + 'px';
-          }
-          // }
-        }
-      }
-
-      if(reactionsMenu) {
-        const container = reactionsMenu.widthContainer;
-        if(!IS_MOBILE) {
-          const i = document.createElement('div');
-          i.classList.add('btn-menu-items', 'btn-menu-transition');
-          i.append(...Array.from(element.childNodes));
-          element.classList.add('has-items-wrapper');
-          element.append(container, i);
-        } else {
-          element.prepend(container);
-        }
-
-        container.style.setProperty('--height', container.offsetHeight + 'px');
-      }
+      const reactionsCallbacks = reactionsMenu && ChatContextMenu.appendReactionsMenu({element, reactionsMenu, reactionsMenuPosition});
 
       const side: 'left' | 'right' = !bubble || bubble.classList.contains('is-in') ? 'left' : 'right';
       // bubble.parentElement.append(element);
@@ -331,9 +308,7 @@ export default class ChatContextMenu {
       // }
 
       contextMenuController.openBtnMenu(element, () => {
-        if(reactionsMenu) {
-          reactionsMenu.container.classList.remove('is-visible');
-        }
+        reactionsCallbacks?.onClose();
 
         this.mid = 0;
         this.peerId = undefined;
@@ -347,9 +322,7 @@ export default class ChatContextMenu {
         }, 300);
       });
 
-      if(isReactionsMenuVisible) {
-        reactionsMenu.container.classList.add('is-visible');
-      }
+      reactionsCallbacks?.onAfterInit();
     };
 
     r();
@@ -438,7 +411,7 @@ export default class ChatContextMenu {
         text: 'Loading',
         onClick: () => {
           this.emojiInputsPromise.then((inputs) => {
-            PopupElement.createPopup(PopupStickers, inputs, true).show();
+            PopupElement.createPopup(PopupStickers, inputs, true, this.chat.input).show();
           });
         },
         verify: () => reactionCount.reaction._ === 'reactionCustomEmoji',
@@ -470,7 +443,7 @@ export default class ChatContextMenu {
         icon: 'mention',
         text: 'Mention',
         onClick: () => {
-          this.chat.input.mentionUser(this.avatarPeerId.toUserId(), false);
+          this.chat.input.mentionUser(this.avatarPeerId, false);
         },
         verify: () => /* this.avatarPeerId.isUser() &&  */this.chat.canSend('send_plain')
       }, {
@@ -484,13 +457,19 @@ export default class ChatContextMenu {
       return;
     }
 
+    const isGif = (() => {
+      const doc = ((this.message as Message.message).media as MessageMedia.messageMediaDocument)?.document;
+      const isGif = (doc as MyDocument)?.type === 'gif';
+      return isGif;
+    })();
+
     const verifyFavoriteSticker = async(toAdd: boolean) => {
       const doc = ((this.message as Message.message).media as MessageMedia.messageMediaDocument)?.document;
-      if(!(doc as MyDocument)?.sticker) {
+      if(!(doc as MyDocument)?.sticker && !isGif) {
         return false;
       }
 
-      const favedStickers = await this.managers.acknowledged.appStickersManager.getFavedStickersStickers();
+      const favedStickers = await (isGif ? this.managers.acknowledged.appGifsManager.getGifs() : this.managers.acknowledged.appStickersManager.getFavedStickersStickers());
       if(!favedStickers.cached) {
         return false;
       }
@@ -550,7 +529,9 @@ export default class ChatContextMenu {
         !!this.chat.input.messageInput &&
         !!(this.message as Message.message).message &&
         this.isTextSelected &&
-        !this.isTextFromMultipleMessagesSelected
+        !this.isTextFromMultipleMessagesSelected &&
+        (!usePeerTranslation(this.peerId).enabled() || this.message.pFlags.out) &&
+        (this.chat.bubbles.canForward(this.message) || this.chat.canSend())
     }, {
       icon: 'reply',
       text: 'Reply',
@@ -559,16 +540,33 @@ export default class ChatContextMenu {
         // await this.chat.canSend() &&
         !this.message.pFlags.is_outgoing &&
         !!this.chat.input.messageInput &&
-        this.chat.type !== ChatType.Scheduled/* ,
+        this.chat.type !== ChatType.Scheduled &&
+        (this.chat.bubbles.canForward(this.message) || this.chat.canSend())/* ,
       cancelEvent: true */
     }, {
-      icon: 'favourites',
-      text: 'AddToFavorites',
+      icon: 'bubblereply',
+      text: 'ViewReplies',
+      textArgs: [(this.message as Message.message)?.replies?.replies],
+      onClick: () => {
+        this.chat.appImManager.openThread({
+          peerId: this.message.peerId,
+          threadId: this.message.mid,
+          lastMsgId: 0
+        });
+      },
+      verify: () => {
+        if(this.chat.threadId) return false;
+        const replies = (this.message as Message.message)?.replies;
+        return !!(replies && !replies.pFlags.comments && replies.replies);
+      }
+    }, {
+      icon: isGif ? 'gifs' : 'favourites',
+      text: isGif ? 'SaveToGIFs' : 'AddToFavorites',
       onClick: this.onFaveStickerClick.bind(this, false),
       verify: () => verifyFavoriteSticker(true)
     }, {
-      icon: 'favourites',
-      text: 'DeleteFromFavorites',
+      icon: isGif ? 'crossgif' : 'crossstar',
+      text: isGif ? 'Message.Context.RemoveGif' : 'DeleteFromFavorites',
       onClick: this.onFaveStickerClick.bind(this, true),
       verify: () => verifyFavoriteSticker(false)
     }, {
@@ -577,6 +575,11 @@ export default class ChatContextMenu {
       onClick: this.onEditClick,
       verify: async() => (await this.managers.appMessagesManager.canEditMessage(this.message, 'text')) &&
         !!this.chat.input.messageInput
+    }, {
+      icon: 'factcheck',
+      text: (this.mainMessage as Message.message)?.factcheck ? 'EditFactCheck' : 'AddFactCheck',
+      onClick: this.onEditFactCheckClick,
+      verify: () => this.mainMessage && this.managers.appMessagesManager.canUpdateFactCheck(this.mainMessage.peerId, this.mainMessage.mid)
     }, {
       icon: 'copy',
       text: 'Copy',
@@ -644,6 +647,28 @@ export default class ChatContextMenu {
       verify: () => this.target.classList.contains('anchor-hashtag'),
       withSelection: true
     }, {
+      icon: 'premium_translate',
+      text: 'TranslateMessage',
+      onClick: () => {
+        if(!rootScope.premium) {
+          PopupPremium.show({feature: 'translations'});
+        } else {
+          let textWithEntities: TextWithEntities;
+          if(this.isTextSelected) {
+            const {text, entities} = this.getQuotedText();
+            textWithEntities = {_: 'textWithEntities', text, entities};
+          }
+
+          PopupElement.createPopup(PopupTranslate, {
+            peerId: textWithEntities ? this.peerId : this.message.peerId,
+            textWithEntities,
+            message: textWithEntities ? undefined : this.message as Message.message,
+            detectedLanguage: this.messageLanguage
+          });
+        }
+      },
+      verify: () => !!this.messageLanguage
+    }, {
       icon: 'link',
       text: 'MessageContext.CopyMessageLink1',
       onClick: this.onCopyLinkClick,
@@ -656,13 +681,13 @@ export default class ChatContextMenu {
         !this.message.pFlags.is_outgoing &&
         this.message._ !== 'messageService' &&
         !this.message.pFlags.pinned &&
-        await this.managers.appPeersManager.canPinMessage(this.peerId) &&
+        await this.managers.appPeersManager.canPinMessage(this.message.peerId) &&
         this.chat.type !== ChatType.Scheduled
     }, {
       icon: 'unpin',
       text: 'Message.Context.Unpin',
       onClick: this.onUnpinClick,
-      verify: () => (this.message as Message.message).pFlags.pinned && this.managers.appPeersManager.canPinMessage(this.peerId)
+      verify: () => (this.message as Message.message).pFlags.pinned && this.managers.appPeersManager.canPinMessage(this.message.peerId)
     }, {
       icon: 'download',
       text: 'MediaViewer.Context.Download',
@@ -693,8 +718,8 @@ export default class ChatContextMenu {
       icon: 'statistics',
       text: 'ViewStatistics',
       onClick: this.onStatisticsClick,
-      verify: async() => await this.managers.appPeersManager.isBroadcast(this.peerId) &&
-        await this.managers.appProfileManager.canViewStatistics(this.peerId) &&
+      verify: async() => await this.managers.appPeersManager.isBroadcast(this.messagePeerId) &&
+        await this.managers.appProfileManager.canViewStatistics(this.messagePeerId) &&
         !this.message.pFlags.is_outgoing
     }, {
       icon: 'forward',
@@ -723,12 +748,12 @@ export default class ChatContextMenu {
       icon: 'flag',
       text: 'ReportChat',
       onClick: () => {
-        PopupElement.createPopup(PopupReportMessages, this.peerId, [this.mid]);
+        PopupElement.createPopup(PopupReportMessages, this.messagePeerId, [this.mid]);
       },
       verify: () => !this.message.pFlags.out &&
         this.message._ === 'message' &&
         !this.message.pFlags.is_outgoing &&
-        this.managers.appPeersManager.isChannel(this.peerId),
+        this.managers.appPeersManager.isChannel(this.messagePeerId),
       notDirect: () => true,
       withSelection: true
     }, {
@@ -781,7 +806,15 @@ export default class ChatContextMenu {
       onClick: () => {
         PopupElement.createPopup(PopupSponsored);
       },
-      verify: () => this.isSponsored,
+      verify: () => this.isSponsored && !this.sponsoredMessage.pFlags.can_report,
+      isSponsored: true
+    }, {
+      icon: 'info',
+      text: 'AboutRevenueSharingAds',
+      onClick: () => {
+        PopupElement.createPopup(PopupAboutAd);
+      },
+      verify: () => this.isSponsored && !!this.sponsoredMessage.pFlags.can_report,
       isSponsored: true
     }, {
       icon: 'hand',
@@ -789,12 +822,35 @@ export default class ChatContextMenu {
       onClick: () => {
         PopupPremium.show({feature: 'no_ads'});
       },
-      verify: () => this.isSponsored,
+      verify: () => this.isSponsored && !this.sponsoredMessage.pFlags.can_report,
+      isSponsored: true
+    }, {
+      icon: 'hand',
+      text: 'ReportAd',
+      onClick: () => {
+        PopupElement.createPopup(
+          PopupReportAd,
+          this.peerId,
+          this.sponsoredMessage,
+          () => {
+            this.chat.bubbles.deleteMessagesByIds([makeFullMid(this.message.peerId, this.message.mid)], true);
+          }
+        );
+      },
+      verify: () => this.isSponsored && !!this.sponsoredMessage.pFlags.can_report,
+      isSponsored: true
+    }, {
+      icon: 'crossround',
+      text: 'RemoveAds',
+      onClick: () => {
+        PopupPremium.show({feature: 'no_ads'});
+      },
+      verify: () => this.isSponsored && !!this.sponsoredMessage.pFlags.can_report,
       isSponsored: true
     }, {
       icon: 'copy',
       text: 'Copy',
-      onClick: () => copyTextToClipboard(this.sponsoredMessage.message),
+      onClick: this.onCopyClick,
       verify: () => this.isSponsored,
       isSponsored: true
     }, {
@@ -802,7 +858,7 @@ export default class ChatContextMenu {
       text: 'Loading',
       onClick: () => {
         this.emojiInputsPromise.then((inputs) => {
-          PopupElement.createPopup(PopupStickers, inputs, true).show();
+          PopupElement.createPopup(PopupStickers, inputs, true, this.chat.input).show();
         });
       },
       verify: () => !!this.getUniqueCustomEmojisFromMessage().length,
@@ -1072,36 +1128,13 @@ export default class ChatContextMenu {
 
           this.chat.sendReaction({message: reactionsMessage, reaction});
         },
-        getOpenPosition: (hasMenu) => {
-          const rect = reactionsMenu.container.getBoundingClientRect();
-          const newRect = cloneDOMRect(rect);
-          newRect.left -= 21 / 2;
-          newRect.top -= 121 / 2;
-          if(!hasMenu) newRect.top += 37;
-          return newRect;
-        },
-        tags
+        getOpenPosition: (hasMenu) => ChatContextMenu.getReactionsOpenPosition(reactionsMenu, hasMenu),
+        isTags: tags
       });
       await reactionsMenu.init(reactionsMessage);
       // element.prepend(reactionsMenu.widthContainer);
 
-      const size = 36;
-      const margin = 8;
-      const totalSize = size + margin;
-      const paddingLeft = 56, paddingRight = 40;
-      if(reactionsMenuPosition === 'vertical') {
-        menuPadding = {
-          top: paddingLeft,
-          // bottom: 36, // positionMenu will detect it itself somehow
-          left: totalSize
-        };
-      } else {
-        menuPadding = {
-          top: totalSize,
-          right: paddingRight,
-          left: paddingLeft
-        };
-      }
+      menuPadding = ChatContextMenu.getReactionsMenuPadding(reactionsMenuPosition);
     }
 
     const emojisButton = filteredButtons.find((button) => button.localName === 'emojis');
@@ -1177,12 +1210,12 @@ export default class ChatContextMenu {
   }
 
   private async getUrlToMessage() {
-    if(!this.message || this.peerId.isUser()) {
+    if(!this.message || this.messagePeerId.isUser()) {
       return;
     }
 
     let threadMessage: Message.message;
-    const {peerId, mid} = this;
+    const {peerId, mid} = this.message;
     const threadId = this.chat.threadId;
     if(this.chat.type === ChatType.Discussion) {
       threadMessage = (await this.managers.appMessagesManager.getMessageByPeer(peerId, threadId)) as Message.message;
@@ -1208,29 +1241,57 @@ export default class ChatContextMenu {
 
   private async getSelectedMessagesText() {
     if(this.avatarPeerId || !isSelectionEmpty()) {
-      return '';
+      return;
     }
 
-    let mids: number[];
+    let fullMids: FullMid[];
     if(!this.chat.selection.isSelecting) {
-      mids = [this.getMessageWithText().mid];
+      const message = this.getMessageWithText();
+      if(!message) {
+        return;
+      }
+
+      fullMids = [makeFullMid(message.peerId, message.mid)];
     } else {
-      mids = this.chat.selection.getSelectedMids();
+      const v = [...this.chat.selection.selectedMids.entries()];
+      const f = v.map(([peerId, mids]) => [...mids].map((mid) => makeFullMid(peerId, mid)));
+      fullMids = flatten(f);
     }
 
-    const parts: string[] = mids.map((mid) => {
-      const message = this.chat.getMessage(mid) as Message.message;
-      return message?.message ? message.message + '\n' : '';
+    let messages: (Message.message | SponsoredMessage.sponsoredMessage)[];
+    if(this.isSponsored) {
+      messages = [this.sponsoredMessage];
+    } else {
+      messages = fullMids.map((fullMid) => this.chat.getMessage(fullMid) as Message.message);
+    }
+
+    const htmlParts = messages.map((message) => {
+      if(!message?.message) {
+        return;
+      }
+
+      const wrapped = wrapRichText(message.message, {
+        entities: (message as Message.message).totalEntities || message.entities,
+        wrappingDraft: true
+      });
+      return documentFragmentToHTML(wrapped);
     });
 
-    return parts.join('');
+    const parts: string[] = messages.map((message) => {
+      return message?.message;
+    });
+
+    return {
+      text: parts.filter(Boolean).join('\n'),
+      html: htmlParts.filter(Boolean).join('\n')
+    };
   }
 
   private onSendScheduledClick = async() => {
     if(this.chat.selection.isSelecting) {
       simulateClickEvent(this.chat.selection.selectionSendNowBtn);
     } else {
-      PopupElement.createPopup(PopupSendNow, this.peerId, await this.chat.getMidsByMid(this.mid));
+      PopupElement.createPopup(PopupSendNow, this.peerId, await this.chat.getMidsByMid(this.messagePeerId, this.mid));
     }
   };
 
@@ -1247,8 +1308,13 @@ export default class ChatContextMenu {
   };
 
   private onFaveStickerClick = (unfave?: boolean) => {
-    const docId = ((this.message as Message.message).media as MessageMedia.messageMediaDocument).document.id;
-    this.managers.appStickersManager.faveSticker(docId, unfave);
+    const document = ((this.message as Message.message).media as MessageMedia.messageMediaDocument).document as MyDocument;
+    const docId = document.id;
+    if(document.type === 'gif') {
+      this.managers.appGifsManager.saveGif(docId, unfave);
+    } else {
+      this.managers.appStickersManager.faveSticker(docId, unfave);
+    }
   };
 
   private onEditClick = () => {
@@ -1256,9 +1322,65 @@ export default class ChatContextMenu {
     this.chat.input.initMessageEditing(this.isTargetAGroupedItem ? this.mid : message.mid);
   };
 
+  private onEditFactCheckClick = async() => {
+    const {mainMessage: message} = this;
+    const factCheck = (message as Message.message).factcheck;
+    const buttonTextElement = new I18n.IntlElement({key: 'Done'});
+    const buttonOptions: PopupConfirmationOptions['button'] = {
+      text: buttonTextElement.element
+    };
+
+    const inputField = new InputField({
+      placeholder: 'FactCheckPlaceholder',
+      withLinebreaks: true,
+      onRawInput: factCheck ? (value) => {
+        buttonTextElement.compareAndUpdate({key: value ? 'Done' : 'Remove'});
+        if(!buttonOptions.element) {
+          return;
+        }
+
+        buttonOptions.element.classList.toggle('primary', !!value);
+        buttonOptions.element.classList.toggle('danger', !value);
+      } : undefined,
+      canHaveFormatting: ['bold', 'italic', 'link']
+    });
+
+    if(factCheck) {
+      inputField.setValueSilently(wrapDraftText(factCheck.text.text, {entities: factCheck.text.entities}));
+    }
+
+    try {
+      await confirmationPopup({
+        titleLangKey: 'FactCheckDialog',
+        inputField,
+        button: buttonOptions,
+        confirmShortcutIsSendShortcut: true
+      });
+    } catch(err) {
+      return;
+    }
+
+    const {value: text, entities} = getRichValueWithCaret(inputField.input, true, false);
+    const newTextWithEntities: TextWithEntities = text ? {_: 'textWithEntities', text, entities} : undefined;
+    if(factCheck && deepEqual(factCheck.text, newTextWithEntities)) {
+      return;
+    }
+
+    this.managers.appMessagesManager.updateFactCheck(
+      message.peerId,
+      message.mid,
+      newTextWithEntities
+    ).then(() => {
+      toastNew({
+        langPackKey: text ? 'FactCheckEdited' : 'FactCheckDeleted'
+      });
+    });
+  };
+
   private onCopyClick = async() => {
     if(isSelectionEmpty()) {
-      copyTextToClipboard(this.selectedMessagesText);
+      const {text, html} = this.selectedMessagesText;
+      copyTextToClipboard(text, html);
     } else {
       document.execCommand('copy');
       // cancelSelection();
@@ -1279,11 +1401,11 @@ export default class ChatContextMenu {
   };
 
   private onPinClick = () => {
-    PopupElement.createPopup(PopupPinMessage, this.peerId, this.mid);
+    PopupElement.createPopup(PopupPinMessage, this.messagePeerId, this.mid);
   };
 
   private onUnpinClick = () => {
-    PopupElement.createPopup(PopupPinMessage, this.peerId, this.mid, true);
+    PopupElement.createPopup(PopupPinMessage, this.messagePeerId, this.mid, true);
   };
 
   private onRetractVote = () => {
@@ -1298,8 +1420,8 @@ export default class ChatContextMenu {
     if(this.chat.selection.isSelecting) {
       simulateClickEvent(this.chat.selection.selectionForwardBtn);
     } else {
-      const peerId = this.peerId;
-      const mids = this.isTargetAGroupedItem ? [this.mid] : await this.chat.getMidsByMid(this.mid);
+      const peerId = this.messagePeerId;
+      const mids = this.isTargetAGroupedItem ? [this.mid] : await this.chat.getMidsByMid(peerId, this.mid);
       PopupForward.create({
         [peerId]: mids
       });
@@ -1320,142 +1442,28 @@ export default class ChatContextMenu {
       return;
     }
 
-    const {peerId, message} = this;
-    const {fromId, mid} = message;
-    const chatId = peerId.isUser() ? undefined : peerId.toChatId();
-    if(chatId && await this.managers.appChatsManager.isMegagroup(chatId) && !message.pFlags.out) {
-      const participants = await this.managers.appProfileManager.getParticipants({
-        id: chatId,
-        filter: {_: 'channelParticipantsAdmins'},
-        limit: 100
-      });
-      const foundAdmin = participants.participants.some((participant) => getParticipantPeerId(participant) === fromId);
-      if(!foundAdmin) {
-        const [banUser, reportSpam, deleteAll] = await confirmationPopup({
-          titleLangKey: 'DeleteSingleMessagesTitle',
-          peerId: fromId,
-          descriptionLangKey: 'AreYouSureDeleteSingleMessageMega',
-          checkboxes: [{
-            text: 'DeleteBanUser'
-          }, {
-            text: 'DeleteReportSpam'
-          }, {
-            text: 'DeleteAllFrom',
-            textArgs: [await wrapPeerTitle({peerId: fromId})]
-          }],
-          button: {
-            langKey: 'Delete'
-          }
-        });
-
-        if(banUser) {
-          this.managers.appChatsManager.kickFromChannel(peerId.toChatId(), fromId);
-        }
-
-        if(reportSpam) {
-          this.managers.appMessagesManager.reportMessages(peerId, [mid], 'inputReportReasonSpam');
-        }
-
-        if(deleteAll) {
-          this.managers.appMessagesManager.doFlushHistory(peerId, false, true, undefined, fromId);
-        } else {
-          this.managers.appMessagesManager.deleteMessages(peerId, [mid], true);
-        }
-
-        return;
-      }
-    }
-
-    if(TEST_BUBBLES_DELETION) {
-      return this.chat.bubbles.deleteMessagesByIds(await this.chat.getMidsByMid(mid), true);
-    }
+    const {message} = this;
+    const {peerId, mid} = message;
+    // if(TEST_BUBBLES_DELETION) {
+    //   return this.chat.bubbles.deleteMessagesByIds(await this.chat.getMidsByMid(mid), true);
+    // }
 
     PopupElement.createPopup(
       PopupDeleteMessages,
       peerId,
-      this.isTargetAGroupedItem ? [mid] : await this.chat.getMidsByMid(mid),
+      this.isTargetAGroupedItem ? [mid] : await this.chat.getMidsByMid(peerId, mid),
       this.chat.type
     );
   };
 
+  private getQuotedText() {
+    return getRichSelection(this.target);
+  }
+
   private onQuoteClick = async() => {
-    const {peerId} = this;
-    const selection = document.getSelection();
-    const range = selection.getRangeAt(0);
-    const {startContainer, startOffset, endContainer, endOffset} = range;
-    const startValue = startContainer.nodeValue;
-    const endValue = endContainer.nodeValue;
     const messageWithText = this.getMessageWithText();
-    const {mid} = messageWithText;
-
-    // * find the index
-    const needle = '\x02';
-    const container = findUpClassName(this.target, 'spoilers-container');
-    const skipSelectors: string[] = ['.reply'];
-    const s = skipSelectors.map((selector) => {
-      const element = container.querySelector(selector);
-      if(element) {
-        const textNode = document.createTextNode('');
-        element.replaceWith(textNode);
-        return [textNode, element];
-      }
-    }).filter(Boolean);
-
-    let insertedStartNode: Text, insertedEndNode: Text;
-    if(startValue === null) {
-      startContainer.parentNode.insertBefore(
-        insertedStartNode = document.createTextNode(needle),
-        startOffset === 0 ? startContainer : startContainer.nextSibling
-      );
-    }
-
-    if(endValue === null) {
-      endContainer.parentNode.insertBefore(
-        insertedEndNode = document.createTextNode(needle),
-        endOffset === 0 ? endContainer : endContainer.nextSibling
-      );
-    }
-
-    if(startContainer === endContainer && !insertedStartNode) {
-      startContainer.nodeValue = startValue.slice(0, startOffset) + needle + startValue.slice(startOffset, endOffset) + needle + startValue.slice(endOffset);
-    } else {
-      if(!insertedEndNode) endContainer.nodeValue = endValue.slice(0, endOffset) + needle + endValue.slice(endOffset);
-      if(!insertedStartNode) startContainer.nodeValue = startValue.slice(0, startOffset) + needle + startValue.slice(startOffset);
-    }
-    const {value: valueBefore} = getRichValueWithCaret(container);
-    const startIndex = valueBefore.indexOf(needle);
-    const endIndex = valueBefore.indexOf(needle, startIndex + 1) - 1;
-    if(insertedStartNode) insertedStartNode.remove();
-    else startContainer.nodeValue = startValue;
-    if(insertedEndNode) insertedEndNode.remove();
-    else endContainer.nodeValue = endValue;
-
-    // * have to fix entities
-    const SUPPORTED_ENTITIES = new Set<MessageEntity['_']>([
-      'messageEntityBold',
-      'messageEntityItalic',
-      'messageEntityUnderline',
-      'messageEntityStrike',
-      'messageEntitySpoiler',
-      'messageEntityCustomEmoji',
-      'messageEntityEmoji'
-    ]);
-    let {value: valueAfter, entities} = getRichValueWithCaret(container, true);
-    let value = valueAfter.slice(startIndex, endIndex);
-    for(let i = 0; i < entities.length; ++i) {
-      const entity = entities[i];
-      const startOffset = entity.offset;
-      const endOffset = startOffset + entity.length;
-      if(endOffset < startIndex || startOffset >= endIndex || !SUPPORTED_ENTITIES.has(entity._)) {
-        entities.splice(i--, 1);
-        continue;
-      }
-
-      entity.offset = Math.max(startOffset - startIndex, 0);
-      const distance = Math.max(startIndex - startOffset, 0);
-      const maxLength = endIndex - startIndex - entity.offset;
-      entity.length = Math.min(entity.length - distance, maxLength);
-    }
+    const {peerId, mid} = messageWithText;
+    let {text: value, entities = [], offset: startIndex} = this.getQuotedText();
 
     const appConfig = await this.managers.apiManager.getAppConfig();
     let maxLength = appConfig.quote_length_max ?? 1024;
@@ -1487,9 +1495,6 @@ export default class ChatContextMenu {
       replyToQuote: quote
     };
 
-    s.forEach(([textNode, element]) => textNode.replaceWith(element));
-    cancelSelection();
-
     if(!await this.chat.canSend()) {
       replyTo.replyToPeerId = peerId;
       this.chat.input.createReplyPicker(replyTo);
@@ -1500,7 +1505,7 @@ export default class ChatContextMenu {
   };
 
   private onStatisticsClick = () => {
-    this.chat.topbar.appSidebarRight.createTab(AppStatisticsTab).open(this.peerId.toChatId(), this.mid);
+    this.chat.topbar.appSidebarRight.createTab(AppStatisticsTab).open(this.messagePeerId.toChatId(), this.mid);
     this.chat.topbar.appSidebarRight.toggleSidebar(true);
   };
 
@@ -1517,4 +1522,96 @@ export default class ChatContextMenu {
 
     return appDownloadManager.downloadToDisc({media: getMediaFromMessage(messages, true)});
   };
+
+  public static getReactionsMenuPadding(position: 'vertical' | 'horizontal') {
+    const size = 36;
+    const margin = 8;
+    const totalSize = size + margin;
+    let paddingLeft = 56;
+    const paddingRight = 40;
+    if(IS_TOUCH_SUPPORTED) {
+      paddingLeft += 32;
+    }
+
+    let menuPadding: MenuPositionPadding;
+    if(position === 'vertical') {
+      menuPadding = {
+        top: paddingLeft,
+        // bottom: 36, // positionMenu will detect it itself somehow
+        left: totalSize
+      };
+    } else {
+      menuPadding = {
+        top: totalSize,
+        right: paddingRight,
+        left: paddingLeft
+      };
+    }
+
+    return menuPadding;
+  }
+
+  public static getReactionsOpenPosition(reactionsMenu: ChatReactionsMenu, hasMenu: boolean) {
+    const rect = reactionsMenu.container.getBoundingClientRect();
+    const newRect = cloneDOMRect(rect);
+    newRect.left -= 21 / 2;
+    newRect.top -= 121 / 2;
+    if(!hasMenu) newRect.top += 37;
+    return newRect;
+  }
+
+  public static appendReactionsMenu({element, reactionsMenu, reactionsMenuPosition}: {
+    element: HTMLElement,
+    reactionsMenu: ChatReactionsMenu,
+    reactionsMenuPosition: 'horizontal' | 'vertical'
+  }) {
+    let isReactionsMenuVisible = false;
+    if(reactionsMenu) {
+      const className = 'is-visible';
+      isReactionsMenuVisible = reactionsMenu.container.classList.contains(className);
+      if(isReactionsMenuVisible) reactionsMenu.container.classList.remove(className);
+
+      if(reactionsMenuPosition === 'horizontal') {
+        const offsetSize = element[/* reactionsMenuPosition === 'vertical' ? 'offsetHeight' :  */'offsetWidth'];
+        // if(reactionsMenu.scrollable.container.scrollWidth > offsetWidth) {
+        const INNER_CONTAINER_PADDING = 8;
+        const visibleLength = (offsetSize - INNER_CONTAINER_PADDING) / REACTION_CONTAINER_SIZE;
+        const nextVisiblePart = visibleLength % 1;
+        const MIN_NEXT_VISIBLE_PART = 0.65;
+        if(nextVisiblePart < MIN_NEXT_VISIBLE_PART) {
+          const minSize = (offsetSize + (MIN_NEXT_VISIBLE_PART - nextVisiblePart) * REACTION_CONTAINER_SIZE) | 0;
+          element.style[/* reactionsMenuPosition === 'vertical' ? 'minHeight' :  */'minWidth'] = minSize + 'px';
+        }
+        // }
+      }
+    }
+
+    if(reactionsMenu) {
+      const container = reactionsMenu.widthContainer;
+      if(!IS_MOBILE) {
+        const i = document.createElement('div');
+        i.classList.add('btn-menu-items', 'btn-menu-transition');
+        i.append(...Array.from(element.childNodes));
+        element.classList.add('has-items-wrapper');
+        element.append(container, i);
+      } else {
+        element.prepend(container);
+      }
+
+      container.style.setProperty('--height', container.offsetHeight + 'px');
+    }
+
+    return {
+      onAfterInit: () => {
+        if(isReactionsMenuVisible) {
+          reactionsMenu.container.classList.add('is-visible');
+        }
+      },
+      onClose: () => {
+        if(reactionsMenu) {
+          reactionsMenu.container.classList.remove('is-visible');
+        }
+      }
+    };
+  }
 }

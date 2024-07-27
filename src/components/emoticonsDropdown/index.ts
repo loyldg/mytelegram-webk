@@ -16,7 +16,7 @@ import appSidebarRight from '../sidebarRight';
 import StickyIntersector from '../stickyIntersector';
 import EmojiTab, {EmojiTabCategory, getEmojiFromElement} from './tabs/emoji';
 import GifsTab from './tabs/gifs';
-import StickersTab, {EmoticonsTabC, StickersTabCategory} from './tabs/stickers';
+import StickersTab from './tabs/stickers';
 import {MOUNT_CLASS_TO} from '../../config/debug';
 import AppGifsTab from '../sidebarRight/tabs/gifs';
 import AppStickersTab from '../sidebarRight/tabs/stickers';
@@ -42,6 +42,8 @@ import {toastNew} from '../toast';
 import ChatInput, {POSTING_NOT_ALLOWED_MAP} from '../chat/input';
 import safeAssign from '../../helpers/object/safeAssign';
 import ButtonIcon from '../buttonIcon';
+import StickersTabCategory from './category';
+import {Middleware} from '../../helpers/middleware';
 
 export const EMOTICONSSTICKERGROUP: AnimationItemGroup = 'emoticons-dropdown';
 
@@ -72,13 +74,7 @@ const renderEmojiDropdownElement = (): HTMLDivElement => {
   div.innerHTML =
     `<div class="emoji-dropdown" style="display: none;">
       <div class="emoji-container">
-        <div class="tabs-container">
-          <div class="tabs-tab gifs-padding">
-            <div class="emoticons-content" id="content-gifs">
-              <div class="gifs-masonry"></div>
-            </div>
-          </div>
-        </div>
+        <div class="tabs-container"></div>
       </div>
       <div class="emoji-tabs menu-horizontal-div emoticons-menu no-stripe"></div>
     </div>`;
@@ -129,7 +125,7 @@ export class EmoticonsDropdown extends DropdownHover {
 
   constructor(options: {
     customParentElement?: HTMLElement,
-    customAnchorElement?: HTMLElement,
+    // customAnchorElement?: HTMLElement,
     getOpenPosition?: () => DOMRectEditable,
     tabsToRender?: EmoticonsTab[],
     customOnSelect?: (emoji: {element: HTMLElement} & ReturnType<typeof getEmojiFromElement>) => void,
@@ -159,14 +155,14 @@ export class EmoticonsDropdown extends DropdownHover {
 
       if(options.getOpenPosition) {
         const rect = options.getOpenPosition();
-        this.element.style.top = rect.top + 'px';
-        this.element.style.left = rect.left + 'px';
-      } else if(options.customAnchorElement) {
+        this.element.style.setProperty('--top', rect.top + 'px');
+        this.element.style.setProperty('--left', rect.left + 'px');
+      }/*  else if(options.customAnchorElement) {
         const anchorRect = options.customAnchorElement.getBoundingClientRect();
         const offset = 64;
         this.element.style.left = anchorRect.left + 'px' as string;
         this.element.style.bottom = anchorRect.top + offset + 'px' as string;
-      }
+      } */
 
       if(options.customParentElement) {
         options.customParentElement.append(this.element);
@@ -192,6 +188,12 @@ export class EmoticonsDropdown extends DropdownHover {
 
       const tab = this.tab;
       tab.onOpened?.();
+    });
+
+    this.addEventListener('openAfterLayout', () => {
+      if(options.getOpenPosition) {
+        this.element.style.setProperty('--width', this.element.offsetWidth + 'px');
+      }
     });
 
     this.addEventListener('close', () => {
@@ -220,6 +222,11 @@ export class EmoticonsDropdown extends DropdownHover {
     });
   }
 
+  public canUseEmoji(emoji: AppEmoji, showToast?: boolean) {
+    this.init?.();
+    return this.getTab(EmojiTab).canUseEmoji(emoji, undefined, showToast);
+  }
+
   public get tab() {
     return this.tabs[this.tabId];
   }
@@ -236,13 +243,17 @@ export class EmoticonsDropdown extends DropdownHover {
     }
   }
 
-  public setTextColor(textColor: string = EMOJI_TEXT_COLOR) {
-    this.textColor = textColor;
-    this.getTabsFromRenderer(EmojiTab)?.setTextColor(textColor);
+  public get intersectionOptions(): IntersectionObserverInit {
+    return {root: this.getElement()};
   }
 
-  public getTabsFromRenderer<T extends EmoticonsTab>(instance: EmoticonsTabConstructable<T>) {
-    return this.tabsToRender.find(tab => tab instanceof instance) as T;
+  public setTextColor(textColor: string = EMOJI_TEXT_COLOR) {
+    this.textColor = textColor;
+    this.getTab(EmojiTab)?.setTextColor(textColor);
+  }
+
+  public getTab<T extends EmoticonsTab>(instance: EmoticonsTabConstructable<T>) {
+    return this.tabsToRender.find((tab) => tab instanceof instance) as T;
   }
 
   public init() {
@@ -252,7 +263,7 @@ export class EmoticonsDropdown extends DropdownHover {
       this.tabsToRender = [
         new EmojiTab({managers: this.managers, preloaderDelay: 200}),
         new StickersTab(this.managers),
-        new GifsTab(this.managers)
+        new GifsTab({managers: this.managers})
       ];
     }
 
@@ -264,7 +275,7 @@ export class EmoticonsDropdown extends DropdownHover {
     });
 
     this.container = this.element.querySelector('.emoji-container .tabs-container') as HTMLDivElement;
-    this.container.prepend(...this.tabsToRender.map(tab => !(tab instanceof GifsTab) && (tab as EmojiTab).container));
+    this.container.prepend(...this.tabsToRender.map((tab) => (tab as EmojiTab).container));
     this.tabsEl = this.element.querySelector('.emoji-tabs') as HTMLUListElement;
 
     this.selectTab = horizontalMenu(this.tabsEl, this.container, this.onSelectTabClick, () => {
@@ -275,7 +286,7 @@ export class EmoticonsDropdown extends DropdownHover {
 
     this.searchButton = this.element.querySelector('.emoji-tabs-search');
     this.listenerSetter.add(this.searchButton)('click', () => {
-      if(this.tabId === this.getTabsFromRenderer(StickersTab)?.tabId) {
+      if(this.tabId === this.getTab(StickersTab)?.tabId) {
         if(!appSidebarRight.isTabExists(AppStickersTab)) {
           appSidebarRight.createTab(AppStickersTab).open();
         }
@@ -343,7 +354,7 @@ export class EmoticonsDropdown extends DropdownHover {
 
     const HIDE_EMOJI_TAB = IS_APPLE_MOBILE && false;
 
-    const INIT_TAB_ID = HIDE_EMOJI_TAB ? this.getTabsFromRenderer(StickersTab).tabId : this.getTabsFromRenderer(EmojiTab).tabId;
+    const INIT_TAB_ID = HIDE_EMOJI_TAB ? this.getTab(StickersTab).tabId : this.getTab(EmojiTab).tabId;
 
     if(HIDE_EMOJI_TAB) {
       (this.tabsEl.children[1] as HTMLElement).classList.add('hide');
@@ -395,7 +406,9 @@ export class EmoticonsDropdown extends DropdownHover {
     this.listenerSetter.add(appImManager)('peer_changed', onPeerChanged);
     onPeerChanged();
 
-    return super.init();
+    const ret = super.init();
+    this.init = undefined;
+    return ret;
   }
 
   public getElement() {
@@ -407,6 +420,7 @@ export class EmoticonsDropdown extends DropdownHover {
       element: element as HTMLElement,
       axis: 'y',
       position: 'start',
+      getElementPosition: tab.scrollable.container === element ? () => -element.scrollTop : undefined,
       ...scrollOptions
     });
   }
@@ -414,13 +428,13 @@ export class EmoticonsDropdown extends DropdownHover {
   private onSelectTabClick = (id: number) => {
     if(this.tabId === id) {
       const {tab} = this;
-      this.scrollTo(tab, tab.scrollable.firstElementChild as HTMLElement);
+      this.scrollTo(tab, tab.scrollable.container as HTMLElement);
       return;
     }
 
     const rights: {[tabId: number]: ChatRights} = {
-      ...(this.getTabsFromRenderer(StickersTab) && {[this.getTabsFromRenderer(StickersTab).tabId]: 'send_stickers'}),
-      ...(this.getTabsFromRenderer(GifsTab) && {[this.getTabsFromRenderer(GifsTab).tabId]: 'send_gifs'})
+      ...(this.getTab(StickersTab) && {[this.getTab(StickersTab).tabId]: 'send_stickers'}),
+      ...(this.getTab(GifsTab) && {[this.getTab(GifsTab).tabId]: 'send_gifs'})
     };
 
     const action = rights[id];
@@ -432,8 +446,8 @@ export class EmoticonsDropdown extends DropdownHover {
     animationIntersector.checkAnimations(true, EMOTICONSSTICKERGROUP);
 
     this.tabId = id;
-    this.searchButton.classList.toggle('hide', this.tabId === this.getTabsFromRenderer(EmojiTab)?.tabId);
-    this.deleteBtn.classList.toggle('hide', this.tabId !== this.getTabsFromRenderer(EmojiTab)?.tabId);
+    this.searchButton.classList.toggle('hide', this.tabId === this.getTab(EmojiTab)?.tabId);
+    this.deleteBtn.classList.toggle('hide', this.tabId !== this.getTab(EmojiTab)?.tabId);
   };
 
   private checkRights = async() => {
@@ -449,7 +463,7 @@ export class EmoticonsDropdown extends DropdownHover {
       this.rights[action] = rights[idx];
     });
 
-    const emojiTab = this.getTabsFromRenderer(EmojiTab);
+    const emojiTab = this.getTab(EmojiTab);
     const active = this.tabsEl.querySelector('.active');
     if(active && whichChild(active) !== (emojiTab?.tabId + 1) && (!this.rights['send_stickers'] || !this.rights['send_gifs'])) {
       this.selectTab(emojiTab.tabId, false);
@@ -619,9 +633,14 @@ export class EmoticonsDropdown extends DropdownHover {
 
     const a = scrollable.onAdditionalScroll ? scrollable.onAdditionalScroll.bind(scrollable) : noop;
     scrollable.onAdditionalScroll = () => {
-      emoticons.content.parentElement.classList.toggle('scrolled-top', !scrollable.scrollPosition);
+      emoticons.content.parentElement.classList.toggle('no-border-top',
+        scrollable.scrollPosition <= 0 ||
+        emoticons.container.classList.contains('is-searching')
+      );
       a();
     };
+
+    emoticons.content.parentElement.classList.add('no-border-top');
 
     return {stickyIntersector, setActive, setActiveStatic};
   };
@@ -653,12 +672,13 @@ export class EmoticonsDropdown extends DropdownHover {
     }
   }
 
-  public addLazyLoadQueueRepeat(lazyLoadQueue: LazyLoadQueueIntersector, processInvisibleDiv: (div: HTMLElement) => void) {
-    this.addEventListener('close', () => {
+  public addLazyLoadQueueRepeat(lazyLoadQueue: LazyLoadQueueIntersector, processInvisibleDiv: (div: HTMLElement) => void, middleware: Middleware) {
+    const listenerSetter = new ListenerSetter();
+    listenerSetter.add(this)('close', () => {
       lazyLoadQueue.lock();
     });
 
-    this.addEventListener('closed', () => {
+    listenerSetter.add(this)('closed', () => {
       const divs = lazyLoadQueue.intersector.getVisible();
 
       for(const div of divs) {
@@ -668,8 +688,12 @@ export class EmoticonsDropdown extends DropdownHover {
       lazyLoadQueue.intersector.clearVisible();
     });
 
-    this.addEventListener('opened', () => {
+    listenerSetter.add(this)('opened', () => {
       lazyLoadQueue.unlockAndRefresh();
+    });
+
+    middleware.onClean(() => {
+      listenerSetter.removeAll();
     });
   }
 

@@ -6,7 +6,7 @@
 
 import type {MyDocument} from './appDocsManager';
 import type {DownloadOptions} from '../mtproto/apiFileManager';
-import {Document, InputFileLocation, InputStickerSet, MessagesAllStickers, MessagesFavedStickers, MessagesFeaturedStickers, MessagesFoundStickerSets, MessagesRecentStickers, MessagesStickers, MessagesStickerSet, PhotoSize, StickerPack, StickerSet, StickerSetCovered, Update, VideoSize} from '../../layer';
+import {Document, InputFileLocation, InputStickerSet, MessageEntity, MessagesAllStickers, MessagesFavedStickers, MessagesFeaturedStickers, MessagesFoundStickerSets, MessagesRecentStickers, MessagesStickers, MessagesStickerSet, PhotoSize, StickerPack, StickerSet, StickerSetCovered, Update, VideoSize} from '../../layer';
 import {Modify} from '../../types';
 import AppStorage from '../storage';
 import DATABASE_STATE from '../../config/databases/state';
@@ -21,6 +21,9 @@ import {getEnvironment} from '../../environment/utils';
 import getDocumentInput from './utils/docs/getDocumentInput';
 import getStickerEffectThumb from './utils/stickers/getStickerEffectThumb';
 import tsNow from '../../helpers/tsNow';
+import SearchIndex from '../searchIndex';
+import parseEntities from '../richTextProcessor/parseEntities';
+import toArray from '../../helpers/array/toArray';
 
 const CACHE_TIME = 3600e3;
 
@@ -70,6 +73,11 @@ export class AppStickersManager extends AppManager {
   private recentStickers: MyDocument[];
 
   private names: Record<string, InputStickerSet.inputStickerSetID>;
+
+  private indexes: Partial<{
+    stickers: SearchIndex<DocId>,
+    emojis: SearchIndex<DocId>
+  }>;
 
   protected after() {
     this.clear(true);
@@ -142,6 +150,7 @@ export class AppStickersManager extends AppManager {
     this.getStickersByEmoticonsPromises = {};
     this.sounds = {};
     this.names = {};
+    this.indexes = {};
   };
 
   private async onStickersUpdated(type: 'faved' | 'recent', overwrite: boolean) {
@@ -183,6 +192,8 @@ export class AppStickersManager extends AppManager {
   }
 
   private saveStickers(docs: Document[]) {
+    if(!docs || (docs as any).saved) return;
+    (docs as any).saved = true;
     forEachReverse(docs, (doc, idx) => {
       doc = this.appDocsManager.saveDoc(doc);
 
@@ -221,7 +232,8 @@ export class AppStickersManager extends AppManager {
       if(!params.overwrite) {
         const cachedSet = await this.storage.get(id);
         if(this.canUseStickerSetCache(cachedSet, params.useCache)) {
-          this.saveStickers(cachedSet.documents);
+          delete (cachedSet.documents as any).saved;
+          this.saveStickerSetLocal(cachedSet);
           resolve(cachedSet);
 
           if(this.getStickerSetPromises[id] === promise) {
@@ -449,6 +461,46 @@ export class AppStickersManager extends AppManager {
     return this.apiFileManager.downloadMedia({media: doc, thumb: isPremiumEffect ? doc.video_thumbs?.[0] as Extract<VideoSize, VideoSize.videoSize> : undefined});
   }
 
+  public getEmojisSearchIndex() {
+    return this.indexes.emojis;
+  }
+
+  private indexStickerSet(stickerSet: MessagesStickerSet.messagesStickerSet) {
+    const isEmojis = stickerSet.set.pFlags.emojis;
+    const index = this.indexes[isEmojis ? 'emojis' : 'stickers'] ??= new SearchIndex({minChars: 2, fullWords: true});
+
+    const map: Map<DocId, string[]> = new Map();
+    stickerSet.keywords.forEach((keyword) => {
+      map.set(keyword.document_id, keyword.keyword.slice());
+    });
+
+    stickerSet.packs.forEach((pack) => {
+      const emoticon = fixEmoji(pack.emoticon);
+      pack.documents.forEach((docId) => {
+        let array = map.get(docId);
+        if(!array) {
+          map.set(docId, array = []);
+        }
+
+        array.push(emoticon);
+      });
+    });
+
+    const shouldRemove = !stickerSet.set.installed_date;
+    map.forEach((keywords, docId) => {
+      index.indexObjectArray(docId as DocId, shouldRemove ? [] : keywords);
+    });
+  }
+
+  private saveStickerSetLocal(stickerSet: MessagesStickerSet.messagesStickerSet) {
+    if(stickerSet.set.short_name) {
+      this.names[stickerSet.set.short_name] = this.getStickerSetInput(stickerSet.set) as any;
+    }
+
+    this.saveStickers(stickerSet.documents);
+    this.indexStickerSet(stickerSet);
+  }
+
   private saveStickerSet(res: Omit<MessagesStickerSet.messagesStickerSet, '_'>, id: DocId) {
     const newSet: MessagesStickerSet = {
       _: 'messages.stickerSet',
@@ -465,11 +517,7 @@ export class AppStickersManager extends AppManager {
       stickerSet = this.storage.setToCache(id, newSet);
     }
 
-    if(stickerSet.set.short_name) {
-      this.names[stickerSet.set.short_name] = this.getStickerSetInput(newSet.set) as any;
-    }
-
-    this.saveStickers(res.documents);
+    this.saveStickerSetLocal(newSet);
 
     // console.log('stickers wrote', this.stickerSets);
     const needSave = stickerSet.set.installed_date || LOCAL_IDS_SET.has(id as any);
@@ -549,7 +597,12 @@ export class AppStickersManager extends AppManager {
         // });
 
         res.sets.forEach((covered) => {
-          this.saveStickerSet({set: covered.set, documents: [], packs: [], keywords: []}, covered.set.id);
+          this.saveStickerSet({
+            documents: [],
+            packs: [],
+            keywords: [],
+            ...(covered as StickerSetCovered.stickerSetFullCovered)
+          }, covered.set.id);
         });
 
         return res;
@@ -569,8 +622,7 @@ export class AppStickersManager extends AppManager {
   public getPremiumStickers() {
     return this.getStickersByEmoticon({
       emoticon: '📂⭐️',
-      includeServerStickers: true,
-      excludePremiumEffectStickers: true
+      includeServerStickers: true
     });
   }
 
@@ -625,7 +677,8 @@ export class AppStickersManager extends AppManager {
   }
 
   public async toggleStickerSet(set: StickerSet.stickerSet) {
-    set = this.storage.getFromCache(set.id).set;
+    const stickerSet = this.storage.getFromCache(set.id);
+    set = stickerSet.set;
 
     if(set.installed_date) {
       const res = await this.apiManager.invokeApi('messages.uninstallStickerSet', {
@@ -634,6 +687,7 @@ export class AppStickersManager extends AppManager {
 
       if(res) {
         delete set.installed_date;
+        this.saveStickerSetLocal(stickerSet);
         this.rootScope.dispatchEvent('stickers_deleted', set);
         this.storage.delete(set.id, true);
         return true;
@@ -646,6 +700,7 @@ export class AppStickersManager extends AppManager {
 
       if(res) {
         set.installed_date = tsNow(true);
+        this.saveStickerSetLocal(stickerSet);
         this.rootScope.dispatchEvent('stickers_installed', set);
         return true;
       }
@@ -677,7 +732,13 @@ export class AppStickersManager extends AppManager {
         // });
 
         res.sets.forEach((covered) => {
-          this.saveStickerSet({set: covered.set, documents: [], packs: [], keywords: []}, covered.set.id);
+          this.saveStickerSet({
+            set: covered.set,
+            documents: [],
+            keywords: [],
+            packs: [],
+            ...(covered as StickerSetCovered.stickerSetFullCovered)
+          }, covered.set.id);
         });
 
         return res;
@@ -723,11 +784,17 @@ export class AppStickersManager extends AppManager {
     });
   }
 
+  private onPreloadStickerSetsResult = (allStickers: MessagesAllStickers) => {
+    const sets = (allStickers as MessagesAllStickers.messagesAllStickers).sets;
+    return Promise.all(sets.map((set) => this.getStickerSet(set, {useCache: true})));
+  };
+
   public preloadStickerSets() {
-    return this.getAllStickers().then((allStickers) => {
-      const sets = (allStickers as MessagesAllStickers.messagesAllStickers).sets;
-      return Promise.all(sets.map((set) => this.getStickerSet(set, {useCache: true})));
-    });
+    return this.getAllStickers().then(this.onPreloadStickerSetsResult);
+  }
+
+  public preloadEmojiSets() {
+    return this.getEmojiStickers().then(this.onPreloadStickerSetsResult);
   }
 
   // TODO: detect "🤷" by "🤷‍♂️"
@@ -737,12 +804,13 @@ export class AppStickersManager extends AppManager {
     includeServerStickers,
     excludePremiumEffectStickers
   }: {
-    emoticon: string,
+    emoticon: string | string[],
     includeOurStickers?: boolean,
     includeServerStickers?: boolean,
     excludePremiumEffectStickers?: boolean
   }) {
-    emoticon = fixEmoji(emoticon);
+    const emoticonArray = toArray(emoticon).map((emoji) => fixEmoji(emoji));
+    emoticon = emoticonArray.join('');
     const cacheKey = emoticon + (includeOurStickers ? '1' : '0') + (includeServerStickers ? '1' : '0');
     if(this.getStickersByEmoticonsPromises[cacheKey]) return this.getStickersByEmoticonsPromises[cacheKey];
 
@@ -763,12 +831,14 @@ export class AppStickersManager extends AppManager {
       // console.log('getStickersByEmoticon', messagesStickers, installedSets, recentStickers);
 
       const iteratePacks = (packs: StickerPack.stickerPack[]) => {
-        for(const pack of packs) {
-          const packEmoticon = fixEmoji(pack.emoticon);
-          if(packEmoticon.includes(emoticon)) {
-            for(const docId of pack.documents) {
-              const doc = this.appDocsManager.getDoc(docId);
-              (doc.animated ? cachedStickersAnimated : cachedStickersStatic).push(doc);
+        for(const emoticon of emoticonArray) {
+          for(const pack of packs) {
+            const packEmoticon = fixEmoji(pack.emoticon);
+            if(packEmoticon.includes(emoticon)) {
+              for(const docId of pack.documents) {
+                const doc = this.appDocsManager.getDoc(docId);
+                (doc.animated ? cachedStickersAnimated : cachedStickersStatic).push(doc);
+              }
             }
           }
         }
@@ -808,6 +878,32 @@ export class AppStickersManager extends AppManager {
       });
 
       return stickers;
+    });
+  }
+
+  private async splitSearchQuery(query: string): Promise<string[]> {
+    query = query.trim();
+    if(!query) {
+      return [];
+    }
+
+    const entities = parseEntities(query);
+    const emojiEntities = entities
+    .filter((entity) => entity._ === 'messageEntityEmoji' || entity._ === 'messageEntityCustomEmoji')
+    .map((entity) => query.slice(entity.offset, entity.offset + entity.length));
+
+    let emojis: string[] = emojiEntities;
+    if(!emojis.length) {
+      emojis = (await this.appEmojiManager.prepareAndSearchEmojis({q: query, limit: 200, minChars: 1})).map(({emoji}) => emoji);
+    }
+
+    return emojis;
+  }
+
+  public async searchStickers(query: string): Promise<MyDocument[]> {
+    return this.getStickersByEmoticon({
+      emoticon: await this.splitSearchQuery(query),
+      includeOurStickers: true
     });
   }
 

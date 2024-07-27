@@ -24,6 +24,8 @@ import {getMiddleware, MiddlewareHelper} from '../../helpers/middleware';
 import ButtonIcon from '../buttonIcon';
 import Icon from '../icon';
 import toggleDisability from '../../helpers/dom/toggleDisability';
+import {JSX} from 'solid-js';
+import {render} from 'solid-js/web';
 
 export type PopupButton = {
   text?: HTMLElement | DocumentFragment | Text,
@@ -40,7 +42,7 @@ export type PopupButton = {
 
 export type PopupOptions = Partial<{
   closable: boolean,
-  onBackClick: () => void,
+  onBackClick: () => void | false,
   isConfirmationNeededOnClose: () => void | boolean | Promise<any>, // should return boolean instantly or `Promise` from `confirmationPopup`
   overlayClosable: boolean,
   withConfirm: LangPackKey | boolean,
@@ -51,7 +53,8 @@ export type PopupOptions = Partial<{
   scrollable: boolean,
   buttons: Array<PopupButton>,
   title: boolean | LangPackKey | DocumentFragment | HTMLElement,
-  floatingHeader: boolean
+  floatingHeader: boolean,
+  withFooterConfirm: boolean
 }>;
 
 export interface PopupElementConstructable<T extends PopupElement = any> {
@@ -157,8 +160,9 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
 
       attachClickEvent(this.btnClose, () => {
         if(options.onBackClick && this.btnCloseAnimatedIcon.classList.contains('state-back')) {
-          this.btnCloseAnimatedIcon.classList.remove('state-back');
-          options.onBackClick();
+          if(options.onBackClick() !== false) {
+            this.btnCloseAnimatedIcon.classList.remove('state-back');
+          }
         } else {
           this.hide();
         }
@@ -218,6 +222,10 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
       this.footer = document.createElement('div');
       this.footer.classList.add('popup-footer');
       (this.body || this.container).append(this.footer);
+
+      if(options.withFooterConfirm) {
+        this.footer.append(this.btnConfirm);
+      }
     }
 
     this.btnConfirmOnEnter = this.btnConfirm;
@@ -418,6 +426,13 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
         animationIntersector.checkAnimations2(false);
       }
     }, 250);
+  }
+
+  protected appendSolid(callback: () => JSX.Element) {
+    const div = document.createElement('div');
+    (this.scrollable || this.body).prepend(div);
+    const dispose = render(callback, div);
+    this.addEventListener('closeAfterTimeout', dispose as any);
   }
 
   public static reAppend() {

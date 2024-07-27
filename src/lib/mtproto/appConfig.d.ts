@@ -49,6 +49,9 @@ export interface MTAppConfig {
   caption_length_limit_premium?:             number;
   upload_max_fileparts_default?:             number;
   upload_max_fileparts_premium?:             number;
+  upload_premium_speedup_download?:          number;
+  upload_premium_speedup_notify_period?:     number;
+  upload_premium_speedup_upload?:            number;
   about_length_limit_default?:               number;
   about_length_limit_premium?:               number;
   stickers_premium_by_emoji_num?:            number;
@@ -99,6 +102,10 @@ export interface MTAppConfig {
   hash?:                                     number;
   pm_read_date_expire_period?:               number;
   new_noncontact_peers_require_premium_without_ownpremium?: boolean;
+  stars_purchase_blocked?:                   boolean;
+  can_edit_factcheck?:                       boolean;
+  stories_pinned_to_top_count_max?:          number;
+  stars_paid_post_amount_max?:               number;
 }
 
 export interface EmojiesSendDiceSuccess {

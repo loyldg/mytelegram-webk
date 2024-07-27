@@ -570,7 +570,10 @@ class ApiUpdatesManager {
           };
         }
 
-        curState.syncPending.ptsAwaiting = true;
+        if(curState.syncPending) {
+          curState.syncPending.ptsAwaiting = true;
+        }
+
         return false;
       }
 
@@ -749,8 +752,7 @@ class ApiUpdatesManager {
 
               text = pre + text;
 
-              const entities: MessageEntity[] = [];
-              const message = parseMarkdown(text, entities);
+              const [message, entities] = parseMarkdown(text, []);
 
               const update: Update.updateServiceNotification = {
                 _: 'updateServiceNotification',

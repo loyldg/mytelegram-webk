@@ -1,4 +1,7 @@
+import Icon from '../components/icon';
 import Currencies from '../config/currencies';
+import I18n from '../lib/langPack';
+import {STARS_CURRENCY} from '../lib/mtproto/mtproto_config';
 
 // https://stackoverflow.com/a/34141813
 function number_format(number: any, decimals: any, dec_point: any, thousands_sep: any): string {
@@ -25,13 +28,25 @@ function number_format(number: any, decimals: any, dec_point: any, thousands_sep
   return s.join(dec);
 }
 
-export default function paymentsWrapCurrencyAmount(
+export default function paymentsWrapCurrencyAmount<T extends boolean = false>(
   amount: number | string,
   currency: string,
   skipSymbol?: boolean,
-  useNative?: boolean
-) {
+  useNative?: boolean,
+  plain?: T
+): T extends true ? string : HTMLElement | string {
   amount = +amount;
+
+  if(currency === STARS_CURRENCY) {
+    if(plain) {
+      return I18n.format('StarsCount', true, [amount]);
+    }
+
+    const out = document.createElement('span');
+    out.classList.add('xtr');
+    out.append(Icon('star', 'xtr-icon'), ' ', '' + amount);
+    return out as any;
+  }
 
   const isNegative = amount < 0;
 

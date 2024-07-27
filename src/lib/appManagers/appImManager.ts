@@ -13,7 +13,7 @@ import appSidebarRight, {RIGHT_COLUMN_ACTIVE_CLASSNAME} from '../../components/s
 import mediaSizes, {ScreenSize} from '../../helpers/mediaSizes';
 import {logger, LogTypes} from '../logger';
 import rootScope from '../rootScope';
-import Chat, {ChatType} from '../../components/chat/chat';
+import Chat, {ChatSearchKeys, ChatType} from '../../components/chat/chat';
 import PopupNewMedia, {getCurrentNewMediaPopup} from '../../components/popups/newMedia';
 import MarkupTooltip from '../../components/chat/markupTooltip';
 import IS_TOUCH_SUPPORTED from '../../environment/touchSupport';
@@ -26,7 +26,7 @@ import {MOUNT_CLASS_TO} from '../../config/debug';
 import appNavigationController from '../../components/appNavigationController';
 import AppPrivateSearchTab from '../../components/sidebarRight/tabs/search';
 import I18n, {i18n, join, LangPackKey} from '../langPack';
-import {ChatFull, ChatParticipants, Message, MessageAction, MessageMedia, SendMessageAction, User, Chat as MTChat, UrlAuthResult, WallPaper, Config, AttachMenuBot, Peer, InputChannel, HelpPeerColors, Reaction, Document, MessageEntity} from '../../layer';
+import {ChatFull, ChatParticipants, Message, MessageAction, MessageMedia, SendMessageAction, User, Chat as MTChat, UrlAuthResult, WallPaper, Config, AttachMenuBot, Peer, InputChannel, HelpPeerColors, Reaction, Document, MessageEntity, PeerColor} from '../../layer';
 import PeerTitle from '../../components/peerTitle';
 import {PopupPeerCheckboxOptions} from '../../components/popups/peer';
 import blurActiveElement from '../../helpers/dom/blurActiveElement';
@@ -59,7 +59,7 @@ import copy from '../../helpers/object/copy';
 import getObjectKeysAndSort from '../../helpers/object/getObjectKeysAndSort';
 import numberThousandSplitter from '../../helpers/number/numberThousandSplitter';
 import ChatBackgroundPatternRenderer from '../../components/chat/patternRenderer';
-import {IS_FIREFOX} from '../../environment/userAgent';
+import {IS_CHROMIUM, IS_FIREFOX} from '../../environment/userAgent';
 import compareVersion from '../../helpers/compareVersion';
 import {AppManagers} from './managers';
 import uiNotificationsManager from './uiNotificationsManager';
@@ -125,6 +125,13 @@ import useProfileColors from '../../hooks/useProfileColors';
 import {DEFAULT_BACKGROUND_SLUG} from '../../config/app';
 import blur from '../../helpers/blur';
 import {wrapSlowModeLeftDuration} from '../../components/wrappers/wrapDuration';
+import {splitFullMid} from '../../components/chat/bubbles';
+import PopupStars from '../../components/popups/stars';
+import getSelectedNodes from '../../helpers/dom/getSelectedNodes';
+import {setQuizHint} from '../../components/poll';
+import anchorCallback from '../../helpers/dom/anchorCallback';
+import PopupPremium from '../../components/popups/premium';
+import safeWindowOpen from '../../helpers/dom/safeWindowOpen';
 
 export type ChatSavedPosition = {
   mids: number[],
@@ -134,16 +141,16 @@ export type ChatSavedPosition = {
 export type ChatSetPeerOptions = {
   peerId: PeerId,
   lastMsgId?: number,
+  lastMsgPeerId?: PeerId,
   threadId?: number,
   startParam?: string,
   stack?: {peerId: PeerId, mid: number, message?: Message.message, isOut?: boolean},
   commentId?: number,
   type?: ChatType,
   mediaTimestamp?: number,
-  savedReaction?: Reaction[],
   text?: string
   entities?: MessageEntity[]
-};
+} & Partial<ChatSearchKeys>;
 
 export type ChatSetInnerPeerOptions = Modify<ChatSetPeerOptions, {
   peerId: PeerId,
@@ -358,7 +365,7 @@ export class AppImManager extends EventListenerBase<{
       const typing = typings.find((typing) => typing.action._ === 'sendMessageEmojiInteraction');
       if(typing?.action?._ === 'sendMessageEmojiInteraction') {
         const action = typing.action;
-        const bubble = chat.bubbles.bubbles[typing.action.msg_id];
+        const bubble = chat.bubbles.getBubble(peerId, typing.action.msg_id);
         if(bubble && bubble.classList.contains('emoji-big') && getVisibleRect(bubble, chat.bubbles.scrollable.container)) {
           const stickerWrapper: HTMLElement = bubble.querySelector('.media-sticker-wrapper:not(.bubble-hover-reaction-sticker):not(.reaction-sticker)');
 
@@ -391,6 +398,23 @@ export class AppImManager extends EventListenerBase<{
           }
         });
       }
+    });
+
+    rootScope.addEventListener('file_speed_limited', ({increaseTimes, isUpload}) => {
+      const {hide} = setQuizHint({
+        icon: 'premium_speed',
+        title: i18n(isUpload ? 'UploadSpeedLimited' : 'DownloadSpeedLimited'),
+        textElement: i18n(isUpload ? 'Chat.UploadLimit.Text' : 'Chat.DownloadLimit.Text', [
+          anchorCallback(() => {
+            hide();
+            PopupPremium.show({feature: 'faster_download'});
+          }),
+          increaseTimes
+        ]),
+        appendTo: this.chat.bubbles.container,
+        from: 'top',
+        duration: 10000
+      });
     });
 
     const onInstanceDeactivated = (reason: InstanceDeactivateReason) => {
@@ -546,6 +570,10 @@ export class AppImManager extends EventListenerBase<{
       }
     });
 
+    rootScope.addEventListener('gif_updated', ({saved}) => {
+      toastNew({langPackKey: saved ? 'GifSavedHint' : 'RemovedGIFFromFavorites'});
+    });
+
     apiManagerProxy.addEventListener('notificationBuild', async(options) => {
       const isForum = await this.managers.appPeersManager.isForum(options.message.peerId);
       const threadId = getMessageThreadId(options.message, isForum);
@@ -619,6 +647,27 @@ export class AppImManager extends EventListenerBase<{
       telegramMeWebManager.setAuthorized(true);
     };
 
+    // ! THANKS TO CHROMIUM DEVELOPERS FOR THIS BUG
+    // ! https://issues.chromium.org/issues/328755781
+    if(IS_CHROMIUM) document.addEventListener('visibilitychange', () => {
+      if(document.hidden) {
+        return;
+      }
+
+      const canvases = Array.from(document.querySelectorAll('canvas')) as HTMLCanvasElement[];
+      canvases.forEach((canvas) => {
+        const context = canvas.getContext('2d');
+        if(!context) {
+          return;
+        }
+
+        const oldFillStyle = context.fillStyle;
+        context.fillStyle = 'transparent';
+        context.fillRect(0, 0, 1, 1);
+        context.fillStyle = oldFillStyle;
+      });
+    });
+
     setInterval(setAuthorized, ONE_DAY);
     setAuthorized();
 
@@ -628,6 +677,7 @@ export class AppImManager extends EventListenerBase<{
 
     this.onHashChange(true);
     this.attachKeydownListener();
+    this.attachCopyListener();
     this.handleAutologinDomains();
     this.handlePeerColors();
     this.checkForShare();
@@ -1148,9 +1198,44 @@ export class AppImManager extends EventListenerBase<{
     document.body.addEventListener('keydown', onKeyDown);
   }
 
-  public openUrl(url: string) {
+  // * restrict copying no forwards content
+  private attachCopyListener() {
+    document.addEventListener('copy', (e) => {
+      const nodes = getSelectedNodes();
+      nodes.some((node) => {
+        let element: HTMLElement = node as HTMLElement;
+        if(node.nodeType !== node.ELEMENT_NODE) {
+          element = node.parentElement;
+        }
+
+        if(!findUpClassName(element, 'no-forwards')) {
+          return false;
+        }
+
+        const bubble = findUpClassName(element, 'bubble');
+        if(!bubble) {
+          return false;
+        }
+
+        e.preventDefault();
+        const peerId = bubble.dataset.peerId.toPeerId();
+        const chat = apiManagerProxy.getChat(peerId.toChatId());
+        toastNew({
+          langPackKey: (chat as MTChat.channel).pFlags.broadcast ? 'CopyRestricted.Channel' : 'CopyRestricted.Group'
+        });
+
+        return true;
+      });
+    });
+  }
+
+  public openUrl(url: string, newWindowIfNoClick?: boolean) {
     const {url: wrappedUrl, onclick} = wrapUrl(url);
     if(!onclick) {
+      if(newWindowIfNoClick) {
+        safeWindowOpen(wrappedUrl);
+      }
+
       return;
     }
 
@@ -1625,13 +1710,14 @@ export class AppImManager extends EventListenerBase<{
     if(
       !(chatBubbles.scrollable.getDistanceToEnd() <= 16 && chatBubbles.scrollable.loadedAll.bottom) &&
       chatBubbles.getRenderedLength() &&
-      !chat.savedReaction
+      !chat.savedReaction &&
+      chatBubbles.getViewportSlice().invisibleBottom.length // * don't save if we're close to the end (or sponsored is below)
     ) {
       chatBubbles.sliceViewport(true);
       const top = chatBubbles.scrollable.scrollPosition;
 
       const position = {
-        mids: getObjectKeysAndSort(chatBubbles.bubbles, 'desc').filter((mid) => mid > 0 && !chatBubbles.skippedMids.has(mid)),
+        mids: chatBubbles.getRenderedHistory('desc', true).map((fullMid) => splitFullMid(fullMid).mid),
         top
       };
 
@@ -1779,6 +1865,8 @@ export class AppImManager extends EventListenerBase<{
     // if(!isTouchSupported) {
     MarkupTooltip.getInstance().handleSelection();
     // }
+
+    // PopupElement.createPopup(PopupStars);
   }
 
   private attachDragAndDropListeners() {
@@ -2025,7 +2113,7 @@ export class AppImManager extends EventListenerBase<{
     this.tabId = id;
     blurActiveElement();
     if(mediaSizes.isMobile && prevTabId === APP_TABS.PROFILE && id < APP_TABS.PROFILE) {
-      document.body.classList.remove(RIGHT_COLUMN_ACTIVE_CLASSNAME);
+      appSidebarRight.hide();
     }
 
     if(prevTabId !== undefined && id > prevTabId) {
@@ -2206,7 +2294,7 @@ export class AppImManager extends EventListenerBase<{
       if(options.threadId) {
         if(options.peerId === rootScope.myId) {
           options.type = ChatType.Saved;
-        } else if(!(await this.managers.appPeersManager.isForum(options.peerId))) {
+        } else if(!apiManagerProxy.isForum(options.peerId)) {
           options.type = ChatType.Discussion;
         }
       }
@@ -2605,12 +2693,14 @@ export class AppImManager extends EventListenerBase<{
     peerId,
     element,
     messageHighlighting,
-    colorAsOut
+    colorAsOut,
+    color
   }: {
     peerId: PeerId,
     element: HTMLElement,
     messageHighlighting?: boolean,
-    colorAsOut?: boolean
+    colorAsOut?: boolean,
+    color?: PeerColor
   }) {
     const colorProperty = '--peer-color-rgb';
     const borderBackgroundProperty = '--peer-border-background';
@@ -2629,7 +2719,7 @@ export class AppImManager extends EventListenerBase<{
       peerColorRgbValue = `var(--${property}-primary-color-rgb)`;
       peerBorderBackgroundValue = `var(--${property}-peer-${Math.max(1, length)}-border-background)`;
     } else {
-      const colorIndex = getPeerColorIndexByPeer(peer);
+      const colorIndex = color?.color ?? getPeerColorIndexByPeer(peer);
       if(colorIndex === -1) {
         element.style.removeProperty(colorProperty);
         element.style.removeProperty(borderBackgroundProperty);
@@ -2693,17 +2783,17 @@ export class AppImManager extends EventListenerBase<{
     }
 
     if(!peerId.isUser() || !liteMode.isAvailable('effects_emoji')) {
-      return;
+      return false;
     }
 
     const activeAnimations: Set<{}> = (container as any).activeAnimations ??= new Set();
     if(activeAnimations.size >= 3) {
-      return;
+      return true;
     }
 
     const doc = await managers.appStickersManager.getAnimatedEmojiSticker(emoji, true);
     if(!doc) {
-      return;
+      return false;
     }
 
     const data: SendMessageEmojiInteractionData = (container as any).emojiData ??= {
@@ -2770,6 +2860,8 @@ export class AppImManager extends EventListenerBase<{
 
       sendInteractionThrottled();
     }
+
+    return true;
     // });
   }
 }

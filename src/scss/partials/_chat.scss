@@ -93,7 +93,7 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 		position: absolute;
 		// inset-inline-end: 0;
     inset-inline-end: calc(#{$btn-send-margin} + var(--chat-input-size) + var(--padding-horizontal));
-		top: 0;
+		// top: 0;
     color: var(--danger-color) !important;
 
     @include hover() {
@@ -187,6 +187,18 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
     .btn-menu-overlay {
 			z-index: 3;
 		}
+
+    @include respond-to(until-floating-left-sidebar) {
+      .btn-menu-reactions {
+        &-container {
+          --bubble-side-offset: 0;
+        }
+    
+        &-bubble {
+          display: none;
+        }
+      }
+    }
 	}
 
 	.btn-icon {
@@ -201,7 +213,7 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
   .btn-cancel-record {
     box-shadow: $chat-input-box-shadow;
   }
-	
+
 	.btn-send {
     color: #fff !important;
     background-color: var(--primary-color) !important;
@@ -677,16 +689,6 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 		}
 	}
 
-  &.no-forwards {
-    .bubble-beside-button.forward {
-      display: none;
-    }
-
-    .bubbles {
-      user-select: none !important;
-    }
-  }
-
 	&-background {
 		overflow: hidden;
 		background-color: #e6ebee;
@@ -728,6 +730,10 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
         //   height: 150%;
         //   top: -25%;
         // }
+      }
+
+      &.is-image {
+        background-color: #000;
       }
 
 			@include animation-level(2) {
@@ -785,6 +791,8 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
       }
 
       &-image {
+        --opacity-max: 1;
+        opacity: var(--opacity-max);
         object-fit: cover;
         width: 100%;
         height: 100%;
@@ -1215,6 +1223,12 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
       &-icon,
       &-cancel {
         color: rgb(var(--peer-color-rgb, var(--primary-color-rgb)));
+      }
+
+      &-cancel {
+        @include hover() {
+          background-color: rgba(var(--peer-color-rgb, var(--primary-color-rgb)), #{$hover-alpha});
+        }
       }
 
 			&-icon {
@@ -1761,6 +1775,10 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 
 				.bubbles-go-mention {
 					--translateY: calc(var(--chat-input-size) * -1 + -.625rem);
+          
+          &.is-visible + .bubbles-go-reaction {
+            --translateY: calc(var(--chat-input-size) * -2 + -.625rem * 2);
+          }
 				}
 			} 
 		//}
@@ -1851,10 +1869,9 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 	} */
 
 	&:not(.is-broadcast) {
-		.message,
-		.name {
-			max-width: 480px;
-		}
+    .bubble {
+      --max-width: 30rem;
+    }
 	}
 
 	&.is-scrolling .is-sticky {
@@ -1891,6 +1908,10 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 		visibility: visible;
 		transition: transform var(--layer-transition), opacity var(--layer-transition), visibility 0s 0s !important;
 	}
+
+  &.is-visible + .bubbles-go-reaction {
+    --translateY: calc(var(--chat-input-size) * -1 + -.625rem * 1);
+  }
 }
 
 .chat-secondary-button {
@@ -1950,7 +1971,7 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 		inset-inline-end: -.25rem;
 
 		&.badge-primary:not(.badge-gray) {
-			background-color: var(--chatlist-status-color);
+			background-color: var(--primary-color);
 		}
 		
 		@include respond-to(handhelds) {
@@ -1966,4 +1987,34 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 			margin-bottom: 1rem;
 		}
 	}
+}
+
+.btn-send-effect {
+  width: .875rem;
+  height: .875rem;
+
+  &-container {
+    position: absolute;
+    width: 1.375rem;
+    height: 1.375rem;
+    align-self: flex-end;
+    inset-inline-end: -.25rem;
+    z-index: 3;
+    bottom: calc(var(--bottom) + 0rem);
+    background-color: var(--surface-color);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    opacity: 0;
+
+    @include animation-level(2) {
+      transition: opacity var(--transition-standard-in);
+    }
+
+    &.is-visible {
+      opacity: 1;
+    }
+  }
 }

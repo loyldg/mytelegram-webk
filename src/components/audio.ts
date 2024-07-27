@@ -86,7 +86,7 @@ function createWaveformBars(waveform: Uint8Array, duration: number) {
   const barWidth = 2;
   const barMargin = 2;
   const barHeightMin = 4;
-  const barHeightMax = mediaSizes.isMobile ? 16 : 23;
+  const barHeightMax = mediaSizes.isMobile && false ? 16 : 23;
 
   const minW = mediaSizes.isMobile ? 152 : 190;
   const maxW = mediaSizes.isMobile ? 190 : 256;
@@ -495,6 +495,7 @@ export default class AudioElement extends HTMLElement {
   public loadPromises: Promise<any>[];
   public managers: AppManagers;
   public transcriptionState: number;
+  public uploadingFileName: string;
 
   private listenerSetter = new ListenerSetter();
   private onTypeDisconnect: () => void;
@@ -513,7 +514,7 @@ export default class AudioElement extends HTMLElement {
     const isRealVoice = doc.type === 'voice';
     const isVoice = !this.voiceAsMusic && isRealVoice;
     const isOutgoing = this.message.pFlags.is_outgoing;
-    const uploadingFileName = this.message?.uploadingFileName;
+    const uploadingFileName = this.uploadingFileName ?? this.message?.uploadingFileName?.[0];
 
     const getDurationStr = () => {
       const duration = this.audio && this.audio.readyState >= this.audio.HAVE_CURRENT_DATA ? this.audio.duration : doc.duration;

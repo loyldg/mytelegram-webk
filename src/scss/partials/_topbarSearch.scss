@@ -16,6 +16,11 @@
     gap: .5rem;
     z-index: 1;
 
+    @include respond-to(handhelds) {
+      inset-inline: .5rem;
+      background-color: var(--surface-color);
+    }
+
     @include respond-to(medium-screens) {
       transition: padding-inline-end var(--transition-standard-out);
   
@@ -141,26 +146,54 @@
     }
 
     &-reactions {
-      --margin-vertical: .5rem;
+      --margin-vertical: 0px;
       --margin-horizontal: .5625rem;
-      padding: .5rem 0 1rem;
+      // padding: .5rem 0 1rem;
       margin-top: calc(var(--margin-vertical) * -1);
       flex-wrap: nowrap;
       flex: 0 0 auto;
-      height: 70px;
+      // height: 70px;
 
       &-padding {
         width: 1rem;
+
+        @include respond-to(handhelds) {
+          width: .5rem;
+        }
       }
 
       &-scrollable {
         position: relative;
         display: flex;
+        align-items: center;
+        height: 44px;
       }
 
       &-padding,
       .reaction-tag {
         flex: 0 0 auto;
+      }
+    }
+
+    &-search-types {
+      display: flex;
+      gap: .5rem;
+
+      .selector-user {
+        margin: 0;
+
+        &-avatar-close {
+          display: none;
+        }
+
+        &.active {
+          background-color: var(--primary-color) !important;
+          color: #fff;
+        }
+
+        @include hover() {
+          background-color: var(--light-primary-color);
+        }
       }
     }
   }
@@ -206,6 +239,10 @@
     padding-inline-start: var(--padding-horizontal-start);
     padding-inline-end: 136px;
 
+    @include respond-to(handhelds) {
+      padding-inline-end: 3.25rem;
+    }
+
     @include animation-level(2) {
       transition: padding-inline-start .2s ease-in-out;
     }
@@ -219,7 +256,7 @@
       margin: 0;
 
       .input-search-placeholder {
-        inset-inline-start: var(--padding-horizontal-start);
+        inset-inline-start: calc(var(--padding-horizontal-start) + var(--padding-hashtag));
 
         @include animation-level(2) {
           transition: inset-inline-start .2s ease-in-out;
@@ -235,9 +272,19 @@
         margin-inline-end: .4375rem;
       }
 
+      .input-search-back {
+        pointer-events: all;
+      }
+
       .preloader-path-new {
         stroke: var(--secondary-text-color) !important;
         opacity: .6;
+      }
+
+      &.with-arrow-back {
+        .preloader-container {
+          inset-inline: auto var(--icon-left-offset);
+        }
       }
     }
 
