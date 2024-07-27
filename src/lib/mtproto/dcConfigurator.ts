@@ -51,7 +51,7 @@ export function constructTelegramWebSocketUrl(dcId: DcId, connectionType: Connec
 export class DcConfigurator {
   private sslSubdomains = ['pluto', 'venus', 'aurora', 'vesta', 'flora'];
 
-  private dcOptions = [{id: 1, host: '192.168.2.121',  port: 30444}];
+  private dcOptions = [{id: 1, host: '192.168.1.100',  port: 30444}];
 
   public chosenServers: Servers = {} as any;
 
