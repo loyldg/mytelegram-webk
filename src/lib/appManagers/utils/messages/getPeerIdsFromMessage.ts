@@ -45,6 +45,11 @@ export default function getPeerIdsFromMessage(message: Message.message | Message
     peerIds.push(...recentReactions.map((reaction) => getPeerId(reaction.peer_id)));
   }
 
+  const topReactors = ((message as Message.message).reactions)?.top_reactors;
+  if(topReactors?.length) {
+    peerIds.push(...topReactors.map((reactor) => getPeerId(reactor.peer_id)));
+  }
+
   const action = (message as Message.messageService).action;
   if(action) {
     const userIds: UserId[] = [
@@ -61,7 +66,7 @@ export default function getPeerIdsFromMessage(message: Message.message | Message
     peerIds.push(...chatIds.filter(Boolean).map((chatId) => chatId.toPeerId(true)));
 
     const peers: Peer[] = [
-      (action as MessageAction.messageActionGiftCode).boost_peer,
+      (action as MessageAction.messageActionGiftCode | MessageAction.messageActionPrizeStars).boost_peer,
       ...(action as MessageAction.messageActionRequestedPeer).peers || [],
       (action as MessageAction.messageActionGeoProximityReached).from_id,
       (action as MessageAction.messageActionGeoProximityReached).to_id
