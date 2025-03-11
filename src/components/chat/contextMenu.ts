@@ -20,7 +20,6 @@ import cancelEvent from '../../helpers/dom/cancelEvent';
 import {attachClickEvent, simulateClickEvent} from '../../helpers/dom/clickEvent';
 import isSelectionEmpty from '../../helpers/dom/isSelectionEmpty';
 import {Message, Poll, Chat as MTChat, MessageMedia, AvailableReaction, MessageEntity, InputStickerSet, StickerSet, Document, Reaction, Photo, SponsoredMessage, ChannelParticipant, TextWithEntities} from '../../layer';
-import PopupReportMessages from '../popups/reportMessages';
 import assumeType from '../../helpers/assumeType';
 import PopupSponsored from '../popups/sponsored';
 import ListenerSetter from '../../helpers/listenerSetter';
@@ -75,6 +74,7 @@ import getRichValueWithCaret from '../../helpers/dom/getRichValueWithCaret';
 import deepEqual from '../../helpers/object/deepEqual';
 import wrapDraftText from '../../lib/richTextProcessor/wrapDraftText';
 import flatten from '../../helpers/array/flatten';
+import getUniqueCustomEmojisFromMessage from '../../lib/appManagers/utils/messages/getUniqueCustomEmojisFromMessage';
 
 type ChatContextMenuButton = ButtonMenuItemOptions & {
   verify: () => boolean | Promise<boolean>,
@@ -96,6 +96,7 @@ export default class ChatContextMenu {
   private isTextFromMultipleMessagesSelected: boolean;
   private isAnchorTarget: boolean;
   private isUsernameTarget: boolean;
+  private isEmailTarget: boolean;
   private isSponsored: boolean;
   private isOverBubble: boolean;
   private isTag: boolean;
@@ -224,6 +225,7 @@ export default class ChatContextMenu {
         (this.target as HTMLAnchorElement).target === '_blank' ||
         this.target.classList.contains('anchor-url')
       );
+      this.isEmailTarget = this.isAnchorTarget && (this.target as HTMLAnchorElement).href.startsWith('mailto:');
       this.isUsernameTarget = this.target.tagName === 'A' && this.target.classList.contains('mention');
       this.isTag = !!tagReactionElement;
       this.reactionElement = tagReactionElement as ReactionElement;
@@ -452,7 +454,7 @@ export default class ChatContextMenu {
         onClick: () => {
           this.chat.initSearch({filterPeerId: this.avatarPeerId});
         },
-        verify: () => this.chat.isRealGroup
+        verify: () => this.chat.isAnyGroup
       }];
       return;
     }
@@ -626,7 +628,7 @@ export default class ChatContextMenu {
       withSelection: true
     }, {
       icon: 'copy',
-      text: 'CopyLink',
+      text: this.isEmailTarget ? 'Text.Context.Copy.Email' : 'CopyLink',
       onClick: this.onCopyAnchorLinkClick,
       verify: () => this.isAnchorTarget,
       withSelection: true
@@ -748,7 +750,7 @@ export default class ChatContextMenu {
       icon: 'flag',
       text: 'ReportChat',
       onClick: () => {
-        PopupElement.createPopup(PopupReportMessages, this.messagePeerId, [this.mid]);
+        PopupReportAd.createMessageReport(this.messagePeerId, [this.mid]);
       },
       verify: () => !this.message.pFlags.out &&
         this.message._ === 'message' &&
@@ -828,14 +830,10 @@ export default class ChatContextMenu {
       icon: 'hand',
       text: 'ReportAd',
       onClick: () => {
-        PopupElement.createPopup(
-          PopupReportAd,
-          this.peerId,
-          this.sponsoredMessage,
-          () => {
-            this.chat.bubbles.deleteMessagesByIds([makeFullMid(this.message.peerId, this.message.mid)], true);
-          }
-        );
+        const {peerId, mid} = this.message;
+        PopupReportAd.createAdReport(this.peerId, this.sponsoredMessage, () => {
+          this.chat.bubbles.deleteMessagesByIds([makeFullMid(peerId, mid)], true)
+        });
       },
       verify: () => this.isSponsored && !!this.sponsoredMessage.pFlags.can_report,
       isSponsored: true
@@ -920,23 +918,7 @@ export default class ChatContextMenu {
   }
 
   private getUniqueCustomEmojisFromMessage() {
-    const docIds: DocId[] = [];
-
-    const message = this.getMessageWithText();
-
-    const entities = (message as Message.message).entities;
-    if(entities) {
-      const filtered = entities.filter((entity) => entity._ === 'messageEntityCustomEmoji') as MessageEntity.messageEntityCustomEmoji[];
-      docIds.push(...filtered.map((entity) => entity.document_id));
-    }
-
-    const reactions = (message as Message.message).reactions;
-    if(reactions) {
-      const results = reactions.results.filter((reactionCount) => reactionCount.reaction._ === 'reactionCustomEmoji');
-      docIds.push(...results.map((reactionCount) => (reactionCount.reaction as Reaction.reactionCustomEmoji).document_id));
-    }
-
-    return filterUnique(docIds);
+    return getUniqueCustomEmojisFromMessage(this.getMessageWithText());
   }
 
   private async init() {

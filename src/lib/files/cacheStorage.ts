@@ -7,12 +7,11 @@
 import Modes from '../../config/modes';
 import blobConstruct from '../../helpers/blob/blobConstruct';
 import MemoryWriter from './memoryWriter';
-import FileManager from './memoryWriter';
 import FileStorage from './fileStorage';
 import makeError from '../../helpers/makeError';
 import deferredPromise from '../../helpers/cancellablePromise';
 
-export type CacheStorageDbName = 'cachedFiles' | 'cachedStreamChunks' | 'cachedAssets';
+export type CacheStorageDbName = 'cachedFiles' | 'cachedStreamChunks' | 'cachedAssets' | 'cachedHlsQualityFiles' | 'cachedHlsStreamChunks';
 
 export default class CacheStorageController implements FileStorage {
   private static STORAGES: CacheStorageController[] = [];
@@ -138,17 +137,16 @@ export default class CacheStorageController implements FileStorage {
     };
   }
 
-  public static toggleStorage(enabled: boolean, clearWrite: boolean) {
-    return Promise.all(this.STORAGES.map((storage) => {
+  public static toggleStorage(enabled: boolean, _clearWrite: boolean) {
+    this.STORAGES.forEach((storage) => {
       storage.useStorage = enabled;
+    });
+    return Promise.resolve();
+  }
 
-      if(!clearWrite) {
-        return;
-      }
-
-      if(!enabled) {
-        return storage.deleteAll();
-      }
+  public static deleteAllStorages() {
+    return Promise.all(this.STORAGES.map((storage) => {
+      return storage.deleteAll();
     }));
   }
 }

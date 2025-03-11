@@ -60,11 +60,11 @@ import {ChatType} from './chat';
 import AppBoostsTab from '../sidebarRight/tabs/boosts';
 import ChatLive from './topbarLive/container';
 import {RtmpStartStreamPopup} from '../rtmp/adminPopup';
-import {appState} from '../../stores/appState';
 import assumeType from '../../helpers/assumeType';
 import PinnedContainer from './pinnedContainer';
 import IS_LIVE_STREAM_SUPPORTED from '../../environment/liveStreamSupport';
 import ChatTranslation from './translation';
+import {useAppSettings} from '../../stores/appSettings';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
 
@@ -454,7 +454,7 @@ export default class ChatTopbar {
       onClick: () => {
         this.chat.appImManager.toggleViewAsMessages(this.peerId, false);
       },
-      verify: () => this.peerId === rootScope.myId && !this.chat.threadId && !appState.settings.savedAsForum
+      verify: () => this.peerId === rootScope.myId && !this.chat.threadId && !rootScope.settings.savedAsForum
     }, {
       icon: 'select',
       text: 'Chat.Menu.SelectMessages',
@@ -462,13 +462,14 @@ export default class ChatTopbar {
         const selection = this.chat.selection;
         selection.toggleSelection(true, true);
         apiManagerProxy.getState().then((state) => {
-          if(state.chatContextMenuHintWasShown) {
+          const [appSettings, setAppSettings] = useAppSettings();
+          if(appSettings.chatContextMenuHintWasShown) {
             return;
           }
 
           const original = selection.toggleByElement.bind(selection);
           selection.toggleByElement = async(bubble) => {
-            this.managers.appStateManager.pushToState('chatContextMenuHintWasShown', true);
+            setAppSettings('chatContextMenuHintWasShown', true);
             toast(i18n('Chat.Menu.Hint'));
 
             selection.toggleByElement = original;

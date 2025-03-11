@@ -56,11 +56,15 @@
     font-size: 1.5rem;
     font-weight: var(--font-weight-bold);
     line-height: 2rem;
-    margin-bottom: .375rem;
   }
 
   &-subtitle {
     line-height: 1.375rem;
+    margin-top: .375rem;
+
+    &.mt {
+      margin-top: .5rem;
+    }
   }
 
   &-options {
@@ -128,26 +132,6 @@
       line-height: var(--line-height-16);
       color: var(--secondary-text-color);
       height: 1.3125rem;
-    }
-
-    &-stars {
-      width: 26px;
-      height: 26px;
-      display: flex;
-      flex-direction: row-reverse;
-      justify-content: center;
-      --star-background-color: var(--background-color);
-
-      .stars-star-icon {
-        width: 26px;
-        height: 26px;
-        flex: 0 0 auto;
-        margin-top: -2px;
-
-        &-stroke { // hide next star leg
-          background: linear-gradient(90deg, var(--star-background-color) 16px, transparent 16px);
-        }
-      }
     }
   }
 
@@ -239,6 +223,17 @@
     }
   }
 
+  &-cancelled {
+    font-size: var(--font-size-13);
+  }
+
+  &-gift-avatar {
+    position: absolute;
+    top: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
   .media-photo {
     width: inherit;
     height: inherit;
@@ -261,6 +256,10 @@
 
       &.is-receipt {
         margin-bottom: 0;
+
+        .popup-stars-pay-amount {
+          display: flex;
+        }
       }
 
       .scrollable-y {
@@ -301,24 +300,38 @@
     background-color: var(--surface-color);
   }
 
+  &-sticker {
+    width: 128px;
+    height: 128px;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1;
+    margin-top: -1rem;
+  }
+
   &-tos {
     color: var(--secondary-text-color);
     text-align: center;
     @include text-overflow(false);
+
+    &2 {
+      margin-top: 1.5rem;
+    }
   }
 
   &-amount {
     font-weight: var(--font-weight-bold);
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: .25rem;
-    margin-top: .375rem;
+    vertical-align: bottom;
+    gap: .125rem;
 
-    .stars-star-icon {
-      width: 20px;
-      height: 20px;
-      margin-top: -3px;
+    .currency-star-icon {
+      width: 1.125rem;
+      height: 1.125rem;
     }
 
     &-status {
@@ -342,6 +355,18 @@
     }
   }
 
+  &-boosts {
+    display: inline-flex;
+    align-items: center;
+    background-color: var(--premium-color);
+    border-radius: .75rem;
+    height: 1.5rem;
+    color: #fff;
+    padding-inline: .25rem .5rem;
+    font-size: var(--font-size-14);
+    gap: .125rem;
+  }
+
   .monospace-text {
     cursor: pointer;
   }
@@ -352,5 +377,13 @@
 
   .popup-stars-transaction-media-counter {
     font-size: 2.5rem;
+  }
+
+  .table {
+    margin-top: 1.375rem;
+
+    &-key {
+      font-weight: var(--font-weight-normal);
+    }
   }
 }

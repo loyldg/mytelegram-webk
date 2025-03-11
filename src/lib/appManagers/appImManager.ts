@@ -21,7 +21,6 @@ import SetTransition from '../../components/singleTransition';
 import ChatDragAndDrop from '../../components/chat/dragAndDrop';
 import {doubleRaf} from '../../helpers/schedulers';
 import useHeavyAnimationCheck, {dispatchHeavyAnimationEvent} from '../../hooks/useHeavyAnimationCheck';
-import stateStorage from '../stateStorage';
 import {MOUNT_CLASS_TO} from '../../config/debug';
 import appNavigationController from '../../components/appNavigationController';
 import AppPrivateSearchTab from '../../components/sidebarRight/tabs/search';
@@ -32,17 +31,16 @@ import {PopupPeerCheckboxOptions} from '../../components/popups/peer';
 import blurActiveElement from '../../helpers/dom/blurActiveElement';
 import cancelEvent from '../../helpers/dom/cancelEvent';
 import disableTransition from '../../helpers/dom/disableTransition';
-import placeCaretAtEnd from '../../helpers/dom/placeCaretAtEnd';
 import replaceContent from '../../helpers/dom/replaceContent';
 import whichChild from '../../helpers/dom/whichChild';
 import PopupElement from '../../components/popups';
-import singleInstance, {InstanceDeactivateReason, SingleInstance} from '../mtproto/singleInstance';
+import singleInstance from '../mtproto/singleInstance';
 import {toastNew} from '../../components/toast';
 import debounce from '../../helpers/schedulers/debounce';
 import pause from '../../helpers/schedulers/pause';
 import MEDIA_MIME_TYPES_SUPPORTED from '../../environment/mediaMimeTypesSupport';
 import IMAGE_MIME_TYPES_SUPPORTED from '../../environment/imageMimeTypesSupport';
-import {NULL_PEER_ID} from '../mtproto/mtproto_config';
+import {NULL_PEER_ID, STARS_CURRENCY} from '../mtproto/mtproto_config';
 import telegramMeWebManager from '../mtproto/telegramMeWebManager';
 import {ONE_DAY} from '../../helpers/date';
 import TopbarCall from '../../components/topbarCall';
@@ -56,20 +54,19 @@ import getVisibleRect from '../../helpers/dom/getVisibleRect';
 import {simulateClickEvent} from '../../helpers/dom/clickEvent';
 import PopupCall from '../../components/call';
 import copy from '../../helpers/object/copy';
-import getObjectKeysAndSort from '../../helpers/object/getObjectKeysAndSort';
 import numberThousandSplitter from '../../helpers/number/numberThousandSplitter';
 import ChatBackgroundPatternRenderer from '../../components/chat/patternRenderer';
 import {IS_CHROMIUM, IS_FIREFOX} from '../../environment/userAgent';
 import compareVersion from '../../helpers/compareVersion';
 import {AppManagers} from './managers';
-import uiNotificationsManager from './uiNotificationsManager';
+import {UiNotificationsManager} from './uiNotificationsManager';
 import appMediaPlaybackController from '../../components/appMediaPlaybackController';
 import wrapEmojiText from '../richTextProcessor/wrapEmojiText';
 import wrapRichText from '../richTextProcessor/wrapRichText';
 import wrapUrl from '../richTextProcessor/wrapUrl';
 import getUserStatusString from '../../components/wrappers/getUserStatusString';
 import getChatMembersString from '../../components/wrappers/getChatMembersString';
-import {STATE_INIT} from '../../config/state';
+import {STATE_INIT, SETTINGS_INIT} from '../../config/state';
 import CacheStorageController from '../files/cacheStorage';
 import themeController from '../../helpers/themeController';
 import overlayCounter from '../../helpers/overlayCounter';
@@ -116,7 +113,6 @@ import safePlay from '../../helpers/dom/safePlay';
 import {RequestWebViewOptions} from './appAttachMenuBotsManager';
 import PopupWebApp from '../../components/popups/webApp';
 import {getPeerColorIndexByPeer, getPeerColorsByPeer, setPeerColors} from './utils/peers/getPeerColorById';
-import deepEqual from '../../helpers/object/deepEqual';
 import {savedReactionTags} from '../../components/chat/reactions';
 import {setAppState} from '../../stores/appState';
 import rtmpCallsController, {RtmpCallInstance} from '../calls/rtmpCallsController';
@@ -126,12 +122,15 @@ import {DEFAULT_BACKGROUND_SLUG} from '../../config/app';
 import blur from '../../helpers/blur';
 import {wrapSlowModeLeftDuration} from '../../components/wrappers/wrapDuration';
 import {splitFullMid} from '../../components/chat/bubbles';
-import PopupStars from '../../components/popups/stars';
 import getSelectedNodes from '../../helpers/dom/getSelectedNodes';
 import {setQuizHint} from '../../components/poll';
 import anchorCallback from '../../helpers/dom/anchorCallback';
 import PopupPremium from '../../components/popups/premium';
 import safeWindowOpen from '../../helpers/dom/safeWindowOpen';
+import {openWebAppInAppBrowser} from '../../components/browser';
+import PopupBoostsViaGifts from '../../components/popups/boostsViaGifts';
+import stateStorage from '../stateStorageInstance';
+import {createProxiedManagersForAccount} from './getProxiedManagers';
 
 export type ChatSavedPosition = {
   mids: number[],
@@ -148,8 +147,10 @@ export type ChatSetPeerOptions = {
   commentId?: number,
   type?: ChatType,
   mediaTimestamp?: number,
-  text?: string
-  entities?: MessageEntity[]
+  text?: string,
+  entities?: MessageEntity[],
+  call?: string | number,
+  isDeleting?: boolean
 } & Partial<ChatSearchKeys>;
 
 export type ChatSetInnerPeerOptions = Modify<ChatSetPeerOptions, {
@@ -209,19 +210,14 @@ export class AppImManager extends EventListenerBase<{
     this.managers = managers;
     internalLinkProcessor.construct(managers);
 
-    const {
-      apiUpdatesManager
-    } = managers;
-    apiUpdatesManager.attach(I18n.lastRequestedLangCode);
+    UiNotificationsManager.constructAndStartAll();
 
     appMediaPlaybackController.construct(managers);
-    uiNotificationsManager.construct(managers);
-    uiNotificationsManager.start();
 
     this.log = logger('IM', LogTypes.Log | LogTypes.Warn | LogTypes.Debug | LogTypes.Error);
 
     this.backgroundPromises = {};
-    STATE_INIT.settings.themes.forEach((theme) => {
+    SETTINGS_INIT.themes.forEach((theme) => {
       const themeSettings = theme.settings;
       if(!themeSettings) {
         return;
@@ -275,6 +271,11 @@ export class AppImManager extends EventListenerBase<{
       this.dispatchEvent('premium_toggle', isPremium);
     };
     rootScope.addEventListener('premium_toggle', onPremiumToggle);
+
+    rootScope.addEventListener('background_change', () => {
+      this.applyCurrentTheme({noSetTheme: true});
+    });
+
     onPremiumToggle(rootScope.premium);
     this.managers.rootScope.getPremium().then(onPremiumToggle);
 
@@ -310,15 +311,13 @@ export class AppImManager extends EventListenerBase<{
 
     mediaSizes.addEventListener('resize', () => {
       // const perf = performance.now();
-      const rect = this.chatsContainer.getBoundingClientRect();
-      ChatBackgroundPatternRenderer.resizeInstances(rect.width, rect.height).then(() => {
-        // this.log.warn('resize bg time:', performance.now() - perf);
-        // for(const chat of this.chats) {
-        //   if(chat.renderDarkPattern) {
-        //     chat.renderDarkPattern();
-        //   }
-        // }
-      });
+      this.adjustChatPatternBackground();
+      // this.log.warn('resize bg time:', performance.now() - perf);
+      // for(const chat of this.chats) {
+      //   if(chat.renderDarkPattern) {
+      //     chat.renderDarkPattern();
+      //   }
+      // }
     });
 
     const onPeerChanging = (chat: Chat) => {
@@ -417,46 +416,6 @@ export class AppImManager extends EventListenerBase<{
       });
     });
 
-    const onInstanceDeactivated = (reason: InstanceDeactivateReason) => {
-      const isUpdated = reason === 'version';
-      const popup = PopupElement.createPopup(PopupElement, 'popup-instance-deactivated', {overlayClosable: true});
-      const c = document.createElement('div');
-      c.classList.add('instance-deactivated-container');
-      (popup as any).container.replaceWith(c);
-
-      const header = document.createElement('div');
-      header.classList.add('header');
-      header.append(i18n(isUpdated ? 'Deactivated.Version.Title' : 'Deactivated.Title'));
-
-      const subtitle = document.createElement('div');
-      subtitle.classList.add('subtitle');
-      subtitle.append(i18n(isUpdated ? 'Deactivated.Version.Subtitle' : 'Deactivated.Subtitle'));
-
-      c.append(header, subtitle);
-
-      document.body.classList.add('deactivated');
-
-      const onClose = isUpdated ? () => {
-        appRuntimeManager.reload();
-      } : () => {
-        document.body.classList.add('deactivated-backwards');
-
-        singleInstance.activateInstance();
-
-        setTimeout(() => {
-          document.body.classList.remove('deactivated', 'deactivated-backwards');
-        }, 333);
-      };
-
-      popup.addEventListener('close', onClose);
-      popup.show();
-    };
-
-    singleInstance.addEventListener('deactivated', onInstanceDeactivated);
-    if(singleInstance.deactivatedReason) {
-      onInstanceDeactivated(singleInstance.deactivatedReason);
-    }
-
     // remove scroll listener when setting chat to tray
     this.addEventListener('chat_changing', ({to}) => {
       this.toggleChatGradientAnimation(to);
@@ -488,6 +447,8 @@ export class AppImManager extends EventListenerBase<{
     (window as any).onSpoilerClick = (e: MouseEvent) => {
       const spoiler = findUpClassName(e.target, 'spoiler');
       const parentElement = findUpClassName(spoiler, 'spoilers-container') || spoiler.parentElement;
+
+      if(parentElement.querySelector('.message-spoiler-overlay')) return;
 
       const className = 'is-spoiler-visible';
       const isVisible = parentElement.classList.contains(className);
@@ -575,13 +536,16 @@ export class AppImManager extends EventListenerBase<{
     });
 
     apiManagerProxy.addEventListener('notificationBuild', async(options) => {
-      const isForum = await this.managers.appPeersManager.isForum(options.message.peerId);
+      const {accountNumber} = options;
+      const managers = createProxiedManagersForAccount(accountNumber);
+      const isForum = await managers.appPeersManager.isForum(options.message.peerId);
       const threadId = getMessageThreadId(options.message, isForum);
+
       if(this.chat.peerId === options.message.peerId && this.chat.threadId === threadId && !idleController.isIdle) {
         return;
       }
 
-      uiNotificationsManager.buildNotificationQueue(options);
+      UiNotificationsManager.byAccount[accountNumber]?.buildNotificationQueue(options);
     });
 
     this.addEventListener('peer_changed', async({peerId}) => {
@@ -682,6 +646,13 @@ export class AppImManager extends EventListenerBase<{
     this.handlePeerColors();
     this.checkForShare();
     this.init();
+
+    // PopupElement.createPopup(PopupBoostsViaGifts, -5000866300);
+  }
+
+  public adjustChatPatternBackground() {
+    const rect = this.chatsContainer.getBoundingClientRect();
+    ChatBackgroundPatternRenderer.resizeInstances(rect.width, rect.height);
   }
 
   private checkForShare() {
@@ -832,8 +803,8 @@ export class AppImManager extends EventListenerBase<{
     };
 
     if(
-      !options.attachMenuBot &&
-      (options.fromAttachMenu || options.fromSideMenu)
+      !options.attachMenuBot/*  &&
+      (options.fromAttachMenu || options.fromSideMenu) */
     ) {
       try {
         options.attachMenuBot = await this.managers.appAttachMenuBotsManager.getAttachMenuBot(options.botId);
@@ -864,12 +835,25 @@ export class AppImManager extends EventListenerBase<{
     }
 
     try {
+      const cacheKeyArr = [options.botId, options.startParam];
+      if(options.fromBotMenu || options.fromSideMenu || options.main) {
+        cacheKeyArr.push('main');
+      }
+
+      const cacheKey = cacheKeyArr.join('-');
+
       const webViewResultUrl = await this.managers.appAttachMenuBotsManager.requestWebView(options as RequestWebViewOptions);
-      PopupElement.createPopup(PopupWebApp, {
+      const webAppOptions: Parameters<typeof openWebAppInAppBrowser>[0] = {
         webViewResultUrl,
         webViewOptions: options as RequestWebViewOptions,
-        attachMenuBot: options.attachMenuBot
-      });
+        attachMenuBot: options.attachMenuBot,
+        cacheKey
+      };
+      if(IS_TOUCH_SUPPORTED) {
+        PopupElement.createPopup(PopupWebApp, webAppOptions);
+      } else {
+        openWebAppInAppBrowser(webAppOptions);
+      }
     } catch(err) {
       if((err as ApiError).type === 'PEER_ID_INVALID' && options.attachMenuBot) {
         toastNew({
@@ -1068,7 +1052,7 @@ export class AppImManager extends EventListenerBase<{
       return;
     }
 
-    this.managers.appChatsManager.clickSponsoredMessage(message.peerId.toChatId(), sponsoredMessage.random_id);
+    this.managers.appMessagesManager.clickSponsoredMessage(message.peerId, sponsoredMessage.random_id);
   }
 
   public async openStoriesFromAvatar(avatar: HTMLElement) {
@@ -1302,7 +1286,8 @@ export class AppImManager extends EventListenerBase<{
               this.op({
                 peer,
                 lastMsgId: messageId,
-                threadId
+                threadId,
+                call: params.call
               });
             });
             break;
@@ -1313,6 +1298,18 @@ export class AppImManager extends EventListenerBase<{
 
     // appNavigationController.replaceState();
     // location.hash = '';
+  };
+
+  public onSponsoredBoxClick = (message: Message.message) => {
+    const sponsoredMessage = message.sponsoredMessage;
+    const wrapped = wrapUrl(sponsoredMessage.url);
+    this.clickIfSponsoredMessage(message as Message.message);
+
+    if(wrapped.onclick) {
+      this.chat.appImManager.openUrl(sponsoredMessage.url);
+    } else {
+      safeWindowOpen(wrapped.url);
+    }
   };
 
   public async open(options: Omit<Parameters<AppImManager['op']>[0], 'peer'> & {peerId: PeerId}) {
@@ -1370,6 +1367,11 @@ export class AppImManager extends EventListenerBase<{
         threadId = options.threadId = lastMsgId;
         lastMsgId = options.lastMsgId = undefined;
       }
+    }
+
+    if(options.call) {
+      const call = await rootScope.managers.appCallsManager.getCall(options.call);
+      rootScope.dispatchEvent('call_update', call);
     }
 
     if(threadId) {
@@ -1613,7 +1615,7 @@ export class AppImManager extends EventListenerBase<{
 
     const slug = (theme.settings?.wallpaper as WallPaper.wallPaper)?.slug;
     if(slug) {
-      const defaultTheme = STATE_INIT.settings.themes.find((t) => t.name === theme.name);
+      const defaultTheme = SETTINGS_INIT.themes.find((t) => t.name === theme.name);
       // const isDefaultBackground = theme.background.blur === defaultTheme.background.blur &&
       // slug === defaultslug;
 
@@ -2141,6 +2143,11 @@ export class AppImManager extends EventListenerBase<{
     return this.managers.appUsersManager.updateMyOnlineStatus(this.offline);
   }
 
+  public goOffline() {
+    this.offline = true;
+    this.updateStatus();
+  }
+
   private createNewChat() {
     const chat = new Chat(
       this,
@@ -2219,10 +2226,16 @@ export class AppImManager extends EventListenerBase<{
     const chatIndex = this.chats.indexOf(chat);
     const isSamePeer = this.isSamePeer(chat, options as any);
     if(!peerId) {
+      if(options.isDeleting) {
+        await this.selectTab(APP_TABS.CHATLIST, animate);
+        await chat.setPeer(options as any as Parameters<Chat['setPeer']>[0]);
+        return;
+      }
+
       if(chatIndex > 0) {
         this.spliceChats(chatIndex, undefined, animate);
         return;
-      } else if(mediaSizes.activeScreen === ScreenSize.medium) { // * floating sidebar case
+      } else if(mediaSizes.isFloatingLeftSidebar) {
         this.selectTab(+!this.tabId, animate);
         return;
       }
@@ -2672,8 +2685,12 @@ export class AppImManager extends EventListenerBase<{
   }
 
   public giftPremium(peerId: PeerId) {
-    this.managers.appProfileManager.getProfile(peerId.toUserId()).then((profile) => {
-      PopupElement.createPopup(PopupGiftPremium, peerId, profile.premium_gifts);
+    this.managers.appPaymentsManager.getPremiumGiftCodeOptions().then((giftCodeOptions) => {
+      PopupElement.createPopup(
+        PopupGiftPremium,
+        peerId,
+        giftCodeOptions.filter((option) => option.users === 1 && option.currency !== STARS_CURRENCY)
+      );
     });
   }
 

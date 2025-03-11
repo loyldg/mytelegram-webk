@@ -7,10 +7,12 @@
 import type {WebPushApiManager} from '../mtproto/webPushApiManager';
 import type {PushNotificationObject} from './push';
 import type {MyUploadFile} from '../mtproto/apiFileManager';
+import type {Document, InputFileLocation, InputGroupCall} from '../../layer';
+import type {GroupCallRtmpState} from '../appManagers/appGroupCallsManager';
+import type {ActiveAccountNumber} from '../accounts/types';
+import type {getEnvironment} from '../../environment/utils';
 import SuperMessagePort from '../mtproto/superMessagePort';
 import {MOUNT_CLASS_TO} from '../../config/debug';
-import {InputFileLocation, InputGroupCall} from '../../layer';
-import {GroupCallRtmpState} from '../appManagers/appGroupCallsManager';
 
 export type ServicePushPingTaskPayload = {
   localNotifications: boolean,
@@ -26,12 +28,14 @@ export type ServiceRequestFilePartTaskPayload = {
   docId: DocId,
   dcId: number,
   offset: number,
-  limit: number
+  limit: number,
+  accountNumber: ActiveAccountNumber
 };
 
 export type ServiceRequestRtmpPartTaskPayload = {
   request: InputFileLocation.inputGroupCallStream,
   dcId: number,
+  accountNumber: ActiveAccountNumber
 };
 
 export type ServiceDownloadTaskPayload = {
@@ -45,13 +49,14 @@ export type ServiceEvent = {
 
 export default class ServiceMessagePort<Master extends boolean = false> extends SuperMessagePort<{
   // from main thread to service worker
+  environment: (environment: ReturnType<typeof getEnvironment>) => void,
   notificationsClear: () => void,
   toggleStorages: (payload: {enabled: boolean, clearWrite: boolean}) => void,
   pushPing: (payload: ServicePushPingTaskPayload, source: MessageEventSource, event: MessageEvent) => void,
   hello: (payload: void, source: MessageEventSource, event: MessageEvent) => void,
   shownNotification: (payload: string) => void,
   leaveRtmpCall: (payload: [Long, boolean]) => void,
-  toggleStreamInUse: (payload: {url: string, inUse: boolean}) => void,
+  toggleStreamInUse: (payload: {url: string, inUse: boolean, accountNumber: ActiveAccountNumber}) => void,
 
   // from mtproto worker
   download: (payload: ServiceDownloadTaskPayload) => void,
@@ -69,9 +74,12 @@ export default class ServiceMessagePort<Master extends boolean = false> extends 
 
   // to mtproto worker
   requestFilePart: (payload: ServiceRequestFilePartTaskPayload) => MaybePromise<MyUploadFile>,
-  cancelFilePartRequests: (payload: DocId) => void,
-  requestRtmpState: (payload: InputGroupCall) => MaybePromise<GroupCallRtmpState>,
+  cancelFilePartRequests: (payload: {docId: DocId, accountNumber: ActiveAccountNumber}) => void,
+  requestRtmpState: (payload: {call: InputGroupCall, accountNumber: ActiveAccountNumber}) => MaybePromise<GroupCallRtmpState>,
   requestRtmpPart: (payload: ServiceRequestRtmpPartTaskPayload) => MaybePromise<MyUploadFile>,
+  downloadDoc: (payload: {docId: DocId, accountNumber: ActiveAccountNumber}) => MaybePromise<Blob>,
+  requestDoc: (payload: {docId: DocId, accountNumber: ActiveAccountNumber}) => MaybePromise<Document.document>,
+  requestAltDocsByDoc: (payload: {docId: DocId, accountNumber: ActiveAccountNumber}) => MaybePromise<Document.document[]>,
 } & ServiceEvent, Master> {
   constructor() {
     super('SERVICE');
