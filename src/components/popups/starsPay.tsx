@@ -308,7 +308,13 @@ export default class PopupStarsPay extends PopupElement<{
       peerId,
       onClick: () => {
         hidePopupsWithCallback(() => {
-          appImManager.setInnerPeer({peerId})
+          appImManager.setInnerPeer({
+            peerId,
+            stack: this.message ? {
+              peerId: this.message.peerId,
+              mid: this.message.mid
+            } : undefined
+          });
         });
       }
     });
@@ -329,7 +335,7 @@ export default class PopupStarsPay extends PopupElement<{
       tableContent = [
         ['BoostingFrom', tablePeer],
         this.transaction.id && ['BoostingTo', makeTablePeer(rootScope.myId)],
-        [this.transaction.id ? 'BoostingGift' : 'Giveaway.Prize', i18n('Stars', [+this.transaction.stars])],
+        [this.transaction.id ? 'BoostingGift' : 'Giveaway.Prize', i18n('Stars', [formatStarsAmount(this.transaction.stars)])],
         ['BoostingReason', messageAnchor],
         this.transaction.id && ['StarsTransactionID', transactionIdSpan],
         ['StarsTransactionDate',  formatFullSentTime((this.form as PaymentsPaymentReceipt.paymentsPaymentReceiptStars).date, undefined, true)]

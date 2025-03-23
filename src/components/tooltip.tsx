@@ -16,6 +16,7 @@ const KEEP_TOOLTIP = true;
 const tooltipOverlayClickHandler = new OverlayClickHandler(undefined, true);
 export default function showTooltip({
   element,
+  class: className,
   container = element.parentElement,
   vertical,
   textElement,
@@ -27,13 +28,17 @@ export default function showTooltip({
   icon,
   auto,
   mountOn = document.body,
-  relative
+  relative,
+  lighter,
+  rightElement
 }: {
   element: HTMLElement,
+  class?: string,
   container?: HTMLElement,
   vertical: 'top' | 'bottom',
   textElement?: HTMLElement,
   subtitleElement?: HTMLElement,
+  rightElement?: JSX.Element,
   paddingX?: number,
   offsetY?: number,
   centerVertically?: boolean,
@@ -41,7 +46,8 @@ export default function showTooltip({
   icon?: Icon,
   auto?: boolean,
   mountOn?: HTMLElement,
-  relative?: boolean
+  relative?: boolean,
+  lighter?: boolean // When opening a tooltip in dark mode on a surface
 }) {
   const containerRect = !relative && container.getBoundingClientRect();
   const elementRect = !relative &&  element.getBoundingClientRect();
@@ -80,7 +86,7 @@ export default function showTooltip({
     const tooltip = (
       <div
         ref={div}
-        class={classNames('tooltip', 'tooltip-' + vertical, icon && 'tooltip-with-icon')}
+        class={classNames('tooltip', 'tooltip-' + vertical, icon && 'tooltip-with-icon', className, lighter && 'tooltip-lighter')}
         style={!relative && getStyle()}
       >
         <div class="tooltip-part tooltip-background"></div>
@@ -94,6 +100,7 @@ export default function showTooltip({
             </>
           ) : textElement}
         </div>
+        {rightElement && <div class="tooltip-part tooltip-right">{rightElement}</div>}
       </div>
     );
 

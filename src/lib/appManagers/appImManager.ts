@@ -129,8 +129,9 @@ import PopupPremium from '../../components/popups/premium';
 import safeWindowOpen from '../../helpers/dom/safeWindowOpen';
 import {openWebAppInAppBrowser} from '../../components/browser';
 import PopupBoostsViaGifts from '../../components/popups/boostsViaGifts';
-import stateStorage from '../stateStorageInstance';
 import {createProxiedManagersForAccount} from './getProxiedManagers';
+import ChatBackgroundStore from '../chatBackgroundStore';
+import useLockScreenShortcut from './utils/useLockScreenShortcut';
 
 export type ChatSavedPosition = {
   mids: number[],
@@ -198,6 +199,12 @@ export class AppImManager extends EventListenerBase<{
   public cacheStorage = new CacheStorageController('cachedFiles');
   public customEmojiSize: MediaSize;
 
+  public isShiftLockShortcut = false;
+
+  private chatPositions: {
+    [peerId_threadId: string]: ChatSavedPosition;
+  };
+
   get myId() {
     return rootScope.myId;
   }
@@ -230,7 +237,7 @@ export class AppImManager extends EventListenerBase<{
       }
 
       const url = 'assets/img/' + slug + '.svg' + (IS_FIREFOX ? '?1' : '');
-      this.setBackgroundUrlToCache({slug, url})
+      ChatBackgroundStore.setBackgroundUrlToCache({slug, url})
     });
 
     this.selectTab(APP_TABS.CHATLIST);
@@ -329,6 +336,11 @@ export class AppImManager extends EventListenerBase<{
     };
 
     this.addEventListener('peer_changed', onPeerChanged);
+
+    // * prefetch some data
+    this.addEventListener('peer_changed', () => {
+      this.managers.appReactionsManager.getPaidReactionPrivacy();
+    }, {once: true});
 
     rootScope.addEventListener('theme_changed', () => {
       this.applyCurrentTheme({
@@ -443,6 +455,34 @@ export class AppImManager extends EventListenerBase<{
         ]
       });
     });
+
+    rootScope.addEventListener('toggle_locked', (isLocked) => {
+      if(isLocked) appRuntimeManager.reload(false);
+    //   (() => {
+    //     if(isLocked) {
+    //       [
+    //         () => this.setPeer({}, false),
+    //         () => appNavigationController.overrideHash(),
+    //         () => appNavigationController.replaceState(),
+    //         () => PopupElement.destroyAll(),
+    //         () => appNavigationController.spliceItems(0, Infinity),
+    //         () => appSidebarLeft.closeEverythingInside(),
+    //         () => this.topbarCall?.hangUp(),
+    //         () => AppMediaViewerBase.closeAll()
+    //       ].forEach(callback => {
+    //         try {
+    //           callback();
+    //         } catch(e) {
+    //           console.error(e);
+    //         }
+    //       });
+    //     } else {
+    //       appSidebarLeft.initNavigation();
+    //     }
+    //   })()
+    });
+
+    useLockScreenShortcut();
 
     (window as any).onSpoilerClick = (e: MouseEvent) => {
       const spoiler = findUpClassName(e.target, 'spoiler');
@@ -559,7 +599,7 @@ export class AppImManager extends EventListenerBase<{
     });
 
     // stateStorage.get('chatPositions').then((c) => {
-    stateStorage.setToCache('chatPositions', /* c ||  */{});
+    this.chatPositions = {};
     // });
 
     if(IS_CALL_SUPPORTED || IS_GROUP_CALL_SUPPORTED) {
@@ -639,6 +679,8 @@ export class AppImManager extends EventListenerBase<{
       savedReactionTags.splice(0, savedReactionTags.length, ...tags);
     });
 
+    // new PasscodeLockScreenControler().lock();
+
     this.onHashChange(true);
     this.attachKeydownListener();
     this.attachCopyListener();
@@ -651,8 +693,7 @@ export class AppImManager extends EventListenerBase<{
   }
 
   public adjustChatPatternBackground() {
-    const rect = this.chatsContainer.getBoundingClientRect();
-    ChatBackgroundPatternRenderer.resizeInstances(rect.width, rect.height);
+    ChatBackgroundPatternRenderer.resizeInstancesOf(this.chatsContainer);
   }
 
   private checkForShare() {
@@ -1065,18 +1106,29 @@ export class AppImManager extends EventListenerBase<{
   }
 
   public getStackFromElement(element: HTMLElement): ChatSetPeerOptions['stack'] {
-    const possibleBubble = findUpClassName(element, 'bubble');
-    const chatContainer = possibleBubble && findUpClassName(possibleBubble, 'chat');
+    let possibleBubble = findUpClassName(element, 'bubble');
+    if(!possibleBubble) {
+      const group = findUpClassName(element, 'bubbles-group');
+      if(group) {
+        possibleBubble = group.querySelector('.bubble');
+      }
+    }
+
+    if(!possibleBubble) {
+      return;
+    }
+
+    const chatContainer = findUpClassName(possibleBubble, 'chat');
     const chat = chatContainer && this.chats.find((chat) => chat.container === chatContainer);
     const peerId = chat?.peerId;
-    const mid = possibleBubble && +possibleBubble.dataset.mid;
-    const message: Message.message = (possibleBubble as any)?.message || (peerId && apiManagerProxy.getMessageByPeer(peerId, mid))
-    return possibleBubble ? {
+    const mid = +possibleBubble.dataset.mid;
+    const message = possibleBubble.message || (peerId && apiManagerProxy.getMessageByPeer(peerId, mid));
+    return {
       peerId,
       mid,
-      message,
-      isOut: message ? !!message.pFlags.out : undefined
-    } : undefined;
+      message: message as Message.message,
+      isOut: message ? !!(message as Message.message).pFlags.out : undefined
+    };
   }
 
   private deleteFilesIterative(callback: (response: Response) => boolean) {
@@ -1138,6 +1190,8 @@ export class AppImManager extends EventListenerBase<{
       // this.log('onkeydown', e, document.activeElement);
 
       const chat = this.chat;
+
+      if(this.isShiftLockShortcut && e.shiftKey) return;
 
       if((key.startsWith('Arrow') || (e.shiftKey && key === 'Shift')) && !isSelectionCollapsed) {
         return;
@@ -1620,7 +1674,11 @@ export class AppImManager extends EventListenerBase<{
       // slug === defaultslug;
 
       // if(!isDefaultBackground) {
-      return Promise.resolve(this.getBackground({slug})).then((url) => {
+      return Promise.resolve(ChatBackgroundStore.getBackground({
+        slug,
+        managers: this.managers,
+        appDownloadManager
+      })).then((url) => {
         return this.setBackground(url, broadcastEvent, skipAnimation);
       }, () => { // * if NO_ENTRY_FOUND
         theme.settings = copy(defaultTheme.settings); // * reset background
@@ -1630,62 +1688,6 @@ export class AppImManager extends EventListenerBase<{
     }
 
     return this.setBackground('', broadcastEvent, skipAnimation);
-  }
-
-  private getWallPaperStorageUrl(slug: string, blur?: boolean) {
-    return `backgrounds/${slug}${blur ? '?blur' : ''}`;
-  }
-
-  public saveWallPaperToCache(slug: string, url: string, blur?: boolean) {
-    if(!slug || slug === DEFAULT_BACKGROUND_SLUG) {
-      return;
-    }
-
-    return fetch(url).then((response) => {
-      return appImManager.cacheStorage.save(this.getWallPaperStorageUrl(slug, blur), response);
-    });
-  }
-
-  public blurWallPaperImage(url: string) {
-    const {canvas, promise} = blur(url, 12, 4);
-    return promise.then(() => {
-      return canvas.toDataURL();
-    });
-  }
-
-  public setBackgroundUrlToCache({slug, url, blur}: {slug: string, url: string, blur?: boolean}) {
-    this.backgroundPromises[this.getWallPaperStorageUrl(slug, blur)] = url;
-  }
-
-  public getBackground({
-    slug,
-    canDownload,
-    blur
-  }: {
-    slug: string,
-    canDownload?: boolean,
-    blur?: boolean
-  }) {
-    const storageUrl = this.getWallPaperStorageUrl(slug, blur);
-    return this.backgroundPromises[storageUrl] ||= this.cacheStorage.getFile(storageUrl).then((blob) => {
-      return this.backgroundPromises[storageUrl] = URL.createObjectURL(blob);
-    }, canDownload ? async(err) => {
-      if((err as ApiError).type !== 'NO_ENTRY_FOUND') {
-        throw err;
-      }
-
-      const wallPaper = await this.managers.appThemesManager.getWallPaperBySlug(slug);
-      let url = await appDownloadManager.downloadMediaURL({
-        media: (wallPaper as WallPaper.wallPaper).document as Document.document
-      });
-
-      if(blur) {
-        url = await this.blurWallPaperImage(url);
-      }
-
-      this.saveWallPaperToCache(slug, url, blur);
-      return this.backgroundPromises[storageUrl] = url;
-    } : undefined);
   }
 
   public setBackground(url: string, broadcastEvent = true, skipAnimation?: boolean): Promise<void> {
@@ -1708,7 +1710,8 @@ export class AppImManager extends EventListenerBase<{
     // const top = bubble.getBoundingClientRect().top;
     const chatBubbles = chat.bubbles;
     const key = chat.peerId + (chat.threadId ? '_' + chat.threadId : '');
-    const chatPositions = stateStorage.getFromCache('chatPositions');
+
+    const chatPositions = this.chatPositions;
     if(
       !(chatBubbles.scrollable.getDistanceToEnd() <= 16 && chatBubbles.scrollable.loadedAll.bottom) &&
       chatBubbles.getRenderedLength() &&
@@ -1732,7 +1735,7 @@ export class AppImManager extends EventListenerBase<{
       this.log('deleted chat position');
     }
 
-    stateStorage.set({chatPositions}, true);
+    this.chatPositions = chatPositions;
     // }
   }
 
@@ -1742,8 +1745,7 @@ export class AppImManager extends EventListenerBase<{
     }
 
     const key = chat.peerId + (chat.threadId ? '_' + chat.threadId : '');
-    const cache = stateStorage.getFromCache('chatPositions');
-    return cache && cache[key];
+    return this.chatPositions[key];
   }
 
   public applyCurrentTheme({
@@ -1760,7 +1762,7 @@ export class AppImManager extends EventListenerBase<{
     skipAnimation?: boolean
   } = {}) {
     if(backgroundUrl) {
-      this.setBackgroundUrlToCache({slug, url: backgroundUrl});
+      ChatBackgroundStore.setBackgroundUrlToCache({slug, url: backgroundUrl});
     }
 
     !noSetTheme && themeController.setTheme();
@@ -2221,6 +2223,27 @@ export class AppImManager extends EventListenerBase<{
     options.peerId = await this.managers.appPeersManager.getPeerMigratedTo(options.peerId) || options.peerId;
 
     const {peerId, lastMsgId, threadId} = options;
+
+    // * replenish `min` peer
+    if(peerId && options.stack) {
+      const peer = apiManagerProxy.getPeer(peerId);
+      const isMin = peer && (peer as User.user).pFlags.min;
+      if(isMin && peerId.isUser()) {
+        await this.managers.appUsersManager.getApiUsers([{
+          _: 'inputUserFromMessage',
+          msg_id: getServerMessageId(options.stack.mid),
+          peer: await this.managers.appPeersManager.getInputPeerById(options.stack.peerId),
+          user_id: peerId.toUserId()
+        }]);
+      } else if(isMin) {
+        await this.managers.appChatsManager.resolveChannel({
+          _: 'inputChannelFromMessage',
+          msg_id: getServerMessageId(options.stack.mid),
+          peer: await this.managers.appPeersManager.getInputPeerById(options.stack.peerId),
+          channel_id: peerId.toChatId()
+        });
+      }
+    }
 
     const chat = this.chat;
     const chatIndex = this.chats.indexOf(chat);

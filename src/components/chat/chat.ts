@@ -17,7 +17,7 @@ import ChatContextMenu from './contextMenu';
 import ChatInput from './input';
 import ChatSelection from './selection';
 import ChatTopbar from './topbar';
-import {NULL_PEER_ID, REPLIES_PEER_ID} from '../../lib/mtproto/mtproto_config';
+import {NULL_PEER_ID, REPLIES_PEER_ID, SEND_PAID_REACTION_DELAY} from '../../lib/mtproto/mtproto_config';
 import SetTransition from '../singleTransition';
 import AppPrivateSearchTab from '../sidebarRight/tabs/search';
 import renderImageFromUrl from '../../helpers/dom/renderImageFromUrl';
@@ -51,8 +51,6 @@ import {Accessor, createEffect, createRoot, createSignal, on, untrack} from 'sol
 import TopbarSearch from './topbarSearch';
 import createUnifiedSignal from '../../helpers/solid/createUnifiedSignal';
 import liteMode from '../../helpers/liteMode';
-import deepEqual from '../../helpers/object/deepEqual';
-import getSearchType from '../../lib/appManagers/utils/messages/getSearchType';
 import {useFullPeer} from '../../stores/fullPeers';
 import {useAppState} from '../../stores/appState';
 import {unwrap} from 'solid-js/store';
@@ -64,7 +62,9 @@ import useStars, {setReservedStars} from '../../stores/stars';
 import PopupElement from '../popups';
 import PopupStars from '../popups/stars';
 import {getPendingPaidReactionKey, PENDING_PAID_REACTIONS} from './reactions';
-import tsNow from '../../helpers/tsNow';
+import ChatBackgroundStore from '../../lib/chatBackgroundStore';
+import appDownloadManager from '../../lib/appManagers/appDownloadManager';
+import showPaidReactionTooltip from './paidReactionTooltip';
 
 export enum ChatType {
   Chat = 'chat',
@@ -260,9 +260,11 @@ export default class Chat extends EventListenerBase<{
 
     if(!url && !isColorBackground) {
       const settings = wallPaper.settings;
-      const r = this.appImManager.getBackground({
+      const r = ChatBackgroundStore.getBackground({
         slug,
         canDownload: true,
+        managers: this.managers,
+        appDownloadManager: appDownloadManager,
         blur: settings && settings.pFlags.blur
       });
 
@@ -320,6 +322,7 @@ export default class Chat extends EventListenerBase<{
 
           const rect = this.appImManager.chatsContainer.getBoundingClientRect();
           patternRenderer = this.patternRenderer = ChatBackgroundPatternRenderer.getInstance({
+            element: this.appImManager.chatsContainer,
             url,
             width: rect.width,
             height: rect.height,
@@ -1178,7 +1181,7 @@ export default class Chat extends EventListenerBase<{
     }
 
     return this.managers.appUsersManager.getRequirementToContact(peerId.toUserId(), true)
-    .then((requirement) => requirement._ === 'requirementToContactPremium');
+    .then((requirement) => requirement?._ === 'requirementToContactPremium');
   }
 
   public getMessageSendingParams(): MessageSendingParams {
@@ -1288,9 +1291,17 @@ export default class Chat extends EventListenerBase<{
     const isPaidReaction = options.reaction._ === 'reactionPaid';
     const count = options.count ?? 1;
     if(isPaidReaction) {
-      if(!this.stars()) {
+      const key = getPendingPaidReactionKey(options.message as Message.message);
+      let pending = PENDING_PAID_REACTIONS.get(key);
+      const hadPending = !!pending;
+      const requiredStars = (pending ? pending.count() : 0) + count;
+      if(+this.stars() < requiredStars) {
+        if(pending) {
+          pending.abortController.abort();
+        }
+
         PopupElement.createPopup(PopupStars, {
-          itemPrice: 1,
+          itemPrice: count,
           onTopup: () => {
             this.sendReaction(options);
           },
@@ -1301,42 +1312,55 @@ export default class Chat extends EventListenerBase<{
         return;
       }
 
-      const DELAY = 5;
-
-      const key = getPendingPaidReactionKey(options.message as Message.message);
-      let pending = PENDING_PAID_REACTIONS.get(key);
       if(!pending) {
+        const [count, setCount] = createSignal(0);
+        const [sendTime, setSendTime] = createSignal(0);
+        const abortController = new AbortController();
+        abortController.signal.addEventListener('abort', () => {
+          clearTimeout(pending.sendTimeout);
+          pending.setSendTime(0);
+          PENDING_PAID_REACTIONS.delete(key);
+          setReservedStars((reservedStars) => reservedStars - pending.count());
+          rootScope.dispatchEventSingle('messages_reactions', [{
+            message: this.getMessageByPeer(options.message.peerId, options.message.mid) as Message.message,
+            changedResults: [],
+            removedResults: []
+          }]);
+        });
+
         PENDING_PAID_REACTIONS.set(key, pending = {
-          count: 0,
-          sendTimestamp: 0,
+          count,
+          setCount,
+          sendTime,
+          setSendTime,
           sendTimeout: 0,
-          cancel: () => {
-            clearTimeout(pending.sendTimeout);
-            PENDING_PAID_REACTIONS.delete(key);
-            setReservedStars((reservedStars) => reservedStars - pending.count);
-            rootScope.dispatchEventSingle('messages_reactions', [{
-              message: this.getMessageByPeer(options.message.peerId, options.message.mid) as Message.message,
-              changedResults: [],
-              removedResults: []
-            }]);
-          }
+          abortController
         });
       } else {
         clearTimeout(pending.sendTimeout);
       }
 
-      pending.count += count;
-      pending.sendTimestamp = tsNow(true) + DELAY;
+      pending.setCount((_count) => _count + count);
+      pending.setSendTime(Date.now() + SEND_PAID_REACTION_DELAY);
       pending.sendTimeout = window.setTimeout(() => {
-        pending.cancel();
-        alert('yeah');
-      }, DELAY * 1e3);
+        const count = pending.count();
+        pending.abortController.abort();
+        this.managers.appReactionsManager.sendReaction({
+          ...options,
+          count
+        });
+      }, SEND_PAID_REACTION_DELAY);
 
       setReservedStars((reservedStars) => reservedStars + count);
+
+      if(!hadPending) {
+        showPaidReactionTooltip({
+          pending
+        });
+      }
     }
 
     const messageReactions = await this.managers.appReactionsManager.sendReaction({
-      sendAsPeerId: this.getMessageSendingParams().sendAsPeerId,
       ...options,
       count: isPaidReaction ? 0 : count,
       onlyReturn: isPaidReaction
