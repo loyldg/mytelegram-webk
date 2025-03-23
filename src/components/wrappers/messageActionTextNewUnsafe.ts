@@ -124,7 +124,7 @@ export function wrapMessageGiveawayResults(action: MessageAction.messageActionGi
   };
 
   if(!action.winners_count) {
-    langPackKey = 'Giveaway.Results.NoWinners';
+    langPackKey = (action as MessageAction.messageActionGiveawayResults).pFlags.stars ? 'Giveaway.Results.NoWinners.Stars' : 'Giveaway.Results.NoWinners';
     args = [action.unclaimed_count];
   } else if(action.unclaimed_count) {
     setCombined('Giveaway.Results.Unclaimed', [action.unclaimed_count]);
@@ -310,7 +310,16 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
         break;
       }
 
-      case 'messageActionGiveawayLaunch':
+      case 'messageActionGiveawayLaunch': {
+        langPackKey = action.stars ? 'BoostingStarsGiveawayJustStarted' : 'BoostingGiveawayJustStarted';
+        args = [getNameDivHTML(message.fromId, plain)];
+
+        if(action.stars) {
+          args.unshift(+action.stars);
+        }
+        break;
+      }
+
       case 'messageActionContactSignUp':
       case 'messageActionChatReturn':
       case 'messageActionChatLeave':
@@ -406,6 +415,13 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
           }
         }
 
+        break;
+      }
+
+      case 'messageActionPaymentRefunded': {
+        const price = paymentsWrapCurrencyAmount(action.total_amount, action.currency, undefined, undefined, plain);
+        args = [getNameDivHTML(message.fromId, plain), price];
+        langPackKey = 'Chat.Service.Refund';
         break;
       }
 
@@ -530,6 +546,12 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
         break;
       }
 
+      case 'messageActionPrizeStars': {
+        langPackKey = 'BoostingReceivedGiftNoName';
+        break;
+      }
+
+      case 'messageActionGiftStars':
       case 'messageActionGiftCode':
       case 'messageActionGiftPremium': {
         const isGiftCode = action._ === 'messageActionGiftCode';

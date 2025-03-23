@@ -445,7 +445,7 @@ export class AppProfileManager extends AppManager {
       try {
         sendAsPeersResult = this.appChatsManager.getSendAs(id);
         if(sendAsPeersResult instanceof Promise) {
-          sendAsPeersResult = sendAsPeersResult.catch(() => undefined);
+          sendAsPeersResult = sendAsPeersResult.catch(() => undefined as any);
         }
       } catch(err) {
 
@@ -536,6 +536,11 @@ export class AppProfileManager extends AppManager {
     const peerId = id.toPeerId(true);
     if(this.chatsFull[id] !== undefined && !override && Date.now() < this.fullExpiration[peerId]) {
       return this.chatsFull[id] as ChatFull.channelFull;
+    }
+
+    const chat = this.appChatsManager.getChat(id);
+    if(chat._ === 'channelForbidden') {
+      throw makeError('CHANNEL_PRIVATE') as any;
     }
 
     return this.apiManager.invokeApiSingleProcess({
@@ -881,10 +886,13 @@ export class AppProfileManager extends AppManager {
       return false;
     }
 
-    return callbackify(this.getProfile(userId), (userFull) => {
-      const user = this.appUsersManager.getUser(userId);
-      return !!userFull.premium_gifts && !user?.pFlags?.premium;
-    });
+    return callbackify(
+      this.appPaymentsManager.getPremiumGiftCodeOptions(),
+      (premiumGiftCodeOptions) => {
+        const user = this.appUsersManager.getUser(userId);
+        return premiumGiftCodeOptions.some((p) => p.users === 1) && !user?.pFlags?.premium;
+      }
+    );
   }
 
   public canViewStatistics(peerId: PeerId) {

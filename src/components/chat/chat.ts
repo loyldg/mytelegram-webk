@@ -17,7 +17,7 @@ import ChatContextMenu from './contextMenu';
 import ChatInput from './input';
 import ChatSelection from './selection';
 import ChatTopbar from './topbar';
-import {NULL_PEER_ID, REPLIES_PEER_ID} from '../../lib/mtproto/mtproto_config';
+import {NULL_PEER_ID, REPLIES_PEER_ID, SEND_PAID_REACTION_DELAY} from '../../lib/mtproto/mtproto_config';
 import SetTransition from '../singleTransition';
 import AppPrivateSearchTab from '../sidebarRight/tabs/search';
 import renderImageFromUrl from '../../helpers/dom/renderImageFromUrl';
@@ -35,7 +35,7 @@ import AppSharedMediaTab from '../sidebarRight/tabs/sharedMedia';
 import noop from '../../helpers/noop';
 import middlewarePromise from '../../helpers/middlewarePromise';
 import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
-import {Message, WallPaper, Chat as MTChat, Reaction, AvailableReaction, ChatFull, MessageEntity} from '../../layer';
+import {Message, WallPaper, Chat as MTChat, Reaction, AvailableReaction, ChatFull, MessageEntity, PaymentsPaymentForm} from '../../layer';
 import animationIntersector, {AnimationItemGroup} from '../animationIntersector';
 import {getColorsFromWallPaper} from '../../helpers/color';
 import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
@@ -47,12 +47,10 @@ import isForwardOfForward from '../../lib/appManagers/utils/messages/isForwardOf
 import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
 import {SendReactionOptions} from '../../lib/appManagers/appReactionsManager';
 import {MiddlewareHelper, getMiddleware} from '../../helpers/middleware';
-import {createEffect, createRoot, createSignal, on, untrack} from 'solid-js';
+import {Accessor, createEffect, createRoot, createSignal, on, untrack} from 'solid-js';
 import TopbarSearch from './topbarSearch';
 import createUnifiedSignal from '../../helpers/solid/createUnifiedSignal';
 import liteMode from '../../helpers/liteMode';
-import deepEqual from '../../helpers/object/deepEqual';
-import getSearchType from '../../lib/appManagers/utils/messages/getSearchType';
 import {useFullPeer} from '../../stores/fullPeers';
 import {useAppState} from '../../stores/appState';
 import {unwrap} from 'solid-js/store';
@@ -60,6 +58,13 @@ import {averageColorFromCanvas, averageColorFromImage} from '../../helpers/avera
 import highlightingColor from '../../helpers/highlightingColor';
 import callbackify from '../../helpers/callbackify';
 import useIsNightTheme from '../../hooks/useIsNightTheme';
+import useStars, {setReservedStars} from '../../stores/stars';
+import PopupElement from '../popups';
+import PopupStars from '../popups/stars';
+import {getPendingPaidReactionKey, PENDING_PAID_REACTIONS} from './reactions';
+import ChatBackgroundStore from '../../lib/chatBackgroundStore';
+import appDownloadManager from '../../lib/appManagers/appDownloadManager';
+import showPaidReactionTooltip from './paidReactionTooltip';
 
 export enum ChatType {
   Chat = 'chat',
@@ -129,8 +134,8 @@ export default class Chat extends EventListenerBase<{
   public isBot: boolean;
   public isChannel: boolean;
   public isBroadcast: boolean;
+  public isLikeGroup: boolean;
   public isAnyGroup: boolean;
-  public isRealGroup: boolean;
   public isMegagroup: boolean;
   public isForum: boolean;
   public isAllMessagesForum: boolean;
@@ -152,6 +157,8 @@ export default class Chat extends EventListenerBase<{
   public hadAnyBackground: boolean;
 
   public ignoreSearchCleaning: boolean;
+
+  public stars: Accessor<Long>;
 
   // public requestHistoryOptionsPart: RequestHistoryOptions;
 
@@ -253,9 +260,11 @@ export default class Chat extends EventListenerBase<{
 
     if(!url && !isColorBackground) {
       const settings = wallPaper.settings;
-      const r = this.appImManager.getBackground({
+      const r = ChatBackgroundStore.getBackground({
         slug,
         canDownload: true,
+        managers: this.managers,
+        appDownloadManager: appDownloadManager,
         blur: settings && settings.pFlags.blur
       });
 
@@ -313,6 +322,7 @@ export default class Chat extends EventListenerBase<{
 
           const rect = this.appImManager.chatsContainer.getBoundingClientRect();
           patternRenderer = this.patternRenderer = ChatBackgroundPatternRenderer.getInstance({
+            element: this.appImManager.chatsContainer,
             url,
             width: rect.width,
             height: rect.height,
@@ -462,7 +472,9 @@ export default class Chat extends EventListenerBase<{
     return this.setBackgroundPromise = Promise.race([
       pause(500),
       promise
-    ]).then(() => {}) as any;
+    ]).then(() => {
+      rootScope.dispatchEvent('chat_background_set');
+    }) as any;
   }
 
   public setBackgroundIfNotSet(options: Parameters<Chat['setBackground']>[0]) {
@@ -605,7 +617,7 @@ export default class Chat extends EventListenerBase<{
 
     this.bubbles.listenerSetter.add(rootScope)('dialog_drop', (dialog) => {
       if(dialog.peerId === this.peerId && (isDialog(dialog) || this.threadId === getDialogKey(dialog))) {
-        this.appImManager.setPeer();
+        this.appImManager.setPeer({isDeleting: true});
       }
     });
 
@@ -688,7 +700,7 @@ export default class Chat extends EventListenerBase<{
           chatType: this.type,
           peerId: this.peerId,
           threadId: this.threadId,
-          canFilterSender: this.isRealGroup,
+          canFilterSender: this.isAnyGroup,
           query,
           filterPeerId,
           reaction,
@@ -728,6 +740,11 @@ export default class Chat extends EventListenerBase<{
         setReaction(s?.reaction);
         setNeedSearch(!!s);
       });
+    });
+
+    createRoot((dispose) => {
+      this.middlewareHelper.get().onDestroy(dispose);
+      this.stars = useStars();
     });
   }
 
@@ -809,7 +826,7 @@ export default class Chat extends EventListenerBase<{
     const [
       noForwards,
       isRestricted,
-      isAnyGroup,
+      isLikeGroup,
       isRealGroup,
       _,
       isMegagroup,
@@ -822,7 +839,7 @@ export default class Chat extends EventListenerBase<{
     ] = await m(Promise.all([
       this.managers.appPeersManager.noForwards(peerId),
       this.managers.appPeersManager.isPeerRestricted(peerId),
-      this._isAnyGroup(peerId),
+      this._isLikeGroup(peerId),
       this.managers.appPeersManager.isAnyGroup(peerId),
       this.setAutoDownloadMedia(),
       this.managers.appPeersManager.isMegagroup(peerId),
@@ -831,7 +848,7 @@ export default class Chat extends EventListenerBase<{
       this.managers.appPeersManager.isBot(peerId),
       this.managers.appMessagesManager.isAnonymousSending(peerId),
       peerId.isUser() && this.managers.appProfileManager.isCachedUserBlocked(peerId),
-      peerId.isUser() && this.managers.appUsersManager.isPremiumRequiredToContact(peerId.toUserId(), true)
+      this.isPremiumRequiredToContact(peerId)
     ]));
 
     // ! WARNING: TEMPORARY, HAVE TO GET TOPIC
@@ -841,8 +858,8 @@ export default class Chat extends EventListenerBase<{
 
     this.noForwards = noForwards;
     this.isRestricted = isRestricted;
-    this.isAnyGroup = isAnyGroup;
-    this.isRealGroup = isRealGroup;
+    this.isLikeGroup = isLikeGroup;
+    this.isAnyGroup = isRealGroup;
     this.isMegagroup = isMegagroup;
     this.isBroadcast = isBroadcast;
     this.isChannel = isChannel;
@@ -1118,11 +1135,11 @@ export default class Chat extends EventListenerBase<{
   }
 
   // * used to define need of avatars
-  public _isAnyGroup(peerId: PeerId) {
+  public _isLikeGroup(peerId: PeerId) {
     return peerId === rootScope.myId ||
       peerId === REPLIES_PEER_ID ||
       (this.type === ChatType.Search && this.hashtagType !== 'this') ||
-      this.managers.appPeersManager.isAnyGroup(peerId);
+      this.managers.appPeersManager.isLikeGroup(peerId);
   }
 
   public resetSearch() {
@@ -1158,12 +1175,13 @@ export default class Chat extends EventListenerBase<{
     });
   }
 
-  public isPremiumRequiredToContact() {
-    if(!this.peerId.isUser()) {
+  public isPremiumRequiredToContact(peerId = this.peerId) {
+    if(!peerId.isUser()) {
       return Promise.resolve(false);
     }
 
-    return this.managers.appUsersManager.isPremiumRequiredToContact(this.peerId.toUserId(), true);
+    return this.managers.appUsersManager.getRequirementToContact(peerId.toUserId(), true)
+    .then((requirement) => requirement?._ === 'requirementToContactPremium');
   }
 
   public getMessageSendingParams(): MessageSendingParams {
@@ -1187,7 +1205,7 @@ export default class Chat extends EventListenerBase<{
       return !!message.pFlags.out;
     }
 
-    if(message.fromId === rootScope.myId) {
+    if(message.fromId === rootScope.myId && !message.pFlags.post) {
       return true;
     }
 
@@ -1207,7 +1225,7 @@ export default class Chat extends EventListenerBase<{
   }
 
   public isAvatarNeeded(message: Message.message | Message.messageService) {
-    return this.isAnyGroup && !this.isOutMessage(message);
+    return this.isLikeGroup && !this.isOutMessage(message);
   }
 
   public isPinnedMessagesNeeded() {
@@ -1231,6 +1249,10 @@ export default class Chat extends EventListenerBase<{
   }
 
   public getPostAuthor(message: Message.message) {
+    if(this.isLikeGroup) {
+      return;
+    }
+
     const fwdFrom = message.fwd_from;
     const isPost = !!(message.pFlags.post || (fwdFrom?.post_author && !this.isOutMessage(message)));
     if(!isPost) {
@@ -1265,10 +1287,93 @@ export default class Chat extends EventListenerBase<{
     return this.appImManager.openWebApp(options);
   }
 
-  public sendReaction(options: SendReactionOptions) {
-    return this.managers.appReactionsManager.sendReaction({
-      sendAsPeerId: this.getMessageSendingParams().sendAsPeerId,
-      ...options
+  public async sendReaction(options: SendReactionOptions) {
+    const isPaidReaction = options.reaction._ === 'reactionPaid';
+    const count = options.count ?? 1;
+    if(isPaidReaction) {
+      const key = getPendingPaidReactionKey(options.message as Message.message);
+      let pending = PENDING_PAID_REACTIONS.get(key);
+      const hadPending = !!pending;
+      const requiredStars = (pending ? pending.count() : 0) + count;
+      if(+this.stars() < requiredStars) {
+        if(pending) {
+          pending.abortController.abort();
+        }
+
+        PopupElement.createPopup(PopupStars, {
+          itemPrice: count,
+          onTopup: () => {
+            this.sendReaction(options);
+          },
+          purpose: 'reaction',
+          peerId: this.peerId
+        });
+
+        return;
+      }
+
+      if(!pending) {
+        const [count, setCount] = createSignal(0);
+        const [sendTime, setSendTime] = createSignal(0);
+        const abortController = new AbortController();
+        abortController.signal.addEventListener('abort', () => {
+          clearTimeout(pending.sendTimeout);
+          pending.setSendTime(0);
+          PENDING_PAID_REACTIONS.delete(key);
+          setReservedStars((reservedStars) => reservedStars - pending.count());
+          rootScope.dispatchEventSingle('messages_reactions', [{
+            message: this.getMessageByPeer(options.message.peerId, options.message.mid) as Message.message,
+            changedResults: [],
+            removedResults: []
+          }]);
+        });
+
+        PENDING_PAID_REACTIONS.set(key, pending = {
+          count,
+          setCount,
+          sendTime,
+          setSendTime,
+          sendTimeout: 0,
+          abortController
+        });
+      } else {
+        clearTimeout(pending.sendTimeout);
+      }
+
+      pending.setCount((_count) => _count + count);
+      pending.setSendTime(Date.now() + SEND_PAID_REACTION_DELAY);
+      pending.sendTimeout = window.setTimeout(() => {
+        const count = pending.count();
+        pending.abortController.abort();
+        this.managers.appReactionsManager.sendReaction({
+          ...options,
+          count
+        });
+      }, SEND_PAID_REACTION_DELAY);
+
+      setReservedStars((reservedStars) => reservedStars + count);
+
+      if(!hadPending) {
+        showPaidReactionTooltip({
+          pending
+        });
+      }
+    }
+
+    const messageReactions = await this.managers.appReactionsManager.sendReaction({
+      ...options,
+      count: isPaidReaction ? 0 : count,
+      onlyReturn: isPaidReaction
     });
+
+    if(isPaidReaction) {
+      const {message} = options;
+      message.reactions = messageReactions;
+      rootScope.dispatchEventSingle('messages_reactions', [{
+        message: message as Message.message,
+        changedResults: [messageReactions.results[0]],
+        removedResults: []
+      }]);
+    }
   }
 }

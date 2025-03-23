@@ -13,7 +13,7 @@ import findUpTag from '../helpers/dom/findUpTag';
 import setInnerHTML from '../helpers/dom/setInnerHTML';
 import mediaSizes from '../helpers/mediaSizes';
 import SearchListLoader from '../helpers/searchListLoader';
-import {Message} from '../layer';
+import {Message, MessageMedia, WebPage} from '../layer';
 import appDownloadManager from '../lib/appManagers/appDownloadManager';
 import appImManager from '../lib/appManagers/appImManager';
 import {MyMessage} from '../lib/appManagers/appMessagesManager';
@@ -34,6 +34,10 @@ import {ChatType} from './chat/chat';
 import getFwdFromName from '../lib/appManagers/utils/messages/getFwdFromName';
 import TranslatableMessage from './translatableMessage';
 import {MAX_FILE_SAVE_SIZE} from '../lib/mtproto/mtproto_config';
+import {i18n} from '../lib/langPack';
+import wrapEmojiText from '../lib/richTextProcessor/wrapEmojiText';
+import wrapWebPageDescription from './wrappers/webPageDescription';
+import Button from './button';
 
 type AppMediaViewerTargetType = {
   element: HTMLElement,
@@ -73,7 +77,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     return this.listLoader.searchContext;
   }
 
-  constructor(protected local?: boolean) {
+  constructor(protected local?: boolean, sponsored?: boolean) {
     super(new SearchListLoader({
       processItem: (item) => {
         const isForDocument = this.searchContext.inputFilter._ === 'inputMessagesFilterDocument';
@@ -88,7 +92,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
 
         return {element: null as HTMLElement, mid, peerId};
       }
-    }), ['delete', 'forward']);
+    }), ['delete', 'forward'], sponsored ? 60 : 0);
 
     this.listLoader.onEmptied = () => {
       this.close();
@@ -258,7 +262,12 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     }
   };
 
-  onDownloadClick = () => {
+  onDownloadClick = async(_: any, docId?: DocId) => {
+    if(docId) {
+      const doc = await this.managers.appDocsManager.getDoc(docId);
+      appDownloadManager.downloadToDisc({media: doc, queueId: appImManager.chat.bubbles.lazyLoadQueue.queueId});
+      return;
+    }
     const {message, index} = this.target;
     const media = getMediaFromMessage(message, true, index);
     if(!media) return;
@@ -266,26 +275,89 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
   };
 
   private setCaption(message: MyMessage) {
-    const caption = (message as Message.message).message;
-    let html: Parameters<typeof setInnerHTML>[1];
-    if(caption) {
-      const media = getMediaFromMessage(message, true);
+    const isSponsored = !!(message as Message.message).pFlags.sponsored;
+    if(isSponsored) {
+      this.author.nameEl.append(i18n('SponsoredMessageAd'));
+    }
 
+    const media = getMediaFromMessage(message, true);
+    const loadPromises: Promise<any>[] = [];
+    const richTextOptions: Parameters<typeof wrapRichText>[1] = {
+      maxMediaTimestamp: ((media as MyDocument)?.type === 'video' && (media as MyDocument).duration) || undefined,
+      textColor: 'white',
+      loadPromises
+    };
+
+    let hasCaption: boolean;
+    let html: HTMLElement;
+    if(isSponsored) {
+      const sponsoredMessage = (message as Message.message).sponsoredMessage;
+      const webPage = ((message as Message.message).media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage;
+      html = document.createElement('div');
+      hasCaption = true;
+      const b = document.createElement('b');
+      b.append(wrapEmojiText(sponsoredMessage.title));
+      html.append(
+        b,
+        '\n',
+        wrapWebPageDescription(webPage, {...richTextOptions, entities: webPage.entities}, true)
+      );
+
+      const button = Button('btn-primary media-viewer-caption-button', {noRipple: true});
+      button.append(wrapEmojiText(sponsoredMessage.button_text));
+      this.content.caption.append(button);
+      this.content.caption.classList.add('has-button');
+
+      attachClickEvent(button, () => {
+        this.close().then(() => {
+          appImManager.onSponsoredBoxClick(message as Message.message);
+        });
+      });
+    } else if(hasCaption = !!(message as Message.message).message) {
       html = TranslatableMessage({
         peerId: message.peerId,
         message: message as Message.message,
         middleware: this.content.mover.middlewareHelper.get(),
-        richTextOptions: {
-          maxMediaTimestamp: ((media as MyDocument)?.type === 'video' && (media as MyDocument).duration) || undefined,
-          textColor: 'white'
-        }
+        richTextOptions
       });
+      this.saveTimestamps(html, loadPromises);
     }
 
-    // html = 'Dandelion are a family of flowering plants that grow in many parts of the world.';
     setInnerHTML(this.content.caption.firstElementChild, html);
-    this.content.caption.classList.toggle('hide', !caption);
+    this.content.caption.classList.toggle('hide', !hasCaption);
     // this.content.container.classList.toggle('with-caption', !!caption);
+  }
+
+  private removeTimestamps() {
+    this.videoTimestamps = [];
+  }
+
+  private async saveTimestamps(messageContent: HTMLElement, loadPromises: Promise<any>[]) {
+    loadPromises && await Promise.all(loadPromises);
+    const timestampElements = Array.from(messageContent.querySelectorAll('.timestamp[data-timestamp]'));
+
+    this.videoTimestamps = timestampElements.map((element) => ({
+      time: +(element as HTMLElement).dataset.timestamp,
+      text: this.extractTimestampText(element)
+    }));
+  }
+
+  private extractTimestampText(element: Element) {
+    const result: string[] = [];
+    let current = element.nextSibling;
+    while(current) {
+      if(current instanceof HTMLElement && current.classList.contains('timestamp')) break;
+
+      const text = current.textContent;
+
+      const shouldBreak = text.includes('\n');
+      result.push(text.split('\n')[0].trim());
+
+      if(shouldBreak) break;
+      current = current.nextSibling;
+    }
+
+    return result.filter(Boolean).join(' ');
   }
 
   public setSearchContext(context: MediaSearchContext) {
@@ -320,10 +392,12 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     const fromId = (message as Message.message).fwd_from && !message.fromId ? getFwdFromName((message as Message.message).fwd_from) : message.fromId;
     const media = getMediaFromMessage(message, true, index);
 
+    const isSponsored = !!(message as Message.message).pFlags.sponsored;
+    const noAuthor = isSponsored;
     const noForwards = await this.managers.appPeersManager.noForwards(message.peerId);
     const isServiceMessage = message._ === 'messageService';
-    const cantForwardMessage = isServiceMessage || !(await this.managers.appMessagesManager.canForward(message));
-    const cantDownloadMessage = (isServiceMessage ? noForwards : cantForwardMessage) || !canSaveMessageMedia(message);
+    const cantForwardMessage = isServiceMessage || noAuthor || !(await this.managers.appMessagesManager.canForward(message));
+    const cantDownloadMessage = (isServiceMessage ? noForwards : cantForwardMessage && !isSponsored) || !canSaveMessageMedia(message);
     const a: [(HTMLElement | ButtonMenuItemOptionsVerifiable)[], boolean][] = [
       [[this.buttons.forward, this.btnMenuForward], cantForwardMessage],
       [[this.buttons.download, this.btnMenuDownload], cantDownloadMessage],
@@ -342,7 +416,9 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
 
     this.wholeDiv.classList.toggle('no-forwards', cantDownloadMessage);
 
+    this.removeTimestamps();
     this.setCaption(message);
+
     const promise = super._openMedia({
       media: media as MyPhoto | MyDocument,
       timestamp: message.date,
@@ -353,7 +429,8 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
       prevTargets,
       nextTargets,
       message,
-      mediaTimestamp
+      mediaTimestamp,
+      noAuthor
       /* , needLoadMore */
     });
     this.target.mid = mid;

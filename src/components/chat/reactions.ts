@@ -21,12 +21,30 @@ import LazyLoadQueue from '../lazyLoadQueue';
 import ReactionElement, {ReactionLayoutType, REACTIONS_DISPLAY_COUNTER_AT, REACTIONS_SIZE} from './reaction';
 import {getHeavyAnimationPromise} from '../../hooks/useHeavyAnimationCheck';
 import pause from '../../helpers/schedulers/pause';
+import {Accessor, Setter} from 'solid-js';
+import showPaidReactionTooltip from './paidReactionTooltip';
 
 const CLASS_NAME = 'reactions';
 const TAG_NAME = CLASS_NAME + '-element';
 
 const REACTIONS_ELEMENTS: Map<string, Set<ReactionsElement>> = new Map();
 export {REACTIONS_ELEMENTS};
+
+export type PendingPaidReaction = {
+  count: Accessor<number>,
+  setCount: Setter<number>,
+  sendTime: Accessor<number>,
+  setSendTime: Setter<number>,
+  sendTimeout: number,
+  abortController: AbortController,
+};
+
+const PENDING_PAID_REACTIONS: Map<string, PendingPaidReaction> = new Map();
+export {PENDING_PAID_REACTIONS};
+
+export function getPendingPaidReactionKey(message: ReactionsContext) {
+  return message.peerId + '_' + message.mid;
+}
 
 export const savedReactionTags: SavedReactionTag[] = [];
 rootScope.addEventListener('saved_tags', ({savedPeerId, tags}) => {
@@ -210,10 +228,12 @@ export default class ReactionsElement extends HTMLElement {
         //   })
       ) : [];
 
+    // counts = counts.filter((count) => count.reaction._ !== 'reactionPaid');
+
     // if(this.context.peerId.isUser()) {
     //   counts.sort((a, b) => (b.count - a.count) || ((b.chosen_order ?? 0) - (a.chosen_order ?? 0)));
     // } else {
-    counts.sort((a, b) => (b.count - a.count) || ((a.chosen_order ?? 0) - (b.chosen_order ?? 0)));
+    // counts.sort((a, b) => (b.count - a.count) || ((a.chosen_order ?? 0) - (b.chosen_order ?? 0)));
     // }
 
     forEachReverse(this.sorted, (reactionElement, idx, arr) => {
@@ -234,6 +254,7 @@ export default class ReactionsElement extends HTMLElement {
       (!!reactions.pFlags.can_see_list || this.context.peerId.isUser()) &&
       totalReactions < REACTIONS_DISPLAY_COUNTER_AT[this.type];
     const customEmojiElements: ReturnType<ReactionElement['render']>[] = new Array(counts.length);
+    let paidReactionElement: ReactionElement, pendingPaidReaction: PendingPaidReaction;
     this.sorted = counts.map((reactionCount, idx, arr) => {
       let reactionElement: ReactionElement = this.sorted.find((reactionElement) => reactionsEqual(reactionElement.reactionCount.reaction, reactionCount.reaction));
       if(!reactionElement) {
@@ -244,20 +265,33 @@ export default class ReactionsElement extends HTMLElement {
       }
 
       reactionElement.classList.toggle('is-last', idx === (arr.length - 1));
-      positionElementByIndex(reactionElement, this, idx);
+
+      const isPaidReaction = reactionCount.reaction._ === 'reactionPaid';
+      const pending = isPaidReaction && PENDING_PAID_REACTIONS.get(getPendingPaidReactionKey(this.context));
+      if(pending) {
+        paidReactionElement = reactionElement;
+        pendingPaidReaction = pending;
+      }
 
       const recentReactions = reactions.recent_reactions ?
         reactions.recent_reactions.filter((reaction) => reactionsEqual(reaction.reaction, reactionCount.reaction)) :
         [];
       const wasUnread = reactionElement.isUnread;
       const isUnread = recentReactions.some((reaction) => reaction.pFlags.unread);
-      reactionElement.reactionCount = {...reactionCount};
+      reactionElement.reactionCount = {
+        ...reactionCount,
+        count: reactionCount.count + (pending?.count?.() ?? 0)
+      };
       reactionElement.setCanRenderAvatars(canRenderAvatars);
       const customEmojiElement = reactionElement.render(this.isPlaceholder);
       reactionElement.renderCounter(this.forceCounter);
       reactionElement.renderAvatars(recentReactions);
       reactionElement.isUnread = isUnread;
-      reactionElement.setIsChosen();
+      reactionElement.setIsChosen(
+        isPaidReaction ?
+          !!pending || reactions.top_reactors.some((reactor) => reactor.pFlags.my && reactor.count) :
+          undefined
+      );
 
       if(wasUnread && !isUnread && !changedResults?.includes(reactionCount)) {
         (changedResults ??= []).push(reactionCount);
@@ -268,6 +302,24 @@ export default class ReactionsElement extends HTMLElement {
 
       return reactionElement;
     });
+
+    this.sorted.forEach((element, idx) => {
+      positionElementByIndex(element, this, idx);
+    });
+
+    if(pendingPaidReaction) {
+      const {width} = paidReactionElement.getBoundingClientRect();
+      paidReactionElement.style.setProperty('--width', width + 'px');
+      paidReactionElement.setPaidReactionCounter(pendingPaidReaction.count());
+      if(!paidReactionElement.classList.contains('effect-active')) {
+        paidReactionElement.classList.add('effect-active');
+        pendingPaidReaction.abortController.signal.addEventListener('abort', () => {
+          paidReactionElement.classList.remove('effect-active');
+          paidReactionElement.querySelectorAll('.reaction-sticker-activate').forEach((it) => it.remove());
+          paidReactionElement.destroyPaidReactionCounter();
+        });
+      }
+    }
 
     callbackifyAll(customEmojiElements, (customEmojiElements) => {
       const map: Parameters<CustomEmojiRendererElement['add']>[0]['addCustomEmojis'] = new Map();
@@ -313,14 +365,6 @@ export default class ReactionsElement extends HTMLElement {
       });
     });
 
-    // this.sorted.forEach((reactionElement, idx) => {
-    //   /* if(this.type === 'block' && this.childElementCount !== this.sorted.length) { // because of appended time
-    //     idx += 1;
-    //   } */
-
-    //   positionElementByIndex(reactionElement, this, idx);
-    // });
-
     if(!this.isPlaceholder && changedResults?.length) {
       if(this.isConnected) {
         this.handleChangedResults(changedResults, waitPromise, animationShouldHaveDelay);
@@ -330,7 +374,6 @@ export default class ReactionsElement extends HTMLElement {
         };
       }
     }
-    // });
   }
 
   private async handleChangedResults(changedResults: ReactionCount[], waitPromise?: Promise<any>, withDelay?: boolean) {

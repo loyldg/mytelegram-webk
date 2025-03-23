@@ -207,12 +207,12 @@
       border-color: var(--primary-color);
     }
 
-    &:focus ~ label {
+    &:focus ~ label, &.force-focus ~ label {
       color: var(--primary-color);
       font-weight: var(--font-weight-bold);
     }
 
-    &:focus ~ .input-field-border {
+    &:focus ~ .input-field-border, &.force-focus ~ .input-field-border {
       opacity: 1;
     }
 
@@ -225,7 +225,8 @@
     &:focus ~ label,
     &:valid ~ label,
     &:not(.is-empty) ~ label,
-    &:disabled ~ label {
+    &:disabled ~ label,
+    &.force-focus ~ label {
       transform: translate(calc(-.1875rem + (1rem - var(--padding-horizontal))), calc(var(--height) / -2 + .0625rem)) scale(.75);
       padding: 0 .3125rem;
       opacity: 1;
@@ -281,6 +282,15 @@
         transform: translateX(0);
       }
     }
+  }
+
+  &-right-label {
+    position: absolute;
+    inset-inline-end: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1;
+    color: var(--secondary-text-color);
   }
 }
 
@@ -355,9 +365,10 @@ button:focus {
   --border-width: 1px;
   --height: 42px;
   --border-radius: 22px;
-  --padding-horizontal: calc(var(--height) + 3px - var(--border-width));
-  --icon-left-offset: .8125rem;
+  --icon-left-add-offset: 0rem;
+  --icon-left-offset: calc(.8125rem + var(--icon-left-add-offset));
   --icon-size: 1.5rem;
+  --padding-horizontal: calc(var(--height) + 3px + var(--icon-left-add-offset) - var(--border-width));
   position: relative;
   width: 100%;
   margin-inline: .4375rem;
@@ -413,6 +424,11 @@ button:focus {
     display: block !important;
   }
 
+  &.old-style &-input {
+    background-color: var(--old-input-background-color);
+    border-color: transparent;
+  }
+
   &-placeholder {
     position: absolute;
     color: $placeholder-color;
@@ -436,7 +452,7 @@ button:focus {
     line-height: var(--line-height-16);
     
     @include animation-level(2) {
-      transition: /* background-color .2s ease-in-out,  */border-color .2s ease-in-out;
+      transition: background-color .2s ease-in-out, border-color .2s ease-in-out;
     }
 
     @include hover() {
@@ -549,6 +565,10 @@ button:focus {
       html.is-ios & {
         // ! меньше 1rem будет зумить поле
         font-size: 1rem;
+      }
+
+      &::-ms-reveal {
+        display: none; // Remove the reveal password eye in Edge browsers
       }
     }
   }
