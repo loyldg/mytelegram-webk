@@ -4,7 +4,7 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag} from '../layer';
+import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag, InputSavedStarGift} from '../layer';
 import type {Dialog, ForumTopic, MessagesStorageKey, MyMessage} from './appManagers/appMessagesManager';
 import type {MyDialogFilter} from './storages/filters';
 import type {AnyDialog, Folder} from './storages/dialogs';
@@ -196,7 +196,7 @@ export type BroadcastEvents = {
   'saved_tags': {savedPeerId: PeerId, tags: SavedReactionTag[]},
   'saved_tags_clear': void,
 
-  'stars_balance': Long,
+  'stars_balance': {balance: Long, fulfilledReservedStars?: number},
 
   'file_speed_limited': {increaseTimes: number, isUpload: boolean},
 
@@ -211,7 +211,14 @@ export type BroadcastEvents = {
   'chat_background_set': void,
 
   'toggle_using_passcode': boolean,
-  'toggle_locked': boolean
+  'toggle_locked': boolean,
+
+  'star_gift_update': {
+    input: InputSavedStarGift,
+    unsaved?: boolean,
+    converted?: boolean
+    togglePinned?: boolean
+  },
 };
 
 export type BroadcastEventsListeners = {

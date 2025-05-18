@@ -143,6 +143,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
       ['stories', 'StoriesCount'],
       ['members', 'Members'],
       ['media', 'MediaFiles'],
+      ['gifts', 'StarGiftsCount'],
       ['saved', 'SavedMessagesCount'],
       ['files', 'Files'],
       ['links', 'Links'],
@@ -313,6 +314,9 @@ export default class AppSharedMediaTab extends SliderSuperTab {
         inputFilter: 'inputMessagesFilterPhotoVideo',
         name: 'SharedMediaTab2',
         type: 'media'
+      }, {
+        name: 'SharedMedia.Gifts',
+        type: 'gifts'
       }, {
         inputFilter: 'inputMessagesFilterEmpty',
         name: 'SharedMedia.Saved',
@@ -601,7 +605,10 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     };
   }
 
-  private async toggleEditBtn<T extends boolean>(manual?: T): Promise<T extends true ? () => void : void> {
+  private async toggleEditBtn(manual: true): Promise<() => void>;
+  private async toggleEditBtn(manual?: false): Promise<void>;
+
+  private async toggleEditBtn(manual?: boolean): Promise<(() => void) | void> {
     const {peerId} = this;
     let show: boolean;
     if(peerId.isUser()) {
@@ -621,7 +628,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
       this.editBtn.classList.toggle('hide', !show);
     };
 
-    return manual ? callback : callback() as any;
+    return manual ? callback : callback();
   }
 
   public loadSidebarMedia(single: boolean, justLoad?: boolean) {

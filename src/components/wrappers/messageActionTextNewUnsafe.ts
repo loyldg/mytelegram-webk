@@ -10,7 +10,7 @@ import htmlToSpan from '../../helpers/dom/htmlToSpan';
 import setInnerHTML, {setDirection} from '../../helpers/dom/setInnerHTML';
 import {wrapCallDuration} from './wrapDuration';
 import paymentsWrapCurrencyAmount from '../../helpers/paymentsWrapCurrencyAmount';
-import {ForumTopic, Message, MessageAction, MessageMedia, MessageReplyHeader} from '../../layer';
+import {ForumTopic, Message, MessageAction, MessageMedia, MessageReplyHeader, StarGift} from '../../layer';
 import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
 import I18n, {FormatterArgument, FormatterArguments, i18n, join, langPack, LangPackKey, _i18n} from '../../lib/langPack';
 import {GENERAL_TOPIC_ID} from '../../lib/mtproto/mtproto_config';
@@ -50,7 +50,12 @@ type WrapTopicIconOptions = {
   topic: Pick<ForumTopic.forumTopic, 'icon_color' | 'icon_emoji_id' | 'title' | 'id'>,
   plain?: boolean
 } & WrapSomethingOptions;
-export async function wrapTopicIcon<T extends WrapTopicIconOptions>(options: T): Promise<T['plain'] extends true ? string : HTMLElement | DocumentFragment> {
+
+export async function wrapTopicIcon(options: WrapTopicIconOptions & {plain: true}): Promise<string>;
+export async function wrapTopicIcon(options: WrapTopicIconOptions & {plain?: false}): Promise<HTMLElement | DocumentFragment>;
+export async function wrapTopicIcon(options: WrapTopicIconOptions): Promise<string | HTMLElement | DocumentFragment>;
+
+export async function wrapTopicIcon(options: WrapTopicIconOptions): Promise<string | HTMLElement | DocumentFragment> {
   const topic = options.topic;
 
   let iconEmojiId = topic?.icon_emoji_id;
@@ -85,7 +90,7 @@ export async function wrapTopicIcon<T extends WrapTopicIconOptions>(options: T):
     }).then((fragment) => {
       fragment.lastElementChild.classList.add('topic-icon');
       return fragment;
-    }) as any;
+    });
 }
 
 function wrapMessageActionTopicIcon(options: WrapMessageActionTextOptions) {
@@ -140,8 +145,8 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
 
   // this.log('message action:', action);
 
-  if((action as MessageAction.messageActionCustomAction).message) {
-    const unsafeMessage = (action as MessageAction.messageActionCustomAction).message;
+  if(action._ === 'messageActionCustomAction' && action.message) {
+    const unsafeMessage = action.message;
     if(plain) {
       return wrapPlainText(unsafeMessage);
     } else {
@@ -640,6 +645,36 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
 
         break;
       }
+
+      case 'messageActionPaidMessagesPrice': {
+        const isFree = !+action.stars;
+        langPackKey = isFree ? 'PaidMessages.GroupPriceChangedFree' : 'PaidMessages.GroupPriceChanged';
+        args = [+action.stars]
+        break;
+      }
+
+      case 'messageActionPaidMessagesRefunded': {
+        langPackKey = 'PaidMessages.StarsRefundedShort';
+        args = [+action.stars];
+        break;
+      }
+      case 'messageActionStarGift':
+        if(message.pFlags.out) {
+          langPackKey = 'StarGiftSentMessageOutgoing'
+          args = [(action.gift as StarGift.starGift).stars];
+        } else {
+          langPackKey = 'StarGiftSentMessageIncoming'
+          args = [getNameDivHTML(message.fromId, plain), (action.gift as StarGift.starGift).stars];
+        }
+        break;
+      case 'messageActionStarGiftUnique':
+        if(action.pFlags.upgrade) {
+          langPackKey = message.pFlags.out ? 'ActionGiftUpgradedOutbound' : 'ActionGiftUpgradedInbound'
+        } else {
+          langPackKey = message.pFlags.out ? 'ActionGiftTransferredOutbound' : 'ActionGiftTransferredInbound'
+        }
+        args = [getNameDivHTML(message.peerId, plain)];
+        break;
 
       default:
         langPackKey = (langPack[_] || `[${action._}]`) as any;

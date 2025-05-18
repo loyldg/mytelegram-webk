@@ -65,6 +65,7 @@ const lang = {
   'Chat.Menu.SelectMessages': 'Select Messages',
   'Chat.Menu.ClearSelection': 'Clear Selection',
   'Chat.Menu.Hint': 'To **edit** or **reply**, close this menu.\nThen tap next to a message.',
+  'Chat.Menu.SendGift': 'Send a Gift',
   'Chat.Input.UnpinAll': 'Unpin All Messages',
   'Chat.Input.Attach.PhotoOrVideo': 'Photo or Video',
   'Chat.Input.Attach.Document': 'Document',
@@ -499,6 +500,7 @@ const lang = {
   'OpenChat': 'Open Chat',
   'DeleteSavedDialogDescription': 'Are you sure you want to delete all saved messages from **%s**?',
   'SharedMedia.Saved': 'Saved',
+  'SharedMedia.Gifts': 'Gifts',
   'Giveaway.Prepaid': {
     'one_value': 'Prepaid Giveaway',
     'other_value': 'Prepaid Giveaways'
@@ -827,7 +829,8 @@ const lang = {
     'other_value': 'Stars sent anonymously!'
   },
   'Stars.TopUp.Reaction': 'Buy **Stars** and send them to **%s** to support their posts.',
-  'Stars.TopUp.Label_default': 'Buy Stars to unlock content and service\nin miniapps on Telegram.',
+  'Stars.TopUp.Label_default': 'Buy **Stars** to unlock content and service\nin miniapps on Telegram.',
+  'Stars.TopUp.Label_stargift': 'Buy **Stars** to send gifts.',
   'Stars.TopUp.Enough': 'You have enough Stars at the moment. [Buy anyway]()',
   'Action.StarGiveawayPrize': {
     'one_value': 'You won a prize in a giveaway organized by **%s**.\n\nYour prize is **%1$d Star**.',
@@ -1696,14 +1699,19 @@ const lang = {
   'DynamicPackOrder': 'Dynamic Pack Order',
   'DynamicPackOrderInfo': 'Automatically place recently used sticker packs at the front of the panel.',
   'GiftPremium': 'Gift Premium',
+  'PayWithStars': 'Pay with %s %s',
   'GiftTelegramPremiumTitle': 'Gift Telegram Premium',
   'GiftTelegramPremiumDescription': 'Give **%1$s** access to exclusive features with **Telegram Premium**.',
   'PricePerMonth': '%1$s / month',
   'GiftSubscriptionFor': 'Gift Subscription for %1$s',
   'ActionGiftInbound': 'un1 sent you a gift for **un2**',
   'ActionGiftOutbound': 'You have sent a gift for **un2**',
-  'ActionGiftPremiumTitle': 'Telegram Premium',
-  'ActionGiftPremiumSubtitle': 'for %1$s',
+  'ActionGiftUpgradedInbound': '%s turned the gift from you into a unique collectible',
+  'ActionGiftUpgradedOutbound': 'You turned the gift from %s into a unique collectible',
+  'ActionGiftTransferredInbound': '%s transferred a gift to you',
+  'ActionGiftTransferredOutbound': 'You transferred a gift to %s',
+  'ActionGiftPremiumTitle2': '%s Premium',
+  'ActionGiftPremiumSubtitle2': 'Subscription for exclusive Telegram features.',
   'ChatAdmin': 'admin',
   'BotRequestAttachPermission': '**%1$s** requests to be added as an option to your attachment menu so you can access it from any chat.',
   'BotCantAddToAttachMenu': 'This bot can\'t be added to the attachment menu.',
@@ -2145,6 +2153,7 @@ const lang = {
   },
   'GiftPremiumUseGiftBtn': 'Use Gift',
   'ActionGiftPremiumView': 'View',
+  'ActionGiftPremiumUnpack': 'Unpack',
   'TelegramPremiumUserGiftedPremiumDialogTitleWithPlural': '**%1$s** has gifted you a %2$s subscription to Telegram Premium.',
   'TelegramPremiumUserGiftedPremiumDialogTitleWithPluralSomeone': 'Someone has gifted you a %1$s subscription to Telegram Premium.',
   'TelegramPremiumUserGiftedPremiumDialogSubtitle': 'You now have access to additional features.',
@@ -2407,6 +2416,8 @@ const lang = {
   'TelegramStars': 'Telegram Stars',
   'TelegramStarsInfo': 'Buy Stars to unlock content and service\nin miniapps on Telegram.',
   'StarsBalance': 'Balance',
+  'StarsBalanceLong': 'Your balance is %s %s',
+  'GetMoreStars': 'Get More Stars >',
   'StarsTransactionsAll': 'All Transactions',
   'StarsTransactionsIncoming': 'Incoming',
   'StarsTransactionsOutgoing': 'Outgoing',
@@ -2414,6 +2425,10 @@ const lang = {
   'StarsConfirmPurchaseText': {
     'one_value': 'Do you want to buy "**%2$s**" in **%3$s** for **%1$d star**?',
     'other_value': 'Do you want to buy "**%2$s**" in **%3$s** for **%1$d stars**?'
+  },
+  'StarGiftConfirmPurchaseText': {
+    'one_value': 'Do you want to buy a gift for **%1$d star**?',
+    'other_value': 'Do you want to buy a gift for **%1$d stars**?'
   },
   'StarsNeededTitle': {
     'one_value': '%d Star Needed',
@@ -2494,6 +2509,110 @@ const lang = {
   'GiftStarsTitle': 'Gift Stars',
   'GiftStarsSubtitle': 'With Stars, **%s** will be able to unlock content and services on Telegram.',
   'GiftStarsSubtitleLinkName': '**See Examples >**',
+  'StarGiftSentMessageIncoming': {
+    'one_value': '**%1$s** sent you a gift for **%2$d Star**',
+    'other_value': '**%1$s** sent you a gift for **%2$d Stars**'
+  },
+  'StarGiftSentMessageOutgoing': {
+    'one_value': '**You** sent a gift for **%d Star**',
+    'other_value': '**You** sent a gift for **%d Stars**'
+  },
+  'StarGiftFrom': 'Gift from %s',
+  'StarGiftDefaultMessage': 'You can add this gift to your profile.',
+  'StarGiftDefaultMessageOut': '%s can display this gift on their page.',
+  'StarGiftDefaultMessageConvertable': {
+    'one_value': 'Display this gift on your page or convert it to %d Star.',
+    'other_value': 'Display this gift on your page or convert it to %d Stars.'
+  },
+  'StarGiftDefaultMessageConvertableOut': {
+    'one_value': '%s can display this gift on their page or convert it to %d Star.',
+    'other_value': '%s can display this gift on their page or convert it to %d Stars.'
+  },
+  'StarGiftDefaultMessageUpgrade': 'Upgrade this gift to a unique collectible.',
+  'StarGiftDefaultMessageUpgradeOut': '%s can turn this gift to a unique collectible.',
+  'StarGiftReceivedTitle': 'Received Gift',
+  'StarGiftTitle': 'Gift',
+  'StarGiftReceivedSubtitle': {
+    'one_value': 'You can keep this gift in your Profile or convert it to %d Star.',
+    'other_value': 'You can keep this gift in your Profile or convert it to %d Stars.'
+  },
+  'StarGiftReceivedSubtitleLink': 'More About Stars >',
+  'StarGiftDisplayOnMyPage': 'Display on my Page',
+  'StarGiftHideFromMyPage': 'Hide from my Page',
+  'StarGiftHiddenHint': 'This gift is hidden. Only you can see it.',
+  'StarGiftVisibleHint': 'The gift is visible on your page.',
+  'StarGiftVisibleHintLink': 'View >',
+  'StarGiftFromShort': 'From',
+  'StarGiftSendInline': 'send a gift',
+  'StarGiftDate': 'Date',
+  'StarGiftValue': 'Value',
+  'StarGiftAvailability': 'Availability',
+  'StarGiftAvailabilityValue': '%1$d of %2$d left',
+  'StarGiftAvailabilityIssued': '%1$d/%2$d issued',
+  'StarGiftConvertButton': {
+    'one_value': 'sale for %d Star',
+    'other_value': 'sale for %d Stars'
+  },
+  'StarGiftsCount': {
+    'one_value': '%d gift',
+    'other_value': '%d gifts'
+  },
+  'StarGiftLimitedBadge': 'limited',
+  'StarGiftSoldOutBadge': 'sold out',
+  'SendStarGiftSubtitle': 'Give %s gifts that can be kept on the profile or converted to Stars.',
+  'StarGiftCategoryAll': 'All Gifts',
+  'StarGiftCategoryLimited': 'Limited',
+  'StarGiftCategoryInStock': 'In Stock',
+  'StarGiftUnavailableTitle': 'Unavailable',
+  'StarGiftUnavailableSubtitle': 'This gift has sold out.',
+  'StarGiftUnavailableFirstSale': 'First sale',
+  'StarGiftUnavailableLastSale': 'Last sale',
+  'StarGiftHiddenUser': 'Hidden user',
+  'StarGiftMessagePlaceholder': 'Enter Message (Optional)',
+  'StarGiftHideMyName': 'Hide My Name',
+  'StarGiftHideMyNameHint': 'Hide my name and message from visitors to %s’s profile. %s will still see your name and message.',
+  'StarGiftSend': 'Send a Gift for %s',
+  'StarGiftLimitedLeft': '%d left',
+  'StarGiftLimitedSold': '%d sold',
+  'StarGiftMakeUnique': 'Make Unique for %s %s',
+  'StarGiftMakeUniqueHint': 'Enable this to let %s turn your gift into a unique collectible. %s',
+  'StarGiftMakeUniqueLink': 'Learn more >',
+  'StarGiftLimitedBadgeNum': '1 of %s',
+  'StarGiftStatus': 'Status',
+  'StarGiftStatusNonUnique': 'Non-Unique',
+  'StarGiftStatusUpgrade': 'upgrade',
+  'StarGiftUpgradeTitle': 'Upgrade Gift',
+  'StarGiftUpgradeTitleFor': 'Make Unique',
+  'StarGiftUpgradeSubtitle': 'Turn your gift into a unique collectible that you can transfer or auction.',
+  'StarGiftUpgradeSubtitleFor': 'Let %s turn your gift into a unique collectible.',
+  'StarGiftUpgradeUniqueTitle': 'Unique',
+  'StarGiftUpgradeUniqueText': 'Get a unique number, model, backdrop and symbol for your gift.',
+  'StarGiftUpgradeTransferableTitle': 'Transferable',
+  'StarGiftUpgradeTransferableText': 'Send your upgraded gift to any of your friends on Telegram.',
+  'StarGiftUpgradeTradableTitle': 'Tradable',
+  'StarGiftUpgradeTradableText': 'Sell or auction your gift on third-party NFT marketplaces.',
+  'StarGiftUpgradeKeepInfo': 'Add sender’s name and comment',
+  'StarGiftUpgradeFree': 'Upgrade for Free',
+  'StarGiftUpgrade': 'Upgrade %s',
+  'StarGiftModel': 'Model',
+  'StarGiftBackdrop': 'Backdrop',
+  'StarGiftPattern': 'Symbol',
+  'StarGiftOwner': 'Owner',
+  'StarGiftCollectibleNum': 'Collectible #%s',
+  'StarGiftTransfer': 'transfer',
+  'StarGiftTransferFull': 'Transfer',
+  'StarGiftWear': 'wear',
+  'StarGiftWearFull': 'Wear',
+  'StarGiftShare': 'share',
+  'StarGiftPin': 'Pin',
+  'StarGiftUnpin': 'Unpin',
+  'StarGiftLinkButton': 'VIEW COLLECTIBLE',
+  'StarGiftTransferTo': 'Transfer to',
+  'StarGiftOriginalDetailsBasic': 'Gifted to %s on %s.',
+  'StarGiftOriginalDetailsSender': 'Gifted by %s to %s on %s.',
+  'StarGiftOriginalDetailsComment': 'Gifted to %s on %s with the comment “%s”.',
+  'StarGiftOriginalDetailsSenderComment': 'Gifted by %s to %s on %s with the comment “%s”.',
+  'StarGiftAttributeTooltip': 'Only %s of such collectibles have this attribute.',
   'ActionGiftStarsTitle': {
     'one_value': '%d Star',
     'other_value': '%d Stars'
@@ -2504,7 +2623,6 @@ const lang = {
     'one_value': 'You reacted with **%d** star.',
     'other_value': 'You reacted with **%d** stars.'
   },
-  'StarsSentUndo': 'Undo',
   'StarsReactionTitle': 'Star Reaction',
   'StarsReactionText': 'Choose how many stars you want to send to **%s** to support this post.',
   'StarsReactionTopSenders': 'Top Senders',
@@ -2949,6 +3067,7 @@ const lang = {
   'PrivacySettingsController.Everbody': 'Everybody',
   'PrivacySettingsController.MyContacts': 'My Contacts',
   'PrivacySettingsController.Nobody': 'Nobody',
+  'PrivacySettingsController.Paid': 'Paid',
   'PrivacySettingsController.NeverShare': 'Never Share With',
   'PrivacySettingsController.AlwaysShare': 'Always Share With',
   'PrivacySettingsController.NeverAllow': 'Never Allow',
@@ -3176,7 +3295,68 @@ const lang = {
   'PasscodeLock.Disabled': 'Disabled',
   'PasscodeLock.TooManyAttempts': 'Too many attempts, try again later',
   'PasscodeLock.LogoutPopup.Description': 'Are you sure you want to log out?',
-  'PasscodeLock.TurnOff.Description': 'Are you sure you want to turn passcode off?'
+  'PasscodeLock.TurnOff.Description': 'Are you sure you want to turn passcode off?',
+
+  'PaidMessages.ChargeForMessages': 'Charge for Messages',
+  'PaidMessages.ChargeForMessagesDescription': 'Charge a fee for messages from people outside your contacts or who you haven\'t messaged first',
+  'PaidMessages.ChargeForGroupMessagesDescription': 'If you turn this on, regular members of the group will have to pay Stars to send messages.',
+  'PaidMessages.SetPrice': 'Set your price per message',
+  'PaidMessages.SetPriceDescription': 'You will receive %d% of the selected fee (~%d$) for each incoming messages',
+  'PaidMessages.SetPriceGroupDescription': 'Your group will receive %d% of the selected fee (~%d$) for each incoming messages',
+  'PaidMessages.RemoveFee': 'Remove Fee',
+  'PaidMessages.RemoveFeeDescription': 'Add users or entire groups who won\'t have to pay to send you messages',
+  'PaidMessages.NewChatDescription': '%s charges %d for each message',
+  'PaidMessages.MessageForStars': 'Message for %d',
+  'PaidMessages.UserChargesForOneMessageWarning': '**%s** charges **%s** per incoming message. Would you like to pay **%s** to send one message?',
+  'PaidMessages.UserChargesForMultipleMessageWarning': '**%s** charges **%s** per incoming message. Would you like to pay **%s** to send **%d messages**?',
+  'PaidMessages.PayForMessages': {
+    'one_value': 'Pay for %d message',
+    'other_value': 'Pay for %d messages'
+  },
+  'PaidMessages.MessagesSent': {
+    'one_value': '%d Message sent!',
+    'other_value': '%d Messages sent!'
+  },
+  'PaidMessages.YouPaidForMessages': {
+    'one_value': 'You paid %d Star.',
+    'other_value': 'You paid %d Stars.'
+  },
+  'PaidMessages.YouPaidToSendMessages': {
+    'one_value': 'You paid **%2$s** to send a message',
+    'other_value': 'You paid **%2$s** to send %1$d messages.'
+  },
+  'PaidMessages.YouReceivedStarsFrom': 'You received **%s** from %s',
+  'PaidMessages.FeeForMessages': {
+    'one_value': 'Fee for %d message',
+    'other_value': 'Fee for %d messages'
+  },
+  'PaidMessages.YouReceiveWithCommissionNotice': 'You receive %d% of the price that you charge for each incoming message.',
+  'PaidMessages.FullPrice': 'Full Price',
+  'PaidMessages.GroupPriceChangedFree': 'Messages in this group are now free',
+  'PaidMessages.GroupPriceChanged': {
+    'one_value': 'Messages now cost **%d Star** in this group',
+    'other_value': 'Messages now cost **%d Stars** in this group'
+  },
+  'PaidMessages.StarsRefundedToYou': {
+    'one_value': '%2$s refunded **%1$d Star** to you',
+    'other_value': '%2$s refunded **%1$d Stars** to you'
+  },
+  'PaidMessages.StarsRefundedByYou': {
+    'one_value': 'You refunded **%1$d Star** to %2$s',
+    'other_value': 'You refunded **%1$d Stars** to %2$s'
+  },
+  'PaidMessages.StarsRefundedShort': {
+    'one_value': '%d Star refunded',
+    'other_value': '%d Stars refunded'
+  },
+
+  'BuyStars': 'Buy Stars',
+  'UnsavedChanges': 'Unsaved Changes',
+  'UnsavedChangesDescription.Privacy': 'You have changed some privacy settings. Save changes?',
+  'UnsavedChangesDescription.Group': 'You have changed some settings in this group. Save changes?',
+  'DontAskAgain': 'Don\'t ask again',
+  'ConfirmPayment': 'Confirm Payment',
+  'Undo': 'Undo'
 };
 
 export default lang;

@@ -15,7 +15,7 @@ import safeAssign from '../../helpers/object/safeAssign';
 import {InputInvoice, MessageMedia, PaymentsPaymentForm, PaymentsPaymentReceipt, StarsTransaction, Message, MessageExtendedMedia, Photo, Document, ChatInvite, StarsSubscription, Chat, MessageAction, Boost, WebDocument} from '../../layer';
 import appImManager from '../../lib/appManagers/appImManager';
 import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
-import {i18n} from '../../lib/langPack';
+import I18n, {i18n} from '../../lib/langPack';
 import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
 import wrapRichText from '../../lib/richTextProcessor/wrapRichText';
 import {replaceButtonIcon} from '../button';
@@ -40,11 +40,19 @@ import PeerTitle from '../peerTitle';
 import rootScope from '../../lib/rootScope';
 import {IconTsx} from '../iconTsx';
 import formatStarsAmount from '../../lib/appManagers/utils/payments/formatStarsAmount';
+import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
+import DEBUG from '../../config/debug';
+import makeError from '../../helpers/makeError';
+
+const TEST_FIRST_TIME = DEBUG && false;
 
 export default class PopupStarsPay extends PopupElement<{
   finish: (result: PopupPaymentResult) => void
 }> {
-  private paymentForm: PaymentsPaymentForm.paymentsPaymentFormStars | PaymentsPaymentReceipt.paymentsPaymentReceiptStars;
+  private paymentForm:
+    | PaymentsPaymentForm.paymentsPaymentFormStars
+    | PaymentsPaymentReceipt.paymentsPaymentReceiptStars
+    | PaymentsPaymentForm.paymentsPaymentFormStarGift;
   private result: PopupPaymentResult;
   private inputInvoice: InputInvoice;
   private isReceipt: boolean;
@@ -57,6 +65,10 @@ export default class PopupStarsPay extends PopupElement<{
   private subscription: StarsSubscription;
   private isOutGift: boolean;
   private boost: Boost;
+  private noShowIfStars: boolean;
+  private purpose: ConstructorParameters<typeof PopupPayment>[0]['purpose'];
+
+  private onConfirm: () => void;
 
   constructor(options: ConstructorParameters<typeof PopupPayment>[0]) {
     super('popup-stars popup-stars-pay', {
@@ -72,8 +84,9 @@ export default class PopupStarsPay extends PopupElement<{
     safeAssign(this, options);
     this.footer.classList.add('abitlarger');
     this.result = 'cancelled';
+    let test = TEST_FIRST_TIME;
 
-    const onConfirm = async() => {
+    const onConfirm = this.onConfirm = async() => {
       const {paymentForm} = this;
       if(this.isReceipt || (!paymentForm && !this.chatInvite && !this.subscription)) {
         this.hide();
@@ -85,7 +98,11 @@ export default class PopupStarsPay extends PopupElement<{
       this.result = 'pending';
 
       let result: Promise<any>;
-      if(this.subscription) {
+      if(test) {
+        test = false;
+        result = Promise.reject(makeError('BALANCE_TOO_LOW'));
+        // result = Promise.resolve();
+      } else if(this.subscription) {
         result = this.managers.appPaymentsManager.changeStarsSubscription(
           this.subscription.id,
           !this.subscription.pFlags.canceled
@@ -110,7 +127,12 @@ export default class PopupStarsPay extends PopupElement<{
             onTopup: async() => {
               await this.reloadForm();
               onConfirm();
-            }
+            },
+            onCancel: () => {
+              this.result = 'cancelled';
+              this.hide();
+            },
+            purpose: this.purpose
           });
         } else if((err as ApiError).type === 'FORM_EXPIRED') {
           await this.reloadForm();
@@ -277,6 +299,9 @@ export default class PopupStarsPay extends PopupElement<{
         );
         noStarsChange = true;
       }
+    } else if(this.form._ === 'payments.paymentFormStarGift') {
+      title = i18n('StarsConfirmPurchaseTitle');
+      subtitle = i18n('StarGiftConfirmPurchaseText', [amount]);
     } else if(this.transaction && !this.form.title) {
       title = i18n(this.transaction.subscription_period ? 'Stars.Subscription.Title' : 'Stars.TopUp');
     } else if(this.chatInvite) {
@@ -287,9 +312,23 @@ export default class PopupStarsPay extends PopupElement<{
       title = i18n('Stars.Subscription');
       subtitle = i18n('Stars.Subscription.Fee', [StarsAmount({stars: amount}) as HTMLElement]);
       (subtitle as HTMLElement).classList.add('secondary');
+    } else if(this.transaction?.paid_messages) {
+      title = i18n('PaidMessages.FeeForMessages', [this.transaction.paid_messages]);
+      if(!this.transaction.pFlags.refund && +amount > 0) {
+        subtitle = i18n('PaidMessages.YouReceiveWithCommissionNotice');
+        Promise.resolve(apiManagerProxy.getAppConfig()).then((config) => {
+          const intlElement = I18n.weakMap.get(subtitle as HTMLElement) as I18n.IntlElement;
+          intlElement.compareAndUpdate({
+            key: 'PaidMessages.YouReceiveWithCommissionNotice',
+            args: [Math.round(config.stars_paid_message_commission_permille / 10)]
+          })
+        });
+      }
     } else {
       title = this.isReceipt ? wrapEmojiText(this.form.title) : i18n('StarsConfirmPurchaseTitle');
-      subtitle = this.isReceipt ? wrapEmojiText(this.form.description) : i18n('StarsConfirmPurchaseText', [amount, wrapEmojiText(this.paymentForm.title), _title]);
+      subtitle = this.isReceipt ?
+        wrapEmojiText(this.form.description) :
+        i18n('StarsConfirmPurchaseText', [amount, wrapEmojiText((this.paymentForm as PaymentsPaymentForm.paymentsPaymentFormStars).title), _title]);
     }
 
     const transactionId = this.transaction?.id ?? (this.paymentForm as PaymentsPaymentReceipt.paymentsPaymentReceiptStars)?.transaction_id;
@@ -346,11 +385,19 @@ export default class PopupStarsPay extends PopupElement<{
         ['StarsTransactionDate',  formatFullSentTime((this.form as PaymentsPaymentReceipt.paymentsPaymentReceiptStars).date, undefined, true)]
       ];
     } else if(this.isReceipt) {
+      const realAmount = this.transaction?.paid_messages &&
+        !this.transaction.pFlags.refund &&
+        this.transaction.starref_amount &&
+        this.transaction.stars &&
+        +amount > 0 &&
+        (formatStarsAmount(this.transaction.starref_amount) + formatStarsAmount(this.transaction.stars));
+
       tableContent = [
         this.peerId ? [
           this.transaction?.subscription_period ? 'Stars.Subscription' : 'BoostingTo',
           tablePeer
         ] : ['Stars.Via', _title],
+        realAmount && ['PaidMessages.FullPrice', <StarsChange reverse noSign inline stars={realAmount} />],
         this.transaction && (this.transaction.extended_media || this.transaction.pFlags.reaction) && messageAnchor && [this.transaction.pFlags.reaction ? 'Message' : 'StarsTransactionMedia', messageAnchor],
         ['StarsTransactionID', transactionIdSpan],
         ['StarsTransactionDate', formatFullSentTime((this.form as PaymentsPaymentReceipt.paymentsPaymentReceiptStars).date, undefined, true)]
@@ -409,7 +456,7 @@ export default class PopupStarsPay extends PopupElement<{
         {subtitle && <div class={classNames('popup-stars-subtitle', tableContent && !this.subscription && !this.boost && 'mt')}>{subtitle}</div>}
         {tableContent && (
           <>
-            <Table content={tableContent.filter(Boolean)} />
+            <Table class="popup-stars-pay-table" content={tableContent.filter(Boolean)} />
             <div class="popup-stars-pay-tos">{i18n('Stars.TransactionTOS')}</div>
             {this.subscription && (
               <div class={classNames('popup-stars-pay-tos', 'popup-stars-pay-tos2', this.subscription.pFlags.canceled && 'danger')}>{
@@ -428,7 +475,7 @@ export default class PopupStarsPay extends PopupElement<{
   }
 
   private async construct() {
-    if(this.chatInvite) {
+    if(this.chatInvite || this.paymentForm?._ === 'payments.paymentFormStarGift') {
       this.peerId = NULL_PEER_ID;
     } else if(this.paymentForm) {
       this.peerId = this.paymentForm.bot_id.toPeerId(false);
@@ -454,7 +501,7 @@ export default class PopupStarsPay extends PopupElement<{
           paidMediaPeerId: this.message ? this.message.fwdFromId || this.message.fromId : this.peerId,
           chatInvite: this.chatInvite,
           subscription: this.subscription,
-          photo: this.form?.photo as WebDocument.webDocument
+          photo: this.form._ === 'payments.paymentFormStarGift' ? undefined : this.form?.photo as WebDocument.webDocument
         });
 
         if(this.boost) {
@@ -492,16 +539,17 @@ export default class PopupStarsPay extends PopupElement<{
           return;
         }
 
-        return this.managers.apiManager.invokeApi('channels.exportMessageLink', {
-          channel: await this.managers.appChatsManager.getChannelInput(this.peerId.toChatId()),
-          id: getServerMessageId(this.transaction.msg_id || this.transaction.giveaway_post_id)
-        }).then((exportedMessageLink) => {
-          return exportedMessageLink.link;
-        }, () => undefined as string);
+        const channelId = this.peerId.toChatId()
+        const serverMsgId = getServerMessageId(this.transaction.msg_id || this.transaction.giveaway_post_id)
+        return `https://t.me/c/${channelId}/${serverMsgId}`;
       })()
     ]);
     this.body.classList.toggle('is-receipt', this.isReceipt);
     this.appendSolid(() => this._construct(image, title, media, link));
-    this.show();
+    if(this.noShowIfStars) {
+      this.onConfirm();
+    } else {
+      this.show();
+    }
   }
 }

@@ -259,6 +259,14 @@
 
         .popup-stars-pay-amount {
           display: flex;
+
+          &.reverse {
+            flex-direction: row-reverse;
+          }
+
+          &.inline {
+            display: inline-flex;
+          }
         }
       }
 
@@ -379,12 +387,8 @@
     font-size: 2.5rem;
   }
 
-  .table {
-    margin-top: 1.375rem;
-
-    &-key {
-      font-weight: var(--font-weight-normal);
-    }
+  .popup-stars-pay-table {
+    margin-block: 1.375rem 1rem;
   }
 }
 
@@ -607,6 +611,7 @@
 
     &-row {
       padding-inline-start: 3.5rem;
+      border-radius: $border-radius-medium;
     }
   }
 

@@ -65,6 +65,8 @@ import PinnedContainer from './pinnedContainer';
 import IS_LIVE_STREAM_SUPPORTED from '../../environment/liveStreamSupport';
 import ChatTranslation from './translation';
 import {useAppSettings} from '../../stores/appSettings';
+import PopupSendGift from '../popups/sendGift';
+import PaidMessagesInterceptor, {PAYMENT_REJECTED} from './paidMessagesInterceptor';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
 
@@ -498,7 +500,17 @@ export default class ChatTopbar {
       onClick: () => {
         const contactPeerId = this.peerId;
         PopupPickUser.createSharingPicker({
-          onSelect: (peerId) => {
+          onSelect: async(peerId) => {
+            const preparedPaymentResult = await PaidMessagesInterceptor.prepareStarsForPayment({messageCount: 1, peerId});
+            if(preparedPaymentResult === PAYMENT_REJECTED) throw new Error();
+
+            const send = () => {
+              this.managers.appMessagesManager.sendContact(peerId, contactPeerId, preparedPaymentResult);
+              this.chat.appImManager.setInnerPeer({peerId});
+            };
+
+            if(preparedPaymentResult) return void send();
+
             return new Promise((resolve, reject) => {
               PopupElement.createPopup(PopupPeer, '', {
                 titleLangKey: 'SendMessageTitle',
@@ -506,11 +518,9 @@ export default class ChatTopbar {
                 descriptionLangArgs: [new PeerTitle({peerId, dialog: true}).element],
                 buttons: [{
                   langKey: 'Send',
-                  callback: () => {
+                  callback: async() => {
                     resolve();
-
-                    this.managers.appMessagesManager.sendContact(peerId, contactPeerId);
-                    this.chat.appImManager.setInnerPeer({peerId});
+                    send();
                   }
                 }, {
                   langKey: 'Cancel',
@@ -529,9 +539,9 @@ export default class ChatTopbar {
       verify: async() => rootScope.myId !== this.peerId && this.peerId.isUser() && (await this.managers.appPeersManager.isContact(this.peerId)) && !!(await this.managers.appUsersManager.getUser(this.peerId.toUserId())).phone
     }, {
       icon: 'gift',
-      text: 'GiftPremium',
-      onClick: () => this.chat.appImManager.giftPremium(this.peerId),
-      verify: () => this.chat.canGiftPremium()
+      text: 'Chat.Menu.SendGift',
+      onClick: () => PopupElement.createPopup(PopupSendGift, this.peerId),
+      verify: async() => this.chat.isChannel || (this.chat.peerId.isUser() && this.managers.appUsersManager.isRegularUser(this.peerId))
     }, {
       icon: 'statistics',
       text: 'Statistics',
@@ -552,6 +562,7 @@ export default class ChatTopbar {
       icon: 'bots',
       text: 'Settings',
       onClick: () => {
+        // [ ] Bot with paid stars?
         this.managers.appMessagesManager.sendText({peerId: this.peerId, text: '/settings'});
       },
       verify: async() => {

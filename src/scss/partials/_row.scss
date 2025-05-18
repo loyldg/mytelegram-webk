@@ -145,8 +145,16 @@ $row-border-radius: $border-radius-medium;
 
     .row-title,
     .row-subtitle {
-      @include text-overflow(true);
+      overflow: visible;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
       flex: 1 1 auto;
+
+      .peer-title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
     }
   }
 
@@ -254,7 +262,7 @@ $row-border-radius: $border-radius-medium;
       }
 
       &-stars-color {
-        color: #fecf16;
+        color: var(--star-golden-color);
       }
     }
 
@@ -270,7 +278,7 @@ $row-border-radius: $border-radius-medium;
   &-clickable {
     cursor: pointer;
     overflow: hidden;
-    
+
     @include respond-to(not-handhelds) {
       border-radius: $row-border-radius;
     }
@@ -347,7 +355,8 @@ $row-border-radius: $border-radius-medium;
   }
   
   .radio-field,
-  .checkbox-field {
+  .checkbox-field,
+  .offset-left {
     --offset-left: 1rem;
   }
 
