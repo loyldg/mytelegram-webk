@@ -27,7 +27,7 @@
         position: absolute;
         content: " ";
         height: 100%;
-        width: 
+        width:
       } */
       @include hover() {
         .profile-avatars-arrow {
@@ -36,7 +36,7 @@
       }
 
       &.is-single {
-        .profile-avatars-arrow, 
+        .profile-avatars-arrow,
         .profile-avatars-tabs {
           display: none;
         }
@@ -183,7 +183,7 @@
         transition: transform var(--transition-standard-in), color var(--transition-standard-in);
       }
 
-      .profile-name, 
+      .profile-name,
       .profile-subtitle {
         color: currentColor;
         margin: 0;
@@ -281,7 +281,7 @@
       &-next {
         left: auto;
         right: 0;
-        
+
         .profile-avatars-arrow-icon {
           left: auto;
           right: .625rem;
@@ -472,7 +472,7 @@
           &-background {
             fill: #fff;
           }
-  
+
           &-check {
             visibility: hidden;
           }
@@ -619,8 +619,8 @@
     }
   }
 
-  &-name, 
-  &-subtitle, 
+  &-name,
+  &-subtitle,
   &-avatar {
     flex: 0 0 auto;
   }
@@ -664,12 +664,31 @@
     width: 30px;
     height: 30px;
 
+    animation: profile-pinned-gift-fade-in 0.5s forwards;
+
+    @keyframes profile-pinned-gift-fade-in {
+      0% {opacity: 0;}
+      100% {opacity: 1;}
+    }
+
     &[data-idx="0"] { left: -36px; top: -3px; }
     &[data-idx="1"] { left: -96px; top: 57px; }
     &[data-idx="2"] { left: -31px; top: 87px; }
     &[data-idx="3"] { right: -54px; top: 17px; }
     &[data-idx="4"] { right: -114px; top: 37px; }
     &[data-idx="5"] { right: -84px; top: 87px; }
+  }
+
+  &-bot-verification {
+    --custom-emoji-size: 1rem;
+    font-size: 14px;
+    line-height: 16px;
+    padding-inline: 1rem;
+    margin-bottom: 0.75rem;
+    color: var(--secondary-text-color);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 }
 

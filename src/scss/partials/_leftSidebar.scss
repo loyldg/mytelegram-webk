@@ -6,6 +6,7 @@
 
 :root {
   --sidebar-collapsed-width: 80px;
+  --sidebar-max-width: #{calc($large-screen / 4)};
 }
 
 #column-left {
@@ -24,7 +25,7 @@
   }
 
   @include respond-to(no-floating-left-sidebar) {
-    &.is-collapsed {  
+    &.is-collapsed {
       width: var(--sidebar-left-width-when-collapsed, var(--sidebar-collapsed-width));
 
       >.sidebar-slider {
@@ -42,6 +43,15 @@
       #chatlist-container .chatlist {
         padding: 0;
       }
+
+      #chatlist-container .virtual-chatlist {
+        margin: 0 !important;
+      }
+
+      #chatlist-container .loading-dialog-skeleton {
+        padding-left: 13px;
+      }
+
       #chatlist-container .chatlist-chat {
         padding-inline-end: 0;
         border-radius: 0;
@@ -115,7 +125,7 @@
         >:not(.sidebar-header-search-trigger):not(.sidebar-header__btn-container) {
           display: none;
         }
-        body.has-folders-sidebar & { 
+        body.has-folders-sidebar & {
           .sidebar-header-search-trigger {
             width: 40px;
           }
@@ -159,7 +169,7 @@
       top: 0;
       bottom: 0;
       left: calc(max(0px, (100vw - #{$large-screen}) / 2) + var(--sidebar-collapsed-width)) !important;
-      
+
       body:not(.has-folders-sidebar) & {
         left: calc(max(0px, (100vw - #{$large-screen}) / 2)) !important;
       }
@@ -172,7 +182,6 @@
         width: var(--sidebar-left-inner-width-when-collapsed, #{$max-width});
       }
 
-      // #new-menu, 
       .btn-corner.btn-update {
         display: none;
       }
@@ -234,7 +243,7 @@
       pointer-events: none;
     }
   }
-  
+
   @include respond-to(floating-left-sidebar) {
     display: flex;
     position: fixed;
@@ -246,7 +255,7 @@
     transform: translate3d(-5rem, 0, 0);
     transition: transform var(--layer-transition);
     max-width: unset;
-    
+
     body.animation-level-0 & {
       transition: none;
     }
@@ -298,7 +307,7 @@
 
       &:not(.hide) + #folders-container {
         height: calc(100% - var(--scrollable-size));
-  
+
         .scrollable {
           padding-top: .5rem;
         }
@@ -306,7 +315,7 @@
         .dialogs-placeholder-canvas {
           top: .5rem;
         }
-  
+
         /* .chatlist {
           top: .5rem;
         } */
@@ -342,7 +351,7 @@
   /* .folders-tabs-scrollable {
     .menu-horizontal-div-item:first-child {
       margin-inline-start: .6875rem;
-  
+
       @include respond-to(handhelds) {
         margin-inline-start: .1875rem;
       }
@@ -373,7 +382,7 @@
           padding-inline-start: calc(var(--paddingLeft) + 8px - var(--border-width));
         }
       }
-      
+
       &.is-picked-twice {
         .is-first {
           width: 30px;
@@ -397,7 +406,7 @@
         height: 1.5rem;
       }
     }
-  
+
     .search-helper {
       display: flex;
       margin-inline-start: 28px;
@@ -419,10 +428,10 @@
         }
       }
     }
-    
+
     .search-super-tabs-scrollable {
-      flex: 0 0 auto; 
-      position: relative !important; 
+      flex: 0 0 auto;
+      position: relative !important;
 
       &:before {
         display: none;
@@ -467,7 +476,7 @@
     .scrollable-y {
       background-color: transparent;
       position: absolute;
-      
+
       &.active { // fix safari 14.0.2 scrollHeight
         display: block;
       }
@@ -518,7 +527,7 @@
       &-subtitle {
         display: none;
       }
-  
+
       &-title {
         max-width: 65px;
         padding-bottom: .75rem;
@@ -540,12 +549,12 @@
 
     .search-group-scrollable {
       position: relative;
-      
+
       @include respond-to(handhelds) {
         margin-inline-start: -7px;
         margin-top: 4px;
       }
-      
+
       > .scrollable {
         position: relative;
       }
@@ -561,21 +570,21 @@
     }
 
     .btn-corner {
-      &:not(.menu-open) .animated-button-icon-icon-first, 
+      &:not(.menu-open) .animated-button-icon-icon-first,
       &.menu-open .animated-button-icon-icon-last {
         visibility: visible;
         animation: grow-icon .4s forwards ease-in-out;
       }
-    
+
       @include respond-to(handhelds) {
         --size: 54px;
         bottom: 14px;
         inset-inline-end: 14px;
-    
+
         position: fixed !important;
         z-index: 1;
       }
-    
+
       /* html:not(.no-touch) & {
         transform: translateZ(0);
       } */
@@ -594,7 +603,7 @@
     padding: 0 .5rem .5rem;
     overflow: hidden;
     flex: 0 0 auto;
-    
+
     &:not(.is-shown) {
       .connection-status-button {
         display: none;
@@ -603,7 +612,7 @@
 
     &.is-shown {
       &.animating {
-        .connection-status-button, 
+        .connection-status-button,
         & + .connection-status-bottom {
           transition: transform var(--layer-transition);
         }
@@ -762,7 +771,7 @@
         opacity: 0;
         overflow: hidden;
         pointer-events: none;
-        
+
         transition: width 0.12s, opacity 0.12s;
 
         &.is-visible {
@@ -845,7 +854,7 @@
     .badge {
       font-size: 12px;
       color: var(--badge-text-color) !important;
-      background-color: var(--primary-color) !important;  
+      background-color: var(--primary-color) !important;
       height: 20px;
       display: inline-flex;
       margin-inline-start: 1rem;
@@ -919,8 +928,8 @@
   }
 }
 
-.chat-folders-container, 
-.edit-folder-container, 
+.chat-folders-container,
+.edit-folder-container,
 .people-nearby-container {
   user-select: none;
 
@@ -1045,7 +1054,7 @@
     @include respond-to(handhelds) {
       padding-bottom: .5rem;
     }
-  
+
     &-content {
       @include respond-to(not-handhelds) {
         margin: 0 .5rem;
@@ -1062,7 +1071,7 @@
       }
 
       @include respond-to(handhelds) {
-        > .checkbox-ripple, 
+        > .checkbox-ripple,
         > .btn-primary {
           border-radius: 0;
         }
@@ -1080,7 +1089,7 @@
         position: relative;
       }
     }
-  
+
     &-name {
       padding: 1rem;
 
@@ -1267,7 +1276,7 @@
       line-height: var(--line-height-12);
     }
 
-    &-midtitle, 
+    &-midtitle,
     &-subtitle {
       white-space: nowrap;
       overflow: hidden;
@@ -1438,7 +1447,7 @@
   margin: 0 auto;
   padding: 0 1rem;
   position: relative;
-  
+
   .media-sticker-wrapper {
     width: 128px;
     height: 128px;
@@ -1470,7 +1479,7 @@
     opacity: 0;
 
     @include animation-level(2) {
-      transition: opacity .2s ease-in-out;  
+      transition: opacity .2s ease-in-out;
     }
 
     &-icon {
