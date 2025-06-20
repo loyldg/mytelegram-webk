@@ -116,8 +116,11 @@ import {useAppSettings} from '../../stores/appSettings';
 import wrapFolderTitle from '../../components/wrappers/folderTitle';
 import {SequentialCursorFetcher, SequentialCursorFetcherResult} from '../../helpers/sequentialCursorFetcher';
 import SortedDialogList from '../../components/sortedDialogList';
+import throttle from '../../helpers/schedulers/throttle';
+import {MAX_SIDEBAR_WIDTH} from '../../components/sidebarLeft/constants';
 
 export const DIALOG_LIST_ELEMENT_TAG = 'A';
+const DIALOG_LOAD_COUNT = 10;
 
 export type DialogDom = {
   avatarEl: ReturnType<typeof avatarNew>,
@@ -495,7 +498,7 @@ class ForumTab extends SliderSuperTabEventable {
     this.title.replaceWith(this.rows);
     this.rows.append(this.title, this.subtitle);
 
-    this.xd = new Some3(this.peerId, isFloating ? 80 : 0);
+    this.xd = new Some3(this.peerId, isFloating);
     this.xd.scrollable = this.scrollable;
     this.xd.sortedList = new SortedDialogList({
       itemSize: 64,
@@ -505,6 +508,7 @@ class ForumTab extends SliderSuperTabEventable {
       managers: this.managers,
       log: this.log,
       requestItemForIdx: this.xd.requestItemForIdx,
+      onListShrinked: this.xd.onListShrinked,
       indexKey: 'index_0',
       virtualFilterId: this.peerId
     });
@@ -695,11 +699,24 @@ class Some<T extends AnyDialog = AnyDialog> {
   protected placeholderOptions: ConstructorParameters<typeof DialogsPlaceholder>[0];
 
   protected cursorFetcher = new SequentialCursorFetcher((cursor: number) => this.loadDialogs(cursor));
+  protected hasReachedTheEnd = false;
 
   protected skipMigrated = true;
 
   public requestItemForIdx = (idx: number, itemsLength?: number) => {
     this.cursorFetcher.fetchUntil(idx + 1, itemsLength);
+  }
+
+  public onListShrinked = () => {
+    const items = this.sortedList.getSortedItems();
+    const last = items[items.length - 1];
+
+    this.cursorFetcher.setFetchedItemsCount(items.length);
+    this.cursorFetcher.setNeededCount(items.length);
+    this.cursorFetcher.setCursor(last?.index);
+
+    // Make sure the current request is canceled so the cursor is not overriden to a bigger page
+    this.loadDialogsDeferred.reject();
   }
 
   constructor() {
@@ -721,12 +738,27 @@ class Some<T extends AnyDialog = AnyDialog> {
     return this.deleteDialogByKey(this.getDialogKey(dialog));
   }
 
+  /**
+   * @returns Returns `true` if a new dialog was just added
+   */
+  private addOrDeleteDialogIfNeeded(dialog: T, key: any) {
+    if(!this.canUpdateDialog(dialog)) {
+      this.deleteDialog(dialog);
+      return false;
+    }
+
+    if(!this.sortedList.has(key)) {
+      this.sortedList.add(key);
+      return true;
+    }
+
+    return false;
+  }
+
   public updateDialog(dialog: T) {
     const key = this.getDialogKey(dialog);
-    if(!this.sortedList.has(key) && this.loadedDialogsAtLeastOnce) {
-      this.sortedList.add(key);
-      return;
-    }
+
+    if(this.addOrDeleteDialogIfNeeded(dialog, key)) return;
 
     const dialogElement = this.getDialogElement(key);
     if(!dialogElement) {
@@ -741,13 +773,23 @@ class Some<T extends AnyDialog = AnyDialog> {
     this.sortedList.update(key);
   }
 
-  public onChatsScrollTop() {
-    return this.onChatsScroll('top');
-  };
+  protected canUpdateDialog(dialog: T) {
+    const sortedItems = this.sortedList.getSortedItems();
+    const last = sortedItems[sortedItems.length - 1];
 
-  public onChatsScroll(_: SliceSides = 'bottom') {
+    const bottomIndex = last?.index;
+    const dialogIndex = getDialogIndex(dialog);
+
+    return !last || dialogIndex >= bottomIndex || this.hasReachedTheEnd;
+  }
+
+  public onChatsScroll() {
     this.requestItemForIdx(0);
   };
+
+  protected onScrolledBottom() {
+    this.cursorFetcher.tryToFetchMore();
+  }
 
   public createPlaceholder(): DialogsPlaceholder {
     const placeholder = this.placeholder = new DialogsPlaceholder(this.placeholderOptions);
@@ -771,7 +813,7 @@ class Some<T extends AnyDialog = AnyDialog> {
 
   private loadDialogsDeferred: CancellablePromise<SequentialCursorFetcherResult<number>>;
 
-  public async loadDialogs(offsetIndex: number) {
+  public async loadDialogs(offsetIndex?: number) {
     this.loadDialogsDeferred = deferredPromise();
 
     this.loadDialogsInner(offsetIndex)
@@ -803,28 +845,88 @@ class Some<T extends AnyDialog = AnyDialog> {
     throw NOT_IMPLEMENTED_ERROR;
   }
 
-  public async loadDialogsInner(offsetIndex: number): Promise<SequentialCursorFetcherResult<number>> {
-    console.log('[my-debug] loadDialogs offsetIndex :>> ', offsetIndex);
+  public checkForDialogsPlaceholder() {
+    if(this.placeholder || this.loadedDialogsAtLeastOnce) return;
 
-    if(!this.placeholder && !this.loadedDialogsAtLeastOnce) this.placeholder = this.createPlaceholder();
+    this.placeholder = this.createPlaceholder();
+  }
 
+  private guessLoadCount() {
+    // Make sure we have some scroll even when the screen is very huge
+    return Math.max(windowSize.height / 64 * 1.25 | 0, DIALOG_LOAD_COUNT);
+  }
+
+  public async preloadDialogs() {
     const filterId = this.getFilterId();
+
+    await this.managers.acknowledged.dialogsStorage.getDialogs({
+      offsetIndex: 0,
+      limit: this.guessLoadCount(),
+      filterId,
+      skipMigrated: this.skipMigrated
+    });
+
+    this.checkForDialogsPlaceholder();
+  }
+
+  // /**
+  //  * The request might randomly get delayed even if it is cached, so it is good to have a placholder in this case
+  //  */
+  // private putPlaceholderIfRequestIsTooLong<T>(promise: Promise<T> | T) {
+  //   if(!(promise instanceof Promise)) return promise;
+
+  //   const SMALL_TIMEOUT = 5;
+
+  //   const timeout = self.setTimeout(() => {
+  //     if(this.sortedList.itemsLength()) return;
+
+  //     this.placeholder = this.createPlaceholder();
+  //   }, SMALL_TIMEOUT);
+
+  //   promise?.finally(() => {
+  //     self.clearTimeout(timeout);
+  //   });
+
+  //   return promise;
+  // }
+
+  public async loadDialogsInner(offsetIndex?: number): Promise<SequentialCursorFetcherResult<number>> {
+    const filterId = this.getFilterId();
+
+    this.checkForDialogsPlaceholder();
+
+    /**
+     * The first time getDialogs might return `count: null`, which is not good for this
+     * infinite loading implementation, that's why we're refetching after 0.5 seconds to
+     * make sure we get the latest total count of dialogs to properly render the whole list
+     */
+    let shouldRefetch = false;
+    if(appDialogsManager.isFirstDialogsLoad && !offsetIndex) {
+      appDialogsManager.isFirstDialogsLoad = false;
+      shouldRefetch = true;
+    }
 
     const ackedResult = await this.managers.acknowledged.dialogsStorage.getDialogs({
       offsetIndex,
-      limit: 20,
+      limit: this.guessLoadCount(),
       filterId,
       skipMigrated: this.skipMigrated
     });
 
     const result = await ackedResult.result;
 
+    if(shouldRefetch) {
+      setTimeout(async() => {
+        const {totalCount} = await this.loadDialogsInner();
+        this.cursorFetcher.setFetchedItemsCount(totalCount);
+      }, 500);
+    }
+
     const newOffsetIndex = result.dialogs.reduce((prev, curr) => {
       const index = getDialogIndex(curr, this.indexKey)
       return index < prev ? index : prev;
     }, offsetIndex || Infinity);
 
-    console.log('[my-debug] loadDialogs after', result);
     const items = await Promise.all(result.dialogs.map(async dialog => {
       const key = this.getDialogKey(dialog as T);
 
@@ -834,7 +936,9 @@ class Some<T extends AnyDialog = AnyDialog> {
     if(this.loadDialogsDeferred?.isRejected) throw new Error();
 
     this.loadedDialogsAtLeastOnce = true;
-    this.sortedList.addDeferredItems(items, result.count);
+    this.hasReachedTheEnd = !!result.isEnd;
+
+    this.sortedList.addDeferredItems(items, result.count || 0);
 
     this.placeholder?.detach(this.sortedList.itemsLength());
 
@@ -892,8 +996,9 @@ class Some<T extends AnyDialog = AnyDialog> {
   }
 
   public bindScrollable() {
-    this.scrollable.onScrolledTop = this.onChatsScrollTop.bind(this);
-    this.scrollable.onScrolledBottom = this.onChatsScroll.bind(this);
+    this.scrollable.onScrolledBottom = throttle(() => {
+      this.onScrolledBottom();
+    }, 200, false);
   }
 
   public clear() {
@@ -901,6 +1006,7 @@ class Some<T extends AnyDialog = AnyDialog> {
     this.placeholder?.remove();
     this.loadDialogsDeferred?.reject();
     this.cursorFetcher.reset();
+    this.hasReachedTheEnd = false;
   }
 
   public reset() {
@@ -923,7 +1029,7 @@ class Some<T extends AnyDialog = AnyDialog> {
 }
 
 class Some3 extends Some<ForumTopic> {
-  constructor(public peerId: PeerId, public paddingX: number) {
+  constructor(public peerId: PeerId, public isFloating: boolean) {
     super();
 
     this.skipMigrated = !!CAN_HIDE_TOPIC;
@@ -951,7 +1057,7 @@ class Some3 extends Some<ForumTopic> {
     });
 
     this.listenerSetter.add(rootScope)('dialogs_multiupdate', (dialogs) => {
-      for(const [peerId, {dialog, topics}] of dialogs) {
+      for(const [peerId, {topics}] of dialogs) {
         if(peerId !== this.peerId || !topics?.size) {
           continue;
         }
@@ -998,7 +1104,7 @@ class Some3 extends Some<ForumTopic> {
       this.deleteDialogByKey(this.getDialogKey(dialog));
     });
 
-    this.listenerSetter.add(rootScope)('dialog_draft', ({dialog, drop, peerId}) => {
+    this.listenerSetter.add(rootScope)('dialog_draft', ({dialog, drop}) => {
       if(!isForumTopic(dialog) || dialog.peerId !== this.peerId) {
         return;
       }
@@ -1023,12 +1129,15 @@ class Some3 extends Some<ForumTopic> {
     return (): DOMRectEditable => {
       const sidebarRect = appSidebarLeft.rect;
       const paddingY = 56;
+      const paddingX = this.isFloating ? 80 : 0;
+      const width = this.isFloating ? MAX_SIDEBAR_WIDTH - paddingX : sidebarRect.width;
+
       return {
         top: paddingY,
         right: sidebarRect.right,
         bottom: 0,
-        left: this.paddingX,
-        width: sidebarRect.width - this.paddingX,
+        left: paddingX,
+        width,
         height: sidebarRect.height - paddingY
       };
     };
@@ -1040,6 +1149,11 @@ class Some3 extends Some<ForumTopic> {
 
   protected getFilterId() {
     return this.peerId;
+  }
+
+  protected canUpdateDialog(dialog: ForumTopic): boolean {
+    if(dialog.pFlags.hidden) return false;
+    return super.canUpdateDialog(dialog);
   }
 }
 
@@ -1196,7 +1310,6 @@ export class Some2 extends Some<Dialog> {
     const scrollable = new Scrollable(null, 'CL', 500);
     scrollable.container.dataset.filterId = '' + filterId;
 
-    console.log('[my-debug] sorted dialog list created');
     const indexKey = getDialogIndexKey(filter.localId);
     const sortedDialogList = new SortedDialogList({
       appDialogsManager,
@@ -1205,9 +1318,9 @@ export class Some2 extends Some<Dialog> {
       scrollable: scrollable,
       indexKey,
       requestItemForIdx: this.requestItemForIdx,
+      onListShrinked: this.onListShrinked,
       itemSize: 72,
       onListLengthChange: () => {
-        console.log('[my-debug] onListLengthChange :>> ', sortedDialogList.itemsLength());
         scrollable.onSizeChange();
         appDialogsManager.onListLengthChange?.();
       }
@@ -1294,13 +1407,12 @@ export class Some2 extends Some<Dialog> {
     this.setCallStatus(dom, !!(chat.pFlags.call_active && chat.pFlags.call_not_empty));
   }
 
-  public onChatsScroll(side: SliceSides = 'bottom') {
-    if(this.scrollable.loadedAll[side]) {
+  protected onScrolledBottom() {
+    super.onScrolledBottom();
+
+    if(this.hasReachedTheEnd) {
       appDialogsManager.loadContacts?.();
     }
-
-    this.log('onChatsScroll', side);
-    return super.onChatsScroll(side);
   }
 
   public toggleAvatarUnreadBadges(value: boolean, useRafs: number) {
@@ -1351,6 +1463,11 @@ export class Some2 extends Some<Dialog> {
 
   public getDialogFromElement(element: HTMLElement) {
     return rootScope.managers.appMessagesManager.getDialogOnly(element.dataset.peerId.toPeerId());
+  }
+
+  protected canUpdateDialog(dialog: Dialog): boolean {
+    if(dialog.migratedTo !== undefined || !this.testDialogForFilter(dialog)) return false;
+    return super.canUpdateDialog(dialog);
   }
 }
 
@@ -1480,6 +1597,7 @@ export class AppDialogsManager {
   private selectTab: ReturnType<typeof horizontalMenu>;
 
   public doNotRenderChatList: boolean;
+  public isFirstDialogsLoad: boolean;
 
   private stateMiddlewareHelper: MiddlewareHelper;
 
@@ -1500,7 +1618,6 @@ export class AppDialogsManager {
   public resizeStoriesList: () => void;
 
   public start() {
-    console.log('[my-debug] app dialogs manager started');
     const managers = this.managers = getProxiedManagers();
 
     this.contextMenu = new DialogsContextMenu(managers);
@@ -1925,10 +2042,11 @@ export class AppDialogsManager {
     }
 
     this.doNotRenderChatList = true;
-    // const loadDialogsPromise = this.xd.onChatsScroll();
-    const m = middlewarePromise(middleware);
+    this.isFirstDialogsLoad = true;
+
+    const wrapPromiseWithMiddleware = middlewarePromise(middleware);
     try {
-      // await m(loadDialogsPromise);
+      await wrapPromiseWithMiddleware(this.xd.preloadDialogs());
     } catch(err) {
 
     }
@@ -1938,7 +2056,7 @@ export class AppDialogsManager {
       this.selectTab(0, false);
     }
 
-    addFiltersPromise && await m(addFiltersPromise);
+    addFiltersPromise && await wrapPromiseWithMiddleware(addFiltersPromise);
     // this.folders.menu.children[0].classList.add('active');
 
     this.renderStories();
@@ -1952,7 +2070,7 @@ export class AppDialogsManager {
       this.initedListeners = true;
     }
 
-    haveFilters && this.showFiltersPromise && await m(this.showFiltersPromise);
+    haveFilters && this.showFiltersPromise && await wrapPromiseWithMiddleware(this.showFiltersPromise);
 
     this.managers.appNotificationsManager.getNotifyPeerTypeSettings();
 
@@ -3162,7 +3280,7 @@ export class AppDialogsManager {
       dialogElement.createUnreadBadge();
     }
 
-    const hasUnreadAvatarBadge = this.xd !== this.xds[FOLDER_ID_ARCHIVE] && !isTopic && (!!this.forumTab || appSidebarLeft.isCollapsed()) && this.xd.getDialogElement(peerId) === dialogElement && isDialogUnread;
+    const hasUnreadAvatarBadge = this.xd !== this.xds[FOLDER_ID_ARCHIVE] && !isTopic && (!!this.forumTab || appSidebarLeft.isCollapsed()) && isDialogUnread;
 
     const isUnreadAvatarBadgeMounted = !!dom.unreadAvatarBadge;
     if(hasUnreadAvatarBadge) {

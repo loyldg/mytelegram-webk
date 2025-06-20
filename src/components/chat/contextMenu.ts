@@ -78,6 +78,7 @@ import PopupStarReaction from '../popups/starReaction';
 import getUniqueCustomEmojisFromMessage from '../../lib/appManagers/utils/messages/getUniqueCustomEmojisFromMessage';
 import getPeerTitle from '../wrappers/getPeerTitle';
 import {getFullDate} from '../../helpers/date/getFullDate';
+import PaidMessagesInterceptor, {PAYMENT_REJECTED} from './paidMessagesInterceptor';
 
 type ChatContextMenuButton = ButtonMenuItemOptions & {
   verify: () => boolean | Promise<boolean>,
@@ -802,6 +803,11 @@ export default class ChatContextMenu {
       notDirect: () => true,
       localName: 'views'
     }, {
+      icon: 'rotate_right',
+      text: 'Resend',
+      onClick: () => this.handleRepay(),
+      verify: () => 'repayRequest' in this.message && !!this.message.repayRequest
+    }, {
       icon: 'delete',
       className: 'danger',
       text: 'Delete',
@@ -1094,16 +1100,18 @@ export default class ChatContextMenu {
     let reactionsMenu: ChatReactionsMenu;
     let reactionsMenuPosition: 'horizontal' | 'vertical';
     if(
-      this.message?._ === 'message' &&
+      (this.message._ === 'message' || (this.message._ === 'messageService' && this.message.pFlags.reactions_are_possible)) &&
       !this.chat.selection.isSelecting &&
       !this.message.pFlags.is_outgoing &&
-      !this.message.pFlags.is_scheduled &&
+      !(this.message._ === 'message' && this.message.pFlags.is_scheduled) &&
       !this.message.pFlags.local &&
       !this.reactionElement
     ) {
       const reactions = this.message.reactions;
       const tags = this.message.peerId === rootScope.myId && (!reactions || reactions.pFlags.reactions_as_tags);
-      const reactionsMessage = await this.managers.appMessagesManager.getGroupsFirstMessage(this.message);
+      const reactionsMessage = this.message._ === 'message' ?
+        await this.managers.appMessagesManager.getGroupsFirstMessage(this.message) :
+        this.message;
       reactionsMenuPosition = (IS_APPLE || IS_TOUCH_SUPPORTED) || true/*  && false */ ? 'horizontal' : 'vertical';
       reactionsMenu = this.reactionsMenu = new ChatReactionsMenu({
         managers: this.managers,
@@ -1527,6 +1535,18 @@ export default class ChatContextMenu {
     this.chat.topbar.appSidebarRight.createTab(AppStatisticsTab).open(this.messagePeerId.toChatId(), this.mid);
     this.chat.topbar.appSidebarRight.toggleSidebar(true);
   };
+
+  private async handleRepay() {
+    if(!('repayRequest' in this.message) || !this.message.repayRequest) return;
+
+    const preparedPaymentResult = await this.chat.input.paidMessageInterceptor.prepareStarsForPayment(
+      this.message.repayRequest.messageCount
+    );
+
+    if(preparedPaymentResult === PAYMENT_REJECTED) return;
+
+    this.managers.appMessagesManager.confirmRepayRequest(this.message.repayRequest.id, preparedPaymentResult);
+  }
 
   public static onDownloadClick(messages: MyMessage | MyMessage[], noForwards?: boolean): DownloadBlob | DownloadBlob[] {
     if(Array.isArray(messages)) {
