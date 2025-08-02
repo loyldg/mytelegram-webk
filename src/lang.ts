@@ -22,6 +22,7 @@ const lang = {
   'EditProfile.Username.Taken': 'Username is already taken',
   'EditProfile.Username.Invalid': 'Username is invalid',
   'EditFolder.Toast.ChooseChat': 'Please choose at least one chat for this folder.',
+  'EditFolder.EmojiAsIconTip': 'If you put only one emoji at the beginning (or at the end), it will be displayed as the icon in the folders sidebar',
   'EditBot.Title': 'Edit Bot',
   'EditBot.Username.Caption': 'This username cannot be edited.',
   'EditBot.Buttons.Caption': 'Use [@BotFather](https://t.me/botfather) to manage this bot.',
@@ -877,12 +878,15 @@ const lang = {
   'MediaEditor.Adjustments.Sharpen': 'Sharpen',
   'MediaEditor.DiscardChanges': 'Discard Changes',
   'MediaEditor.DiscardWarning': 'Are you sure you want to discard your changes?',
+  'MediaEditor.VideoMutedTooltip': 'Sound is muted, the video will loop like a GIF if it\'s short enough',
+
   'MultiAccount.AddAccount': 'Add Account',
   'MultiAccount.More': 'More',
   'MultiAccount.ShowNotificationsFrom': 'Show Notifications From',
   'MultiAccount.ShowNotificationsFromCaption': 'Turn this off if you want to receive notifications only from the account you are currently using.',
   'MultiAccount.AllAccounts': 'All Accounts',
   'MultiAccount.AccountsLimitDescription': 'You have reached the limit of **3** connected accounts. You can add more by subscribing to **Telegram Premium**.',
+
   'CtrlFSearchTipMac': 'Tip: Use **Cmd+F** to open Search',
 
   // * android
@@ -2452,8 +2456,8 @@ const lang = {
   'FactCheckWhat': 'what’s this?',
   'FactCheckDialog': 'Fact Check',
   'FactCheckPlaceholder': 'Add Fact or Context',
-  'FactCheckToast': 'This clarification was provided by a fact checking agency assigned by the department of the government of your country (%s) responsible for combating misinformation.',
-  'FactCheckFooter': 'This clarification was provided by a fact checking agency assigned by the department of the government of your country (%s) responsible for combating misinformation.',
+  'FactCheckToast': 'This clarification was provided by Telegram.',
+  'FactCheckFooter': 'This clarification was provided by Telegram.',
   'FactCheckEdited': 'Fact check updated.',
   'FactCheckDeleted': 'Fact check removed.',
   'CaptionAbove': 'Move Caption Up',
@@ -3333,7 +3337,7 @@ const lang = {
     'one_value': 'You paid **%2$s** to send a message',
     'other_value': 'You paid **%2$s** to send %1$d messages.'
   },
-  'PaidMessages.YouReceivedStarsFrom': 'You received **%s** from %s',
+  'PaidMessages.YouReceivedStarsFrom': '%1$s paid %2$s to send a message',
   'PaidMessages.FeeForMessages': {
     'one_value': 'Fee for %d message',
     'other_value': 'Fee for %d messages'
@@ -3374,6 +3378,11 @@ const lang = {
   'ConfirmPayment': 'Confirm Payment',
   'Undo': 'Undo',
   'Resend': 'Resend',
+  'Quality': 'Quality',
+  'AddToFolder': 'Add to Folder',
+  'AddToFolderSearch': 'Type to search quickly',
+  'AddToFolderTip': 'Hold Shift to select more folders at once',
+  'AddToFolderEmptySearchResult': 'Tip: Use **Escape** to clear the search',
 
   'BotSetEmojiStatusTitle': 'Set Emoji Status',
   'BotSetEmojiStatusText': 'Do you want to set this emoji status suggested by **%s**?',
@@ -3382,7 +3391,7 @@ const lang = {
   'BotLocationAccessText': '**%s** requests access to your location. You can revoke this access anytime on the profile page of **%s**.',
   'BotAllowAccessTo': 'Allow access to',
   'BotAllowAccessToEmojiStatus': 'Emoji status',
-  'BotAllowAccessToLocation': 'Location',
+  'BotAllowAccessToLocation': 'Geolocation',
   'BotDownloadPromptTitle': 'Download file',
   'BotDownloadPromptText': '**%s** is asking to download a file with name **%s**',
   'BotDownloadPromptManual': 'Failed to download the file directly. Click "Confirm" to open the file in a new tab.',
@@ -3396,7 +3405,36 @@ const lang = {
   'UnknownUserSharedGroups': 'Shared groups',
   'UnknownUserUnofficial': 'Not an official account',
   'UnknownUserName': 'User updated name %s ago',
-  'UnknownUserPhoto': 'User updated photo %s ago'
+  'UnknownUserPhoto': 'User updated photo %s ago',
+
+  'VerificationCodesBotDescription': 'Third-party services, like websites and stores, can send verification codes to your phone number via Telegram instead of SMS. Such codes will appear in this chat.\n\nIf you didn\'t request any codes – don\'t worry! Most likely, someone made a mistake when entering their number.',
+  'NewChecklist': 'New Checklist',
+  'EditChecklist': 'Edit Checklist',
+  'Checklist': 'Checklist',
+  'GroupChecklist': 'Group Checklist',
+  'ChecklistCompleted': '%s of %s tasks completed',
+  'NewChecklist.TitlePlaceholder': 'Title...',
+  'NewChecklist.TaskPlaceholder': 'Task',
+  'ChecklistAddedTask': '**%s** added a new task **"%s"** to **"%s"**.',
+  'ChecklistAddedTaskMany': '**%s** added %s to **"%s"**.',
+  'ChecklistMarkedDone': '**%s** marked %s as done.',
+  'ChecklistMarkedUndone': '**%s** marked %s as not done.',
+  'ChecklistMarkedMixed': '**%s** marked %s as done and %s as not done.',
+  'ChecklistAddTasks': 'Add Tasks',
+  'ChecklistOptions': 'Checklist options',
+  'ChecklistReadonlyForwarded': 'You can\'t edit forwarded checklists.',
+  'ChecklistReadonlyPersonal': '**%s** has restricted others from marking tasks as done.',
+  'ChecklistCheck': 'Check',
+  'ChecklistUncheck': 'Uncheck',
+  'ChecklistEditItem': 'Edit Item',
+  'ChecklistDeleteItem': 'Delete Item',
+  'AllChats': 'All Chats',
+  'UsersOnly': 'Private Chats',
+  'GroupsOnly': 'Group Chats',
+  'ChannelsOnly': 'Channels',
+  'NoResultsTitle': 'No results',
+  'NoResultsSubtitle': 'Try a different search term',
+  'SearchInAllChats': 'Search in All Chats'
 };
 
 export default lang;

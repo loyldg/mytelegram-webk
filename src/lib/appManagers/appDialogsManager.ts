@@ -12,7 +12,7 @@ import type {AnyDialog} from '../storages/dialogs';
 import type {CustomEmojiRendererElement} from '../customEmoji/renderer';
 import PopupElement from '../../components/popups';
 import DialogsContextMenu from '../../components/dialogsContextMenu';
-import {horizontalMenu} from '../../components/horizontalMenu';
+import {horizontalMenu, horizontalMenuObjArgs} from '../../components/horizontalMenu';
 import ripple from '../../components/ripple';
 import Scrollable, {ScrollableX, SliceSides} from '../../components/scrollable';
 import {formatDateAccordingToTodayNew} from '../../helpers/date';
@@ -31,7 +31,7 @@ import lottieLoader from '../rlottie/lottieLoader';
 import wrapPhoto from '../../components/wrappers/photo';
 import AppEditFolderTab from '../../components/sidebarLeft/tabs/editFolder';
 import appSidebarLeft from '../../components/sidebarLeft';
-import {attachClickEvent} from '../../helpers/dom/clickEvent';
+import {attachClickEvent, CLICK_EVENT_NAME, simulateClickEvent} from '../../helpers/dom/clickEvent';
 import positionElementByIndex from '../../helpers/dom/positionElementByIndex';
 import replaceContent from '../../helpers/dom/replaceContent';
 import ConnectionStatusComponent from '../../components/connectionStatus';
@@ -118,6 +118,7 @@ import {SequentialCursorFetcher, SequentialCursorFetcherResult} from '../../help
 import SortedDialogList from '../../components/sortedDialogList';
 import throttle from '../../helpers/schedulers/throttle';
 import {MAX_SIDEBAR_WIDTH} from '../../components/sidebarLeft/constants';
+import {unwrap} from 'solid-js/store';
 
 export const DIALOG_LIST_ELEMENT_TAG = 'A';
 const DIALOG_LOAD_COUNT = 10;
@@ -166,6 +167,10 @@ function setPromiseMiddleware<T extends {[smth in K as K]?: CancellablePromise<v
   return {deferred, middleware};
 }
 
+function getFolderTitleTextColor(active: boolean) {
+  return active ? 'primary-color' : 'secondary-text-color';
+}
+
 const BADGE_SIZE = 22;
 const BADGE_TRANSITION_TIME = 250;
 
@@ -191,7 +196,8 @@ type DialogElementOptions = {
   wrapOptions: WrapSomethingOptions,
   isMainList?: boolean,
   withStories?: boolean,
-  controlled?: boolean
+  controlled?: boolean,
+  dontSetActive?: boolean
 };
 export class DialogElement extends Row {
   private static BADGE_ORDER: Parameters<DialogElement['toggleBadgeByKey']>[0][] = ['reactionsBadge', 'mentionsBadge', 'unreadBadge', 'pinnedBadge'];
@@ -212,7 +218,8 @@ export class DialogElement extends Row {
     wrapOptions = {},
     isMainList,
     withStories,
-    controlled
+    controlled,
+    dontSetActive
   }: DialogElementOptions) {
     super({
       clickable: true,
@@ -270,7 +277,7 @@ export class DialogElement extends Row {
 
     this.titleRow.classList.add('dialog-title');
 
-    const isActive = !autonomous &&
+    const isActive = !dontSetActive && !autonomous &&
       appImManager.chat &&
       appImManager.isSamePeer(appImManager.chat, {peerId, threadId: threadId, type: isSavedDialog ? ChatType.Saved : ChatType.Chat});
 
@@ -444,7 +451,7 @@ class ForumTab extends SliderSuperTabEventable {
 
   private log: ReturnType<typeof logger>;
 
-  private xd: Some3;
+  public xd: Some3;
 
   public async toggle(value: boolean) {
     if(this.init2) {
@@ -1490,7 +1497,7 @@ export class Some4 extends Some<SavedDialog> {
       for(const [peerId, {saved}] of dialogs) {
         saved?.forEach((dialog) => {
           hasAnyUpdate = true;
-          this.updateDialog(dialog);
+          this.updateDialog(dialog as SavedDialog);
         });
       }
 
@@ -1705,61 +1712,71 @@ export class AppDialogsManager {
 
     const foldersScrollable = new ScrollableX(this.folders.menuScrollContainer);
     bottomPart.prepend(this.folders.menuScrollContainer);
-    const selectTab = this.selectTab = horizontalMenu(this.folders.menu, this.folders.container, async(id, tabContent) => {
-      /* if(id !== 0) {
-        id += 1;
-      } */
+    const selectTab = this.selectTab = horizontalMenuObjArgs({
+      tabs: this.folders.menu,
+      content: this.folders.container,
+      onClick: async(id, tabContent) => {
+        /* if(id !== 0) {
+          id += 1;
+        } */
 
-      const _id = id;
-      id = +tabContent.dataset.filterId || FOLDER_ID_ALL;
+        const _id = id;
+        id = +tabContent.dataset.filterId || FOLDER_ID_ALL;
 
-      rootScope.dispatchEventSingle('changing_folder_from_chatlist', id);
+        rootScope.dispatchEventSingle('changing_folder_from_chatlist', id);
 
-      const isFilterAvailable = this.filterId === -1 || REAL_FOLDERS.has(id) || await this.managers.filtersStorage.isFilterIdAvailable(id);
-      if(!isFilterAvailable) {
-        showLimitPopup('folders');
-        return false;
-      }
+        const isFilterAvailable = this.filterId === -1 || REAL_FOLDERS.has(id) || await this.managers.filtersStorage.isFilterIdAvailable(id);
+        if(!isFilterAvailable) {
+          showLimitPopup('folders');
+          return false;
+        }
 
-      const wasFilterId = this.filterId;
-      if(!IS_MOBILE_SAFARI) {
-        if(_id) {
-          if(!this.filtersNavigationItem) {
-            this.filtersNavigationItem = {
-              type: 'filters',
-              onPop: () => {
-                selectTab(0);
-                this.filtersNavigationItem = undefined;
-              }
-            };
+        const wasFilterId = this.filterId;
+        if(!IS_MOBILE_SAFARI) {
+          if(_id) {
+            if(!this.filtersNavigationItem) {
+              this.filtersNavigationItem = {
+                type: 'filters',
+                onPop: () => {
+                  selectTab(0);
+                  this.filtersNavigationItem = undefined;
+                }
+              };
 
-            appNavigationController.spliceItems(1, 0, this.filtersNavigationItem);
+              appNavigationController.spliceItems(1, 0, this.filtersNavigationItem);
+            }
+          } else if(this.filtersNavigationItem) {
+            appNavigationController.removeItem(this.filtersNavigationItem);
+            this.filtersNavigationItem = undefined;
           }
-        } else if(this.filtersNavigationItem) {
-          appNavigationController.removeItem(this.filtersNavigationItem);
-          this.filtersNavigationItem = undefined;
         }
-      }
 
-      if(wasFilterId === id) return;
+        if(wasFilterId === id) return;
 
-      this.xds[id].clear();
-      const promise = this.setFilterIdAndChangeTab(id).then(() => {
-        // if(cached) {
-        //   return renderPromise;
-        // }
-      });
+        this.xds[id].clear();
+        const promise = this.setFilterIdAndChangeTab(id).then(() => {
+          // if(cached) {
+          //   return renderPromise;
+          // }
+        });
 
-      if(wasFilterId !== -1) {
-        return promise;
-      }
-    }, () => {
-      for(const folderId in this.xds) {
-        if(+folderId !== this.filterId) {
-          this.xds[folderId].clear();
+        if(wasFilterId !== -1) {
+          return promise;
         }
+      },
+      onTransitionEnd: () => {
+        for(const folderId in this.xds) {
+          if(+folderId !== this.filterId) {
+            this.xds[folderId].clear();
+          }
+        }
+      },
+      scrollableX: foldersScrollable,
+      onChange: ({element, active}) => {
+        const renderer: CustomEmojiRendererElement = element?.querySelector('custom-emoji-renderer-element');
+        renderer?.setTextColor(getFolderTitleTextColor(active));
       }
-    }, undefined, foldersScrollable);
+    });
 
     createFolderContextMenu({
       appSidebarLeft,
@@ -1773,7 +1790,7 @@ export class AppDialogsManager {
     apiManagerProxy.getState().then((state) => {
       const [appSettings, setAppSettings] = useAppSettings();
       // * it should've had a better place :(
-      appMediaPlaybackController.setPlaybackParams(appSettings.playbackParams);
+      appMediaPlaybackController.setPlaybackParams(unwrap(appSettings.playbackParams));
       appMediaPlaybackController.addEventListener('playbackParams', (params) => {
         setAppSettings('playbackParams', params);
       });
@@ -1896,11 +1913,13 @@ export class AppDialogsManager {
         }
       }
 
-      const elements = Array.from(document.querySelectorAll(`[data-autonomous="0"] .chatlist-chat[data-peer-id="${peerId}"]`)) as HTMLElement[];
-      elements.forEach((element) => {
-        const elementThreadId = +element.dataset.threadId || undefined;
+      const elements = [this.xd?.sortedList?.get?.(peerId), this.forumTab?.xd?.sortedList?.get(threadId)].filter(Boolean);
+
+      elements.forEach(element => {
+        if(!element?.dom?.listEl) return;
+        const elementThreadId = +element?.dom?.listEl?.dataset?.threadId || undefined;
         if(appImManager.isSamePeer({peerId, threadId: elementThreadId}, options)) {
-          this.setDialogActive(element, true);
+          this.setDialogActive(element.dom?.listEl, true);
         }
       });
       // this.log('peer_changed total time:', performance.now() - perf);
@@ -1917,7 +1936,8 @@ export class AppDialogsManager {
       }
 
       const elements = this.filtersRendered[filter.id];
-      setInnerHTML(elements.title, await wrapFolderTitle(filter.title, elements.middlewareHelper.get()));
+      const active = this.filterId === filter.id;
+      setInnerHTML(elements.title, await wrapFolderTitle(filter.title, elements.middlewareHelper.get(), false, {textColor: getFolderTitleTextColor(active)}));
     });
 
     rootScope.addEventListener('filter_delete', (filter) => {
@@ -2294,7 +2314,7 @@ export class AppDialogsManager {
     const titleSpan = document.createElement('span');
     titleSpan.classList.add('text-super');
     if(id === FOLDER_ID_ALL) titleSpan.append(this.allChatsIntlElement.element);
-    else setInnerHTML(titleSpan, wrapFolderTitle(filter.title, middlewareHelper.get(), true));
+    else setInnerHTML(titleSpan, wrapFolderTitle(filter.title, middlewareHelper.get(), true, {textColor: 'secondary-text-color'}));
     const unreadSpan = createBadge('div', 20, 'primary');
     const i = document.createElement('i');
     span.append(titleSpan, unreadSpan, i);
@@ -2828,6 +2848,19 @@ export class AppDialogsManager {
       const peerId = elem.dataset.peerId.toPeerId();
       const lastMsgId = +elem.dataset.mid || undefined;
       const threadId = +elem.dataset.threadId || undefined;
+
+      const isSponsored = elem.dataset.sponsored === 'true';
+      if(isSponsored) {
+        const chip = elem.querySelector('.sponsored-peer-chip');
+        // if click was inside chip, open menu
+        const rect = chip.getBoundingClientRect();
+        if(e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          if(!IS_TOUCH_SUPPORTED) {
+            simulateClickEvent(chip as HTMLElement);
+          }
+          return;
+        }
+      }
 
       if(onFound?.(elem) === false) {
         return;
