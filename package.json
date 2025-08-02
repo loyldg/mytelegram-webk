@@ -6,6 +6,7 @@
   "scripts": {
     "preinstall": "npx only-allow pnpm",
     "start": "vite --force",
+    "start-in-docker": "vite --force --host",
     "serve": "pnpm run build; node server.js",
     "build": "pnpm run generate-changelog && vite build",
     "test": "vitest",

@@ -97,7 +97,7 @@ class RtmpStream {
 
   private _log: ReturnType<typeof logger>;
 
-  constructor(readonly call: InputGroupCall, readonly accountNumber: ActiveAccountNumber) {
+  constructor(readonly call: InputGroupCall.inputGroupCall, readonly accountNumber: ActiveAccountNumber) {
     this.decodeOpus = this.decodeOpus.bind(this);
     this._log = logger('RTMP-' + (Date.now() + '').slice(-2));
     this._log('constructor', call.id);
@@ -165,7 +165,7 @@ class RtmpStream {
         video_channel: RTMP_UNIFIED_CHANNEL_ID,
         video_quality: RTMP_UNIFIED_QUALITY
       }
-    }) as VideoStreamInfo;
+    });
     const rtt = Date.now() - now;
     this.updateRtt(rtt);
     log(`ended fetch time=${time}, rtt=${rtt}`);

@@ -18,7 +18,7 @@ import LazyLoadQueueBase from '../../components/lazyLoadQueueBase';
 import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
 import tsNow from '../../helpers/tsNow';
 import {randomLong} from '../../helpers/random';
-import {Chat, ChatFull, Dialog as MTDialog, DialogPeer, DocumentAttribute, InputMedia, InputMessage, InputPeerNotifySettings, InputSingleMedia, Message, MessageAction, MessageEntity, MessageFwdHeader, MessageMedia, MessageReplies, MessageReplyHeader, MessagesDialogs, MessagesFilter, MessagesMessages, MethodDeclMap, NotifyPeer, PeerNotifySettings, PhotoSize, SendMessageAction, Update, Photo, Updates, ReplyMarkup, InputPeer, InputPhoto, InputDocument, InputGeoPoint, WebPage, GeoPoint, ReportReason, MessagesGetDialogs, InputChannel, InputDialogPeer, ReactionCount, MessagePeerReaction, MessagesSearchCounter, Peer, MessageReactions, Document, InputFile, Reaction, ForumTopic as MTForumTopic, MessagesForumTopics, MessagesGetReplies, MessagesGetHistory, MessagesAffectedHistory, UrlAuthResult, MessagesTranscribedAudio, ReadParticipantDate, WebDocument, MessagesSearch, MessagesSearchGlobal, InputReplyTo, InputUser, MessagesSendMessage, MessagesSendMedia, MessagesGetSavedHistory, MessagesSavedDialogs, SavedDialog as MTSavedDialog, User, MissingInvitee, TextWithEntities, ChannelsSearchPosts, FactCheck, MessageExtendedMedia, SponsoredMessage, MessagesSponsoredMessages} from '../../layer';
+import {Chat, ChatFull, Dialog as MTDialog, DialogPeer, DocumentAttribute, InputMedia, InputMessage, InputPeerNotifySettings, InputSingleMedia, Message, MessageAction, MessageEntity, MessageFwdHeader, MessageMedia, MessageReplies, MessageReplyHeader, MessagesDialogs, MessagesFilter, MessagesMessages, MethodDeclMap, NotifyPeer, PeerNotifySettings, PhotoSize, SendMessageAction, Update, Photo, Updates, ReplyMarkup, InputPeer, InputPhoto, InputDocument, InputGeoPoint, WebPage, GeoPoint, ReportReason, MessagesGetDialogs, InputChannel, InputDialogPeer, ReactionCount, MessagePeerReaction, MessagesSearchCounter, Peer, MessageReactions, Document, InputFile, Reaction, ForumTopic as MTForumTopic, MessagesForumTopics, MessagesGetReplies, MessagesGetHistory, MessagesAffectedHistory, UrlAuthResult, MessagesTranscribedAudio, ReadParticipantDate, WebDocument, MessagesSearch, MessagesSearchGlobal, InputReplyTo, InputUser, MessagesSendMessage, MessagesSendMedia, MessagesGetSavedHistory, MessagesSavedDialogs, SavedDialog as MTSavedDialog, User, MissingInvitee, TextWithEntities, ChannelsSearchPosts, FactCheck, MessageExtendedMedia, SponsoredMessage, MessagesSponsoredMessages, InputGroupCall, TodoItem, TodoCompletion} from '../../layer';
 import {ArgumentTypes, InvokeApiOptions, Modify} from '../../types';
 import {logger, LogTypes} from '../logger';
 import {ReferenceContext} from '../mtproto/referenceDatabase';
@@ -82,6 +82,9 @@ import commonStateStorage from '../commonStateStorage';
 import PaidMessagesQueue from './utils/messages/paidMessagesQueue';
 import type {ConfirmedPaymentResult} from '../../components/chat/paidMessagesInterceptor';
 import RepayRequestHandler, {RepayRequest} from '../mtproto/repayRequestHandler';
+import canVideoBeAnimated from './utils/docs/canVideoBeAnimated';
+import getPhotoInput from './utils/photos/getPhotoInput';
+import {BatchProcessor} from '../../helpers/sortedList';
 
 // console.trace('include');
 // TODO: если удалить диалог находясь в папке, то он не удалится из папки и будет виден в настройках
@@ -108,6 +111,8 @@ export type SendFileDetails = {
   height: number,
   objectURL: string,
   thumb: {
+    isCover?: boolean;
+
     blob: Blob,
     url: string,
     size: MediaSize
@@ -260,6 +265,7 @@ export type RequestHistoryOptions = {
   isPublicHashtag?: boolean,
   isCacheableSearch?: boolean,
   hashtagType?: 'this' | 'my' | 'public',
+  chatType?: 'all' | 'users' | 'groups' | 'channels',
   recursion?: boolean,                  // ! FOR INNER USE ONLY
   historyType?: HistoryType,            // ! FOR INNER USE ONLY
   searchType?: 'cached' | 'uncached'    // ! FOR INNER USE ONLY
@@ -271,6 +277,17 @@ type GetUnreadMentionsOptions = {
   peerId: PeerId,
   threadId?: number,
   isReaction?: boolean
+};
+
+type UploadThumbAndCoverArgs = {
+  peer: InputPeer;
+  blob: Blob;
+  isCover: boolean;
+};
+
+type UploadVideoCoverArgs = {
+  peer: InputPeer;
+  file: InputFile;
 };
 
 type MessageContext = {searchStorages?: Set<HistoryStorage>};
@@ -372,6 +389,7 @@ export class AppMessagesManager extends AppManager {
   private historyMaxIdSubscribed: Map<HistoryStorageKey, number> = new Map();
 
   private factCheckBatcher: Batcher<PeerId, number, FactCheck>;
+  private checklistBatcher: Batcher<string, { taskId: number, oldItem?: TodoCompletion, action: 'complete' | 'uncomplete' }, void>;
 
   private waitingTranscriptions: Map<string, CancellablePromise<MessagesTranscribedAudio>>;
   private paidMessagesQueue = new PaidMessagesQueue;
@@ -555,6 +573,12 @@ export class AppMessagesManager extends AppManager {
 
     this.factCheckBatcher = new Batcher({
       processBatch: this.processFactCheckBatch
+    });
+
+    this.checklistBatcher = new Batcher({
+      delay: 500,
+      debounce: true,
+      processBatch: this.processChecklistBatch
     });
 
     return this.appStateManager.getState().then((state) => {
@@ -1082,9 +1106,7 @@ export class AppMessagesManager extends AppManager {
       attributes.push(videoAttribute);
 
       // * must follow after video attribute
-      if(options.noSound &&
-        file.size > (10 * 1024) &&
-        file.size < (10 * 1024 * 1024)) {
+      if(canVideoBeAnimated(options.noSound, file.size)) {
         attributes.push({
           _: 'documentAttributeAnimated'
         });
@@ -1236,8 +1258,10 @@ export class AppMessagesManager extends AppManager {
       this.rootScope.dispatchEvent('messages_pending');
     };
 
-    let uploaded = false,
-      uploadPromise: ReturnType<ApiFileManager['upload']> = null;
+    let
+      uploaded = false,
+      uploadPromise: ReturnType<ApiFileManager['upload']> = null
+    ;
 
     const upload = () => {
       if(isDocument) {
@@ -1281,9 +1305,13 @@ export class AppMessagesManager extends AppManager {
             sentDeferred.notifyAll({done: 0, total: file.size});
           }
 
-          let thumbUploadPromise: typeof uploadPromise;
+          let thumbUploadPromise: ReturnType<typeof this.uploadThumbAndCover>;
           if(attachType === 'video' && options.objectURL && options.thumb?.blob) {
-            thumbUploadPromise = this.apiFileManager.upload({file: options.thumb.blob});
+            thumbUploadPromise = this.uploadThumbAndCover({
+              blob: options.thumb.blob,
+              isCover: !!options.thumb.isCover,
+              peer: this.appPeersManager.getInputPeerById(peerId)
+            });
           }
 
           uploadPromise && uploadPromise.then(async(inputFile) => {
@@ -1329,8 +1357,11 @@ export class AppMessagesManager extends AppManager {
 
             if(thumbUploadPromise) {
               try {
-                const inputFile = await thumbUploadPromise;
-                (inputMedia as InputMedia.inputMediaUploadedDocument).thumb = inputFile;
+                const thumbUploadResult = await thumbUploadPromise;
+                assumeType<InputMedia.inputMediaUploadedDocument>(inputMedia);
+
+                inputMedia.thumb = thumbUploadResult.file;
+                inputMedia.video_cover = thumbUploadResult.coverPhoto;
               } catch(err) {
                 this.log.error('sendFile thumb upload error:', err);
               }
@@ -1476,6 +1507,37 @@ export class AppMessagesManager extends AppManager {
     ret.send = upload;
 
     return ret;
+  }
+
+  private async uploadThumbAndCover({blob, isCover, peer}: UploadThumbAndCoverArgs) {
+    const file = await this.apiFileManager.upload({file: blob});
+
+    if(!isCover) return {file};
+
+    try {
+      const coverPhoto = await this.uploadVideoCover({file, peer});
+      return {file, coverPhoto};
+    } catch(err) {
+      this.log.error('uploadVideoCover error:', err);
+    }
+
+    return {file};
+  }
+
+  private async uploadVideoCover({file, peer}: UploadVideoCoverArgs) {
+    const media: InputMedia.inputMediaUploadedPhoto = {
+      _: 'inputMediaUploadedPhoto',
+      file,
+      pFlags: {}
+    };
+
+    const messageMedia = await this.apiManager.invokeApi('messages.uploadMedia', {peer, media});
+
+    if(messageMedia._ !== 'messageMediaPhoto') throw new Error('Uploaded video cover is not a photo');
+
+    const photo = this.appPhotosManager.savePhoto(messageMedia.photo);
+
+    return getPhotoInput(photo);
   }
 
   public async sendGrouped(options: MessageSendingParams & {
@@ -1865,6 +1927,14 @@ export class AppMessagesManager extends AppManager {
         break;
       }
 
+      case 'inputMediaTodo': {
+        media = {
+          _: 'messageMediaToDo',
+          todo: inputMedia.todo
+        };
+        break;
+      }
+
       case 'messageMediaPending': {
         media = (inputMedia as any).messageMedia;
         break;
@@ -2194,6 +2264,10 @@ export class AppMessagesManager extends AppManager {
   private generateReplyHeader(peerId: PeerId, replyTo: InputReplyTo): MessageReplyHeader {
     if(!replyTo) {
       return;
+    }
+
+    if(replyTo._ === 'inputReplyToMonoForum') {
+      throw new Error('Monoforum is not supported');
     }
 
     if(replyTo._ === 'inputReplyToStory') {
@@ -4178,7 +4252,7 @@ export class AppMessagesManager extends AppManager {
         case 'messageActionGroupCall': {
           // assumeType<MessageAction.messageActionGroupCall>(action);
 
-          this.appGroupCallsManager.saveGroupCall(action.call);
+          this.appGroupCallsManager.saveGroupCall(action.call as InputGroupCall.inputGroupCall);
 
           let type: string;
           if(action.duration === undefined) {
@@ -4696,7 +4770,8 @@ export class AppMessagesManager extends AppManager {
     const goodMedias = [
       'messageMediaPhoto',
       'messageMediaDocument',
-      'messageMediaWebPage'
+      'messageMediaWebPage',
+      'messageMediaToDo'
     ];
 
     if(kind === 'poll') {
@@ -8031,6 +8106,7 @@ export class AppMessagesManager extends AppManager {
     minDate,
     maxDate,
     historyType = this.getHistoryType(peerId, threadId),
+    chatType,
     fromPeerId,
     savedReaction,
     isPublicHashtag
@@ -8095,7 +8171,10 @@ export class AppMessagesManager extends AppManager {
         max_date: maxDate,
         offset_rate: nextRate,
         offset_peer: this.appPeersManager.getInputPeerById(offsetPeerId),
-        folder_id: folderId
+        folder_id: folderId,
+        users_only: chatType === 'users' || undefined,
+        groups_only: chatType === 'groups' || undefined,
+        broadcasts_only: chatType === 'channels' || undefined
       };
 
       method = 'messages.searchGlobal';
@@ -8821,23 +8900,23 @@ export class AppMessagesManager extends AppManager {
   }
 
   public getSponsoredMessage(peerId: PeerId): Promise<MessagesSponsoredMessages> {
-    // let promise: Promise<MessagesSponsoredMessages>;
-    // if(TEST_SPONSORED) promise = Promise.resolve({
+    // return Promise.resolve({
     //   '_': 'messages.sponsoredMessages',
-    //   'messages': [
-    //     {
-    //       '_': 'sponsoredMessage',
-    //       'pFlags': {},
-    //       'flags': 9,
-    //       'random_id': new Uint8Array([80, 5, 249, 174, 44, 73, 173, 14, 246, 81, 187, 182, 223, 5, 4, 128]),
-    //       'from_id': {
-    //         '_': 'peerUser',
-    //         'user_id': 983000232
-    //       },
-    //       'start_param': 'GreatMinds',
-    //       'message': 'This is a long sponsored message. In fact, it has the maximum length allowed on the platform – 160 characters 😬😬. It\'s promoting a bot with a start parameter.' + chatId
-    //     }
-    //   ],
+    //   'posts_between': 5,
+    //   'messages': Array.from({length: 5}, () => ({
+    //     '_': 'sponsoredMessage',
+    //     'pFlags': {},
+    //     'flags': 9,
+    //     'random_id': new Uint8Array([80, 5, 249, 174, 44, 73, 173, 14, 246, 81, 187, 182, 223, 5, 4, 128]),
+    //     'from_id': {
+    //       '_': 'peerUser',
+    //       'user_id': 983000232
+    //     },
+    //     'message': 'This is a long sponsored message. In fact, it has the maximum length allowed on the platform – 160 characters 😬😬. It\'s promoting a bot with a start parameter.' + peerId,
+    //     'url': 'https://t.me/QuizBot?start=GreatMinds',
+    //     'title': 'QuizBot',
+    //     'button_text': 'Start'
+    //   })),
     //   'chats': [],
     //   'users': [
     //     {
@@ -8931,20 +9010,188 @@ export class AppMessagesManager extends AppManager {
   public cancelRepayRequest(requestId: number) {
     this.repayRequestHandler.cancelRepayRequest(requestId);
   }
+
+  public async updateTodo(params: {
+    peerId: PeerId,
+    mid: number,
+    taskId: number,
+    action: 'complete' | 'uncomplete',
+  }) {
+    // generate message_edit update
+    const storage = this.getHistoryMessagesStorage(params.peerId);
+    const message = this.getMessageFromStorage(storage, params.mid) as Message.message;
+    if(!message) {
+      return;
+    }
+
+    let oldItem: TodoCompletion;
+    this.modifyMessage(message, (message) => {
+      const checklist = message.media as MessageMedia.messageMediaToDo;
+      if(!checklist.completions) checklist.completions = []
+      const now = Date.now() / 1000
+
+      if(params.action === 'complete') {
+        const existing = checklist.completions.findIndex((completion) => completion.id === params.taskId);
+        if(existing !== -1) {
+          checklist.completions.splice(existing, 1);
+        }
+
+        checklist.completions.push({
+          _: 'todoCompletion',
+          id: params.taskId,
+          completed_by: this.rootScope.myId,
+          date: now
+        })
+      } else {
+        const existing = checklist.completions.findIndex((completion) => completion.id === params.taskId);
+        if(existing !== -1) {
+          oldItem = checklist.completions[existing];
+          checklist.completions.splice(existing, 1);
+        }
+      }
+    }, storage)
+
+    this.rootScope.dispatchEvent('message_edit', {
+      storageKey: storage.key,
+      peerId: params.peerId,
+      mid: params.mid,
+      message
+    })
+
+    const key = `${params.peerId}:${params.mid}`;
+    this.checklistBatcher.addToBatch(key, {taskId: params.taskId, oldItem, action: params.action});
+  }
+
+  private processChecklistBatch = async(batch: AppMessagesManager['checklistBatcher']['batchMap']) => {
+    for(const [key, list] of batch) {
+      const [peerId, mid] = key.split(':').map(Number);
+
+      const completedIds = new Set<number>();
+      const incompletedIds = new Set<number>();
+      const incompletedItems = new Map<number, TodoCompletion>();
+
+      for(const [{taskId, oldItem, action}, promise] of list) {
+        promise.resolve();
+
+        if(action === 'complete') {
+          incompletedIds.delete(taskId);
+          incompletedItems.delete(taskId);
+          completedIds.add(taskId);
+        } else {
+          completedIds.delete(taskId);
+          incompletedIds.add(taskId);
+          if(oldItem) {
+            incompletedItems.set(taskId, oldItem);
+          }
+        }
+      }
+
+      if(!completedIds.size && !incompletedIds.size) {
+        continue;
+      }
+
+      try {
+        const updates = await this.apiManager.invokeApi('messages.toggleTodoCompleted', {
+          completed: Array.from(completedIds),
+          incompleted: Array.from(incompletedIds),
+          peer: this.appPeersManager.getInputPeerById(peerId),
+          msg_id: getServerMessageId(mid)
+        });
+
+        this.apiUpdatesManager.processUpdateMessage(updates);
+      } catch(e) {
+        console.error(e);
+
+        if((e as any).type !== 'MESSAGE_NOT_MODIFIED') {
+        // revert
+          const storage = this.getHistoryMessagesStorage(peerId);
+          const message = this.getMessageFromStorage(storage, mid) as Message.message;
+          if(!message) {
+            return;
+          }
+
+          this.modifyMessage(message, (message) => {
+            const checklist = message.media as MessageMedia.messageMediaToDo;
+            if(!checklist.completions) checklist.completions = []
+
+            for(const oldItem of incompletedItems.values()) {
+              checklist.completions.push(oldItem)
+            }
+
+            for(const taskId of completedIds) {
+              const idx = checklist.completions.findIndex((completion) => completion.id === taskId);
+              if(idx !== -1) {
+                checklist.completions.splice(idx, 1);
+              }
+            }
+          }, storage)
+
+          this.rootScope.dispatchEvent('message_edit', {
+            storageKey: storage.key,
+            peerId,
+            mid,
+            message
+          })
+        }
+      }
+    }
+
+    batch.clear()
+  }
+
+  public async appendTodo(params: {
+    peerId: PeerId,
+    mid: number,
+    tasks: TodoItem[]
+  }) {
+    // generate message_edit update
+    const storage = this.getHistoryMessagesStorage(params.peerId);
+    const message = this.getMessageFromStorage(storage, params.mid) as Message.message;
+    if(!message) {
+      return;
+    }
+
+    this.modifyMessage(message, (message) => {
+      const checklist = message.media as MessageMedia.messageMediaToDo;
+      checklist.todo.list.push(...params.tasks);
+    }, storage)
+
+    this.rootScope.dispatchEvent('message_edit', {
+      storageKey: storage.key,
+      peerId: params.peerId,
+      mid: params.mid,
+      message
+    })
+
+    await this.apiManager.invokeApiSingleProcess({
+      method: 'messages.appendTodoList',
+      params: {
+        peer: this.appPeersManager.getInputPeerById(params.peerId),
+        msg_id: getServerMessageId(params.mid),
+        list: params.tasks
+      },
+      processResult: (updates) => {
+        this.apiUpdatesManager.processUpdateMessage(updates);
+      }
+    })
+  }
 }
 
 class Batcher<Key, Id, Result> {
   private batchMap: Map<Key, Map<Id, CancellablePromise<Result>>>;
   private delay: number;
+  private debounce: boolean;
   private timeoutId: number;
   private _processBatch: (batch: Batcher<Key, Id, Result>['batchMap']) => Promise<any>;
 
   constructor(options: {
     delay?: number
+    debounce?: boolean
     processBatch: (batch: Batcher<Key, Id, Result>['batchMap']) => Promise<any>
   }) {
     this.batchMap = new Map();
     this.delay = options.delay ?? 0;
+    this.debounce = options.debounce ?? false;
     this._processBatch = options.processBatch;
   }
 
@@ -8958,6 +9205,11 @@ class Batcher<Key, Id, Result> {
   }
 
   private scheduleBatch() {
+    if(this.debounce && this.timeoutId) {
+      clearTimeout(this.timeoutId);
+      this.timeoutId = undefined;
+    }
+
     if(!this.timeoutId) {
       this.timeoutId = ctx.setTimeout(() => {
         this.processBatch();
