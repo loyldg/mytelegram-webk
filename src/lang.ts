@@ -886,8 +886,26 @@ const lang = {
   'MultiAccount.ShowNotificationsFromCaption': 'Turn this off if you want to receive notifications only from the account you are currently using.',
   'MultiAccount.AllAccounts': 'All Accounts',
   'MultiAccount.AccountsLimitDescription': 'You have reached the limit of **3** connected accounts. You can add more by subscribing to **Telegram Premium**.',
-
   'CtrlFSearchTipMac': 'Tip: Use **Cmd+F** to open Search',
+  'InviteViaLink.Title': 'Invite via Link',
+  'InviteViaLink.Subtitle': {
+    'one_value': '**%2$s** restricts adding them to groups.\nYou can send them an invite link as message instead.',
+    'other_value': '**%d users** restrict adding them to groups.\nYou can send them an invite link as message instead.'
+  },
+  'InviteViaLink.Send': 'Send Invite Link',
+  'InviteViaLink.Skip': 'Skip',
+  'InviteViaLink.LinkShared': {
+    'one_value': 'Link shared with **%2$s**',
+    'other_value': 'Link shared with **%d users**'
+  },
+  // 'InviteToGroupLeftError': 'Sorry, if a person is no longer part of a group, you need to add each other to your respective contact lists to be able to add them back.\n\nNote that they could still join via the group\'s invite link as long as they are not in the Removed users list.',
+  'InviteViaLink.Premium': 'Upgrade to Premium',
+  'InviteViaLink.Premium.Subtitle': {
+    'one_value': '**%2$s** only accepts invitations to groups from Contacts and **Premium** users.',
+    'other_value': '**%d users** only accept invitations to groups from Contacts and **Premium** users.'
+  },
+  'InviteViaLink.Premium.Subtitle2': 'You can send an invite link to the group in a private message instead.',
+  'InviteViaLink.Premium.Subscribe': 'Subscribe to Telegram Premium',
 
   // * android
   'GroupsAndChannelsLimitTitle': 'Groups and Channels',
@@ -3417,10 +3435,16 @@ const lang = {
   'NewChecklist.TaskPlaceholder': 'Task',
   'ChecklistAddedTask': '**%s** added a new task **"%s"** to **"%s"**.',
   'ChecklistAddedTaskMany': '**%s** added %s to **"%s"**.',
+  'ChecklistAddedTaskYou': 'You added a new task **"%2$s"** to **"%s"**.',
+  'ChecklistAddedTaskManyYou': 'You added %2$s to **"%s"**.',
   'ChecklistMarkedDone': '**%s** marked %s as done.',
   'ChecklistMarkedUndone': '**%s** marked %s as not done.',
   'ChecklistMarkedMixed': '**%s** marked %s as done and %s as not done.',
+  'ChecklistMarkedDoneYou': 'You marked %2$s as done.',
+  'ChecklistMarkedUndoneYou': 'You marked %2$s as not done.',
+  'ChecklistMarkedMixedYou': 'You marked %2$s as done and %s as not done.',
   'ChecklistAddTasks': 'Add Tasks',
+  'ChecklistAddTask': 'Add Task',
   'ChecklistOptions': 'Checklist options',
   'ChecklistReadonlyForwarded': 'You can\'t edit forwarded checklists.',
   'ChecklistReadonlyPersonal': '**%s** has restricted others from marking tasks as done.',
@@ -3428,13 +3452,28 @@ const lang = {
   'ChecklistUncheck': 'Uncheck',
   'ChecklistEditItem': 'Edit Item',
   'ChecklistDeleteItem': 'Delete Item',
+  'ChecklistAllowOthersDone': 'Allow Others to Mark as Done',
+  'ChecklistAllowOthersAdd': 'Allow Others to Add Tasks',
   'AllChats': 'All Chats',
   'UsersOnly': 'Private Chats',
   'GroupsOnly': 'Group Chats',
   'ChannelsOnly': 'Channels',
   'NoResultsTitle': 'No results',
   'NoResultsSubtitle': 'Try a different search term',
-  'SearchInAllChats': 'Search in All Chats'
+  'SearchInAllChats': 'Search in All Chats',
+  '18Plus': '18+',
+  'SensitiveContentDesc': 'This media may contain sensitive content suitable only for adults. Do you still want to view it?',
+  'SensitiveContentRemember': 'Always show 18+ media',
+  'SensitiveContentUnavailable': 'Unfortunately, this content is not available in your country in accordance with local laws.',
+  'SensitiveContentConfirm': 'View anyway',
+  'SensitiveChannel': 'This channel contains sensitive content suitable only for adults.',
+  'RestrictedUser': 'This user is restricted',
+  'RestrictedChat': 'This chat is restricted',
+  'AgeVerification.Title': 'Age Verification',
+  'AgeVerification.Text': 'To access such content, you must confirm that you are at least 18 years old as required by local laws.\n\nThis is a one-time process using your phone\'s camera. Your selfie will not be stored by Telegram.',
+  'AgeVerification.TextGB': 'To access such content, you must confirm that you are at least 18 years old as required by UK law.\n\nThis is a one-time process using your phone\'s camera. Your selfie will not be stored by Telegram.',
+  'AgeVerification.Action': 'Verify my age',
+  'AgeVerification.Failed': 'Sorry, you can\'t view 18+ content.'
 };
 
 export default lang;

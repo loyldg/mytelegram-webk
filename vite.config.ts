@@ -9,6 +9,12 @@ import autoprefixer from 'autoprefixer';
 import {resolve} from 'path';
 import {existsSync} from 'fs';
 import {ServerOptions} from 'vite';
+import {watchLangFile} from './watch-lang.js';
+
+const isDEV = process.env.NODE_ENV === 'development';
+if(isDEV) {
+  watchLangFile();
+}
 
 const rootDir = resolve(__dirname);
 

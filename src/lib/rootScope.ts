@@ -4,7 +4,7 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag, InputSavedStarGift} from '../layer';
+import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag, InputSavedStarGift, LangPackDifference} from '../layer';
 import type {Dialog, ForumTopic, MessagesStorageKey, MyMessage} from './appManagers/appMessagesManager';
 import type {MyDialogFilter} from './storages/filters';
 import type {AnyDialog, Folder} from './storages/dialogs';
@@ -28,6 +28,7 @@ import {MOUNT_CLASS_TO} from '../config/debug';
 import MTProtoMessagePort from './mtproto/mtprotoMessagePort';
 import {ActiveAccountNumber} from './accounts/types';
 import type {ApiManager} from './mtproto/apiManager';
+import {SensitiveContentSettings} from './appManagers/appPrivacyManager';
 
 export type BroadcastEvents = {
   'chat_full_update': ChatId,
@@ -157,7 +158,10 @@ export type BroadcastEvents = {
 
   'notification_count_update': void,
 
-  'language_change': string,
+  'language_change': string, // * multi account event
+  'language_apply': void, // * single tab event
+  'langpack_update': {difference: LangPackDifference},
+  'langpack_update_too_long': {lang_code: string},
 
   'theme_change': {x: number, y: number} | void,
   'theme_changed': void,
@@ -225,6 +229,8 @@ export type BroadcastEvents = {
   'insufficent_stars_for_message': {messageCount: number, requestId: number, invokeApiArgs: Parameters<ApiManager['invokeApi']>, reservedStars?: number};
 
   'fulfill_repaid_message': {requestId: number},
+
+  'sensitive_content_settings': SensitiveContentSettings
 };
 
 export type BroadcastEventsListeners = {
