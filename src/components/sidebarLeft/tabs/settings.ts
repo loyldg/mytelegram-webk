@@ -10,7 +10,7 @@ import AppPrivacyAndSecurityTab from './privacyAndSecurity';
 import AppGeneralSettingsTab from './generalSettings';
 import AppEditProfileTab from './editProfile';
 import AppChatFoldersTab from './chatFolders';
-import AppNotificationsTab from './notifications';
+import {AppNotificationsTab} from '../../solidJsTabs';
 import AppLanguageTab from './language';
 import lottieLoader from '../../../lib/rlottie/lottieLoader';
 import PopupPeer from '../../popups/peer';
@@ -91,12 +91,8 @@ export default class AppSettingsTab extends SliderSuperTab {
       false,
       this.container,
       (has) => {
-        let last = this.profile.element.lastElementChild;
-        if(has) {
-          last = last.previousElementSibling;
-        }
-
-        last.firstElementChild.append(changeAvatarBtn);
+        const last = this.profile.element.lastElementChild;
+        last.parentElement.firstElementChild.nextElementSibling.firstElementChild.append(changeAvatarBtn);
       }
     );
     this.profile.init();

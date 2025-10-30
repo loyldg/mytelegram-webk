@@ -4,7 +4,7 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag, InputSavedStarGift, LangPackDifference} from '../layer';
+import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag, InputSavedStarGift, LangPackDifference, StarsAmount} from '../layer';
 import type {Dialog, ForumTopic, MessagesStorageKey, MyMessage} from './appManagers/appMessagesManager';
 import type {MyDialogFilter} from './storages/filters';
 import type {AnyDialog, Folder} from './storages/dialogs';
@@ -29,6 +29,7 @@ import MTProtoMessagePort from './mtproto/mtprotoMessagePort';
 import {ActiveAccountNumber} from './accounts/types';
 import type {ApiManager} from './mtproto/apiManager';
 import {SensitiveContentSettings} from './appManagers/appPrivacyManager';
+import type {MonoforumDialog} from './storages/monoforumDialogs';
 
 export type BroadcastEvents = {
   'chat_full_update': ChatId,
@@ -144,7 +145,7 @@ export type BroadcastEvents = {
 
   'connection_status_change': ConnectionStatusChange,
   'settings_updated': {key: string, value: any, settings: StateSettings},
-  'draft_updated': {peerId: PeerId, threadId: number, draft: MyDraftMessage | undefined, force?: boolean},
+  'draft_updated': {peerId: PeerId, threadId?: number, monoforumThreadId?: PeerId, draft: MyDraftMessage | undefined, force?: boolean},
 
   'background_change': void,
 
@@ -154,7 +155,7 @@ export type BroadcastEvents = {
   'notify_peer_type_settings': {key: Exclude<NotifyPeer['_'], 'notifyPeer'>, settings: PeerNotifySettings},
 
   'notification_reset': string,
-  'notification_cancel': string,
+  'notification_cancel': `msg_${ActiveAccountNumber}_${PeerId}_${number}`,
 
   'notification_count_update': void,
 
@@ -201,7 +202,7 @@ export type BroadcastEvents = {
   'saved_tags': {savedPeerId: PeerId, tags: SavedReactionTag[]},
   'saved_tags_clear': void,
 
-  'stars_balance': {balance: Long, fulfilledReservedStars?: number},
+  'stars_balance': {balance: Long, fulfilledReservedStars?: number, ton: boolean},
 
   'file_speed_limited': {increaseTimes: number, isUpload: boolean},
 
@@ -221,16 +222,23 @@ export type BroadcastEvents = {
 
   'star_gift_update': {
     input: InputSavedStarGift,
+    resalePrice?: StarsAmount[],
     unsaved?: boolean,
-    converted?: boolean
-    togglePinned?: boolean
+    converted?: boolean,
+    wearing?: boolean
   },
+  'my_pinned_stargifts': {gifts: InputSavedStarGift[]},
+  'star_gift_list_update': {peerId: PeerId},
 
   'insufficent_stars_for_message': {messageCount: number, requestId: number, invokeApiArgs: Parameters<ApiManager['invokeApi']>, reservedStars?: number};
 
   'fulfill_repaid_message': {requestId: number},
 
-  'sensitive_content_settings': SensitiveContentSettings
+  'sensitive_content_settings': SensitiveContentSettings,
+
+  'monoforum_dialogs_update': {dialogs: MonoforumDialog[]},
+  'monoforum_dialogs_drop': {parentPeerId: PeerId, ids: PeerId[]},
+  'monoforum_draft_update': {dialog: MonoforumDialog},
 };
 
 export type BroadcastEventsListeners = {

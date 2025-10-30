@@ -85,6 +85,7 @@ import createSubmenuTrigger from '../createSubmenuTrigger';
 import noop from '../../helpers/noop';
 import {isSensitive} from '../../helpers/restrictions';
 import {hasSensitiveSpoiler} from '../wrappers/mediaSpoiler';
+import {useAppConfig, useIsFrozen} from '../../stores/appState';
 
 type ChatContextMenuButton = ButtonMenuItemOptions & {
   verify: () => boolean | Promise<boolean>,
@@ -412,14 +413,14 @@ export default class ChatContextMenu {
       this.canOpenReactedList = undefined;
       this.linkToMessage = await this.getUrlToMessage();
       this.selectedMessagesText = await this.getSelectedMessagesText();
-      this.messageLanguage = this.selectedMessages || !this.message ? undefined : await detectLanguageForTranslation((this.message as Message.message).message);
+      this.messageLanguage = useAppConfig().freeze_since_date || this.selectedMessages || !this.message ? undefined : await detectLanguageForTranslation((this.message as Message.message).message);
 
       if(checklistItemId) {
         const media = (this.message as Message.message).media as MessageMedia.messageMediaToDo;
         this.checklistItem = {
           item: media.todo.list.find((item) => item.id === checklistItemId),
           completion: media.completions?.find((completion) => completion.id === checklistItemId)
-        }
+        };
       } else {
         this.checklistItem = undefined;
       }
@@ -724,7 +725,8 @@ export default class ChatContextMenu {
       text: 'Edit',
       onClick: this.onEditClick,
       verify: async() => (await this.managers.appMessagesManager.canEditMessage(this.message, 'text')) &&
-        !!this.chat.input.messageInput
+        !!this.chat.input.messageInput ||
+        (this.message._ === 'message' && this.message.pFlags?.out && this.message.suggested_post && !this.message.suggested_post.pFlags?.accepted && !this.message.suggested_post.pFlags?.rejected)
     }, {
       icon: 'plusround',
       text: 'ChecklistAddTasks',
@@ -810,7 +812,8 @@ export default class ChatContextMenu {
       icon: 'premium_translate',
       text: 'TranslateMessage',
       onClick: () => {
-        if(!rootScope.premium) {
+        const peerTranslation = usePeerTranslation(this.peerId);
+        if(!peerTranslation.canTranslate(true)) {
           PopupPremium.show({feature: 'translations'});
         } else {
           let textWithEntities: TextWithEntities;
@@ -832,22 +835,26 @@ export default class ChatContextMenu {
       icon: 'link',
       text: 'MessageContext.CopyMessageLink1',
       onClick: this.onCopyLinkClick,
-      verify: async() => !this.isLegacy && await this.managers.appPeersManager.isChannel(this.peerId) && !this.message.pFlags.is_outgoing
+      verify: async() => !this.isLegacy && await this.managers.appPeersManager.isChannel(this.peerId) && !this.chat.isMonoforum && !this.message.pFlags.is_outgoing
     }, {
       icon: 'pin',
       text: 'Message.Context.Pin',
       onClick: this.onPinClick,
       verify: async() => !this.isLegacy &&
+        !this.chat.isMonoforum &&
         !this.message.pFlags.is_outgoing &&
         this.message._ !== 'messageService' &&
         !this.message.pFlags.pinned &&
         await this.managers.appPeersManager.canPinMessage(this.message.peerId) &&
-        this.chat.type !== ChatType.Scheduled
+        this.chat.type !== ChatType.Scheduled &&
+        !useIsFrozen()
     }, {
       icon: 'unpin',
       text: 'Message.Context.Unpin',
       onClick: this.onUnpinClick,
-      verify: () => (this.message as Message.message).pFlags.pinned && this.managers.appPeersManager.canPinMessage(this.message.peerId)
+      verify: () => (this.message as Message.message).pFlags.pinned &&
+        this.managers.appPeersManager.canPinMessage(this.message.peerId) &&
+        !useIsFrozen()
     }, {
       icon: 'download',
       text: 'MediaViewer.Context.Download',
@@ -1500,8 +1507,9 @@ export default class ChatContextMenu {
   };
 
   private onReplyClick = async() => {
-    const {mid, peerId} = this;
-    const replyTo: ChatInputReplyTo = {replyToMsgId: mid};
+    const {peerId, message} = this;
+    const replyTo = this.chat.input.getChatInputReplyToFromMessage(message);
+
     if(!await this.chat.canSend()) {
       replyTo.replyToPeerId = peerId;
       this.chat.input.createReplyPicker(replyTo);
@@ -1528,6 +1536,11 @@ export default class ChatContextMenu {
         chat: this.chat,
         editMessage: message as any
       }).show();
+      return;
+    }
+
+    if(message?._ === 'message' && message.suggested_post) {
+      this.chat.input.initSuggestPostChange(message.mid);
       return;
     }
 
@@ -1687,7 +1700,7 @@ export default class ChatContextMenu {
 
   private onQuoteClick = async() => {
     const messageWithText = this.getMessageWithText();
-    const {peerId, mid} = messageWithText;
+    const {peerId} = messageWithText;
     let {text: value, entities = [], offset: startIndex} = this.getQuotedText();
 
     const appConfig = await this.managers.apiManager.getAppConfig();
@@ -1715,10 +1728,7 @@ export default class ChatContextMenu {
       offset: startIndex
     };
 
-    const replyTo: ChatInputReplyTo = {
-      replyToMsgId: mid,
-      replyToQuote: quote
-    };
+    const replyTo = this.chat.input.getChatInputReplyToFromMessage(messageWithText, quote);
 
     if(!await this.chat.canSend()) {
       replyTo.replyToPeerId = peerId;

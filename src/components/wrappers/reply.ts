@@ -5,7 +5,7 @@
  */
 
 import {setDirection} from '../../helpers/dom/setInnerHTML';
-import {MessageEntity, MessageReplyHeader, User} from '../../layer';
+import {MessageEntity, MessageReplyHeader, PeerColor, User} from '../../layer';
 import appImManager from '../../lib/appManagers/appImManager';
 import {getPeerColorsByPeer} from '../../lib/appManagers/utils/peers/getPeerColorById';
 import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
@@ -34,7 +34,7 @@ export default function wrapReply(options: WrapReplyOptions) {
   setDirection(replyContainer.container);
   // replyContainer.border.classList.add('quote-like-border');
   replyContainer.border.remove();
-  ripple(replyContainer.container, undefined, undefined, true);
+  ripple(replyContainer.container);
 
   if(options.isQuote) {
     replyContainer.container.classList.add('quote-like-icon');
@@ -55,7 +55,7 @@ export default function wrapReply(options: WrapReplyOptions) {
     });
 
     const peer = apiManagerProxy.getPeer(setColorPeerId);
-    const docId = (peer as User.user)?.color?.background_emoji_id;
+    const docId = ((peer as User.user)?.color as PeerColor.peerColor)?.background_emoji_id;
     if(docId) {
       wrapEmojiPattern({
         docId,

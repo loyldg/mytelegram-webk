@@ -239,7 +239,7 @@ const onFirstMount = () => {
           if(!dcId) return;
 
           const accountData = await AccountController.get(getCurrentAccount());
-          const key = accountData?.[`dc${dcId as TrueDcId}_auth_key`];
+          const key = accountData[`dc${dcId as TrueDcId}_auth_key`];
 
           if(key) {
             return g();
@@ -279,7 +279,7 @@ const onFirstMount = () => {
 const page = new Page('page-sign', true, onFirstMount, () => {
   if(btnNext) {
     replaceContent(btnNext, i18n('Login.Next'));
-    ripple(btnNext, undefined, undefined, true);
+    ripple(btnNext);
     btnNext.removeAttribute('disabled');
   }
 

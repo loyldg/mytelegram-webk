@@ -19,7 +19,7 @@ import setWorkerProxy from './helpers/setWorkerProxy';
 import toggleAttributePolyfill from './helpers/dom/toggleAttributePolyfill';
 import rootScope from './lib/rootScope';
 import IS_TOUCH_SUPPORTED from './environment/touchSupport';
-import I18n, {checkLangPackForUpdates, i18n} from './lib/langPack';
+import I18n, {checkLangPackForUpdates, i18n, LangPackKey} from './lib/langPack';
 import './helpers/peerIdPolyfill';
 import './lib/polyfill';
 import apiManagerProxy from './lib/mtproto/mtprotoworker';
@@ -53,7 +53,7 @@ import PasscodeLockScreenController from './components/passcodeLock/passcodeLock
 import type {LangPackDifference} from './layer';
 import commonStateStorage from './lib/commonStateStorage';
 import {MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_FACTOR} from './components/sidebarLeft/constants';
-import useHasFoldersSidebar from './stores/foldersSidebar';
+import useHasFoldersSidebar, {useIsSidebarCollapsed} from './stores/foldersSidebar';
 
 // import commonStateStorage from './lib/commonStateStorage';
 // import { STATE_INIT } from './config/state';
@@ -181,6 +181,7 @@ function setSidebarLeftWidth() {
 
   if(validatedWidth === 0) {
     sidebarEl.classList.add('is-collapsed');
+    useIsSidebarCollapsed()[1](true);
   } else if(validatedWidth) {
     document.documentElement.style.setProperty('--current-sidebar-left-width', validatedWidth + 'px');
   }
@@ -269,6 +270,48 @@ function setRootClasses() {
 }
 
 function onInstanceDeactivated(reason: InstanceDeactivateReason) {
+  const onVersionClick = () => {
+    appRuntimeManager.reload();
+  };
+
+  const onTabsClick = () => {
+    document.body.classList.add('deactivated-backwards');
+
+    if(reason === 'otherClient') {
+      singleInstance.onMyClient();
+    } else {
+      singleInstance.activateInstance();
+    }
+
+    setTimeout(() => {
+      document.body.classList.remove('deactivated', 'deactivated-backwards');
+    }, 333);
+  };
+
+  const onOtherClientClick = onTabsClick;
+
+  const map: {[key in InstanceDeactivateReason]: {
+    title: LangPackKey,
+    subtitle: LangPackKey,
+    onClick: () => void
+  }} = {
+    version: {
+      title: 'Deactivated.Version.Title',
+      subtitle: 'Deactivated.Version.Subtitle',
+      onClick: onVersionClick
+    },
+    tabs: {
+      title: 'Deactivated.Title',
+      subtitle: 'Deactivated.Subtitle',
+      onClick: onTabsClick
+    },
+    otherClient: {
+      title: 'Deactivated.OtherClient.Title',
+      subtitle: 'Deactivated.OtherClient.Subtitle',
+      onClick: onOtherClientClick
+    }
+  };
+
   const isUpdated = reason === 'version';
   const popup = PopupElement.createPopup(PopupElement, 'popup-instance-deactivated', {overlayClosable: true});
   const c = document.createElement('div');
@@ -277,29 +320,17 @@ function onInstanceDeactivated(reason: InstanceDeactivateReason) {
 
   const header = document.createElement('div');
   header.classList.add('header');
-  header.append(i18n(isUpdated ? 'Deactivated.Version.Title' : 'Deactivated.Title'));
+  header.append(i18n(map[reason].title));
 
   const subtitle = document.createElement('div');
   subtitle.classList.add('subtitle');
-  subtitle.append(i18n(isUpdated ? 'Deactivated.Version.Subtitle' : 'Deactivated.Subtitle'));
+  subtitle.append(i18n(map[reason].subtitle));
 
   c.append(header, subtitle);
 
   document.body.classList.add('deactivated');
 
-  const onClose = isUpdated ? () => {
-    appRuntimeManager.reload();
-  } : () => {
-    document.body.classList.add('deactivated-backwards');
-
-    singleInstance.activateInstance();
-
-    setTimeout(() => {
-      document.body.classList.remove('deactivated', 'deactivated-backwards');
-    }, 333);
-  };
-
-  popup.addEventListener('close', onClose);
+  popup.addEventListener('close', map[reason].onClick);
   popup.show();
 };
 
@@ -400,11 +431,12 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
     return;
   }
 
+  apiManagerProxy.onLanguageChange(I18n.lastRequestedLangCode);
   await apiManagerProxy.sendAllStates(allStates);
 
   console.timeLog(TIME_LABEL, 'sent all states (2)');
 
-  const {setHasFoldersSidebar} = useHasFoldersSidebar();
+  const [, setHasFoldersSidebar] = useHasFoldersSidebar();
   setHasFoldersSidebar(!!rootScope.settings.tabsInSidebar);
 
   rootScope.managers.rootScope.getPremium().then((isPremium) => {
@@ -539,7 +571,7 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
         import('./lib/mtproto/webPushApiManager')
       ]).then(([meModule, pushModule]) => {
         meModule.default.setAuthorized(false);
-        pushModule.default.forceUnsubscribe();
+        pushModule.default.unsubscribe();
       });
     } catch(err) {
 

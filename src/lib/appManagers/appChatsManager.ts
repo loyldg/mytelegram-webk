@@ -258,8 +258,9 @@ export class AppChatsManager extends AppManager {
     }).then(this.onChatUpdated.bind(this, id));
   }
 
-  public updateChannelPaidMessagesPrice(id: ChatId, stars: number) {
+  public updateChannelPaidMessagesPrice(id: ChatId, stars: number, directMessagesEnabled?: boolean) {
     return this.apiManager.invokeApi('channels.updatePaidMessagesPrice', {
+      broadcast_messages_allowed: directMessagesEnabled,
       channel: this.getChannelInput(id),
       send_paid_messages_stars: stars
     }).then(this.onChatUpdated.bind(this, id));
@@ -300,6 +301,11 @@ export class AppChatsManager extends AppManager {
     return this.isChannel(id) && !this.isMegagroup(id);
   }
 
+  public isMonoforum(id: ChatId) {
+    const chat: Chat = this.chats[id];
+    return !!(chat?._ === 'channel' && chat?.pFlags?.monoforum);
+  }
+
   public isInChat(id: ChatId) {
     let good = true;
     const chat: Chat = this.getChat(id);
@@ -314,6 +320,16 @@ export class AppChatsManager extends AppManager {
     }
 
     return good;
+  }
+
+  public canManageDirectMessages(chatId: ChatId) {
+    let chat = this.getChat(chatId);
+    if(chat?._ !== 'channel') return false;
+
+    if(chat?.pFlags?.monoforum && chat?.linked_monoforum_id) chat = this.getChat(chat.linked_monoforum_id);
+    if(chat?._ !== 'channel') return false;
+
+    return !!(chat.admin_rights?.pFlags?.manage_direct_messages);
   }
 
   /**
@@ -822,7 +838,9 @@ export class AppChatsManager extends AppManager {
 
   public toggleSomething(
     chatId: ChatId,
-    what: 'toggleJoinToSend' | 'toggleJoinRequest' | 'toggleForum' | 'togglePreHistoryHidden' | 'toggleAntiSpam' | 'toggleViewForumAsMessages' | 'toggleParticipantsHidden',
+    what: 'toggleJoinToSend' | 'toggleJoinRequest' | 'toggleForum' |
+      'togglePreHistoryHidden' | 'toggleAntiSpam' | 'toggleViewForumAsMessages' |
+      'toggleParticipantsHidden' | 'toggleAutotranslation',
     enabled: boolean,
     forceInvalidation?: boolean
   ) {
@@ -883,57 +901,8 @@ export class AppChatsManager extends AppManager {
     return this.toggleSomething(chatId, 'toggleViewForumAsMessages', enabled);
   }
 
-  public editForumTopic(options: {
-    chatId: ChatId,
-    topicId: number,
-    title?: string,
-    iconEmojiId?: DocId,
-    closed?: boolean,
-    hidden?: boolean
-  }) {
-    const {chatId, topicId, title, iconEmojiId, closed, hidden} = options;
-    return this.apiManager.invokeApi('channels.editForumTopic', {
-      channel: this.getChannelInput(chatId),
-      topic_id: getServerMessageId(topicId),
-      title,
-      icon_emoji_id: iconEmojiId,
-      closed,
-      hidden
-    }).then(this.onChatUpdated.bind(this, chatId));
-  }
-
-  public async createForumTopic(options: {
-    chatId: ChatId,
-    title: string,
-    iconColor: number,
-    iconEmojiId: DocId
-  }) {
-    const {chatId, title, iconColor, iconEmojiId} = options;
-
-    const channelFull = await this.appProfileManager.getChannelFull(chatId);
-    const sendAsInputPeer = channelFull.default_send_as && this.appPeersManager.getInputPeerById(this.appPeersManager.getPeerId(channelFull.default_send_as));
-
-    return this.apiManager.invokeApi('channels.createForumTopic', {
-      channel: this.getChannelInput(chatId),
-      title,
-      icon_color: iconColor,
-      icon_emoji_id: iconEmojiId,
-      random_id: randomLong(),
-      send_as: sendAsInputPeer
-    }).then((updates) => {
-      this.onChatUpdated(chatId, updates);
-
-      const update = (updates as Updates.updates).updates.find((update) => update._ === 'updateNewChannelMessage') as Update.updateNewChannelMessage;
-      return this.appMessagesIdsManager.generateMessageId(update.message.id, chatId);
-    });
-  }
-
-  public updatePinnedForumTopic(chatId: ChatId, topicId: number, pinned: boolean) {
-    return this.apiManager.invokeApi('channels.updatePinnedForumTopic', {
-      channel: this.getChannelInput(chatId),
-      topic_id: getServerMessageId(topicId),
-      pinned
-    }).then(this.onChatUpdated.bind(this, chatId));
+  public toggleAutotranslation(chatId: ChatId, enabled: boolean) {
+    return this.toggleSomething(chatId, 'toggleAutotranslation', enabled);
   }
 
   public getGroupsForDiscussion() {

@@ -18,13 +18,17 @@ import type AppChatFoldersTab from '../../components/sidebarLeft/tabs/chatFolder
 import type AppEditFolderTab from '../../components/sidebarLeft/tabs/editFolder';
 import type wrapStickerSetThumb from '../../components/wrappers/stickerSetThumb';
 import type {ThemeController} from '../../helpers/themeController';
+import type {AppDialogsManager, AutonomousMonoforumThreadList} from '../appManagers/appDialogsManager';
 import type {AppImManager} from '../appManagers/appImManager';
 import type apiManagerProxy from '../mtproto/mtprotoworker';
 import type lottieLoader from '../rlottie/lottieLoader';
 import type {RootScope} from '../rootScope';
+import type SolidJSHotReloadGuardProvider from './hotReloadGuardProvider';
+import type uiNotificationsManager from '../appManagers/uiNotificationsManager';
 
 
 export type SolidJSHotReloadGuardContextValue = {
+  HotReloadGuard: typeof SolidJSHotReloadGuardProvider;
   rootScope: RootScope;
   appSidebarLeft: AppSidebarLeft;
   AppChatFoldersTab: typeof AppChatFoldersTab;
@@ -43,6 +47,9 @@ export type SolidJSHotReloadGuardContextValue = {
   PopupPremium: typeof PopupPremium;
   EmoticonsDropdown: typeof EmoticonsDropdown;
   EmojiTab: typeof EmojiTab;
+  appDialogsManager: AppDialogsManager;
+  AutonomousMonoforumThreadList: typeof AutonomousMonoforumThreadList;
+  uiNotificationsManager: typeof uiNotificationsManager;
 };
 
 export type LockScreenHotReloadGuardContextValue = Pick<

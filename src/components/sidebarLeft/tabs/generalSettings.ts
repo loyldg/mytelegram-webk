@@ -30,6 +30,8 @@ import liteMode from '../../../helpers/liteMode';
 import AppPowerSavingTab from './powerSaving';
 import {toastNew} from '../../toast';
 import {joinDeepPath} from '../../../helpers/object/setDeepProperty';
+import {useAppSettings} from '../../../stores/appSettings';
+import pause from '../../../helpers/schedulers/pause';
 
 export class RangeSettingSelector {
   public container: HTMLDivElement;
@@ -99,6 +101,7 @@ export default class AppGeneralSettingsTab extends SliderSuperTabEventable {
   public init(p: ReturnType<typeof AppGeneralSettingsTab['getInitArgs']>) {
     this.container.classList.add('general-settings-container');
     this.setTitle('General');
+    const [appSettings, setAppSettings] = useAppSettings();
 
     const section = generateSection.bind(null, this.scrollable);
     const promises: Promise<any>[] = [];
@@ -106,9 +109,9 @@ export default class AppGeneralSettingsTab extends SliderSuperTabEventable {
     {
       const container = section('Settings');
 
-      const range = new RangeSettingSelector('TextSize', 1, rootScope.settings.messagesTextSize, 12, 20);
+      const range = new RangeSettingSelector('TextSize', 1, appSettings.messagesTextSize, 12, 20);
       range.onChange = (value) => {
-        rootScope.managers.appStateManager.setByKey(joinDeepPath('settings', 'messagesTextSize'), value);
+        setAppSettings('messagesTextSize', value);
       };
 
       const chatBackgroundButton = Button('btn-primary btn-transparent', {icon: 'image', text: 'ChatBackground'});
@@ -118,7 +121,7 @@ export default class AppGeneralSettingsTab extends SliderSuperTabEventable {
         this.slider.createTab(AppBackgroundTab).open(initArgs);
       });
 
-      const getLiteModeStatus = (): LangPackKey => rootScope.settings.liteMode.all ? 'Checkbox.Enabled' : 'Checkbox.Disabled';
+      const getLiteModeStatus = (): LangPackKey => appSettings.liteMode.all ? 'Checkbox.Enabled' : 'Checkbox.Disabled';
       const i = new I18n.IntlElement();
 
       const onUpdate = () => {
@@ -521,6 +524,9 @@ export default class AppGeneralSettingsTab extends SliderSuperTabEventable {
       container.append(form);
     }
 
-    return Promise.all(promises);
+    return Promise.race([
+      pause(500),
+      Promise.all(promises)
+    ]);
   }
 }

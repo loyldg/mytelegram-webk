@@ -55,8 +55,7 @@ import Animated from '../../helpers/solid/animations';
 import Chat, {ChatType} from './chat';
 import {subscribeOn} from '../../helpers/solid/subscribeOn';
 import getHistoryStorageKey, {getHistoryStorageType} from '../../lib/appManagers/utils/messages/getHistoryStorageKey';
-import useScreenSize from '../../hooks/useScreenSize';
-import {ScreenSize} from '../../helpers/mediaSizes';
+import {ScreenSize, useMediaSizes} from '../../helpers/mediaSizes';
 import ButtonCorner from '../buttonCorner';
 
 export const ScrollableYTsx = (props: {
@@ -91,6 +90,7 @@ type LoadOptions = {
   middleware: Middleware,
   peerId: PeerId,
   threadId: number,
+  monoforumThreadId: PeerId,
   query: string,
   fromPeerId?: PeerId,
   reaction?: Reaction,
@@ -125,7 +125,7 @@ const renderHistoryResult = ({middleware, peerId, fromSavedDialog, messages, que
 };
 
 const createSearchLoader = (options: LoadOptions) => {
-  const {middleware, peerId, threadId, query, fromPeerId, reaction, searchType} = options;
+  const {middleware, peerId, threadId, query, fromPeerId, reaction, searchType, monoforumThreadId} = options;
   const fromSavedDialog = !!(peerId === rootScope.myId && threadId);
   let lastMessage: Message.message | Message.messageService, loading = false, nextRate: number;
   const loadMore = async() => {
@@ -139,6 +139,7 @@ const createSearchLoader = (options: LoadOptions) => {
     const requestHistoryOptions: RequestHistoryOptions = {
       peerId: searchType === 'this' || !searchType ? peerId : NULL_PEER_ID,
       threadId: searchType === 'this' || !searchType ? threadId : undefined,
+      monoforumThreadId,
       query,
       inputFilter: {_: 'inputMessagesFilterEmpty'},
       offsetId,
@@ -372,8 +373,8 @@ export default function TopbarSearch(props: {
   onActive?: (active: boolean, showingReactions: boolean, isSmallScreen: boolean) => void,
   onSearchTypeChange?: () => void
 }) {
-  const screenSize = useScreenSize();
-  const isSmallScreen = createMemo(() => screenSize() === ScreenSize.mobile);
+  const mediaSizes = useMediaSizes();
+  const isSmallScreen = createMemo(() => mediaSizes.activeScreen === ScreenSize.mobile);
   const [isInputFocused, setIsInputFocused] = createSignal(false);
   const [value, setValue] = createSignal<string>('');
   const [count, setCount] = createSignal<number>();
@@ -775,6 +776,7 @@ export default function TopbarSearch(props: {
       middleware,
       peerId,
       threadId,
+      monoforumThreadId: props.chat.monoforumThreadId,
       query,
       fromPeerId,
       reaction: _reaction,

@@ -63,7 +63,7 @@ import flatten from '../../helpers/array/flatten';
 import EmojiTab from '../emoticonsDropdown/tabs/emoji';
 import {EmoticonsDropdown} from '../emoticonsDropdown';
 import cloneDOMRect from '../../helpers/dom/cloneDOMRect';
-import {AccountEmojiStatuses, EmojiStatus, User} from '../../layer';
+import {AccountEmojiStatuses, AttachMenuBot, EmojiStatus, User} from '../../layer';
 import filterUnique from '../../helpers/array/filterUnique';
 import {Middleware, MiddlewareHelper} from '../../helpers/middleware';
 import wrapEmojiStatus from '../wrappers/emojiStatus';
@@ -81,8 +81,8 @@ import filterAsync from '../../helpers/array/filterAsync';
 import pause from '../../helpers/schedulers/pause';
 import AccountsLimitPopup from './accountsLimitPopup';
 import {changeAccount} from '../../lib/accounts/changeAccount';
-import {UiNotificationsManager} from '../../lib/appManagers/uiNotificationsManager';
-import {renderFoldersSidebarContent} from './foldersSidebarContent';
+import uiNotificationsManager, {UiNotificationsManager} from '../../lib/appManagers/uiNotificationsManager';
+import {FoldersSidebarControls, renderFoldersSidebarContent} from './foldersSidebarContent';
 import SolidJSHotReloadGuardProvider from '../../lib/solidjs/hotReloadGuardProvider';
 import SwipeHandler, {getEvent} from '../swipeHandler';
 import clamp from '../../helpers/number/clamp';
@@ -103,7 +103,9 @@ import createSubmenuTrigger from '../createSubmenuTrigger';
 import ChatTypeMenu from '../chatTypeMenu';
 import {RequestHistoryOptions} from '../../lib/appManagers/appMessagesManager';
 import EmptySearchPlaceholder from '../emptySearchPlaceholder';
-import useHasFoldersSidebar from '../../stores/foldersSidebar';
+import useHasFoldersSidebar, {useIsSidebarCollapsed} from '../../stores/foldersSidebar';
+import isObject from '../../helpers/object/isObject';
+import {useAppSettings} from '../../stores/appSettings';
 
 export const LEFT_COLUMN_ACTIVE_CLASSNAME = 'is-left-column-shown';
 
@@ -137,6 +139,8 @@ export class AppSidebarLeft extends SidebarSlider {
 
   private onResize: () => void;
 
+  public foldersSidebarControls: FoldersSidebarControls;
+
   constructor() {
     super({
       sidebarEl: document.getElementById('column-left') as HTMLDivElement,
@@ -166,7 +170,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
     const mainMiddleware = this.middlewareHelper.get();
     const foldersSidebar = document.getElementById('folders-sidebar');
-    renderFoldersSidebarContent(foldersSidebar, this.totalNotificationsCountSidebar, SolidJSHotReloadGuardProvider, mainMiddleware);
+    this.foldersSidebarControls = renderFoldersSidebarContent(foldersSidebar, this.totalNotificationsCountSidebar, SolidJSHotReloadGuardProvider, mainMiddleware);
 
     // If it has z-index to early, the browser makes it shift a few times before showing it properly in its position (on very large screens)
     // Doesn't solve the blinking, which doesn't seem to appear when the project is built
@@ -175,7 +179,7 @@ export class AppSidebarLeft extends SidebarSlider {
     });
 
     rootScope.addEventListener('notification_count_update', async() => {
-      const notificationsCount = await UiNotificationsManager.getNotificationsCountForAllAccounts();
+      const notificationsCount = await uiNotificationsManager.getNotificationsCountForAllAccounts();
       const count = Object.entries(notificationsCount).reduce(
         (prev, [accountNumber, count]) =>
           prev +
@@ -453,9 +457,9 @@ export class AppSidebarLeft extends SidebarSlider {
     });
 
     this.initSidebarResize();
-    appDialogsManager.onForumTabToggle = () => {
+    appDialogsManager.onSomeDrawerToggle = () => {
       this.onSomethingOpenInsideChange();
-    }
+    };
 
     addShortcutListener(['ctrl+f', 'alt+f', 'meta+f'], () => {
       if(appNavigationController.findItemByType('popup')) return;
@@ -504,21 +508,27 @@ export class AppSidebarLeft extends SidebarSlider {
     this.chatListContainer.parentElement.classList.toggle('zoom-fade', !this.isCollapsed());
     appDialogsManager.xd.toggleAvatarUnreadBadges(this.isCollapsed(), undefined);
 
-    const {hasFoldersSidebar} = useHasFoldersSidebar();
+    const [hasFoldersSidebar] = useHasFoldersSidebar();
 
     if(canShowCtrlFTip && this.isCollapsed() && !hasFoldersSidebar()) {
       this.showCtrlFTip();
     }
+
+    if(!this.isCollapsed()) appDialogsManager.resizeStoriesList?.();
   }
 
   public hasSomethingOpenInside() {
-    return this.hasTabsInNavigation() || this.isSearchActive || !!appDialogsManager.forumTab;
+    return this.hasTabsInNavigation() || this.isSearchActive || !!appDialogsManager.forumTab || appDialogsManager.hasMonoforumOpen();
   }
 
   public closeEverythingInside() {
     this.closeSearch();
     appDialogsManager.toggleForumTab();
-    return this.closeAllTabs();
+
+    const hadOpenedDrawer = appDialogsManager.closeMonoforumDrawers();
+    const hadTabs = this.closeAllTabs();
+
+    return hadTabs || hadOpenedDrawer;
   }
 
   private isAnimatingCollapse = false;
@@ -529,7 +539,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
     this.sidebarEl.classList.toggle('has-open-tabs', isFloating);
     this.sidebarEl.classList.toggle('has-real-tabs', this.hasTabsInNavigation());
-    this.sidebarEl.classList.toggle('has-forum-open', !!appDialogsManager.forumTab);
+    this.sidebarEl.classList.toggle('has-forum-open', !!appDialogsManager.forumTab || appDialogsManager.hasMonoforumOpen());
 
     const sidebarPlaceholder = document.querySelector('.sidebar-left-placeholder');
 
@@ -574,9 +584,10 @@ export class AppSidebarLeft extends SidebarSlider {
           );
         }
       });
-      appDialogsManager.xd.toggleAvatarUnreadBadges(false, undefined);
+      if(!appDialogsManager.hasMonoforumOpen() && !appDialogsManager.forumTab)
+        appDialogsManager.xd?.toggleAvatarUnreadBadges(false, undefined);
     } else {
-      const {hasFoldersSidebar} = useHasFoldersSidebar();
+      const [hasFoldersSidebar] = useHasFoldersSidebar();
 
       sidebarPlaceholder.classList.add('keep-active');
       this.sidebarEl.classList.add(
@@ -640,9 +651,13 @@ export class AppSidebarLeft extends SidebarSlider {
       this.onSomethingOpenInsideChange();
     }
 
+    const rightBorder = document.createElement('div');
+    rightBorder.classList.add('sidebar-right-border');
+
     const resizeHandle = document.createElement('div');
     resizeHandle.classList.add('sidebar-resize-handle');
-    this.sidebarEl.append(resizeHandle);
+
+    this.sidebarEl.append(rightBorder, resizeHandle);
 
     const throttledSetToStorage = throttle((width: number) => {
       localStorage.setItem('sidebar-left-width', width + '');
@@ -669,6 +684,7 @@ export class AppSidebarLeft extends SidebarSlider {
         const wasCollapsed = this.isCollapsed();
         const isCollapsed = !this.hasSomethingOpenInside() && width < MIN_SIDEBAR_WIDTH * SIDEBAR_COLLAPSE_FACTOR;
         this.sidebarEl.classList.toggle('is-collapsed', isCollapsed);
+        useIsSidebarCollapsed()[1](isCollapsed);
 
         if(isCollapsed !== wasCollapsed)
           this.onCollapsedChange(true);
@@ -807,7 +823,11 @@ export class AppSidebarLeft extends SidebarSlider {
       buttons: filteredButtons,
       container: mountTo,
       onOpenBefore: async() => {
-        const attachMenuBots = await this.managers.appAttachMenuBotsManager.getAttachMenuBots();
+        const emptyAttachMenuBots: AttachMenuBot[] = [];
+        const attachMenuBots = await Promise.race([
+          pause(30).then(() => emptyAttachMenuBots),
+          this.managers.appAttachMenuBotsManager.getAttachMenuBots().catch(() => emptyAttachMenuBots)
+        ]);
         const buttons = filteredButtonsSliced.slice();
         const attachMenuBotsButtons = attachMenuBots.filter((attachMenuBot) => {
           return attachMenuBot.pFlags.show_in_side_menu;
@@ -830,7 +850,11 @@ export class AppSidebarLeft extends SidebarSlider {
           return button;
         });
 
-        function wrapUserName(user: User.user) {
+        function wrapUserName(user: User.user | PeerId) {
+          if(!isObject(user)) {
+            return '' + user;
+          }
+
           let name = user.first_name;
           if(user.last_name) name += ' ' + user.last_name;
 
@@ -845,7 +869,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
         const [totalAccounts, notificationsCount] = await Promise.all([
           AccountController.getTotalAccounts(),
-          UiNotificationsManager.getNotificationsCountForAllAccounts()
+          uiNotificationsManager.getNotificationsCountForAllAccounts()
         ]);
         const accountButtons: typeof buttons = [];
         for(let i = 1; i <= totalAccounts; i++) {
@@ -868,11 +892,11 @@ export class AppSidebarLeft extends SidebarSlider {
           } else {
             const otherManagers = createProxiedManagersForAccount(accountNumber);
             const accountData = await AccountController.get(accountNumber);
-            const peerId = accountData?.userId?.toPeerId();
+            const peerId = accountData.userId?.toPeerId();
             const user = await otherManagers.appUsersManager.getSelf();
 
             const content = document.createElement('span');
-            content.append(wrapUserName(user));
+            content.append(wrapUserName(user || peerId));
 
             if(notificationsCount[accountNumber]) {
               const badge = createBadge('span', 20, 'primary');
@@ -942,19 +966,18 @@ export class AppSidebarLeft extends SidebarSlider {
     submenu: ReturnType<typeof createSubmenuTrigger>,
     closeTabsBefore: (clb: () => void) => void
   ) {
-    const isDarkModeEnabled = () => themeController.getTheme().name === 'night';
     const toggleTheme = () => {
       const item = btns[0].element;
       const icon = item.querySelector('.tgico');
       const rect = icon.getBoundingClientRect();
-      themeController.switchTheme(isDarkModeEnabled() ? 'day' : 'night', {
+      themeController.switchTheme(undefined, {
         x: rect.left + rect.width / 2,
         y: rect.top + rect.height / 2
       });
     };
 
     const darkModeText = document.createElement('span');
-    darkModeText.append(i18n(isDarkModeEnabled() ? 'DisableDarkMode': 'EnableDarkMode'));
+    darkModeText.append(i18n(themeController.isNight() ? 'DisableDarkMode': 'EnableDarkMode'));
     const animationsText = document.createElement('span');
 
     const btns: ButtonMenuItemOptionsVerifiable[] = [{
@@ -1033,10 +1056,8 @@ export class AppSidebarLeft extends SidebarSlider {
 
     async function toggleAnimations() {
       updateAnimationsToggleButton(!(await hasAnimations()));
-      rootScope.managers.appStateManager.setByKey(
-        joinDeepPath('settings', 'liteMode', 'animations'),
-        await hasAnimations() // The value is already reversed
-      );
+      const [, setAppSettings] = useAppSettings();
+      await setAppSettings('liteMode', 'animations', await hasAnimations());
     }
 
     async function updateAnimationsToggleButton(enabled: boolean) {

@@ -6,11 +6,11 @@ import type SolidJSHotReloadGuardProvider from '../../../../lib/solidjs/hotReloa
 import {i18n} from '../../../../lib/langPack';
 
 import useStarsCommissionAndWithdrawalPrice from '../../../sidebarLeft/tabs/privacy/messages/useStarsCommissionAndWithdrawalPrice';
-import {PromiseCollector} from '../../../sidebarLeft/tabs/solidJsTabs/promiseCollector';
+import {PromiseCollector} from '../../../solidJsTabs/promiseCollector';
 import StarRangeInput from '../../../sidebarLeft/tabs/privacy/messages/starsRangeInput';
 import StaticSwitch from '../../../staticSwitch';
 import Section from '../../../section';
-import RowTsx from '../../../rowTsx';
+import Row from '../../../rowTsx';
 
 
 const TRANSITION_PARAMS: KeyframeAnimationOptions = {duration: 200, easing: 'ease-out'};
@@ -46,13 +46,10 @@ const ChargeForMessasgesSection: Component<{
   return (
     <>
       <Section caption='PaidMessages.ChargeForGroupMessagesDescription'>
-        <RowTsx
-          rightContent={
-            <StaticSwitch checked={checked()} />
-          }
-          clickable={() => {setChecked(p => !p)}}
-          title={i18n('PaidMessages.ChargeForMessages')}
-        />
+        <Row clickable={() => {setChecked(p => !p)}}>
+          <Row.Title>{i18n('PaidMessages.ChargeForMessages')}</Row.Title>
+          <Row.RightContent><StaticSwitch checked={checked()} /></Row.RightContent>
+        </Row>
       </Section>
       <Transition
         onEnter={async(el, done) => {

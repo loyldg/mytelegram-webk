@@ -227,6 +227,7 @@ export class ChatAdministratorRights extends CheckboxFields<AdministratorRightsC
       isForum && {flags: ['manage_topics'], text: 'ManageTopicsPermission'},
       {flags: ['manage_call'], text: isBroadcast ? 'StartVoipChatPermission' : 'Channel.EditAdmin.ManageCalls'},
       isBroadcast && {flags: ['invite_users'], text: 'Channel.EditAdmin.PermissionInviteSubscribers'},
+      isBroadcast && {flags: ['manage_direct_messages'], text: 'Channel.EditAdmin.ManageDirectMessages'},
       !isBroadcast && {flags: ['anonymous'], text: 'EditAdminSendAnonymously', checked: rights ? undefined : false},
       {flags: ['add_admins'], text: 'EditAdminAddAdmins', checked: rights ? undefined : false}
     ];
@@ -464,7 +465,7 @@ export default class AppGroupPermissionsTab extends SliderSuperTabEventable {
         middleware: this.middlewareHelper.get()
       });
 
-      const values = [0, 10, 30, 60, 300, 900, 3600];
+      const values = [0, 5, 10, 30, 60, 300, 900, 3600];
       const steps = range.generateSteps(values);
       const initialValue = chatFull.slowmode_seconds || 0;
 

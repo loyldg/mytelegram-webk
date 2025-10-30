@@ -38,6 +38,8 @@ import {getMiddleware} from '../../helpers/middleware';
 import anchorCallback from '../../helpers/dom/anchorCallback';
 import PopupStarGiftInfo from '../../components/popups/starGiftInfo';
 import noop from '../../helpers/noop';
+import appSidebarRight from '../../components/sidebarRight';
+import pause from '../../helpers/schedulers/pause';
 
 export class InternalLinkProcessor {
   protected managers: AppManagers;
@@ -248,6 +250,18 @@ export class InternalLinkProcessor {
             _: INTERNAL_LINK_TYPE.STORY,
             domain: pathnameParams[0],
             story: pathnameParams[2]
+          };
+        } else if(pathnameParams?.[1] === 'c') {
+          link = {
+            _: INTERNAL_LINK_TYPE.STAR_GIFT_COLLECTION,
+            domain: pathnameParams[0],
+            id: pathnameParams[2]
+          };
+        } else if(pathnameParams?.[1] === 'a') {
+          link = {
+            _: INTERNAL_LINK_TYPE.STORY_ALBUM,
+            domain: pathnameParams[0],
+            id: pathnameParams[2]
           };
         } else if(PHONE_NUMBER_REG_EXP.test(pathnameParams[0])) {
           link = {
@@ -1008,9 +1022,11 @@ export class InternalLinkProcessor {
   };
 
   public processShareLink = async(link: InternalLink.InternalLinkShare) => {
-    const peerId = await PopupPickUser.createSharingPicker2();
+    const {peerId, threadId, monoforumThreadId} = await PopupPickUser.createSharingPicker2();
     appImManager.setInnerPeer({
       peerId,
+      threadId,
+      monoforumThreadId,
       text: [link.url, link.text].filter(Boolean).join('\n')
     });
   };
@@ -1022,7 +1038,30 @@ export class InternalLinkProcessor {
       return;
     }
 
-    PopupElement.createPopup(PopupStarGiftInfo, gift);
+    PopupElement.createPopup(PopupStarGiftInfo, {gift});
+  }
+
+  public processStarGiftCollectionLink = async(link: InternalLink.InternalLinkStarGiftCollection) => {
+    const peer = await this.managers.appUsersManager.resolveUsername(link.domain);
+    const peerId = peer.id.toPeerId(peer._ !== 'user');
+    if(appImManager.chat.peerId !== peerId) {
+      await appImManager.setInnerPeer({peerId});
+      await pause(500)
+    }
+    appSidebarRight.toggleSidebar(true, true);
+    appSidebarRight.sharedMediaTab.setSearchTab('gifts');
+    appSidebarRight.sharedMediaTab.searchSuper.stargiftsActions?.setFilters({chosenCollection: Number(link.id)})
+  }
+
+  public processStoryAlbumLink = async(link: InternalLink.InternalLinkStoryAlbum) => {
+    const peer = await this.managers.appUsersManager.resolveUsername(link.domain);
+    const peerId = peer.id.toPeerId(peer._ !== 'user');
+    if(appImManager.chat.peerId !== peerId) {
+      await appImManager.setInnerPeer({peerId});
+      await pause(500)
+    }
+    appSidebarRight.toggleSidebar(true, true);
+    appSidebarRight.sharedMediaTab.setSearchTab('stories');
   }
 
   public processInternalLink(link: InternalLink) {
@@ -1047,7 +1086,9 @@ export class InternalLinkProcessor {
       [INTERNAL_LINK_TYPE.BUSINESS_CHAT]: this.processBusinessChatLink,
       [INTERNAL_LINK_TYPE.STARS_TOPUP]: this.processStarsTopupLink,
       [INTERNAL_LINK_TYPE.SHARE]: this.processShareLink,
-      [INTERNAL_LINK_TYPE.UNIQUE_STAR_GIFT]: this.processUniqueStarGiftLink
+      [INTERNAL_LINK_TYPE.UNIQUE_STAR_GIFT]: this.processUniqueStarGiftLink,
+      [INTERNAL_LINK_TYPE.STAR_GIFT_COLLECTION]: this.processStarGiftCollectionLink,
+      [INTERNAL_LINK_TYPE.STORY_ALBUM]: this.processStoryAlbumLink
     };
 
     const processor = map[link._];

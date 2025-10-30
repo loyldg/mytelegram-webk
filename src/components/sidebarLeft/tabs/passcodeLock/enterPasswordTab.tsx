@@ -9,9 +9,8 @@ import Space from '../../../space';
 import {i18n} from '../../../../lib/langPack';
 import ripple from '../../../ripple'; ripple; // keep
 import PasswordInputField from '../../../passwordInputField';
-
-import type {AppPasscodeEnterPasswordTab} from '../solidJsTabs';
-import {useSuperTab} from '../solidJsTabs/superTabProvider';
+import {useSuperTab} from '../../../solidJsTabs/superTabProvider';
+import type {AppPasscodeEnterPasswordTab} from '../../../solidJsTabs';
 
 import LottieAnimation from './lottieAnimation';
 
@@ -46,15 +45,19 @@ const EnterPasswordTab = () => {
 
   const canSubmit = () => value() && value().length <= MAX_PASSCODE_LENGTH;
 
+  let isSubmitting = false;
   async function onSubmit(e: Event) {
     e.preventDefault();
 
-    if(!canSubmit()) return;
+    if(!canSubmit() || isSubmitting) return;
+    isSubmitting = true;
 
     try {
       await tab.payload.onSubmit(value(), tab, actions);
     } catch{
       setIsError(true);
+    } finally {
+      isSubmitting = false;
     }
   }
 

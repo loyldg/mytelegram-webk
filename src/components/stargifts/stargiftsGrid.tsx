@@ -15,19 +15,24 @@ import {StarGiftBackdrop} from './stargiftBackdrop';
 import {MyDocument} from '../../lib/appManagers/appDocsManager';
 import {IconTsx} from '../iconTsx';
 import formatNumber from '../../helpers/number/formatNumber';
-import {rgbIntToHex} from '../../helpers/color';
+import {changeBrightness, getRgbColorFromTelegramColor, rgbaToHexa, rgbIntToHex} from '../../helpers/color';
 import createContextMenu from '../../helpers/dom/createContextMenu';
 import PopupPickUser from '../popups/pickUser';
 import appImManager from '../../lib/appManagers/appImManager';
 import {StarGift} from '../../layer';
 import {copyTextToClipboard} from '../../helpers/clipboard';
 import {toastNew} from '../toast';
-import {wearStarGift} from '../popups/wearStarGift';
 import transferStarGift from '../popups/transferStarGift';
+import {numberThousandSplitterForStars} from '../../helpers/number/numberThousandSplitter';
+import CheckboxFieldTsx from '../checkboxFieldTsx';
+import tsNow from '../../helpers/tsNow';
+import PopupStarGiftWear from '../popups/starGiftWear';
 
 function StarGiftGridItem(props: {
   item: MyStarGift,
-  view: 'profile' | 'list'
+  view: 'profile' | 'list' | 'resale' | 'transfer'
+  hasSelection?: boolean
+  selected?: boolean
   onClick?: () => void
   renderer: SuperStickerRenderer
 }) {
@@ -38,8 +43,8 @@ function StarGiftGridItem(props: {
     props.renderer.renderSticker(props.item.sticker, stickerRef);
     props.renderer.observeAnimated(stickerRef);
 
-    if(props.view === 'profile') {
-      const {raw, saved, input, isIncoming} = props.item;
+    if(props.view === 'profile' && !props.hasSelection) {
+      const {raw, saved, input, isIncoming, isWearing} = props.item;
       const isOwnedUniqueGift = raw._ === 'starGiftUnique' && getPeerId(raw.owner_id) === rootScope.myId && saved !== undefined;
 
       createContextMenu({
@@ -50,9 +55,9 @@ function StarGiftGridItem(props: {
             text: 'ShareFile',
             verify: () => raw._ === 'starGiftUnique',
             onClick: () => {
-              PopupPickUser.createSharingPicker2().then((peerId) => {
-                rootScope.managers.appMessagesManager.sendText({peerId, text: 'https://t.me/nft/' + (raw as StarGift.starGiftUnique).slug});
-                appImManager.setInnerPeer({peerId});
+              PopupPickUser.createSharingPicker2().then(({peerId, threadId, monoforumThreadId}) => {
+                rootScope.managers.appMessagesManager.sendText({peerId, threadId, replyToMonoforumPeerId: monoforumThreadId, text: 'https://t.me/nft/' + (raw as StarGift.starGiftUnique).slug});
+                appImManager.setInnerPeer({peerId, threadId, monoforumThreadId});
               });
             }
           },
@@ -74,7 +79,7 @@ function StarGiftGridItem(props: {
             }
           },
           {
-            icon: 'gem_transfer',
+            icon: 'gem_transfer_outline',
             text: 'StarGiftTransferFull',
             verify: () => isOwnedUniqueGift,
             onClick: () => {
@@ -82,11 +87,15 @@ function StarGiftGridItem(props: {
             }
           },
           {
-            icon: 'crown',
-            text: 'StarGiftWearFull',
+            icon: isWearing ? 'crownoff_outline' : 'crown_outline',
+            text: isWearing ? 'StarGiftWearStopFull' : 'StarGiftWearFull',
             verify: () => isOwnedUniqueGift,
             onClick: () => {
-              wearStarGift(raw.id);
+              if(isWearing) {
+                rootScope.managers.appUsersManager.updateEmojiStatus({_: 'emojiStatusEmpty'});
+              } else {
+                PopupStarGiftWear.open(props.item);
+              }
             }
           },
           {
@@ -103,16 +112,38 @@ function StarGiftGridItem(props: {
   })
 
   const isPinned = () => props.item.saved?.pFlags.pinned_to_top;
+  const isPremium = () => props.view === 'list' && props.item.raw._ === 'starGift' && props.item.raw.pFlags.require_premium && props.item.raw.availability_remains > 0;
+  const isLocked = () => props.view === 'list' && props.item.raw._ === 'starGift' && props.item.raw.locked_until_date > tsNow(true);
 
   return (
     <div
       class={/* @once */ classNames(
         styles.gridItem,
-        props.view === 'profile' ? styles.viewProfile : styles.viewList
+        {
+          profile: styles.viewProfile,
+          transfer: styles.viewTransfer,
+          list: styles.viewList,
+          resale: styles.viewResale
+        }[props.view],
+        isPremium() && styles.itemPremium
       )}
+      style={{
+        '--overlay-color': rgbaToHexa(changeBrightness(getRgbColorFromTelegramColor(props.item.collectibleAttributes?.backdrop?.edge_color ?? 0), 0.9))
+      }}
       onClick={props.onClick}
       ref={containerRef}
     >
+      {props.hasSelection && (
+        <CheckboxFieldTsx
+          round
+          class={/* @once */ styles.checkbox}
+          checked={props.selected}
+        />
+      )}
+
+      {isPremium() && (
+        <div class={/* @once */ styles.itemPremiumBackground} />
+      )}
 
       {props.item.collectibleAttributes && (
         <StarGiftBackdrop
@@ -122,8 +153,19 @@ function StarGiftGridItem(props: {
           patternEmoji={props.item.collectibleAttributes.pattern.document as MyDocument}
         />
       )}
-      {isPinned() && (
+
+      {isPinned() && !props.item.resellOnlyTon && (
         <IconTsx icon="pin2" class={/* @once */ styles.itemPin} />
+      )}
+
+      {isLocked() && (
+        <IconTsx icon="time_lock" class={/* @once */ styles.itemLock} />
+      )}
+
+      {props.item.resellOnlyTon && props.view !== 'transfer' && (
+        <div class={/* @once */ styles.tonIcon}>
+          <IconTsx icon="ton" />
+        </div>
       )}
 
       {props.view === 'profile' && props.item.saved?.pFlags.unsaved && (
@@ -141,13 +183,30 @@ function StarGiftGridItem(props: {
             <Sparkles mode='button' isDiv />
           )} */}
           <StarsStar />
-          <span>{props.item.raw.stars}</span>
+          <span>{
+            props.item.isResale && props.item.raw.resell_min_stars ?
+              `${numberThousandSplitterForStars(props.item.raw.resell_min_stars)}+` :
+              numberThousandSplitterForStars(props.item.raw.stars)
+          }</span>
         </div>
       )}
 
-      {props.view === 'profile' && props.item.raw._ === 'starGift' && (
+      {props.item.resellPriceStars && props.view !== 'transfer' && (
+        <div class={/* @once */ styles.itemPrice}>
+          <IconTsx icon="star" />
+          <span>{numberThousandSplitterForStars(props.item.resellPriceStars)}</span>
+        </div>
+      )}
+
+      {props.view === 'transfer' && (
+        <div class={/* @once */ styles.itemPrice}>
+          {i18n('StarGiftTransferFull')}
+        </div>
+      )}
+
+      {props.view === 'profile' && props.item.raw._ === 'starGift' && !props.hasSelection && (
         <div class={/* @once */ styles.itemFrom}>
-          {props.item.saved.from_id ? (
+          {props.item.saved.from_id && !props.item.saved.pFlags.name_hidden ? (
             <AvatarNewTsx
               peerId={getPeerId(props.item.saved.from_id)}
               size={20}
@@ -163,15 +222,39 @@ function StarGiftGridItem(props: {
       {(() => {
         const gift = props.item.raw;
         if(gift._ !== 'starGift') {
+          if(props.view === 'profile' && props.item.resellPriceStars) {
+            return (
+              <StarGiftBadge class={/* @once */ styles.badgeResale}>
+                {i18n('StarGiftResaleBadgeProfile')}
+              </StarGiftBadge>
+            )
+          }
+
           return (
             <StarGiftBadge
               class={/* @once */ styles.badgeUnique}
               backdropAttr={props.item.collectibleAttributes.backdrop}
             >
-              {isPinned() ? `#${gift.num}` : i18n('StarGiftLimitedBadgeNum', [formatNumber(gift.availability_total, 1)])}
+              {isPinned() || props.view === 'resale' ? `#${gift.num}` : i18n('StarGiftLimitedBadgeNum', [formatNumber(gift.availability_total, 1)])}
             </StarGiftBadge>
           );
         };
+
+        if(props.view === 'list' && props.item.isResale) {
+          return (
+            <StarGiftBadge class={/* @once */ styles.badgeResale}>
+              {i18n('StarGiftResaleBadge')}
+            </StarGiftBadge>
+          )
+        }
+
+        if(isPremium()) {
+          return (
+            <StarGiftBadge class={/* @once */ styles.badgePremium}>
+              {i18n('StarGiftPremiumBadge')}
+            </StarGiftBadge>
+          )
+        }
 
         if(props.view === 'list' && gift.availability_remains === 0) {
           return (
@@ -196,8 +279,10 @@ function StarGiftGridItem(props: {
 export function StarGiftsGrid(props: {
   class?: string
   items: MyStarGift[],
-  view: 'profile' | 'list'
+  view: 'profile' | 'list' | 'resale' | 'transfer'
+  autoplay?: boolean
   onClick?: (item: MyStarGift) => void
+  selected?: (item: MyStarGift) => boolean
   scrollParent: HTMLElement
 }) {
   const lazyLoadQueue = new LazyLoadQueue();
@@ -206,8 +291,14 @@ export function StarGiftsGrid(props: {
     group: 'none',
     managers: rootScope.managers,
     intersectionObserverInit: {root: props.scrollParent},
-    visibleRenderOptions: {loop: false, width: 120, height: 120},
-    withLock: false
+    visibleRenderOptions: {
+      loop: false,
+      play: props.autoplay ?? true,
+      width: 120,
+      height: 120
+    },
+    withLock: false,
+    playOnHover: true
   });
 
   onCleanup(() => {
@@ -222,6 +313,8 @@ export function StarGiftsGrid(props: {
           <StarGiftGridItem
             item={item}
             view={props.view}
+            hasSelection={/* @once */ props.selected !== undefined}
+            selected={props.selected?.(item)}
             onClick={() => props.onClick?.(item)}
             renderer={stickerRenderer}
           />
