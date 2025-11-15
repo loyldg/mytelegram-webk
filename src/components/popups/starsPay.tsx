@@ -30,7 +30,7 @@ import getServerMessageId from '../../lib/appManagers/utils/messageId/getServerM
 import wrapTelegramUrlToAnchor from '../../lib/richTextProcessor/wrapTelegramUrlToAnchor';
 import cancelEvent from '../../helpers/dom/cancelEvent';
 import AppMediaViewer from '../appMediaViewer';
-import {NULL_PEER_ID} from '../../lib/mtproto/mtproto_config';
+import {NULL_PEER_ID, TON_CURRENCY} from '../../lib/mtproto/mtproto_config';
 import tsNow from '../../helpers/tsNow';
 import classNames from '../../helpers/string/classNames';
 import {useChat} from '../../stores/peers';
@@ -43,6 +43,7 @@ import formatStarsAmount from '../../lib/appManagers/utils/payments/formatStarsA
 import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
 import DEBUG from '../../config/debug';
 import makeError from '../../helpers/makeError';
+import bigInt from 'big-integer';
 
 const TEST_FIRST_TIME = DEBUG && false;
 
@@ -93,6 +94,9 @@ export default class PopupStarsPay extends PopupElement<{
         return;
       }
 
+      const isTon = paymentForm?.invoice.currency === TON_CURRENCY
+      const itemPrice = paymentForm ? +paymentForm.invoice.prices[0].amount : (this.chatInvite ? +this.chatInvite.subscription_pricing.amount : +this.subscription.pricing.amount)
+
       const d = putPreloader(this.btnConfirm);
       const toggle = toggleDisability([this.btnConfirm], true);
       this.result = 'pending';
@@ -108,10 +112,15 @@ export default class PopupStarsPay extends PopupElement<{
           !this.subscription.pFlags.canceled
         );
       } else {
-        result = this.managers.appPaymentsManager.sendStarsForm(
-          this.inputInvoice,
-          (paymentForm as PaymentsPaymentForm.paymentsPaymentFormStars)?.form_id || this.chatInvite.subscription_form_id
-        );
+        const balance = await this.managers.appPaymentsManager[isTon ? 'getStarsStatusTon' : 'getStarsStatus']();
+        if(bigInt(balance.balance.amount as number).lt(itemPrice)) {
+          result = Promise.reject(makeError('BALANCE_TOO_LOW'));
+        } else {
+          result = this.managers.appPaymentsManager.sendStarsForm(
+            this.inputInvoice,
+            (paymentForm as PaymentsPaymentForm.paymentsPaymentFormStars)?.form_id || this.chatInvite.subscription_form_id
+          );
+        }
       }
 
       try {
@@ -122,8 +131,9 @@ export default class PopupStarsPay extends PopupElement<{
         let shouldRetry = false;
         if((err as ApiError).type === 'BALANCE_TOO_LOW') {
           PopupElement.createPopup(PopupStars, {
-            itemPrice: paymentForm ? +paymentForm.invoice.prices[0].amount : (this.chatInvite ? +this.chatInvite.subscription_pricing.amount : +this.subscription.pricing.amount),
+            itemPrice,
             paymentForm: paymentForm as PaymentsPaymentForm.paymentsPaymentFormStars,
+            ton: isTon,
             onTopup: async() => {
               await this.reloadForm();
               onConfirm();
@@ -301,7 +311,10 @@ export default class PopupStarsPay extends PopupElement<{
       }
     } else if(this.form._ === 'payments.paymentFormStarGift') {
       title = i18n('StarsConfirmPurchaseTitle');
-      subtitle = i18n('StarGiftConfirmPurchaseText', [amount]);
+      subtitle = i18n(this.inputInvoice._ === 'inputInvoiceStarGiftTransfer' ? 'StarGiftConfirmTransferText' : 'StarGiftConfirmPurchaseText', [amount]);
+    } else if(this.inputInvoice?._ === 'inputInvoiceStarGiftDropOriginalDetails') {
+      title = i18n('StarGiftDropOriginalDetailsTitle');
+      subtitle = i18n('StarGiftDropOriginalDetailsText');
     } else if(this.transaction && !this.form.title) {
       title = i18n(this.transaction.subscription_period ? 'Stars.Subscription.Title' : 'Stars.TopUp');
     } else if(this.chatInvite) {
@@ -359,6 +372,7 @@ export default class PopupStarsPay extends PopupElement<{
     });
 
     const tablePeer = (this.isReceipt || this.subscription) && makeTablePeer(this.peerId);
+    const isTon = this.transaction?.amount._ === 'starsTonAmount';
 
     const transactionIdSpan = transactionId && (<span onClick={onTransactionClick}>{wrapRichText(transactionId, {entities: [{_: 'messageEntityCode', length: transactionId.length, offset: 0}]})}</span>);
 
@@ -381,9 +395,14 @@ export default class PopupStarsPay extends PopupElement<{
       ];
     } else if(this.transaction && this.transaction.pFlags.gift) {
       tableContent = [
-        [this.isOutGift ? 'BoostingTo' : 'BoostingFrom', tablePeer],
-        ['StarsTransactionDate',  formatFullSentTime((this.form as PaymentsPaymentReceipt.paymentsPaymentReceiptStars).date, undefined, true)]
+        [this.isOutGift ? 'BoostingTo' : 'BoostingFrom', tablePeer]
       ];
+      if(transactionIdSpan) {
+        tableContent.push(['StarsTransactionID', transactionIdSpan]);
+      }
+      tableContent.push(
+        ['StarsTransactionDate',  formatFullSentTime((this.form as PaymentsPaymentReceipt.paymentsPaymentReceiptStars).date, undefined, true)]
+      )
     } else if(this.isReceipt) {
       const realAmount = this.transaction?.paid_messages &&
         !this.transaction.pFlags.refund &&
@@ -397,7 +416,7 @@ export default class PopupStarsPay extends PopupElement<{
           this.transaction?.subscription_period ? 'Stars.Subscription' : 'BoostingTo',
           tablePeer
         ] : ['Stars.Via', _title],
-        realAmount && ['PaidMessages.FullPrice', <StarsChange reverse noSign inline stars={realAmount} />],
+        realAmount && ['PaidMessages.FullPrice', <StarsChange reverse noSign inline stars={realAmount} ton={isTon} />],
         this.transaction && (this.transaction.extended_media || this.transaction.pFlags.reaction) && messageAnchor && [this.transaction.pFlags.reaction ? 'Message' : 'StarsTransactionMedia', messageAnchor],
         ['StarsTransactionID', transactionIdSpan],
         ['StarsTransactionDate', formatFullSentTime((this.form as PaymentsPaymentReceipt.paymentsPaymentReceiptStars).date, undefined, true)]
@@ -452,7 +471,14 @@ export default class PopupStarsPay extends PopupElement<{
           >{avatar}</div>
         </div>
         <div class="popup-stars-title">{title}</div>
-        {tableContent && !this.subscription && !noStarsChange && <StarsChange stars={!this.transaction ? -+amount : amount} isRefund={!!this.transaction?.pFlags?.refund} noSign={this.isOutGift} />}
+        {tableContent && !this.subscription && !noStarsChange && (
+          <StarsChange
+            stars={!this.transaction ? -+amount : amount}
+            isRefund={!!this.transaction?.pFlags?.refund}
+            noSign={this.isOutGift}
+            ton={isTon}
+          />
+        )}
         {subtitle && <div class={classNames('popup-stars-subtitle', tableContent && !this.subscription && !this.boost && 'mt')}>{subtitle}</div>}
         {tableContent && (
           <>

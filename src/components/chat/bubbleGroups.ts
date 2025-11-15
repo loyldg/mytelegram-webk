@@ -11,18 +11,22 @@ import type Chat from './chat';
 import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
 import insertInDescendSortedArray from '../../helpers/array/insertInDescendSortedArray';
 import positionElementByIndex from '../../helpers/dom/positionElementByIndex';
-import {Message} from '../../layer';
+import {Message, ReplyMarkup} from '../../layer';
 import {NULL_PEER_ID, REPLIES_PEER_ID, VERIFICATION_CODES_BOT_ID} from '../../lib/mtproto/mtproto_config';
 import ChatBubbles, {SERVICE_AS_REGULAR, STICKY_OFFSET} from './bubbles';
 import forEachReverse from '../../helpers/array/forEachReverse';
 import partition from '../../helpers/array/partition';
-import noop from '../../helpers/noop';
 import getMessageThreadId from '../../lib/appManagers/utils/messages/getMessageThreadId';
 import {avatarNew} from '../avatarNew';
 import {MiddlewareHelper} from '../../helpers/middleware';
 import {ChatType} from './chat';
 import getFwdFromName from '../../lib/appManagers/utils/messages/getFwdFromName';
 import {isMessageForVerificationBot} from './utils';
+import {canHaveSuggestedPostReplyMarkup} from './bubbleParts/suggestedPostReplyMarkup';
+import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
+import {BubbleElementAddons} from './types';
+import ChatThreadSeparator from './bubbleParts/chatThreadSeparator';
+import SolidJSHotReloadGuardProvider from '../../lib/solidjs/hotReloadGuardProvider';
 
 
 type GroupItem = {
@@ -123,6 +127,7 @@ export class BubbleGroup {
     let replyMarkupRows = replyMarkup?._ === 'replyInlineMarkup' && replyMarkup.rows;
     replyMarkupRows = replyMarkupRows?.filter?.((row) => row.buttons.length);
     replyMarkupRows?.length && this.avatar.node.classList.add('avatar-for-reply-markup');
+    canHaveSuggestedPostReplyMarkup(message) && this.avatar.node.classList.add('avatar-for-suggested-reply-markup');
 
     // this.avatarLoadPromise = Promise.all([
     //   avatarLoadPromise,
@@ -401,9 +406,79 @@ export default class BubbleGroups {
       group.mount(true);
     });
 
-    // toMount.forEach((group) => {
-    //   group.updateClassNames();
-    // });
+    this.addChatThreadSeparators();
+    this.addContinueLastTopicReplyMarkup();
+  }
+
+  private addChatThreadSeparators() {
+    const isMonoforum = this.chat.isMonoforum && this.chat.canManageDirectMessages && !this.chat.monoforumThreadId;
+    const isBotforum = this.chat.isBotforum && !this.chat.threadId;
+
+    const canHaveSeparators = isMonoforum || isBotforum;
+
+    if(!canHaveSeparators) return;
+
+    let prevKey: number;
+
+    forEachReverse(this.itemsArr, (item, i) => {
+      const savedPeerId = isMonoforum ? getPeerId(item.message?.saved_peer_id) : undefined;
+      const threadId = isBotforum ? getMessageThreadId(item.message, {isBotforum: true}) : undefined;
+
+      const key = savedPeerId || threadId;
+      if(!key) return;
+
+      const bubbleAddons = item.bubble as BubbleElementAddons;
+
+      if(prevKey === key) {
+        item.bubble.classList.remove('has-chat-thread-separator');
+        bubbleAddons.chatThreadSeparator?.remove();
+        return;
+      }
+
+      prevKey = key;
+
+      if(bubbleAddons.chatThreadSeparator) {
+        bubbleAddons.chatThreadSeparator.feedProps<false>({
+          index: -i
+        });
+        return;
+      }
+
+      bubbleAddons.chatThreadSeparator = new ChatThreadSeparator;
+      bubbleAddons.chatThreadSeparator.HotReloadGuard = SolidJSHotReloadGuardProvider;
+      bubbleAddons.chatThreadSeparator.feedProps({
+        chat: this.chat,
+        bubbles: this.chat.bubbles,
+        peerId: savedPeerId || this.chat.peerId,
+        threadId: savedPeerId ? undefined : threadId,
+        lastMsgId: item.message?.mid,
+        index: -i
+      });
+      item.bubble.classList.add('has-chat-thread-separator');
+      item.bubble.prepend(bubbleAddons.chatThreadSeparator);
+    });
+  }
+
+  /**
+   * Makes the reply markup of the last message bubble visible
+   */
+  private addContinueLastTopicReplyMarkup() {
+    if(!this.chat.isBotforum) return;
+
+    let visible = true;
+
+    this.itemsArr.forEach((item) => {
+      const bubbleAddons = item.bubble as BubbleElementAddons;
+
+      if(item.message._ !== 'message') return;
+      if(!bubbleAddons.continueLastTopicReplyMarkup) return;
+
+      bubbleAddons.continueLastTopicReplyMarkup.feedProps<false>({
+        visible: visible && !(item.message.reply_markup as ReplyMarkup.replyInlineMarkup)?.rows
+      });
+
+      visible = false;
+    });
   }
 
   f(items: GroupItem[], index: number = 0, length = items.length) {
@@ -465,6 +540,11 @@ export default class BubbleGroups {
   canItemsBeGrouped(item1: GroupItem, item2: GroupItem) {
     if(isMessageForVerificationBot(item1.message)) return false;
 
+    if(
+      item1.message?._ === 'message' && item1.message?.suggested_post ||
+      item2.message?._ === 'message' && item2.message?.suggested_post
+    ) return false;
+
     const isOut1 = this.chat.isOutMessage(item1.message);
     return item2.fromId === item1.fromId &&
       item1.dateTimestamp === item2.dateTimestamp &&
@@ -472,8 +552,10 @@ export default class BubbleGroups {
       !item1.single &&
       !item2.single &&
       isOut1 === this.chat.isOutMessage(item2.message) &&
-      (!this.chat.isAllMessagesForum || getMessageThreadId(item1.message, true) === getMessageThreadId(item2.message, true)) &&
-      (!isOut1 || item1.message.fromId === rootScope.myId) && // * group anonymous sending
+      (!this.chat.isAllMessagesForum || getMessageThreadId(item1.message, {isForum: true}) === getMessageThreadId(item2.message, {isForum: true})) &&
+      (!this.chat.isBotforum || getMessageThreadId(item1.message, {isBotforum: true}) === getMessageThreadId(item2.message, {isBotforum: true})) &&
+      (!this.chat.isMonoforum || getMessageThreadId(item1.message) === getMessageThreadId(item2.message)) &&
+      (!isOut1 || item1.message.fromId === rootScope.myId || this.chat.isMonoforum) && // * group anonymous sending
       item1.message.peerId === item2.message.peerId &&
       (item1.message as Message.message).post_author === (item2.message as Message.message).post_author;
   }

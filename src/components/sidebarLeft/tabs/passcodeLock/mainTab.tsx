@@ -7,17 +7,16 @@ import ListenerSetter from '../../../../helpers/listenerSetter';
 import {IS_MOBILE} from '../../../../environment/userAgent';
 import {i18n, LangPackKey} from '../../../../lib/langPack';
 
+import {usePromiseCollector} from '../../../solidJsTabs/promiseCollector';
+import {useSuperTab} from '../../../solidJsTabs/superTabProvider';
+import type {AppPasscodeLockTab} from '../../../solidJsTabs';
 import confirmationPopup from '../../../confirmationPopup';
 import type SliderSuperTab from '../../../sliderTab';
 import ripple from '../../../ripple'; ripple; // keep
 import StaticSwitch from '../../../staticSwitch';
 import Section from '../../../section';
-import RowTsx from '../../../rowTsx';
+import Row from '../../../rowTsx';
 import Space from '../../../space';
-
-import {usePromiseCollector} from '../solidJsTabs/promiseCollector';
-import {useSuperTab} from '../solidJsTabs/superTabProvider';
-import type {AppPasscodeLockTab} from '../solidJsTabs';
 
 import ShortcutBuilder, {ShortcutKey} from './shortcutBuilder';
 import LottieAnimation from './lottieAnimation';
@@ -25,6 +24,7 @@ import InlineSelect from './inlineSelect';
 
 import commonStyles from './common.module.scss';
 import styles from './mainTab.module.scss';
+import {useAppSettings} from '../../../../stores/appSettings';
 
 
 type AppPasscodeLockTabType = typeof AppPasscodeLockTab;
@@ -139,6 +139,7 @@ const PasscodeSetContent: Component<{
   const [tab, {AppPasscodeEnterPasswordTab, AppPasscodeLockTab, AppPrivacyAndSecurityTab}] = useSuperTab<AppPasscodeLockTabType>();
   const {disablePasscode, changePasscode} = usePasscodeActions();
   const {rootScope, setQuizHint} = useHotReloadGuard();
+  const [, setAppSettings] = useAppSettings();
 
   const options = [
     {value: 0, label: () => i18n('PasscodeLock.Disabled')},
@@ -182,17 +183,17 @@ const PasscodeSetContent: Component<{
 
   function setShortcutKeys(value: ShortcutKey[]) {
     mutateShortcutKeys(value);
-    rootScope.managers.appStateManager.setByKey(joinDeepPath('settings', 'passcode', 'lockShortcut'), value);
+    setAppSettings('passcode', 'lockShortcut', value);
   }
 
   function setShortcutEnabled(value: boolean) {
     mutateShortcutEnabled(value);
-    rootScope.managers.appStateManager.setByKey(joinDeepPath('settings', 'passcode', 'lockShortcutEnabled'), value);
+    setAppSettings('passcode', 'lockShortcutEnabled', value);
   }
 
   function setLockTimeout(value: number | null) {
     mutateLockTimeout(value);
-    rootScope.managers.appStateManager.setByKey(joinDeepPath('settings', 'passcode', 'autoLockTimeoutMins'), value);
+    setAppSettings('passcode', 'autoLockTimeoutMins', value);
   }
 
   onCleanup(() => {
@@ -266,25 +267,27 @@ const PasscodeSetContent: Component<{
 
         <Space amount="1.125rem" />
 
-        <RowTsx
-          title={i18n('PasscodeLock.TurnOff.Title')}
-          icon="lockoff"
-          clickable={onDisable}
-        />
-        <RowTsx
-          title={i18n('PasscodeLock.ChangePasscode')}
-          icon="key"
-          clickable={onPasscodeChange}
-        />
+        <Row clickable={onDisable}>
+          <Row.Icon icon="lockoff" />
+          <Row.Title>{i18n('PasscodeLock.TurnOff.Title')}</Row.Title>
+        </Row>
+        <Row clickable={onPasscodeChange}>
+          <Row.Icon icon="key" />
+          <Row.Title>{i18n('PasscodeLock.ChangePasscode')}</Row.Title>
+        </Row>
       </Section>
 
       <Section caption={canShowShortcut() ? 'PasscodeLock.LockShortcutDescription' : undefined}>
         <Show when={lockTimeout.state === 'ready'}>
-          <RowTsx
+          <Row
             ref={setAutoCloseRowEl}
-            classList={{[styles.Row]: true}}
-            title={i18n('PasscodeLock.AutoLock')}
-            rightContent={
+            class={styles.Row}
+            clickable={() => {
+              setIsOpen(true);
+            }}
+          >
+            <Row.Title>{i18n('PasscodeLock.AutoLock')}</Row.Title>
+            <Row.RightContent>
               <InlineSelect
                 value={lockTimeout()}
                 onClose={() => setIsOpen(false)}
@@ -293,23 +296,21 @@ const PasscodeSetContent: Component<{
                 isOpen={isOpen()}
                 parent={autoCloseRowEl()}
               />
-            }
-            clickable={() => {
-              setIsOpen(true);
-            }}
-          />
+            </Row.RightContent>
+          </Row>
         </Show>
         <Show when={canShowShortcut()}>
-          <RowTsx
-            title={i18n('PasscodeLock.EnableLockShortcut')}
-            classList={{[styles.Row]: true}}
-            rightContent={
-              <StaticSwitch checked={shortcutEnabled()} />
-            }
+          <Row
+            class={styles.Row}
             clickable={(e) => {
               setShortcutEnabled(!shortcutEnabled());
             }}
-          />
+          >
+            <Row.Title>{i18n('PasscodeLock.EnableLockShortcut')}</Row.Title>
+            <Row.RightContent>
+              <StaticSwitch checked={shortcutEnabled()} />
+            </Row.RightContent>
+          </Row>
           <div class={styles.ShortcutBuilderRow} classList={{[styles.collapsed]: !shortcutEnabled()}}>
             <ShortcutBuilder class={styles.ShortcutBuilderRowChild} value={shortcutKeys() || []} onChange={setShortcutKeys} key="L" />
           </div>

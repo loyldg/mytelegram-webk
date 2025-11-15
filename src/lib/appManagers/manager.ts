@@ -16,6 +16,7 @@ import type {TimeManager} from '../mtproto/timeManager';
 import type {RootScope} from '../rootScope';
 import type DialogsStorage from '../storages/dialogs';
 import type FiltersStorage from '../storages/filters';
+import type MonoforumDialogsStorage from '../storages/monoforumDialogs';
 import type PeersStorage from '../storages/peers';
 import type ThumbsStorage from '../storages/thumbs';
 import type {ApiUpdatesManager} from './apiUpdatesManager';
@@ -46,7 +47,7 @@ import type {AppWebPagesManager} from './appWebPagesManager';
 import type AppAttachMenuBotsManager from './appAttachMenuBotsManager';
 import type AppSeamlessLoginManager from './appSeamlessLoginManager';
 import type AppThemesManager from './appThemesManager';
-import type AppUsernamesManager from './appThemesManager';
+import type AppUsernamesManager from './appUsernamesManager';
 import type AppChatInvitesManager from './appChatInvitesManager';
 import type AppStoriesManager from './appStoriesManager';
 import type AppBotsManager from './appBotsManager';
@@ -58,6 +59,7 @@ import type {AppManagers} from './managers';
 import type AppGifsManager from './appGifsManager';
 import type AppGiftsManager from './appGiftsManager';
 import type {AppLangPackManager} from './appLangPackManager';
+import {logger, LogTypes} from '../logger';
 import {ActiveAccountNumber} from '../accounts/types';
 
 export class AppManager {
@@ -117,6 +119,12 @@ export class AppManager {
   protected appTranslationsManager: AppTranslationsManager;
   protected appGifsManager: AppGifsManager;
   protected appGiftsManager: AppGiftsManager;
+  protected monoforumDialogsStorage: MonoforumDialogsStorage;
+
+  protected name: string;
+  public log: ReturnType<typeof logger>;
+  protected logTypes: LogTypes;
+  protected logIgnoreDebugReset: boolean;
 
   public clear: (init?: boolean) => void;
 
@@ -124,8 +132,14 @@ export class AppManager {
     return this.accountNumber;
   }
 
+  public createLogger(prefix: string, logTypes?: LogTypes, ignoreDebugReset?: boolean) {
+    return logger(`ACC-${this.accountNumber}-${prefix}`, logTypes, ignoreDebugReset);
+  }
+
   public setManagersAndAccountNumber(managers: AppManagers, accountNumber: ActiveAccountNumber) {
     Object.assign(this, {...managers, accountNumber});
+    this.name = this.name ?? '';
+    this.log = this.createLogger(this.name, this.logTypes, this.logIgnoreDebugReset);
     // this.after();
   }
 }

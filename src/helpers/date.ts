@@ -53,7 +53,7 @@ export const getWeekNumber = (date: Date) => {
   return Math.ceil((((d.getTime() - yearStart.getTime()) / ONE_DAY) + 1) / 7);
 };
 
-export function formatDate(date: Date, today?: Date) {
+export function formatDate(date: Date, today?: Date, withTime?: boolean) {
   if(!today) {
     today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -63,6 +63,11 @@ export function formatDate(date: Date, today?: Date) {
     day: 'numeric',
     month: 'long'
   };
+
+  if(withTime) {
+    options.hour = '2-digit';
+    options.minute = '2-digit';
+  }
 
   if(date.getFullYear() !== today.getFullYear()) {
     options.year = 'numeric';
@@ -191,7 +196,17 @@ const monthYearOrDayPattern = new RegExp(`(${anyLetterRegExp}{3,}) ([0-9]{0,4})`
 const yearOrDayAndMonthPattern = new RegExp(`([0-9]{0,4}) (${anyLetterRegExp}{2,})`, 'iu');
 const shortDate = new RegExp('^([0-9]{1,4})(\\.| |/|\\-)([0-9]{1,4})$', 'i');
 const longDate = new RegExp('^([0-9]{1,2})(\\.| |/|\\-)([0-9]{1,2})(\\.| |/|\\-)([0-9]{1,4})$', 'i');
-const numberOfDaysEachMonth = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+export const numberOfDaysEachMonth = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+export const numberOfDaysEachMonthNonLeapYear = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+export function getDaysPerMonthForYear(year: number) {
+  if(isLeapYear(year)) {
+    return numberOfDaysEachMonth;
+  }
+
+  return numberOfDaysEachMonthNonLeapYear;
+}
+
 export type DateData = {
   title: string,
   minDate: number,
@@ -544,6 +559,22 @@ function getDayOfWeek(q: string) {
     }
   }
   return -1;
+}
+
+export function differenceInYears(earlierDate: Date, laterDate: Date) {
+  const day1 = earlierDate.getDate();
+  const day2 = laterDate.getDate();
+  const month1 = earlierDate.getMonth();
+  const month2 = laterDate.getMonth();
+  const year1 = earlierDate.getFullYear();
+  const year2 = laterDate.getFullYear();
+  const diff = year2 - year1;
+
+  if(month1 < month2 || (month1 === month2 && day1 <= day2)) {
+    return diff;
+  } else {
+    return diff - 1;
+  }
 }
 
 MOUNT_CLASS_TO.fillTipDates = fillTipDates;

@@ -17,6 +17,7 @@ import {ActiveAccountNumber} from '../accounts/types';
 import AppStateManager from './appStateManager';
 import rootScope from '../rootScope';
 import AccountController from '../accounts/accountController';
+import pushSingleManager from '../mtproto/pushSingleManager';
 
 type Managers = Awaited<ReturnType<typeof createManagers>>;
 
@@ -72,6 +73,18 @@ export class AppManagersManager {
 
     port.addEventListener('manager', ({name, method, args, accountNumber}) => {
       return callbackify(this.getManagersByAccount(), (managersByAccount) => {
+        if(accountNumber === undefined) {
+          const results: any[] = [];
+          for(const accountNumber in managersByAccount) {
+            const managers = managersByAccount[+accountNumber as any as ActiveAccountNumber];
+            const manager = managers[name as keyof Managers];
+            // @ts-ignore
+            results.push(manager[method](...args));
+          }
+
+          return results.some((result) => result instanceof Promise) ? Promise.all(results) : results;
+        }
+
         const managers = managersByAccount[accountNumber];
         const manager = managers[name as keyof Managers];
         // @ts-ignore
@@ -108,12 +121,11 @@ export class AppManagersManager {
       return this.cryptoWorkersURLs;
     });
 
-
     rootScope.addEventListener('account_logged_in', async({accountNumber, userId}) => {
       for(let i = 1; i < accountNumber; i++) {
         const otherAccountNumber = i as ActiveAccountNumber;
         const accountData = await AccountController.get(otherAccountNumber);
-        if(accountData?.userId && accountData?.userId === userId) {
+        if(accountData.userId === userId) {
           const managersByAccount = await this.getManagersByAccount();
           managersByAccount[accountNumber].apiManager.logOut(otherAccountNumber);
         }
@@ -211,6 +223,9 @@ export class AppManagersManager {
             const {appDocsManager} = managersByAccount[accountNumber];
             return appDocsManager.getAltDocsByDocument(docId);
           });
+        },
+        decryptPush(payload) {
+          return pushSingleManager.decryptPush(payload.p, payload.keyIdBase64);
         }
       });
     }

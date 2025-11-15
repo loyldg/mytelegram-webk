@@ -97,7 +97,7 @@ export default class PeerProfileAvatars {
     this.arrowNext.classList.add(PeerProfileAvatars.BASE_CLASS + '-arrow', PeerProfileAvatars.BASE_CLASS + '-arrow-next');
     this.arrowNext.append(Icon('avatarnext', PeerProfileAvatars.BASE_CLASS + '-arrow-icon'));
 
-    this.container.append(this.avatars, this.gradient, this.gradientTop, this.info, this.tabs, this.arrowPrevious, this.arrowNext);
+    this.container.append(this.avatars, this.gradient, this.gradientTop, this.tabs, this.arrowPrevious, this.arrowNext, this.info);
 
     this.loadCallbacks = new Map();
     this.listenerSetter = new ListenerSetter();
@@ -118,6 +118,13 @@ export default class PeerProfileAvatars {
     let cancel = false;
     let freeze = false;
     attachClickEvent(this.container, async(_e) => {
+      if(
+        findUpClassName(_e.target, 'profile-subtitle-rating') ||
+        findUpClassName(_e.target, 'emoji-status')
+      ) {
+        return;
+      }
+
       if(freeze) {
         cancelEvent(_e);
         return;

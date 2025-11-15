@@ -1,4 +1,4 @@
-import {ComponentProps, For, JSX, untrack} from 'solid-js';
+import {ComponentProps, For, JSX, splitProps, untrack} from 'solid-js';
 import {LangPackKey, i18n} from '../lib/langPack';
 import {AvatarNew} from './avatarNew';
 import {PeerTitleTsx} from './peerTitleTsx';
@@ -7,8 +7,9 @@ import classNames from '../helpers/string/classNames';
 import styles from './table.module.scss';
 import {NULL_PEER_ID} from '../lib/mtproto/mtproto_config';
 import Button from './buttonTsx';
+import showTooltip from './tooltip';
 
-export type TableRow = [LangPackKey, JSX.Element];
+export type TableRow = [LangPackKey | JSX.Element, JSX.Element];
 
 const keyCellClass = classNames(styles.cell, styles.key);
 
@@ -19,6 +20,7 @@ export default function Table(props: {
   footer?: JSX.Element
   footerClass?: string
   cellClass?: string
+  keyCellClass?: string
 }) {
   return (
     <table
@@ -31,7 +33,9 @@ export default function Table(props: {
       <For each={props.content}>
         {([key, value]) => (
           <tr class={/* @once */ styles.row}>
-            <td class={classNames(keyCellClass, props.cellClass)}>{i18n(key)}</td>
+            <td class={classNames(keyCellClass, props.cellClass, props.keyCellClass)}>
+              {typeof key === 'string' ? i18n(key as LangPackKey) : key}
+            </td>
             <td class={classNames(styles.cell, props.cellClass)}>
               <div class={/* @once */ styles.value}>
                 {value}
@@ -83,6 +87,29 @@ export function TableButton(props: ComponentProps<typeof Button>) {
     <Button
       {...props}
       class={/* @once */ styles.button}
+    />
+  )
+}
+
+export function TableButtonWithTooltip(props: ComponentProps<typeof Button> & {
+  tooltipClass?: string
+  tooltipTextElement: HTMLElement
+}) {
+  const [, rest] = splitProps(props, ['tooltipClass', 'tooltipTextElement']);
+  return (
+    <Button
+      {...rest}
+      class={/* @once */ styles.button}
+      onClick={(evt) => {
+        props.onClick?.(evt);
+        showTooltip({
+          element: evt.target as HTMLElement,
+          vertical: 'top',
+          container: document.body,
+          class: props.tooltipClass,
+          textElement: props.tooltipTextElement
+        })
+      }}
     />
   )
 }

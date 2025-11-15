@@ -28,7 +28,7 @@ import LazyLoadQueue from '../lazyLoadQueue';
 import ListenerSetter from '../../helpers/listenerSetter';
 import PollElement, {setQuizHint} from '../poll';
 import AudioElement from '../audio';
-import {ChannelParticipant, Chat as MTChat, ChatInvite, ChatParticipant, Document, Message, MessageEntity,  MessageMedia,  MessageReplyHeader, Photo, PhotoSize, ReactionCount, SponsoredMessage, User, WebPage, WebPageAttribute, Reaction, BotApp, DocumentAttribute, InputStickerSet, TextWithEntities, FactCheck, WebDocument, MessageExtendedMedia, StarGift, PeerSettings, LangPackString} from '../../layer';
+import {ChannelParticipant, Chat as MTChat, ChatParticipant, Document, Message, MessageEntity,  MessageMedia,  MessageReplyHeader, Photo, PhotoSize, ReactionCount, SponsoredMessage, User, WebPage, WebPageAttribute, Reaction, DocumentAttribute, InputStickerSet, TextWithEntities, FactCheck, WebDocument, MessageExtendedMedia, PeerSettings, LangPackString, ForumTopic} from '../../layer';
 import {BOT_START_PARAM, NULL_PEER_ID, REPLIES_PEER_ID, SEND_WHEN_ONLINE_TIMESTAMP, STARS_CURRENCY} from '../../lib/mtproto/mtproto_config';
 import {FocusDirection, ScrollStartCallbackDimensions} from '../../helpers/fastSmoothScroll';
 import useHeavyAnimationCheck, {getHeavyAnimationPromise, dispatchHeavyAnimationEvent, interruptHeavyAnimation} from '../../hooks/useHeavyAnimationCheck';
@@ -89,7 +89,6 @@ import {getPeerColorIndexByPeer} from '../../lib/appManagers/utils/peers/getPeer
 import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
 import getServerMessageId from '../../lib/appManagers/utils/messageId/getServerMessageId';
 import {AppManagers} from '../../lib/appManagers/managers';
-import {Awaited} from '../../types';
 import idleController from '../../helpers/idleController';
 import overlayCounter from '../../helpers/overlayCounter';
 import {cancelContextMenuOpening} from '../../helpers/dom/attachContextMenuListener';
@@ -99,7 +98,7 @@ import middlewarePromise from '../../helpers/middlewarePromise';
 import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
 import noop from '../../helpers/noop';
 import getGroupedText from '../../lib/appManagers/utils/messages/getGroupedText';
-import paymentsWrapCurrencyAmount from '../../helpers/paymentsWrapCurrencyAmount';
+import paymentsWrapCurrencyAmount, {formatNanoton, nanotonToJsNumber} from '../../helpers/paymentsWrapCurrencyAmount';
 import PopupPayment from '../popups/payment';
 import isInDOM from '../../helpers/dom/isInDOM';
 import getStickerEffectThumb from '../../lib/appManagers/utils/stickers/getStickerEffectThumb';
@@ -200,8 +199,19 @@ import {PremiumGiftBubble} from './bubbles/premiumGift';
 import {UnknownUserBubble} from './bubbles/unknownUser';
 import {isMessageForVerificationBot, isVerificationBot} from './utils';
 import {ChecklistBubble} from './bubbles/checklist';
-import {getRestrictionReason, isSensitive} from '../../helpers/restrictions';
+import {getRestrictionReason} from '../../helpers/restrictions';
 import {isMessageSensitive} from '../../lib/appManagers/utils/messages/isMessageRestricted';
+import {getPriceChangedActionMessageLangParams} from '../../lib/lang';
+import addSuggestedPostServiceMessage, {checkIfNotMePosted} from './bubbleParts/suggestPostServiceMessage';
+import addSuggestedPostReplyMarkup, {canHaveSuggestedPostReplyMarkup} from './bubbleParts/suggestedPostReplyMarkup';
+import type {SeparatorIntersectorRoot} from './bubbleParts/chatThreadSeparator';
+import BotforumNewTopic from './bubbleParts/botforumNewTopic';
+import type {wrapContinuouslyTypingMessage} from './bubbleParts/continuouslyTypingMessage';
+import addContinueLastTopicReplyMarkup from './bubbleParts/continueLastTopicReplyMarkup';
+import {wrapTopicIcon} from '../wrappers/messageActionTextNewUnsafe';
+import {getTransition} from '../../config/transitions';
+import {SuggestBirthdayBubble} from './bubbles/suggestBirthday';
+
 
 export const USER_REACTIONS_INLINE = false;
 export const TEST_BUBBLES_DELETION = false;
@@ -256,6 +266,8 @@ const BIG_EMOJI_SIZES: {[size: number]: number} = {
 };
 const BIG_EMOJI_SIZES_LENGTH = Object.keys(BIG_EMOJI_SIZES).length;
 
+const TOPIC_ICON_SIZE = makeMediaSize(64, 64);
+
 const webPageTypes: {[type in WebPage.webPage['type']]?: LangPackKey} = {
   telegram_channel: 'Chat.Message.ViewChannel',
   telegram_megagroup: 'OpenGroup',
@@ -268,7 +280,9 @@ const webPageTypes: {[type in WebPage.webPage['type']]?: LangPackKey} = {
   telegram_giftcode: 'Open',
   telegram_chat: 'OpenGroup',
   telegram_livestream: 'VoipChannelJoinVoiceChatUrl',
-  telegram_nft: 'StarGiftLinkButton'
+  telegram_nft: 'StarGiftLinkButton',
+  telegram_collection: 'StarGiftCollectionLinkButton',
+  telegram_story_album: 'ViewStoryAlbum'
 };
 
 const webPageTypesSiteNames: {[type in WebPage.webPage['type']]?: LangPackKey} = {
@@ -282,6 +296,19 @@ type Bubble = {
 };
 
 type MyHistoryResult = HistoryResult | {history: number[]};
+
+type EmptyPlaceholderType =
+  | 'group'
+  | 'saved'
+  | 'noMessages'
+  | 'noScheduledMessages'
+  | 'greeting'
+  | 'restricted'
+  | 'premiumRequired'
+  | 'paidMessages'
+  | 'directChannelMessages'
+  | 'topic'
+;
 
 function getMainMidForGrouped(mids: number[]) {
   return Math.min(...mids);
@@ -374,10 +401,14 @@ export default class ChatBubbles {
     timeout?: number
   }} = {};
 
+  private currentlyTypingMessages: {[mid: number | string]: ReturnType<typeof wrapContinuouslyTypingMessage>} = {};
+
   private scrolledDown = true;
   private isScrollingTimeout = 0;
 
   private stickyIntersector: StickyIntersector;
+
+  public separatorIntersectorRoot: SeparatorIntersectorRoot;
 
   private unreaded: Map<HTMLElement, number> = new Map();
   private unreadedContent: Map<HTMLElement, number> = new Map();
@@ -467,6 +498,7 @@ export default class ChatBubbles {
   public replySwipeHandler: SwipeHandler;
 
   private remover: HTMLDivElement;
+  public floatingSeparatorsContainer: HTMLDivElement;
 
   private lastPlayingVideo: HTMLVideoElement;
 
@@ -475,6 +507,8 @@ export default class ChatBubbles {
   private changedMids: Map<number, number>; // used when message is sent faster than temporary one was rendered
 
   private peerSettings: PeerSettings;
+
+  private placeholderTopicIconContainer?: HTMLElement;
 
   constructor(
     private chat: Chat,
@@ -507,7 +541,7 @@ export default class ChatBubbles {
     // * events
 
     // will call when sent for update pos
-    this.listenerSetter.add(rootScope)('history_update', async({storageKey, sequential, message}) => {
+    this.listenerSetter.add(rootScope)('history_update', async({storageKey, sequential, tempId, message}) => {
       if(this.chat.messagesStorageKey !== storageKey || this.chat.type === ChatType.Scheduled) {
         return;
       }
@@ -515,6 +549,8 @@ export default class ChatBubbles {
       const {mid} = message;
       const log = false ? this.log.bindPrefix('history_update-' + mid) : undefined;
       log && log('start');
+
+      if(this.finalizeTypingMessage(message, tempId)) return;
 
       const fullMid = makeFullMid(message);
       const bubble = this.getBubble(fullMid);
@@ -752,7 +788,7 @@ export default class ChatBubbles {
           if(div && !tempMessage.media?.document?.thumbs?.length && doc.thumbs?.length) {
             getHeavyAnimationPromise().then(async() => {
               const timeSpan = div.querySelector('.time');
-              const newDiv = await wrapDocument({message, fontSize: rootScope.settings.messagesTextSize});
+              const newDiv = await wrapDocument({message, fontSize: this.chat.appSettings.messagesTextSize});
               div.replaceWith(newDiv);
 
               if(timeSpan) {
@@ -825,6 +861,12 @@ export default class ChatBubbles {
       // do not edit geo messages
       if(bubble.querySelector('.geo-container')) {
         return;
+      }
+
+      if(this.chat.isMonoforum && message._ === 'message' && !canHaveSuggestedPostReplyMarkup(message)) {
+        const group = bubble.closest('.bubbles-group');
+        const cls = 'avatar-for-suggested-reply-markup';
+        group?.querySelector(`.${cls}`)?.classList.remove(cls);
       }
 
       this.safeRenderMessage({
@@ -1179,9 +1221,12 @@ export default class ChatBubbles {
     remover.classList.add('bubbles-remover', 'bubbles-inner');
     removerContainer.append(remover);
 
+    const floatingSeparatorsContainer = this.floatingSeparatorsContainer = document.createElement('div');
+    floatingSeparatorsContainer.classList.add('bubbles-floating-separators-container');
+
     this.setScroll();
 
-    container.append(removerContainer, this.scrollable.container);
+    container.append(removerContainer, this.scrollable.container, floatingSeparatorsContainer);
   }
 
   public attachContainerListeners() {
@@ -1246,7 +1291,7 @@ export default class ChatBubbles {
             return;
           }
 
-          this.chat.input.initMessageReply({replyToMsgId: message.mid});
+          this.chat.input.initMessageReply(this.chat.input.getChatInputReplyToFromMessage(message));
         }
       });
     } else if(IS_TOUCH_SUPPORTED) {
@@ -1352,8 +1397,8 @@ export default class ChatBubbles {
             }
 
             if(shouldReply) {
-              const {mid} = _target.dataset;
-              this.chat.input.initMessageReply({replyToMsgId: +mid});
+              const message = this.chat.getMessage(getBubbleFullMid(_target));
+              this.chat.input.initMessageReply(this.chat.input.getChatInputReplyToFromMessage(message));
               shouldReply = false;
             }
           });
@@ -1372,7 +1417,15 @@ export default class ChatBubbles {
         this.updateGradient = true;
       }
 
-      if(this.chat.threadId && getMessageThreadId(message, this.chat.isForum) !== this.chat.threadId) {
+      if(this.chat.isBotforum && !this.chat.threadId && message._ === 'message' && message.pFlags.out && getMessageThreadId(message, {isBotforum: true})) {
+        this.chat.setPeer({
+          peerId: this.peerId,
+          threadId: getMessageThreadId(message, {isBotforum: true})
+        });
+        return;
+      }
+
+      if(this.chat.threadId && getMessageThreadId(message, {isForum: this.chat.isForum}) !== this.chat.threadId) {
         return;
       }
 
@@ -1415,7 +1468,7 @@ export default class ChatBubbles {
     });
 
     this.listenerSetter.add(rootScope)('history_delete_key', ({historyKey, mid}) => {
-      if(this.chat.historyStorageKey !== historyKey) {
+      if(this.chat.historyStorage.key !== historyKey) {
         return;
       }
 
@@ -1433,9 +1486,16 @@ export default class ChatBubbles {
     });
 
     this.listenerSetter.add(rootScope)('dialogs_multiupdate', (dialogs) => {
-      if(!dialogs.has(this.peerId) || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Saved) {
+      if(!dialogs.has(this.peerId) || this.chat.monoforumThreadId || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Saved) {
         return;
       }
+
+      this.chat.input.setUnreadCount();
+    });
+
+    this.listenerSetter.add(rootScope)('monoforum_dialogs_update', ({dialogs}) => {
+      if(this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Saved) return;
+      if(!dialogs.find(dialog => dialog.parentPeerId === this.peerId && dialog.peerId === this.chat.monoforumThreadId)) return;
 
       this.chat.input.setUnreadCount();
     });
@@ -1514,7 +1574,7 @@ export default class ChatBubbles {
       }
 
       const middleware = this.getMiddleware();
-      const chat = apiManagerProxy.getChat(chatId);
+      const chat = this.chat.peer;
       const hadRights = this.chatInner.classList.contains('has-rights');
       const hadPlainRights = this.chat.input.canSendPlain();
       const [hasRights, hasPlainRights, canEmbedLinks] = await Promise.all([
@@ -2211,7 +2271,7 @@ export default class ChatBubbles {
     const middleware = this.getMiddleware();
     this[readPromiseKey] = idleController.getFocusPromise().then(async() => {
       if(!middleware()) return;
-      const {peerId, threadId} = this.chat;
+      const {peerId, threadId, monoforumThreadId} = this.chat;
 
       let callback: () => Promise<any>;
       if(type === 'history') {
@@ -2222,7 +2282,7 @@ export default class ChatBubbles {
           const rendered = this.getRenderedHistory('desc', true);
           const bubblesMaxId = rendered ? splitFullMid(rendered[0]).mid : -1;
           if(maxId >= bubblesMaxId) {
-            maxId = Math.max((await this.chat.getHistoryMaxId()) || 0, maxId);
+            maxId = Math.max(this.chat.getHistoryMaxId() || 0, maxId);
             if(!middleware()) return;
           }
         }
@@ -2237,7 +2297,7 @@ export default class ChatBubbles {
           this.log('will readHistory by maxId:', maxId);
         }
 
-        callback = () => this.managers.appMessagesManager.readHistory(peerId, maxId, threadId);
+        callback = () => this.managers.appMessagesManager.readHistory({peerId, maxId, threadId, monoforumThreadId});
       } else {
         const readContents: number[] = [];
         for(const mid of this.unreadedContentSeen) {
@@ -2399,9 +2459,11 @@ export default class ChatBubbles {
       const media = (message as Message.message).media;
       const paidMedia = media?._ === 'messageMediaPaidMedia' ? media : undefined;
 
+      const inputInvoice = await this.managers.appPaymentsManager.getInputInvoiceByPeerId(message.peerId, message.mid);
       const popup = await PopupPayment.create({
         message: message as Message.message,
-        inputInvoice: await this.managers.appPaymentsManager.getInputInvoiceByPeerId(message.peerId, message.mid),
+        inputInvoice,
+        isReceipt: buyButton.classList.contains('is-receipt'),
         paidMedia
       });
 
@@ -2429,8 +2491,7 @@ export default class ChatBubbles {
     if(mediaSpoiler) {
       onMediaSpoilerClick({
         event: e,
-        mediaSpoiler,
-        sensitiveSettings: this.chat.sensitiveContentSettings
+        mediaSpoiler
       });
       return;
     }
@@ -2615,8 +2676,21 @@ export default class ChatBubbles {
           }
         } else {
           const peerId = peerIdStr.toPeerId();
+          const {mid} = splitFullMid(getBubbleFullMid(bubble) || EMPTY_FULL_MID);
+
           if(peerId !== NULL_PEER_ID) {
-            this.chat.appImManager.setInnerPeer({...additionalSetPeerProps, peerId});
+            const chat = this.chat.peer;
+            const linkedChat = chat?._ === 'channel' && chat?.pFlags?.monoforum && chat?.linked_monoforum_id ?
+              apiManagerProxy.getChat(chat.linked_monoforum_id) :
+              undefined;
+
+            const shouldOpenAsMonoforum = this.chat.isMonoforum && this.chat.canManageDirectMessages && peerId !== linkedChat?.id?.toPeerId();
+
+            this.chat.appImManager.setInnerPeer({
+              ...additionalSetPeerProps,
+              peerId: shouldOpenAsMonoforum ? this.peerId : peerId,
+              monoforumThreadId: shouldOpenAsMonoforum ? peerId : undefined
+            });
             this.chat.appImManager.clickIfSponsoredMessage((bubble as any).message);
           } else {
             toast(I18n.format('HidAccount', true));
@@ -2770,7 +2844,8 @@ export default class ChatBubbles {
           peerId: replyToPeerId,
           lastMsgId: replyToMid,
           type: this.chat.type,
-          threadId: this.chat.threadId
+          threadId: this.chat.threadId,
+          monoforumThreadId: this.chat.monoforumThreadId
         });
       }
     }
@@ -2956,6 +3031,7 @@ export default class ChatBubbles {
       .setSearchContext({
         threadId: this.chat.threadId,
         peerId: this.peerId,
+        monoforumThreadId: this.chat.monoforumThreadId,
         inputFilter: {_: documentDiv ? 'inputMessagesFilterDocument' : 'inputMessagesFilterPhotoVideo'},
         useSearch: this.chat.type !== ChatType.Scheduled && !isSingleMedia,
         skipSensitive,
@@ -3336,8 +3412,8 @@ export default class ChatBubbles {
     }
   }
 
-  public async updateUnreadByDialog() {
-    const historyStorage = await this.chat.getHistoryStorage();
+  public updateUnreadByDialog() {
+    const historyStorage = this.chat.getHistoryStorage();
     const maxId = this.peerId === rootScope.myId ? historyStorage.readMaxId : historyStorage.readOutboxMaxId;
 
     for(const mid of this.unreadOut) {
@@ -3478,7 +3554,8 @@ export default class ChatBubbles {
       scrollSaver.restore();
       scrollSaver.save(); // * save again after moving elements
 
-      const options: KeyframeAnimationOptions = {duration: 300, fill: 'forwards', easing: 'cubic-bezier(.4, .0, .2, 1)'};
+      const {duration, easing} = getTransition('standard');
+      const options: KeyframeAnimationOptions = {duration, fill: 'forwards', easing};
 
       // const contentWrapper = bubble.querySelector<HTMLElement>('.bubble-content-wrapper');
       // const bubbleDeleteKeyframe: Keyframe = {transform: 'scale(0)'};
@@ -3661,9 +3738,11 @@ export default class ChatBubbles {
       return;
     }
 
-    if(this.chat.threadId && getMessageThreadId(message, this.chat.isForum) !== this.chat.threadId) {
+    if(this.chat.threadId && getMessageThreadId(message, {isForum: this.chat.isForum}) !== this.chat.threadId) {
       return;
     }
+
+    if(this.chat.monoforumThreadId && getMessageThreadId(message) !== this.chat.monoforumThreadId) return;
 
     const {savedReaction} = this.chat;
     if(savedReaction?.length) {
@@ -4097,7 +4176,7 @@ export default class ChatBubbles {
   }
 
   public async setPeer(options: ChatSetPeerOptions & {samePeer: boolean, sameSearch: boolean}): Promise<{cached?: boolean, promise: Chat['setPeerPromise']}> {
-    const {samePeer, sameSearch, peerId, stack} = options;
+    const {samePeer, sameSearch, peerId, stack, monoforumThreadId} = options;
     let {lastMsgId, lastMsgPeerId, startParam} = options;
     const tempId = ++this.setPeerTempId;
 
@@ -4138,7 +4217,7 @@ export default class ChatBubbles {
       lastMsgFullMid = EMPTY_FULL_MID;
     }
 
-    const historyStorage = await m(this.chat.getHistoryStorage());
+    const historyStorage = this.chat.getHistoryStorage();
     if(chatType === ChatType.Pinned) {
       topMessageFullMid = makeFullMid(peerId, await m(this.managers.appMessagesManager.getPinnedMessagesMaxId(peerId, this.chat.threadId)));
     } else if(historyStorage.searchHistory) {
@@ -4310,7 +4389,7 @@ export default class ChatBubbles {
     // const haveToScrollToBubble = (topMessage && (isJump || samePeer)) || isTarget;
     const haveToScrollToBubble = canScroll || (topMessageFullMid !== EMPTY_FULL_MID && isJump) || isTarget;
     const fromUp = maxBubbleFullMid !== EMPTY_FULL_MID && (lastMsgFullMid === EMPTY_FULL_MID/*  || lastMsgId < 0 */ || await (async() => {
-      const historyStorage = await this.chat.getHistoryStorage();
+      const historyStorage = this.chat.getHistoryStorage();
       const slicedArray = historyStorage.searchHistory || historyStorage.history;
       if(slicedArray === historyStorage.searchHistory) {
         const lastIndex = slicedArray.first.indexOf(lastMsgFullMid);
@@ -4329,6 +4408,10 @@ export default class ChatBubbles {
       topMessageFullMid,
       savedPosition
     };
+
+    if(this.chat.isBroadcast && this.chat.type === ChatType.Chat/*  && false */) {
+      this.loadSponsoredMessages();
+    }
 
     if(!samePeer) {
       this.ranks = undefined;
@@ -4382,10 +4465,6 @@ export default class ChatBubbles {
         if(ackedResult.cached) {
           await m(setRanksPromise);
         }
-      }
-
-      if(this.chat.isBroadcast && this.chat.type === ChatType.Chat/*  && false */) {
-        this.loadSponsoredMessages();
       }
     }
 
@@ -4589,9 +4668,14 @@ export default class ChatBubbles {
       });
 
       if(chatType === ChatType.Chat && !this.chat.isForumTopic) {
-        const dialog = await m(this.managers.appMessagesManager.getDialogOnly(peerId));
+        const dialog = await m(
+          monoforumThreadId ?
+            this.managers.monoforumDialogsStorage.getDialogByParent(peerId, monoforumThreadId) :
+            this.managers.appMessagesManager.getDialogOnly(peerId)
+        );
+
         if(dialog?.pFlags.unread_mark) {
-          this.managers.appMessagesManager.markDialogUnread(peerId, true);
+          this.managers.appMessagesManager.markDialogUnread({peerId, monoforumThreadId: this.chat.monoforumThreadId, read: true});
         }
       }
 
@@ -4784,11 +4868,18 @@ export default class ChatBubbles {
     // }
   }
 
-  public async onScrolledAllDown() {
+  public onScrolledAllDown() {
     if(this.chat.type === ChatType.Chat || this.chat.type === ChatType.Discussion) {
-      const {peerId, threadId} = this.chat;
-      const historyMaxId = await this.chat.getHistoryMaxId();
-      this.managers.appMessagesManager.readHistory(peerId, historyMaxId, threadId, true);
+      const {peerId, threadId, monoforumThreadId} = this.chat;
+      const historyMaxId = this.chat.getHistoryMaxId();
+
+      this.managers.appMessagesManager.readHistory({
+        peerId,
+        maxId: historyMaxId,
+        threadId,
+        monoforumThreadId,
+        force: true
+      });
     }
   }
 
@@ -4798,17 +4889,29 @@ export default class ChatBubbles {
       hasMessages: this.chat.hasMessages()
     });
 
-    const isBroadcast = this.chat.isBroadcast;
-    const isLikeGroup = this.chat.isLikeGroup;
+    const middleware = this.getMiddleware();
+
+    const {isBroadcast, isLikeGroup, peerId, isTemporaryThread} = this.chat;
 
     return () => {
       this.chatInner.classList.toggle('has-rights', canWrite);
-      this.container.classList.toggle('is-chat-input-hidden', !canWrite);
+      this.container.classList.toggle('is-chat-input-hidden', !canWrite && !this.chat.appConfig.freeze_since_date);
+
+      const tmpThreadCls = 'is-temporary-thread';
+      if(!isTemporaryThread && this.container.classList.contains(tmpThreadCls)) {
+        setTimeout(() => {
+          if(!middleware()) return;
+          this.container.classList.remove(tmpThreadCls);
+        }, 200); // leave some time for the message to appear
+      }
+      if(isTemporaryThread) {
+        this.container.classList.add(tmpThreadCls);
+      }
 
       [this.chatInner, this.remover].forEach((element) => {
         element.classList.toggle('is-chat', isLikeGroup);
         element.classList.toggle('no-messages', !hasMessages);
-        element.classList.toggle('with-message-avatars', isVerificationBot(this.peerId));
+        element.classList.toggle('with-message-avatars', isVerificationBot(peerId));
         element.classList.toggle('is-broadcast', isBroadcast);
       });
 
@@ -4816,8 +4919,8 @@ export default class ChatBubbles {
     };
   }
 
-  public async updateHasMessages() {
-    const hasMessages = await this.chat.hasMessages();
+  public updateHasMessages() {
+    const hasMessages = this.chat.hasMessages();
     [this.chatInner, this.remover].forEach((element) => {
       element.classList.toggle('no-messages', !hasMessages);
     });
@@ -5118,6 +5221,15 @@ export default class ChatBubbles {
     const middlewareHelper = getMiddleware();
     const middleware = middlewareHelper.get();
     const realMiddleware = this.getMiddleware();
+
+    if(this.chat.isBotforum && this.chat.threadId && message?._ === 'messageService' && message?.action?._ === 'messageActionTopicEdit' && this.placeholderTopicIconContainer) (async() => {
+      const topic = await this.managers.dialogsStorage.getForumTopic(this.peerId, this.chat.threadId);
+      if(!realMiddleware()) return;
+      this.placeholderTopicIconContainer.replaceChildren(
+        await wrapTopicIcon({topic, middleware: this.getMiddleware(), customEmojiSize: TOPIC_ICON_SIZE})
+      );
+    })();
+
     realMiddleware.onClean(() => {
       (this.chat.destroyPromise || this.chat.setPeerPromise || Promise.resolve()).then(() => {
         middlewareHelper.destroy();
@@ -5277,6 +5389,8 @@ export default class ChatBubbles {
 
     // await pause(1000);
 
+    const loadPromises: Promise<any>[] = [];
+
     const isMessage = message._ === 'message';
     const hasReactions = message._ === 'message' || (message._ === 'messageService' && message.pFlags.reactions_are_possible)
     const groupedId = isMessage && message.grouped_id;
@@ -5316,7 +5430,9 @@ export default class ChatBubbles {
     contentWrapper.append(bubbleContainer);
     bubble.append(contentWrapper);
 
-    await addPaidServiceMessage({
+    let tmpPromise: Promise<any>;
+
+    tmpPromise = addPaidServiceMessage({
       isAnyGroup: this.chat.isAnyGroup,
       bubble,
       message,
@@ -5324,7 +5440,16 @@ export default class ChatBubbles {
       peerId: this.peerId,
       groupedMessages
     });
+    if(tmpPromise) await tmpPromise;
 
+    tmpPromise = addSuggestedPostServiceMessage({
+      bubble,
+      message,
+      peerId: this.peerId,
+      canManageDirectMessages: this.chat.canManageDirectMessages,
+      loadPromises
+    });
+    if(tmpPromise) await tmpPromise;
 
     let isInUnread = !our &&
       !message.pFlags.out &&
@@ -5340,7 +5465,6 @@ export default class ChatBubbles {
       }
     }
 
-    const loadPromises: Promise<any>[] = [];
     const ret = {
       bubble,
       promises: loadPromises,
@@ -5358,6 +5482,10 @@ export default class ChatBubbles {
     const isStoryMention = isMessage && (message.media as MessageMedia.messageMediaStory)?.pFlags?.via_mention;
     const regularAsService = !!isStoryMention;
     let returnService: boolean;
+
+    if(this.chat.isBotforum && (message as Message.messageService).action?._ === 'messageActionTopicCreate') {
+      return;
+    }
 
     if(regularAsService || (!isMessage && (!message.action || !SERVICE_AS_REGULAR.has(message.action._)))) {
       const action = (message as Message.messageService).action;
@@ -5377,6 +5505,7 @@ export default class ChatBubbles {
       bubble.className = 'bubble service';
 
       bubbleContainer.replaceChildren();
+
       const s = document.createElement('div');
       s.classList.add('service-msg');
       if(action) {
@@ -5474,19 +5603,51 @@ export default class ChatBubbles {
           promise = peerTitle.update({peerId: action.channel_id.toPeerId(true), wrapOptions});
           s.append(i18n('ChatMigration.To', [peerTitle.element]));
         } else if(action._ === 'messageActionPaidMessagesPrice') {
-          const isFree = !+action.stars;
+          const result = getPriceChangedActionMessageLangParams(action, this.chat.isBroadcast, () => {
+            const peerTitle = new PeerTitle();
+            promise = peerTitle.update({peerId: message.peerId.toPeerId(true), wrapOptions});
+            return peerTitle.element;
+          });
           s.append(i18n(
-            isFree ? 'PaidMessages.GroupPriceChangedFree' : 'PaidMessages.GroupPriceChanged',
-            [+action.stars]
+            result.langPackKey,
+            result.args
           ));
         } else if(action._ === 'messageActionPaidMessagesRefunded') {
           const peerTitle = new PeerTitle();
-          promise = peerTitle.update({peerId: this.peerId, onlyFirstName: true, wrapOptions});
+          const savedPeerId = this.chat.canManageDirectMessages && getPeerId(message.saved_peer_id);
+          promise = peerTitle.update({peerId: savedPeerId || this.peerId, onlyFirstName: true, wrapOptions});
 
           s.append(i18n(
             our ? 'PaidMessages.StarsRefundedByYou' : 'PaidMessages.StarsRefundedToYou',
             [+action.stars, peerTitle.element]
           ));
+        } else if(action._ === 'messageActionSuggestedPostApproval' || action._ === 'messageActionSuggestedPostRefund' || action._ === 'messageActionSuggestedPostSuccess') {
+          const {default: SuggestedPostActionContent} = await import('./bubbleParts/suggestedPostActionContent');
+          const content = new SuggestedPostActionContent;
+
+          let peerTitle;
+          if(action._ === 'messageActionSuggestedPostApproval' && checkIfNotMePosted({peerId: this.peerId, canManageDirectMessages: this.chat.canManageDirectMessages, message})) {
+            peerTitle = new PeerTitle();
+            promise = peerTitle.update({peerId: this.peerId, onlyFirstName: this.chat.canManageDirectMessages, limitSymbols: 20, wrapOptions});
+          }
+
+          content.feedProps({
+            action,
+            message,
+            canManageDirectMessages: this.chat.canManageDirectMessages,
+            fromPeerTitle: peerTitle?.element
+          });
+
+          s.append(content);
+        } else if(action._ === 'messageActionSuggestBirthday') {
+          const title = await wrapMessageActionTextNew({message, middleware});
+          const container = document.createElement('div');
+          this.wrapSomeSolid(() => SuggestBirthdayBubble({
+            birthday: action.birthday,
+            outgoing: message.pFlags.out,
+            title
+          }), container, middleware);
+          s.append(container);
         } else {
           promise = wrapMessageActionTextNew({
             message,
@@ -5534,6 +5695,29 @@ export default class ChatBubbles {
           }), content, middleware);
 
           bubbleContainer.after(content);
+        } else if(action._ === 'messageActionGiftTon') {
+          const content = bubbleContainer.cloneNode(false) as HTMLElement;
+          content.classList.add('has-service-before');
+
+          const stickers = await this.managers.appStickersManager.getLocalStickerSet('inputStickerSetTonGifts')
+          let idx: number
+          const amountNum = nanotonToJsNumber(action.amount)
+          if(amountNum > 50) idx = 2
+          else if(amountNum > 10) idx = 1
+          else idx = 0
+
+          this.wrapSomeSolid(() => PremiumGiftBubble({
+            rlottieOptions: {middleware},
+            sticker: stickers.documents[idx] as MyDocument,
+            title: formatNanoton(action.crypto_amount) + ' ' + action.crypto_currency,
+            subtitle: i18n('TonGiftSubtitle'),
+            buttonText: i18n('ActionGiftPremiumView'),
+            buttonCallback: () => {
+              PopupElement.createPopup(PopupStars, {ton: true})
+            }
+          }), content, middleware);
+
+          bubbleContainer.after(content);
         } else if(action._ === 'messageActionChannelJoined') {
           bubble.classList.add('is-similar-channels');
 
@@ -5562,7 +5746,8 @@ export default class ChatBubbles {
               scrollSaver.save();
             }
 
-            const options: KeyframeAnimationOptions = {duration: noAnimation ? 0 : 300, fill: 'forwards', easing: 'cubic-bezier(.4, .0, .2, 1)'};
+            const {duration, easing} = getTransition('standard');
+            const options: KeyframeAnimationOptions = {duration: noAnimation ? 0 : duration, fill: 'forwards', easing};
             const keyframes: Keyframe[] = [{height: '0'/* , transform: 'scale(0)', opacity: '0' */}, {height: '9.125rem'/* , transform: 'scale(1)', opacity: '1' */}];
             if(!force) keyframes.reverse();
             const animation = c.animate(keyframes, options);
@@ -5579,10 +5764,10 @@ export default class ChatBubbles {
           const deferred = deferredPromise<void>();
 
           const updateHidden = async(hidden: boolean) => {
-            const state = await apiManagerProxy.getState();
-            if(hidden) state.hiddenSimilarChannels.push(peerId);
-            else indexOfAndSplice(state.hiddenSimilarChannels, peerId);
-            await this.managers.appStateManager.pushToState('hiddenSimilarChannels', state.hiddenSimilarChannels);
+            const array = this.chat.appState.hiddenSimilarChannels.slice();
+            if(hidden) array.push(peerId);
+            else indexOfAndSplice(array, peerId);
+            await this.chat.setAppState('hiddenSimilarChannels', array);
           };
 
           const peerId = this.chat.peerId;
@@ -5603,8 +5788,7 @@ export default class ChatBubbles {
                 bubbleContainer.classList.add('is-clickable');
                 await getHeavyAnimationPromise();
 
-                const state = await apiManagerProxy.getState();
-                if(!state.hiddenSimilarChannels.includes(peerId)) {
+                if(!this.chat.appState.hiddenSimilarChannels.includes(peerId)) {
                   toggle(true, cached);
                 }
 
@@ -5653,9 +5837,9 @@ export default class ChatBubbles {
               if(action._ === 'messageActionStarGift' && action.upgrade_msg_id) {
                 const upgradeMsg = await this.managers.appMessagesManager.getMessageById(action.upgrade_msg_id);
                 const upgradedGift = await this.managers.appGiftsManager.wrapGiftFromMessage(upgradeMsg as Message.messageService);
-                PopupElement.createPopup(PopupStarGiftInfo, upgradedGift);
+                PopupElement.createPopup(PopupStarGiftInfo, {gift: upgradedGift});
               } else {
-                PopupElement.createPopup(PopupStarGiftInfo, gift)
+                PopupElement.createPopup(PopupStarGiftInfo, {gift})
               }
             }
           }), container, middleware)
@@ -5769,6 +5953,7 @@ export default class ChatBubbles {
 
       returnService = true;
     }
+
 
     const setUnreadObserver = isInUnread && this.observer ? this.setUnreadObserver.bind(this, 'history', bubble, maxBubbleMid) : undefined;
 
@@ -5924,7 +6109,7 @@ export default class ChatBubbles {
     let isStandaloneMedia = false;
     let attachmentDiv: HTMLElement;
     if(bigEmojis) {
-      if(rootScope.settings.emoji.big) {
+      if(this.chat.appSettings.emoji.big) {
         const sticker = bigEmojis === 1 &&
           !totalEntities.find((entity) => entity._ === 'messageEntityCustomEmoji') &&
           await this.managers.appStickersManager.getAnimatedEmojiSticker(messageMessage);
@@ -5955,6 +6140,31 @@ export default class ChatBubbles {
 
     if(needToSetHTML) {
       setInnerHTML(messageDiv, richText);
+    }
+
+    const usedId = message.mid;
+    if(isMessage && message.pFlags.currentlyTyping || this.currentlyTypingMessages[usedId]) {
+      const {wrapContinuouslyTypingMessage} = await import('./bubbleParts/continuouslyTypingMessage');
+
+      const previous = this.currentlyTypingMessages[usedId];
+      previous?.clean();
+
+      const current = this.currentlyTypingMessages[usedId] = wrapContinuouslyTypingMessage({
+        scrollable: this.scrollable.container,
+        bubble,
+        root: richText,
+        prevPosition: previous?.currentPosition,
+        isEnd: previous?.nextIsEnd
+      });
+
+      middleware.onDestroy(() => {
+        current?.clean();
+        setTimeout(() => {
+          if(current === this.currentlyTypingMessages[usedId]) {
+            this.currentlyTypingMessages[usedId] = undefined;
+          }
+        }, 1000); // leave some time in case the message is swapped
+      });
     }
 
     const isOut = this.chat.isOutMessage(message);
@@ -5995,7 +6205,7 @@ export default class ChatBubbles {
     if(isMessage && (this.chat.isAllMessagesForum || (this.chat.hashtagType === 'my' && isOut))) {
       const result = await wrapTopicNameButton({
         peerId: message.peerId,
-        threadId: getMessageThreadId(message, this.chat.isForum),
+        threadId: getMessageThreadId(message, {isForum: this.chat.isForum}),
         lastMsgId: message.mid,
         wrapOptions: {
           middleware
@@ -6114,6 +6324,15 @@ export default class ChatBubbles {
         bubble.classList.add('with-reply-markup');
         contentWrapper.append(containerDiv);
       }
+    }
+
+    if(!isOut && isMessage) {
+      tmpPromise = addSuggestedPostReplyMarkup({message, bubble, contentWrapper, chat: this.chat});
+      if(tmpPromise) await tmpPromise;
+    }
+
+    if(isMessage) {
+      addContinueLastTopicReplyMarkup({message, bubble, contentWrapper, chat: this.chat});
     }
 
     const isOutgoing = message.pFlags.is_outgoing/*  && this.peerId !== rootScope.myId */;
@@ -6314,6 +6533,7 @@ export default class ChatBubbles {
           }
 
           const starGiftAttribute = webPage.attributes?.find((attr) => attr._ === 'webPageAttributeUniqueStarGift')
+          const starGiftCollectionAttribute = webPage.attributes?.find((attr) => attr._ === 'webPageAttributeStarGiftCollection')
 
           const props: Parameters<typeof WebPageBox>[0] = {};
           const boxRefs: ((box: HTMLAnchorElement) => void)[] = [];
@@ -6386,7 +6606,7 @@ export default class ChatBubbles {
           // const willHaveSponsoredAvatar = sponsoredMessage && (getPeerId(sponsoredMessage.from_id) !== NULL_PEER_ID || sponsoredPhoto);
           // const willHaveSponsoredPhoto = sponsoredMessage && sponsoredMessage.pFlags.show_peer_photo && willHaveSponsoredAvatar;
           const willHaveSponsoredPhoto = !!sponsoredPhoto;
-          const willHaveMedia = !!(photo || doc || storyAttribute || willHaveSponsoredPhoto || starGiftAttribute);
+          const willHaveMedia = !!(photo || doc || storyAttribute || willHaveSponsoredPhoto || starGiftAttribute || starGiftCollectionAttribute);
           if(willHaveMedia) {
             preview = document.createElement('div');
             props.media = {
@@ -6438,7 +6658,7 @@ export default class ChatBubbles {
                     _: 'inputMessagesFilterEmpty'
                   }
                 },
-                fontSize: rootScope.settings.messagesTextSize,
+                fontSize: this.chat.appSettings.messagesTextSize,
                 canTranscribeVoice: true
               });
               preview.append(docDiv);
@@ -6596,6 +6816,20 @@ export default class ChatBubbles {
               }
             }), preview, middleware)
             props.text = undefined
+          } else if(starGiftCollectionAttribute) {
+            await wrapSticker({
+              doc: await this.managers.appDocsManager.saveDoc(starGiftCollectionAttribute.icons[0]),
+              div: preview,
+              middleware,
+              lazyLoadQueue,
+              play: true,
+              loop: false,
+              group: this.chat.animationGroup
+            })
+            preview.style.width = '48px';
+            preview.style.height = '48px';
+            props.media.photoSize = 'square';
+            isSquare = true;
           }
 
           if(preview) {
@@ -6779,7 +7013,7 @@ export default class ChatBubbles {
                 isScheduled: (message as Message.message).pFlags.is_scheduled
               } : undefined,
               sizeType: 'documentName',
-              fontSize: rootScope.settings.messagesTextSize,
+              fontSize: this.chat.appSettings.messagesTextSize,
               richTextFragment: richText,
               richTextOptions: getRichTextOptions(),
               canTranscribeVoice: true,
@@ -7352,7 +7586,10 @@ export default class ChatBubbles {
 
     const showNameForVerificationCodes = isMessageForVerificationBot(message) && !message.pFlags.local;
     // const needName = ((peerId.isAnyChat() && (peerId !== message.fromId || our)) && message.fromId !== rootScope.myId) || message.viaBotId;
-    const needName = ((message.fromId !== rootScope.myId || !isOut) && this.chat.isLikeGroup) ||
+
+    const iPostedAsSomeoneElse = message.fromId !== rootScope.myId && !this.chat.isMonoforum;
+
+    const needName = ((iPostedAsSomeoneElse || !isOut) && this.chat.isLikeGroup) ||
       message.viaBotId ||
       storyFromPeerId ||
       (showNameForVerificationCodes && !replyTo);
@@ -7397,10 +7634,11 @@ export default class ChatBubbles {
         (
           replyTo?._ === 'messageReplyStoryHeader' || (
             message.reply_to_mid &&
-            message.reply_to_mid !== this.chat.threadId
+            message.reply_to_mid !== this.chat.threadId &&
+            message.reply_to_mid !== replyTo?.reply_to_top_id
           ) || replyTo?.reply_from
         ) &&
-        (!this.chat.isAllMessagesForum || (replyTo as MessageReplyHeader.messageReplyHeader).reply_to_top_id)
+        (!this.chat.isAllMessagesForum && !this.chat.isBotforum || (replyTo as MessageReplyHeader.messageReplyHeader).reply_to_top_id)
       ) {
         replyContainer = await MessageRender.setReply({
           chat: this.chat,
@@ -8044,7 +8282,7 @@ export default class ChatBubbles {
     if(!this.scrollable.loadedAll['bottom'] || !this.scrollable.loadedAll['top']) {
       let isEnd = (historyResult as HistoryResult).isEnd;
       if(!isEnd) {
-        const historyStorage = await this.chat.getHistoryStorage();
+        const historyStorage = this.chat.getHistoryStorage();
         const firstSlice = historyStorage.history.first;
         const lastSlice = historyStorage.history.last;
         isEnd = {top: false, bottom: false, both: false};
@@ -8080,7 +8318,6 @@ export default class ChatBubbles {
         this.chat.getHistoryMaxId()
       ])
       let prevGroupedId: Long | undefined
-      debugger
 
       for(const mid_ of history) {
         const mid = typeof(mid_) === 'number' ? mid_ : mid_.mid;
@@ -8396,7 +8633,7 @@ export default class ChatBubbles {
   }
 
   private async renderEmptyPlaceholder(
-    type: 'group' | 'saved' | 'noMessages' | 'noScheduledMessages' | 'greeting' | 'restricted' | 'premiumRequired' | 'paidMessages',
+    type: EmptyPlaceholderType,
     bubble: HTMLElement,
     message: any,
     elements: (Node | string)[]
@@ -8404,7 +8641,7 @@ export default class ChatBubbles {
     const BASE_CLASS = 'empty-bubble-placeholder';
     bubble.classList.add(BASE_CLASS, BASE_CLASS + '-' + type);
 
-    let title: HTMLElement;
+    let title: HTMLElement, topic: ForumTopic.forumTopic;
     if(type === 'group') title = i18n('GroupEmptyTitle1');
     else if(type === 'saved') title = i18n('ChatYourSelfTitle');
     else if(type === 'noMessages' || type === 'greeting') title = i18n('NoMessages');
@@ -8556,7 +8793,7 @@ export default class ChatBubbles {
       const starsAmount = await this.managers.appPeersManager.getStarsAmount(this.peerId); // should be cached probably here
 
       const starsElement = document.createElement('span');
-      starsElement.classList.add(BASE_CLASS + '-stars')
+      starsElement.classList.add(BASE_CLASS + '-stars');
       starsElement.append(
         Icon('star', BASE_CLASS + '-star-icon'),
         numberThousandSplitterForStars(starsAmount)
@@ -8575,6 +8812,57 @@ export default class ChatBubbles {
       });
 
       elements.push(stickerDiv, subtitle, button);
+    } else if(type === 'directChannelMessages') {
+      const stickerDiv = document.createElement('div');
+      stickerDiv.classList.add(BASE_CLASS + '-sticker');
+      stickerDiv.append(Icon('round_chats_filled'));
+
+      const starsAmount = await this.managers.appPeersManager.getStarsAmount(this.peerId);
+
+      let starsElement: HTMLElement;
+
+      if(starsAmount) {
+        starsElement = document.createElement('span');
+        starsElement.classList.add(BASE_CLASS + '-stars');
+        starsElement.append(
+          Icon('star', BASE_CLASS + '-star-icon'),
+          numberThousandSplitterForStars(starsAmount)
+        );
+      }
+
+      const subtitle = i18n(starsAmount ? 'ChannelDirectMessages.WelcomePaid' : 'ChannelDirectMessages.Welcome', [await wrapPeerTitle({peerId: this.peerId}), starsElement]);
+      subtitle.classList.add('center', BASE_CLASS + '-subtitle');
+
+      let button: HTMLElement;
+      if(starsAmount) {
+        button = Button('bubble-service-button overflow-hidden', {noRipple: true, text: 'BuyStars'});
+        button.append(Sparkles({isDiv: true, mode: 'button'}));
+        attachClickEvent(button, () => {
+          PopupElement.createPopup(PopupStars);
+        });
+      }
+
+      elements.push(...[stickerDiv, subtitle, button].filter(Boolean));
+    } else if(type === 'topic' && (topic = await this.managers.dialogsStorage.getForumTopic(this.peerId, this.chat.threadId))) {
+      const stickerDiv = document.createElement('div');
+      stickerDiv.classList.add(BASE_CLASS + '-sticker');
+
+      stickerDiv.append(
+        await wrapTopicIcon({topic, middleware: this.getMiddleware(), customEmojiSize: TOPIC_ICON_SIZE})
+      );
+
+      this.placeholderTopicIconContainer = stickerDiv;
+      this.getMiddleware().onDestroy(() => {
+        this.placeholderTopicIconContainer = undefined;
+      });
+
+      const title = i18n('TopicEmptyTitle');
+      title.classList.add('center', BASE_CLASS + '-topic-title');
+
+      const subtitle = i18n('TopicEmptyDescription');
+      subtitle.classList.add('center', BASE_CLASS + '-topic-subtitle');
+
+      elements.push(stickerDiv, title, subtitle);
     }
 
     if(listElements) {
@@ -8649,9 +8937,11 @@ export default class ChatBubbles {
       };
 
       if(!isSponsored) {
-        bubble.classList.add('bubble-first');
+        if(!this.shouldShowBotforumNewTopic()) bubble.classList.add('bubble-first');
         bubble.classList.remove('can-have-tail', 'is-in');
       }
+
+      if(this.shouldShowBotforumNewTopic()) bubble.classList.add('bubble-last', 'botforum-new-topic-bubble');
 
       const elements: (Node | string)[] = [];
       const isBot = this.chat.isBot;
@@ -8668,6 +8958,13 @@ export default class ChatBubbles {
         appendTo = this.chatInner;
         method = 'append';
         animate = false;
+      } else if(this.shouldShowBotforumNewTopic()) {
+        animate = false;
+        appendTo = this.chatInner;
+        method = 'append';
+        elementsMethod = 'replaceChildren';
+
+        elements.push(new BotforumNewTopic);
       } else if(isBot && message._ === 'message') {
         if(isMessageForVerificationBot(message)) {
           const langPackString = I18n.strings.get('VerificationCodesBotDescription');
@@ -8686,7 +8983,9 @@ export default class ChatBubbles {
 
         method = 'prepend';
         appendTo = this.chatInner;
-      } else if(this.chat.isAnyGroup && (apiManagerProxy.getPeer(this.peerId) as MTChat.chat).pFlags.creator) {
+      } else if(this.chat.isMonoforum && !this.chat.canManageDirectMessages) {
+        renderPromise = this.renderEmptyPlaceholder('directChannelMessages', bubble, message, elements);
+      } else if(this.chat.isAnyGroup && (this.chat.peer as MTChat.chat).pFlags.creator) {
         renderPromise = this.renderEmptyPlaceholder('group', bubble, message, elements);
       } else if(this.chat.type === ChatType.Scheduled) {
         renderPromise = this.renderEmptyPlaceholder('noScheduledMessages', bubble, message, elements);
@@ -8704,6 +9003,8 @@ export default class ChatBubbles {
         } else {
           renderPromise = this.renderEmptyPlaceholder('greeting', bubble, message, elements);
         }
+      } else if((this.chat.isBotforum || this.chat.isForum) && this.chat.threadId) {
+        renderPromise = this.renderEmptyPlaceholder('topic', bubble, message, elements);
       } else {
         renderPromise = this.renderEmptyPlaceholder('noMessages', bubble, message, elements);
       }
@@ -8932,6 +9233,10 @@ export default class ChatBubbles {
         })
       }
 
+      if(side === 'bottom' && value && this.shouldShowBotforumNewTopic()) {
+        return this.renderBotforumPlaceholder();
+      }
+
       if(side === 'top' && value && this.chat.isBot) {
         return this.renderBotPlaceholder();
       }
@@ -9032,10 +9337,12 @@ export default class ChatBubbles {
         this.messagesQueuePromise
       ]).then(([message]) => {
         if(!middleware()) return;
-        // this.processLocalMessageRender(message);
-        log('rendering', message);
-        return this.performHistoryResult({history: [message]}, false);
-      });
+        if(this.scrollable.loadedAll.bottom) {
+          this.performHistoryResult({history: [message]}, false);
+        } else {
+          this.sponsoredMessagesAvailable = [message]
+        }
+      })
     }).finally(() => {
       if(this.getSponsoredMessagePromise === promise) {
         this.getSponsoredMessagePromise = undefined;
@@ -9084,6 +9391,23 @@ export default class ChatBubbles {
     }
 
     return processPromise;
+  }
+
+  private async renderBotforumPlaceholder() {
+    const middleware = this.getMiddleware();
+
+    const message = await this.generateLocalFirstMessage(false, (message) => {
+      message.message = '-'; // will get replaced anyway
+      message.date = Date.now() * 1000;
+    });
+
+    if(!middleware()) {
+      return;
+    }
+
+    return {
+      renderPromise: this.processLocalMessageRender(message, false)
+    }
   }
 
   private async renderUnknownUserPlaceholder() {
@@ -9140,7 +9464,7 @@ export default class ChatBubbles {
           !this.getRenderedLength()
         ) ||
         (this.chat.type === ChatType.Scheduled && !this.getRenderedLength()) ||
-        !(await this.chat.getHistoryStorage()).count
+        !this.chat.getHistoryStorage().count
       )
     ) {
       this.log('inject empty peer placeholder');
@@ -9254,7 +9578,7 @@ export default class ChatBubbles {
       if(this.chat.type === ChatType.Pinned) {
         additionalFullMids = [additionalFullMid];
       } else {
-        const historyStorage = await this.chat.getHistoryStorage();
+        const historyStorage = this.chat.getHistoryStorage();
         const slicedArray = historyStorage.history;
         const slice = slicedArray.slice;
         if(slice.isEnd(SliceEnd.Bottom) && !slice.isEnd(SliceEnd.Both)) {
@@ -9401,12 +9725,16 @@ export default class ChatBubbles {
       return;
     }
 
+    if(this.chat.canManageDirectMessages && !this.chat.monoforumThreadId) {
+      return;
+    }
+
     const middleware = this.getMiddleware();
 
-    const {peerId, threadId} = this.chat;
+    const {peerId, threadId, monoforumThreadId} = this.chat;
 
-    const historyMaxId = await this.chat.getHistoryMaxId();
-    let readMaxId = await this.managers.appMessagesManager.getReadMaxIdIfUnread(peerId, threadId);
+    const historyMaxId = this.chat.getHistoryMaxId();
+    let readMaxId = await this.managers.appMessagesManager.getReadMaxIdIfUnread(peerId, threadId || monoforumThreadId);
     if(!readMaxId || !middleware()) return;
 
     readMaxId = this.getRenderedHistory('asc', true)
@@ -9477,6 +9805,31 @@ export default class ChatBubbles {
       this.cleanupPlaceholders()
       this.renderUnknownUserPlaceholder();
     }
+  }
+
+  private shouldShowBotforumNewTopic() {
+    return this.chat.isBotforum && !this.chat.threadId;
+  }
+
+  private finalizeTypingMessage(message: MyMessage, tempId: number) {
+    const currentlyTyping = this.currentlyTypingMessages[tempId];
+    const bubble = currentlyTyping?.bubble;
+
+    if(!currentlyTyping || !bubble) return false;
+
+    currentlyTyping?.clean();
+    delete this.currentlyTypingMessages[tempId];
+
+    this.currentlyTypingMessages[message.mid] = currentlyTyping;
+    currentlyTyping.nextIsEnd = true;
+
+    this.safeRenderMessage({
+      message,
+      bubble,
+      reverse: true
+    });
+
+    return true;
   }
 }
 

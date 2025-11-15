@@ -322,7 +322,7 @@ $btn-menu-z-index: 4;
       padding-right: 6px;
     }
 
-    &:not(.submenu-trigger):active {
+    &:not(.submenu-trigger):not(.btn-menu-search):active {
       transform: scale(.96);
     }
 
@@ -335,6 +335,12 @@ $btn-menu-z-index: 4;
 
     &.danger {
       @include hover-background-effect(red);
+    }
+
+    &.btn-menu-search {
+      @include hover-background-effect(transparent);
+      cursor: default !important;
+      margin-top: .3125rem;
     }
 
     &-icon {
@@ -368,6 +374,21 @@ $btn-menu-z-index: 4;
       .media-photo {
         width: inherit;
         height: inherit;
+      }
+
+      
+    }
+
+    &-input {
+      border: none;
+      outline: none;
+      padding: 0;
+      background-color: transparent;
+      font-size: var(--font-size-14);
+      line-height: var(--line-height-16);
+
+      &::placeholder {
+        color: var(--secondary-text-color);
       }
     }
 
@@ -513,6 +534,32 @@ $btn-menu-z-index: 4;
         left: var(--offset);
         border: 1.5px solid var(--primary-color);
         border-radius: inherit;
+      }
+    }
+
+    .checkbox-field {
+      --size: 1.25rem;
+      order: 0;
+      margin: 0;
+      margin-inline-end: var(--icon-margin);
+
+      .checkbox-box {
+        &-border,
+        &-background {
+          display: none;
+        }
+
+        &-check use {
+          stroke: var(--primary-text-color);
+        }
+      }
+    }
+
+    &.has-checkbox {
+      padding-inline-end: 1.5rem;
+
+      .btn-menu-item-text {
+        order: 1;
       }
     }
   }
@@ -856,6 +903,28 @@ $btn-menu-z-index: 4;
       width: 100%;
       height: 100%;
       padding: .0625rem;
+    }
+  }
+
+  &-select {
+    padding-block: 0;
+
+    &-text-faded {
+      opacity: 0.3;
+    }
+  }
+
+  &-search-delimiter {
+    height: 1px;
+    background-color: var(--border-color);
+    margin: 0.3125rem;
+    margin-bottom: 0;
+  }
+
+  &-search-scrollable {
+    position: relative;
+    .scrollable {
+      padding-block: 0.3125rem;
     }
   }
 }

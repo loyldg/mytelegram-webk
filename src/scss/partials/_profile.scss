@@ -198,15 +198,27 @@
         }
       }
 
-      .profile-subtitle {
-        line-height: 16px;
+      .emoji-status {
+        pointer-events: all;
+        z-index: 1;
       }
 
-      .profile-subtitle,
+      .profile-subtitle {
+        line-height: 24px;
+        
+        &-text {
+          opacity: var(--secondary-opacity-max);
+        }
+      }
+
       .verified-icon,
       .premium-icon,
       .emoji-status-text-color {
         opacity: var(--secondary-opacity-max);
+      }
+
+      .stars-rating-icon:not(.stars-rating-icon-warning) {
+        margin-left: -4px;
       }
 
       .online {
@@ -327,6 +339,16 @@
         padding-top: 15px;
       }
     } */
+     
+    .stars-rating-icon {
+      display: flex;
+      align-items: center;
+      pointer-events: all;
+
+      &-warning {
+        margin-right: 0.25rem;
+      }
+    }
 
     .sidebar-left-section {
       position: relative;
@@ -378,6 +400,10 @@
     inset-inline-end: 1.25rem;
     transform: none;
     transition: none !important;
+
+    &-container {
+      position: relative;
+    }
   }
 
   &-container {
@@ -420,6 +446,17 @@
         transform: scale(.8916666667);
         transition-delay: calc(var(--transition-standard-in-time) - .05s), 0s;
       }
+
+      .profile-subtitle,
+      .verified-icon,
+      .premium-icon,
+      .emoji-status-text-color {
+        opacity: var(--secondary-opacity-max);
+      }
+
+      .stars-rating-icon {
+        margin-left: 0;
+      }
     }
 
     &.is-collapsed:not(.need-white) {
@@ -429,6 +466,10 @@
         .profile-subtitle {
           color: var(--secondary-text-color);
           opacity: 1;
+        }
+
+        .stars-rating-icon-warning {
+          color: var(--danger-color);
         }
       }
     }
@@ -506,7 +547,7 @@
       --transition: .1s ease-in-out;
       position: absolute;
       inset-inline: 0;
-      z-index: 2;
+      z-index: 3;
 
       @include animation-level(2) {
         transition: background-color var(--transition);
@@ -690,11 +731,35 @@
     align-items: center;
     gap: 0.5rem;
   }
+
+  &-notes {
+    .row-title {
+      white-space: pre-wrap;
+    }
+  }
 }
 
-.star-gifts-profile-tab {
-  background-color: var(--background-color);
-  display: flex;
-  justify-content: center;
+.search-super-container-gifts.tabs-tab,
+.search-super-container-stories.tabs-tab {
+  position: static;
+  overflow: initial!important;
+}
+
+.search-super-content-gifts {
   height: 100%;
+}
+
+.search-super-content-stories {
+  background-color: var(--background-color)!important;
+
+  &-albums {
+    position: sticky!important;
+    top: 6.5rem;
+    z-index: 3;
+    background-color: var(--background-color);
+
+    .my-stories-container & {
+      top: 0;
+    }
+  }
 }

@@ -23,12 +23,19 @@ import getDialogIndex from '../../lib/appManagers/utils/dialogs/getDialogIndex';
 import {Middleware} from '../../helpers/middleware';
 import deferredPromise from '../../helpers/cancellablePromise';
 import {MOUNT_CLASS_TO} from '../../config/debug';
+import appDialogsManager from '../../lib/appManagers/appDialogsManager';
+import findUpAttribute from '../../helpers/dom/findUpAttribute';
+import cancelEvent from '../../helpers/dom/cancelEvent';
+import {AutonomousMonoforumThreadList} from '../autonomousDialogList/monoforumThreads';
+import Scrollable from '../scrollable';
+import SortedDialogList from '../sortedDialogList';
+import rootScope from '../../lib/rootScope';
 
 type PopupPickUserOptions = Modify<ConstructorParameters<typeof AppSelectPeers>[0], {
   multiSelect?: never,
   appendTo?: never,
   managers?: never,
-  onSelect?: (peerId: PeerId, threadId?: number) => Promise<void> | void,
+  onSelect?: (peerId: PeerId, threadId?: number, monoforumThreadId?: PeerId) => Promise<void> | void,
   onMultiSelect?: (peerIds: PeerId[]) => Promise<void> | void,
   middleware?: never,
   titleLangKey?: LangPackKey,
@@ -83,7 +90,9 @@ export default class PopupPickUser extends PopupElement {
         closable: true,
         overlayClosable: true,
         onBackClick: () => {
-          this.forumSelector.input.replaceWith(this.selector.input);
+          this.forumSelector?.input?.replaceWith(this.selector.input);
+          _i18n(this.selector.input, options.placeholder, undefined, 'placeholder');
+          this.selector.input.removeAttribute('disabled');
           this.transition(this.selector.container);
           if(this.forumNavigationItem) {
             appNavigationController.removeItem(this.forumNavigationItem);
@@ -101,7 +110,7 @@ export default class PopupPickUser extends PopupElement {
     const headerSearch = options.headerSearch ?? isMultiSelect;
 
     let ignoreOnSelect: boolean;
-    const onSelect = async(peerId: PeerId | PeerId[], threadId?: number) => {
+    const onSelect = async(peerId: PeerId | PeerId[], threadId?: number, monoforumThreadId?: PeerId) => {
       if(ignoreOnSelect) {
         return;
       }
@@ -109,8 +118,8 @@ export default class PopupPickUser extends PopupElement {
       if(
         options.useTopics &&
         !Array.isArray(peerId) &&
-        !threadId &&
-        await this.managers.appPeersManager.isForum(peerId)
+        !threadId && !monoforumThreadId &&
+        (await this.managers.appPeersManager.isForum(peerId) || await this.managers.appPeersManager.isBotforum(peerId))
       ) {
         ignoreOnSelect = true;
         await this.createForumSelector({
@@ -123,9 +132,26 @@ export default class PopupPickUser extends PopupElement {
         return;
       }
 
+      if(
+        !Array.isArray(peerId) &&
+        !threadId && !monoforumThreadId &&
+        await this.managers.appPeersManager.canManageDirectMessages(peerId) &&
+        await this.managers.appPeersManager.isMonoforum(peerId)
+      ) {
+        ignoreOnSelect = true;
+        await this.createMonoforumSelector({
+          tabsContainer,
+          peerId,
+          placeholder: options.placeholder,
+          onSelect
+        });
+        ignoreOnSelect = undefined;
+        return;
+      }
+
       const callback = options.onSelect || options.onMultiSelect;
       if(callback) {
-        const res = callback(peerId as any, threadId);
+        const res = callback(peerId as any, threadId, monoforumThreadId);
         if(res instanceof Promise) {
           try {
             await res;
@@ -328,6 +354,90 @@ export default class PopupPickUser extends PopupElement {
     });
   }
 
+  private async createMonoforumSelector({
+    peerId: parentPeerId,
+    tabsContainer,
+    placeholder,
+    onSelect
+  }: {
+    peerId: PeerId,
+    tabsContainer: HTMLElement,
+    placeholder: LangPackKey,
+    onSelect: PopupPickUserOptions['onSelect']
+  }) {
+    const middlewareHelper = this.middlewareHelper.get().create();
+    const middleware = middlewareHelper.get();
+
+    const scrollable = new Scrollable();
+    const autonomousList = new AutonomousMonoforumThreadList({peerId: parentPeerId, appDialogsManager});
+    autonomousList.scrollable = scrollable;
+    autonomousList.sortedList = new SortedDialogList({
+      itemSize: 72,
+      appDialogsManager,
+      scrollable: scrollable,
+      managers: rootScope.managers,
+      requestItemForIdx: autonomousList.requestItemForIdx,
+      onListShrinked: autonomousList.onListShrinked,
+      indexKey: 'index_0',
+      monoforumParentPeerId: parentPeerId
+    });
+
+    autonomousList.getRectFromForPlaceholder = () => this.selector.container;
+
+    const list = autonomousList.sortedList.list;
+
+    scrollable.append(list);
+    autonomousList.bindScrollable();
+
+
+    autonomousList.onChatsScroll();
+
+
+    middleware.onDestroy(() => void autonomousList.destroy());
+
+    attachClickEvent(list, (e) => {
+      const target = findUpAttribute(e.target, 'data-peer-id') as HTMLElement;
+
+      if(!target) return;
+      cancelEvent(e);
+
+      const peerId = target.dataset.peerId?.toPeerId?.();
+      if(!peerId) return;
+
+      onSelect?.(parentPeerId, undefined, peerId);
+    });
+
+    const container = document.createElement('div');
+    container.classList.add('tabs-tab');
+
+    autonomousList.scrollable.container.classList.add('surface-color-background', 'dialogs-placeholder-canvas-parent');
+    container.append(autonomousList.scrollable.container);
+
+    autonomousList.scrollable.attachBorderListeners();
+
+    this.btnCloseAnimatedIcon.classList.add('state-back');
+
+    this.selector.clearInput();
+    _i18n(this.selector.input, 'ChannelDirectMessages.SelectAChat', undefined, 'placeholder');
+    this.selector.input.setAttribute('disabled', '');
+
+    tabsContainer.append(container);
+    container.middlewareHelper = middlewareHelper;
+
+    this.transition(container);
+
+    const navigationItem = this.forumNavigationItem = {
+      type: 'popup',
+      onPop: () => {
+        simulateClickEvent(this.btnClose);
+      }
+    };
+    appNavigationController.pushItem(this.forumNavigationItem);
+    this.addEventListener('close', () => {
+      appNavigationController.removeItem(navigationItem);
+    });
+  }
+
   protected destroy() {
     super.destroy();
     this.selector?.destroy();
@@ -408,6 +518,8 @@ export default class PopupPickUser extends PopupElement {
   public static createSharingPicker(options: {
     onSelect: ConstructorParameters<typeof PopupPickUser>[0]['onSelect'],
     chatRightsActions?: PopupPickUserOptions['chatRightsActions'],
+    excludeMonoforums?: PopupPickUserOptions['excludeMonoforums'],
+    excludeBotforums?: PopupPickUserOptions['excludeBotforums'],
     placeholder?: LangPackKey,
     selfPresence?: LangPackKey
   }) {
@@ -421,13 +533,13 @@ export default class PopupPickUser extends PopupElement {
   }
 
   public static createSharingPicker2(options?: Modify<Parameters<typeof PopupPickUser['createSharingPicker']>[0], {onSelect?: never}>) {
-    return new Promise<PeerId>((resolve, reject) => {
+    return new Promise<{ peerId: PeerId, threadId?: number, monoforumThreadId?: PeerId }>((resolve, reject) => {
       let resolved = false;
       const popup = PopupPickUser.createSharingPicker({
         ...(options || {}),
-        onSelect: (peerId) => {
+        onSelect: (peerId, threadId, monoforumThreadId) => {
           resolved = true;
-          resolve(peerId);
+          resolve({peerId, threadId, monoforumThreadId});
         }
       });
       popup.addEventListener('close', () => {
@@ -438,10 +550,11 @@ export default class PopupPickUser extends PopupElement {
     });
   }
 
-  public static createReplyPicker() {
+  public static createReplyPicker(options: Pick<PopupPickUserOptions, 'excludeBotforums' | 'excludeMonoforums'> = {}) {
     return this.createSharingPicker2({
       placeholder: 'ReplyToDialog',
-      selfPresence: 'SavedMessagesInfoQuote'
+      selfPresence: 'SavedMessagesInfoQuote',
+      ...options
     });
   }
 

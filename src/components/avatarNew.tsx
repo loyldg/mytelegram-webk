@@ -86,9 +86,9 @@ const onAvatarStoriesUpdate = ({peerId}: {peerId: PeerId}) => {
 
 rootScope.addEventListener('avatar_update', onAvatarUpdate);
 rootScope.addEventListener('peer_title_edit', async(data) => {
-  if(!(await rootScope.managers.appAvatarsManager.isAvatarCached(data.peerId))) {
-    onAvatarUpdate(data);
-  }
+  if(!data.threadId && (await rootScope.managers.appAvatarsManager.isAvatarCached(data.peerId))) return;
+
+  onAvatarUpdate(data);
 });
 
 rootScope.addEventListener('peer_stories', ({peerId}) => {
@@ -97,6 +97,7 @@ rootScope.addEventListener('peer_stories', ({peerId}) => {
 rootScope.addEventListener('stories_read', onAvatarStoriesUpdate);
 rootScope.addEventListener('story_deleted', onAvatarStoriesUpdate);
 rootScope.addEventListener('story_new', onAvatarStoriesUpdate);
+
 
 const getStoriesSegments = async(peerId: PeerId, storyId?: number): Promise<AckedResult<StoriesSegments>> => {
   if(storyId) {
@@ -334,7 +335,9 @@ export const AvatarNew = (props: {
   isStoryFolded?: Accessor<boolean>,
   processImageOnLoad?: (image: HTMLImageElement) => void,
   meAsNotes?: boolean,
-  onStoriesStatus?: (has: boolean) => void
+  asAllChats?: boolean,
+  onStoriesStatus?: (has: boolean) => void,
+  class?: string
 }) => {
   const [ready, setReady] = createSignal(false);
   const [icon, setIcon] = createSignal<Icon>();
@@ -344,6 +347,7 @@ export const AvatarNew = (props: {
   const [color, setColor] = createSignal<string>();
   const [isForum, setIsForum] = createSignal(false);
   const [isTopic, setIsTopic] = createSignal(false);
+  const [isMonoforum, setIsMonoforum] = createSignal(false);
   const [isSubscribed, setIsSubscribed] = createSignal(false);
   const {setStoriesSegments, storyDimensions, storiesCircle} = StoriesSegments({
     size: props.size as number,
@@ -502,6 +506,7 @@ export const AvatarNew = (props: {
     isForum,
     isTopic,
     isSubscribed,
+    isMonoforum,
     storiesSegments
   }: {
     abbreviature?: JSX.Element,
@@ -510,6 +515,7 @@ export const AvatarNew = (props: {
     isForum?: boolean,
     isTopic?: boolean,
     isSubscribed?: boolean,
+    isMonoforum?: boolean,
     storiesSegments?: StoriesSegments
   }) => {
     setThumb();
@@ -520,6 +526,7 @@ export const AvatarNew = (props: {
     setIsForum(isForum);
     setIsTopic(isTopic);
     setIsSubscribed(isSubscribed);
+    setIsMonoforum(isMonoforum);
     setStoriesSegments(storiesSegments);
   };
 
@@ -543,6 +550,13 @@ export const AvatarNew = (props: {
     let {peerId} = props;
     if(title !== undefined) {
       peerId = NULL_PEER_ID;
+    }
+
+    if(props.asAllChats) {
+      set({
+        icon: 'round_chats_filled'
+      });
+      return;
     }
 
     if(peerId === myId && isDialog) {
@@ -609,7 +623,10 @@ export const AvatarNew = (props: {
     }
 
     const size: PeerPhotoSize = isBig ? 'photo_big' : 'photo_small';
-    const photo = getPeerPhoto(peer);
+
+    const linkedMonoforumPeer = peer?._ === 'channel' && peer.pFlags?.monoforum && peer.linked_monoforum_id ? await managers.appChatsManager.getChat(peer.linked_monoforum_id.toPeerId?.()) : undefined;
+
+    const photo = getPeerPhoto(linkedMonoforumPeer || peer);
     const avatarAvailable = !!photo;
     const avatarRendered = avatarAvailable && !!media(); // if avatar isn't available, let's reset it
     const isAvatarCached = props.accountNumber === getCurrentAccount() && avatarAvailable && apiManagerProxy.isAvatarCached(peerId, size);
@@ -640,6 +657,7 @@ export const AvatarNew = (props: {
         color,
         isForum: _isForum,
         isSubscribed: _isSubscribed,
+        isMonoforum: !!linkedMonoforumPeer,
         storiesSegments
       });
       isSet = true;
@@ -791,6 +809,7 @@ export const AvatarNew = (props: {
     return {
       'is-forum': isForum(),
       'is-topic': isTopic(),
+      'is-monoforum': isMonoforum(),
       'avatar-relative': !!thumb() || isSubscribed()
     };
   };
@@ -806,7 +825,7 @@ export const AvatarNew = (props: {
     const dimensions = storyDimensions();
     return {
       'padding': dimensions ? (dimensions.size - dimensions.willBeSize) / 2 + 'px' : undefined,
-      '--size': isTopic() && props.wrapOptions.customEmojiSize.width ? props.wrapOptions.customEmojiSize.width + 'px' : undefined
+      '--size': isTopic() && props.wrapOptions?.customEmojiSize?.width ? props.wrapOptions.customEmojiSize.width + 'px' : undefined
     };
   };
 
@@ -840,10 +859,11 @@ export const AvatarNew = (props: {
   const element = (
     <div
       ref={node}
-      class={`avatar avatar-like avatar-${props.size} avatar-gradient`}
+      class={`avatar avatar-like avatar-${props.size} avatar-gradient ${props.class ?? ''}`}
       classList={classList()}
       data-color={color()}
       data-peer-id={props.peerId}
+      data-thread-id={props.threadId}
       data-story-id={props.storyId}
       style={style()}
       {...(props.props || {})}
@@ -889,7 +909,7 @@ export const AvatarNew = (props: {
   return ret;
 };
 
-export function AvatarNewTsx(props: Parameters<typeof AvatarNew>[0]) {
+export function AvatarNewTsx(props: Parameters<typeof AvatarNew>[0] & {class?: string}) {
   const el = AvatarNew(props);
   createEffect(on(() => props.peerId, () => {
     el.render()

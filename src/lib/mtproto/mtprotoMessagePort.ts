@@ -15,6 +15,7 @@ import type {PasscodeStorageValue} from '../commonStateStorage';
 import SuperMessagePort from './superMessagePort';
 
 export type MTProtoManagerTaskPayload = {name: string, method: string, args: any[], accountNumber: ActiveAccountNumber};
+export type MTProtoSingleManagerTaskPayload = {name: string, method: string, args: any[]};
 
 type CallNotificationPayload = {
   callerId: string | number,
@@ -27,10 +28,8 @@ type MTProtoBroadcastEvent = {
 };
 
 export type ToggleUsingPasscodePayload = {
-  isUsingPasscode: true;
-  encryptionKey: CryptoKey;
-} | {
-  isUsingPasscode: false;
+  isUsingPasscode: boolean,
+  encryptionKey?: CryptoKey;
 };
 
 export default class MTProtoMessagePort<Master extends boolean = true> extends SuperMessagePort<{
@@ -38,6 +37,7 @@ export default class MTProtoMessagePort<Master extends boolean = true> extends S
   crypto: (payload: {method: string, args: any[]}) => Promise<any>,
   state: (payload: {accountNumber: ActiveAccountNumber} & LoadStateResult) => void,
   manager: (payload: MTProtoManagerTaskPayload) => any,
+  singleManager: (payload: MTProtoSingleManagerTaskPayload) => any,
   toggleStorages: (payload: {enabled: boolean, clearWrite: boolean}) => ReturnType<typeof toggleStorages>,
   serviceWorkerOnline: (online: boolean) => void,
   serviceWorkerPort: (payload: void, source: MessageEventSource, event: MessageEvent) => void,
@@ -55,6 +55,7 @@ export default class MTProtoMessagePort<Master extends boolean = true> extends S
   toggleLockOthers: (isLocked: boolean, source: MessageEventSource) => void
   localStorageEncryptedProxy: (payload: LocalStorageEncryptedProxyTaskPayload) => Promise<any>,
   toggleCacheStorage: (value: boolean, source: MessageEventSource) => void,
+  resetEncryptableCacheStorages: () => void,
   forceLogout: () => void,
   toggleUninteruptableActivity: (payload: {activity: string, active: boolean}, source: MessageEventSource) => void
 } & MTProtoBroadcastEvent, {

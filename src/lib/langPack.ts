@@ -21,6 +21,8 @@ import {setDirection} from '../helpers/dom/setInnerHTML';
 import setBlankToAnchor from './richTextProcessor/setBlankToAnchor';
 import {createSignal} from 'solid-js';
 import commonStateStorage from './commonStateStorage';
+import Icon from '../components/icon';
+import currencyStarIcon from '../components/currencyStarIcon';
 
 export const langPack: {[actionType: string]: LangPackKey} = {
   'messageActionChatCreate': 'ActionCreateGroup',
@@ -340,6 +342,15 @@ namespace I18n {
     }
   }
 
+  const IconMap: Record<string, Icon | (() => HTMLElement)> = {
+    '>': 'next',
+    '<': 'previous'
+    // '⭐️': currencyStarIcon as () => HTMLElement
+  };
+
+  const iconsNoWhitespace = '><';
+  const iconsKeys = Object.keys(IconMap);
+
   export function superFormatter(input: string, args?: FormatterArguments, indexHolder?: {i: number}): Exclude<FormatterArgument, FormatterArgument[]>[] {
     if(!indexHolder) { // set starting index for arguments without order
       indexHolder = {i: 0};
@@ -350,10 +361,10 @@ namespace I18n {
     }
 
     const out: ReturnType<typeof superFormatter> = [];
-    const regExp = /(\*\*|__)(.+?)\1|(\n)|(\[.+?\]\(.*?\))|un\d|%\d\$.|%\S/g;
+    const regExp = new RegExp(`(\\*\\*|__)(.+?)\\1|(\\n)|(\\[.+?\\]\\(.*?\\))|(?:^|\\s)(${iconsKeys.join('|')})(?:$|\\s)|un\\d|%\\d\\$.|%\\S`, 'g');
 
     let lastIndex = 0;
-    input.replace(regExp, (match, p1: any, p2: any, p3: any, p4: string, offset: number, string: string) => {
+    input.replace(regExp, (match, p1: any, p2: any, p3: any, p4: string, p5: string, offset: number, string: string) => {
       // console.table({match, p1, p2, offset, string});
 
       if(offset > lastIndex) {
@@ -410,6 +421,19 @@ namespace I18n {
           a.append(...formatted);
           out.push(a);
         }
+      } else if(p5) {
+        const noWhitespace = iconsNoWhitespace.includes(p5);
+        if(!noWhitespace && !match.startsWith(p5)) out.push(match[0]);
+        const className = 'inline-icon';
+        const i = IconMap[p5];
+        if(typeof(i) === 'function') {
+          const element = i();
+          element.classList.add(className);
+          out.push(element);
+        } else {
+          out.push(Icon(i, className));
+        }
+        if(!noWhitespace && match.startsWith(p5)) out.push(match[match.length - 1]);
       } else if(args) {
         const index = match.replace(/\D/g, '');
         pushNextArgument(

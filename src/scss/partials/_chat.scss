@@ -229,6 +229,11 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
       background-color: var(--dark-primary-color) !important;
     }
 
+    &.disabled {
+      pointer-events: none;
+      background-color: var(--secondary-color) !important;
+    }
+
 		// .tgico-send {
 		// 	color: var(--primary-color) !important;
 		// }
@@ -409,6 +414,15 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
     pointer-events: none;
     padding: 0 1rem;
   }
+
+  &-frozen-text {
+    display: flex;
+    flex-direction: column;
+
+    &-subtitle {
+      font-size: var(--font-size-14);
+    }
+  }
 }
 
 .chat-input-main {
@@ -446,12 +460,16 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 
         .reply-wrapper {
           height: 0 !important;
-          opacity: 0;
+          opacity: 0 !important;
           pointer-events: none;
         }
 
         .btn-send {
           transform: scale(0);
+        }
+
+        .btn-send-stars-badge {
+          opacity: 0;
         }
       }
 
@@ -1271,34 +1289,6 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
       inset-inline-start: 3.125rem;
       transform: scale(1) !important;
 
-      &-item {
-        padding-inline-end: 1.5rem;
-
-        &-text {
-          order: 1;
-        }
-
-        .checkbox {
-          &-field {
-            --size: 1.25rem;
-            order: 0;
-            margin: 0;
-            margin-inline-end: var(--icon-margin);
-          }
-
-          &-box {
-            &-border,
-            &-background {
-              display: none;
-            }
-
-            &-check use {
-              stroke: var(--primary-text-color);
-            }
-          }
-        }
-      }
-
       @include respond-to(handhelds) {
         inset-inline-start: calc(var(--padding-horizontal) * -1);
       }
@@ -2039,4 +2029,26 @@ $time-margin-left: math.div($message-padding-horizontal, -2) + 1px;
 
 .avatar-for-reply-markup {
   margin-bottom: 43px;
+}
+
+.avatar-for-suggested-reply-markup {
+  margin-bottom: 84px;
+}
+
+.suggested-post-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.reply.has-collectible {
+  padding-inline-end: 28px;
+}
+
+.reply-collectible {
+  width: 24px;
+  height: 24px;
+  position: absolute;
+  inset-inline-end: 4px;
+  top: 4px;
 }

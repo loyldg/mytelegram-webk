@@ -12,6 +12,7 @@ import {toastNew} from '../toast';
 import PopupPickUser from './pickUser';
 import getMediaFromMessage from '../../lib/appManagers/utils/messages/getMediaFromMessage';
 import PopupElement from '.';
+import {useAppConfig, useIsFrozen} from '../../stores/appState';
 
 export default class PopupForward extends PopupPickUser {
   constructor(
@@ -22,7 +23,7 @@ export default class PopupForward extends PopupPickUser {
   ) {
     super({
       peerType: ['dialogs', 'contacts'],
-      onSelect: !peerIdMids && onSelect ? onSelect : async(peerId, threadId) => {
+      onSelect: !peerIdMids && onSelect ? onSelect : async(peerId, threadId, monoforumThreadId) => {
         if(onSelect) {
           const res = onSelect(peerId);
           if(res instanceof Promise) {
@@ -49,13 +50,26 @@ export default class PopupForward extends PopupPickUser {
           return;
         }
 
-        await appImManager.setInnerPeer({peerId, threadId});
+        await appImManager.setInnerPeer({peerId, threadId, monoforumThreadId});
         appImManager.chat.input.initMessagesForward(peerIdMids);
       },
       placeholder: 'ShareModal.Search.ForwardPlaceholder',
       chatRightsActions: chatRightsAction,
       selfPresence: 'ChatYourSelf',
-      useTopics: !noTopics
+      useTopics: !noTopics,
+      ...(useIsFrozen() && {
+        getMoreCustom: async() => {
+          const appConfig = useAppConfig();
+          const peer = await rootScope.managers.appUsersManager.resolveUsername(appConfig.freeze_appeal_url.split('/').pop());
+          return {
+            result: [peer.id.toPeerId(peer._ !== 'user')],
+            isEnd: true
+          };
+        },
+        peerType: ['custom'],
+        noSearch: true,
+        headerLangPackKey: 'Forward'
+      })
     });
   }
 

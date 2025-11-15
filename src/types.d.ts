@@ -26,7 +26,9 @@ export type InvokeApiOptions = Partial<{
   timeout: number,
   waitTime: number,
   stopTime: number,
-  rawError: any
+  rawError: any,
+  noInitConnection: boolean,
+  msg_id: MTLong
 }>;
 
 export type WorkerTaskTemplate = {
@@ -52,7 +54,7 @@ export type AnyFunction = (...args: any) => any;
 export type AnyToVoidFunction = (...args: any) => void;
 export type NoneToVoidFunction = () => void;
 
-export type Awaited<T> = T extends PromiseLike<infer U> ? Awaited<U> : T;
+// export type Awaited<T> = T extends PromiseLike<infer U> ? Awaited<U> : T;
 
 // https://stackoverflow.com/a/60762482/6758968
 type Shift<A extends Array<any>> = ((...args: A) => void) extends ((...args: [A[0], ...infer R]) => void) ? R : never;
@@ -82,8 +84,10 @@ type Impossible<K extends keyof any> = {
 // using generics.
 type NoExtraProperties<T, U extends T = T> = U & Impossible<Exclude<keyof U, keyof T>>;
 
-type ModifyFunctionsToAsync<T> = {
-  [key in keyof T]: T[key] extends (...args: infer A) => infer R ? (R extends PromiseLike<infer O> ? T[key] : (...args: A) => Promise<Awaited<R>>) : T[key]
+export type ModifyFunctionToAsync<T> = T extends (...args: infer A) => infer R ? (R extends PromiseLike<infer O> ? T : (...args: A) => Promise<Awaited<R>>) : T;
+
+export type ModifyFunctionsToAsync<T> = {
+  [key in keyof T]: ModifyFunctionToAsync<T[key]>
 };
 
 export type Mutable<T> = {
@@ -109,6 +113,7 @@ export type ObjectPath<T extends object> =
   T extends any[] ? (keyof T & number) : (keyof T & (number | string))
 ];
 
+export type Pair<Left, Right> = [Left, Right];
 
 export type AuthState = AuthState.signIn | AuthState.signQr | AuthState.authCode | AuthState.password | AuthState.signUp | AuthState.signedIn | AuthState.signImport;
 export namespace AuthState {

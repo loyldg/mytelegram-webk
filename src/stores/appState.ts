@@ -1,16 +1,16 @@
 import {createRoot} from 'solid-js';
-import {createStore, reconcile, unwrap} from 'solid-js/store';
+import {createStore, reconcile, SetStoreFunction, unwrap} from 'solid-js/store';
 import {State} from '../config/state';
 import rootScope from '../lib/rootScope';
 
 const [appState, _setAppState] = createRoot(() => createStore<State>({} as any));
 
-const setAppState: typeof _setAppState = (...args: any[]) => {
+const setAppState: SetStoreFunction<State, Promise<void>> = (...args: any[]) => {
   const key = args[0];
   // @ts-ignore
   _setAppState(...args);
   // @ts-ignore
-  rootScope.managers.appStateManager.setByKey(key, unwrap(appState[key]));
+  return rootScope.managers.appStateManager.setByKey(key, unwrap(appState[key]));
 };
 
 const setAppStateSilent = (key: any, value?: any) => {
@@ -24,9 +24,15 @@ const setAppStateSilent = (key: any, value?: any) => {
 
 const useAppState = () => [appState, setAppState] as const;
 
+const useAppConfig = () => appState.appConfig;
+
+const useIsFrozen = () => !!useAppConfig().freeze_since_date;
+
 export {
   appState,
   useAppState,
   setAppState,
-  setAppStateSilent
+  setAppStateSilent,
+  useAppConfig,
+  useIsFrozen
 };

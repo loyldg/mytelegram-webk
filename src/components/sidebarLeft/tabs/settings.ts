@@ -10,13 +10,12 @@ import AppPrivacyAndSecurityTab from './privacyAndSecurity';
 import AppGeneralSettingsTab from './generalSettings';
 import AppEditProfileTab from './editProfile';
 import AppChatFoldersTab from './chatFolders';
-import AppNotificationsTab from './notifications';
+import {AppNotificationsTab} from '../../solidJsTabs';
 import AppLanguageTab from './language';
 import lottieLoader from '../../../lib/rlottie/lottieLoader';
 import PopupPeer from '../../popups/peer';
 import AppDataAndStorageTab from './dataAndStorage';
 import ButtonIcon from '../../buttonIcon';
-import PeerProfile from '../../peerProfile';
 import rootScope from '../../../lib/rootScope';
 import Row from '../../row';
 import AppActiveSessionsTab from './activeSessions';
@@ -35,6 +34,11 @@ import apiManagerProxy from '../../../lib/mtproto/mtprotoworker';
 import {createEffect, createRoot} from 'solid-js';
 import useStars from '../../../stores/stars';
 import PopupStars from '../../popups/stars';
+import {renderPeerProfile} from '../../peerProfile';
+import SolidJSHotReloadGuardProvider from '../../../lib/solidjs/hotReloadGuardProvider';
+import PopupPickUser from '../../popups/pickUser';
+import PopupSendGift from '../../popups/sendGift';
+import {formatNanoton} from '../../../helpers/paymentsWrapCurrencyAmount';
 
 export default class AppSettingsTab extends SliderSuperTab {
   private buttons: {
@@ -45,7 +49,6 @@ export default class AppSettingsTab extends SliderSuperTab {
     storage: HTMLButtonElement,
     privacy: HTMLButtonElement,
   } = {} as any;
-  private profile: PeerProfile;
 
   private languageRow: Row;
   private devicesRow: Row;
@@ -84,25 +87,6 @@ export default class AppSettingsTab extends SliderSuperTab {
 
     this.header.append(this.buttons.edit, btnMenu);
 
-    this.profile = new PeerProfile(
-      this.managers,
-      this.scrollable,
-      this.listenerSetter,
-      false,
-      this.container,
-      (has) => {
-        let last = this.profile.element.lastElementChild;
-        if(has) {
-          last = last.previousElementSibling;
-        }
-
-        last.firstElementChild.append(changeAvatarBtn);
-      }
-    );
-    this.profile.init();
-    this.profile.setPeer(rootScope.myId);
-    const fillPromise = this.profile.fillProfileElements();
-
     const changeAvatarBtn = ButtonCorner({icon: 'cameraadd', className: 'profile-change-avatar'});
     attachClickEvent(changeAvatarBtn, () => {
       const canvas = document.createElement('canvas');
@@ -112,7 +96,17 @@ export default class AppSettingsTab extends SliderSuperTab {
         });
       });
     }, {listenerSetter: this.listenerSetter});
-    this.profile.element.lastElementChild.firstElementChild.append(changeAvatarBtn);
+
+    const peerProfileElement = createRoot((dispose) => {
+      this.middlewareHelper.onDestroy(dispose);
+      return renderPeerProfile({
+        peerId: rootScope.myId,
+        isDialog: false,
+        scrollable: this.scrollable,
+        setCollapsedOn: this.container,
+        changeAvatarBtn
+      }, SolidJSHotReloadGuardProvider);
+    });
 
     const updateChangeAvatarBtn = async() => {
       const user = await this.managers.appUsersManager.getSelf();
@@ -254,27 +248,46 @@ export default class AppSettingsTab extends SliderSuperTab {
       listenerSetter: this.listenerSetter
     });
 
-    createRoot((dispose) => {
-      this.middlewareHelper.onDestroy(dispose);
-      const stars = useStars();
-      createEffect(() => {
-        starsRow.titleRight.textContent = '' + stars();
-        starsRow.container.classList.toggle('hide', !stars());
-      });
-    });
-
-    const giftPremium = new Row({
-      titleLangKey: 'GiftPremiumGifting',
-      icon: 'gift',
+    const starsTonRow = new Row({
+      titleLangKey: 'MenuTelegramStarsTon',
+      titleRightSecondary: true,
+      icon: 'ton',
       clickable: () => {
-        appImManager.initGifting();
+        PopupElement.createPopup(PopupStars, {ton: true});
       },
       listenerSetter: this.listenerSetter
     });
 
-    const badge = i18n('New');
-    badge.classList.add('row-title-badge');
-    giftPremium.title.append(badge);
+    createRoot((dispose) => {
+      this.middlewareHelper.onDestroy(dispose);
+      const stars = useStars();
+      const starsTon = useStars(true);
+      createEffect(() => {
+        starsRow.titleRight.textContent = '' + stars();
+        starsRow.container.classList.toggle('hide', !stars());
+      });
+      createEffect(() => {
+        starsTonRow.titleRight.textContent = formatNanoton(starsTon());
+        starsTonRow.container.classList.toggle('hide', String(starsTon()) === '0');
+      });
+    });
+
+    const giftPremium = new Row({
+      titleLangKey: 'Chat.Menu.SendGift',
+      icon: 'gift',
+      clickable: () => {
+        PopupElement.createPopup(PopupPickUser, {
+          placeholder: 'Chat.Menu.SendGift',
+          selfPresence: 'SendGiftSelfCaption',
+          meAsSaved: false,
+          onSelect: (peerId) => {
+            PopupElement.createPopup(PopupSendGift, {peerId});
+          },
+          filterPeerTypeBy: ['isRegularUser', 'isBroadcast']
+        });
+      },
+      listenerSetter: this.listenerSetter
+    });
 
     const buttonsSection = new SettingSection();
     buttonsSection.content.append(buttonsDiv);
@@ -282,11 +295,16 @@ export default class AppSettingsTab extends SliderSuperTab {
     let premiumSection: SettingSection;
     if(!await apiManagerProxy.isPremiumPurchaseBlocked()) {
       premiumSection = new SettingSection();
-      premiumSection.content.append(this.premiumRow.container, starsRow.container, giftPremium.container);
+      premiumSection.content.append(
+        this.premiumRow.container,
+        starsRow.container,
+        starsTonRow.container,
+        giftPremium.container
+      );
     }
 
     this.scrollable.append(...[
-      this.profile.element,
+      peerProfileElement,
       /* profileSection.container, */
       buttonsSection.container,
       premiumSection?.container
@@ -315,8 +333,6 @@ export default class AppSettingsTab extends SliderSuperTab {
     lottieLoader.loadLottieWorkers();
 
     this.updateActiveSessions();
-
-    (await fillPromise)();
   }
 
   private getAuthorizations(overwrite?: boolean) {
@@ -337,10 +353,5 @@ export default class AppSettingsTab extends SliderSuperTab {
       this.authorizations = auths.authorizations;
       this.devicesRow.titleRight.textContent = '' + this.authorizations.length;
     });
-  }
-
-  public onCloseAfterTimeout() {
-    this.profile.destroy();
-    return super.onCloseAfterTimeout();
   }
 }

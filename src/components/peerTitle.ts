@@ -16,18 +16,24 @@ import getPeerTitle from './wrappers/getPeerTitle';
 import generateTitleIcons from './generateTitleIcons';
 import {wrapTopicIcon} from './wrappers/messageActionTextNewUnsafe';
 import lottieLoader from '../lib/rlottie/lottieLoader';
+import {AsAllChatsType} from '../lib/appManagers/appDialogsManager';
+import IS_EMOJI_SUPPORTED from '../environment/emojiSupport';
 
 export type PeerTitleOptions = {
   peerId?: PeerId,
   fromName?: string,
   plainText?: boolean,
   onlyFirstName?: boolean,
+  username?: boolean,
   dialog?: boolean,
   limitSymbols?: number,
   withIcons?: boolean,
   withPremiumIcon?: boolean,
+  clickableEmojiStatus?: boolean,
   threadId?: number,
   meAsNotes?: boolean,
+  iconsColor?: string,
+  asAllChats?: AsAllChatsType,
   wrapOptions?: WrapSomethingOptions
 };
 
@@ -43,6 +49,19 @@ rootScope.addEventListener('peer_title_edit', ({peerId, threadId}) => {
   elements.forEach((element) => {
     const peerTitle = weakMap.get(element);
     peerTitle?.update();
+  });
+});
+
+rootScope.addEventListener('botforum_pending_topic_created', ({peerId, tempId, newId}) => {
+  if(!newId) return;
+
+  const query = `.peer-title[data-peer-id="${peerId}"][data-thread-id="${tempId}"]`;
+
+  const elements = Array.from(document.querySelectorAll(query)) as HTMLElement[];
+
+  elements.forEach((element) => {
+    const peerTitle = weakMap.get(element);
+    peerTitle?.update({...peerTitle.options, threadId: newId});
   });
 });
 
@@ -106,7 +125,25 @@ export default class PeerTitle {
 
     let hasInner: boolean;
     const {peerId, threadId} = this.options;
-    if(peerId === rootScope.myId && this.options.dialog) {
+    if(this.options.asAllChats === 'topics') {
+      const title = i18n('AllMessages');
+
+      const inner = document.createElement('span');
+      inner.classList.add('peer-title-inner');
+      hasInner = true;
+      setInnerHTML(inner, title);
+
+      const fragment = document.createDocumentFragment();
+      const emojiText = document.createElement('span');
+      /* !IS_EMOJI_SUPPORTED && */ emojiText.classList.add('emoji-topic-icon');
+      emojiText.append(wrapEmojiText('💬'));
+      fragment.append(emojiText, inner);
+
+      setInnerHTML(this.element, fragment);
+    } else if(this.options.asAllChats === 'monoforum') {
+      const element = i18n('AllChats');
+      replaceContent(this.element, element);
+    } else if(peerId === rootScope.myId && this.options.dialog) {
       let element: HTMLElement;
       if(this.options.meAsNotes) {
         element = i18n(this.options.onlyFirstName ? 'MyNotesShort' : 'MyNotes');
@@ -119,12 +156,13 @@ export default class PeerTitle {
       replaceContent(this.element, i18n(this.options.onlyFirstName ? 'AuthorHiddenShort' : 'AuthorHidden'));
     } else {
       if(threadId) {
-        const [topic, isForum] = await Promise.all([
+        const [topic, isForum, isBotforum] = await Promise.all([
           rootScope.managers.dialogsStorage.getForumTopic(peerId, threadId),
-          rootScope.managers.appPeersManager.isForum(peerId)
+          rootScope.managers.appPeersManager.isForum(peerId),
+          rootScope.managers.appPeersManager.isBotforum(peerId)
         ]);
 
-        if(!topic && isForum) {
+        if(!topic && (isForum || isBotforum)) {
           rootScope.managers.dialogsStorage.getForumTopicById(peerId, threadId).then((forumTopic) => {
             if(!forumTopic && this.options.threadId === threadId) {
               this.options.threadId = undefined;
@@ -152,8 +190,8 @@ export default class PeerTitle {
 
       const [title, icons, topicIcon] = await Promise.all([
         getPeerTitle(this.options as Required<PeerTitleOptions>),
-        (this.options.withIcons && generateTitleIcons({peerId, wrapOptions: this.options.wrapOptions})) ||
-          (this.options.withPremiumIcon && generateTitleIcons({peerId, wrapOptions: this.options.wrapOptions, noVerifiedIcon: true, noFakeIcon: true})),
+        (this.options.withIcons && generateTitleIcons({peerId, clickableEmojiStatus: this.options.clickableEmojiStatus, wrapOptions: {...this.options.wrapOptions, textColor: this.options.iconsColor || this.options.wrapOptions?.textColor}})) ||
+          (this.options.withPremiumIcon && generateTitleIcons({peerId, wrapOptions: {...this.options.wrapOptions, textColor: this.options.iconsColor || this.options.wrapOptions?.textColor}, noVerifiedIcon: true, noFakeIcon: true})),
         getTopicIconPromise
       ]);
 

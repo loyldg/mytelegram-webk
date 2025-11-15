@@ -24,6 +24,7 @@ import tsNow from '../../helpers/tsNow';
 import SearchIndex from '../searchIndex';
 import parseEntities from '../richTextProcessor/parseEntities';
 import toArray from '../../helpers/array/toArray';
+import base64ToBytes from '../../helpers/string/base64ToBytes';
 
 const CACHE_TIME = 3600e3;
 
@@ -31,10 +32,10 @@ type LOCAL_STICKER_SET_ID = Extract<
   InputStickerSet['_'],
   'inputStickerSetAnimatedEmoji' | 'inputStickerSetAnimatedEmojiAnimations' |
   'inputStickerSetPremiumGifts' | 'inputStickerSetEmojiGenericAnimations' |
-  'inputStickerSetEmojiDefaultStatuses' | 'inputStickerSetEmojiDefaultTopicIcons'
+  'inputStickerSetEmojiDefaultStatuses' | 'inputStickerSetEmojiDefaultTopicIcons' | 'inputStickerSetTonGifts'
 >;
 
-type LOCAL_ID = 'EMOJI' | 'EMOJI_ANIMATIONS' | 'PREMIUM_GIFTS' | 'GENERIC_ANIMATIONS' | 'DEFAULT_STATUSES' | 'DEFAULT_TOPIC_ICONS';
+type LOCAL_ID = 'EMOJI' | 'EMOJI_ANIMATIONS' | 'PREMIUM_GIFTS' | 'GENERIC_ANIMATIONS' | 'DEFAULT_STATUSES' | 'DEFAULT_TOPIC_ICONS' | 'TON_GIFTS';
 
 const LOCAL_IDS: {[key in LOCAL_ID]: LOCAL_STICKER_SET_ID} = {
   EMOJI: 'inputStickerSetAnimatedEmoji',
@@ -42,7 +43,8 @@ const LOCAL_IDS: {[key in LOCAL_ID]: LOCAL_STICKER_SET_ID} = {
   PREMIUM_GIFTS: 'inputStickerSetPremiumGifts',
   GENERIC_ANIMATIONS: 'inputStickerSetEmojiGenericAnimations',
   DEFAULT_STATUSES: 'inputStickerSetEmojiDefaultStatuses',
-  DEFAULT_TOPIC_ICONS: 'inputStickerSetEmojiDefaultTopicIcons'
+  DEFAULT_TOPIC_ICONS: 'inputStickerSetEmojiDefaultTopicIcons',
+  TON_GIFTS: 'inputStickerSetTonGifts'
 };
 
 const LOCAL_IDS_SET: Set<LOCAL_STICKER_SET_ID> = new Set(Object.values(LOCAL_IDS) as any);
@@ -294,11 +296,7 @@ export class AppStickersManager extends AppManager {
 
       for(const emoji in appConfig.emojies_sounds) {
         const sound = appConfig.emojies_sounds[emoji];
-        const bytesStr = atob(fixBase64String(sound.file_reference_base64, false));
-        const bytes = new Uint8Array(bytesStr.length);
-        for(let i = 0, length = bytes.length; i < length; ++i) {
-          bytes[i] = bytesStr[i].charCodeAt(0);
-        }
+        const bytes = base64ToBytes(sound.file_reference_base64);
 
         // if(TEST_FILE_REFERENCE_REFRESH) {
         //   bytes[0] = bytes[1] = bytes[2] = bytes[3] = bytes[4] = 0;

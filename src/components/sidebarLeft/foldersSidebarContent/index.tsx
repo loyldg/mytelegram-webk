@@ -1,4 +1,4 @@
-import {createEffect, createRoot, createSelector, createSignal, For, onCleanup, onMount, Show} from 'solid-js';
+import {batch, createEffect, createRoot, createSelector, createSignal, For, onCleanup, onMount, Show} from 'solid-js';
 import {createStore, reconcile} from 'solid-js/store';
 import {render} from 'solid-js/web';
 import indexOfAndSplice from '../../../helpers/array/indexOfAndSplice';
@@ -27,8 +27,14 @@ ripple; // keep
 const log = logger('FoldersSidebarContent', LogTypes.Debug);
 
 
+export type FoldersSidebarControls = {
+  hydrateFilters: (filters: MyDialogFilter[]) => void;
+};
+
 export function FoldersSidebarContent(props: {
-  notificationsElement: HTMLElement
+  filters: MyDialogFilter[];
+  isFiltersInited: boolean;
+  notificationsElement: HTMLElement;
 }) {
   log.debug('Rendering FoldersSidebarContent');
   onCleanup(() => log.debug('Cleaning up FoldersSidebarContent'));
@@ -178,11 +184,12 @@ export function FoldersSidebarContent(props: {
   }
 
   createEffect(() => {
-    if(!menuTarget()) return;
+    const _menuTarget = menuTarget();
+    if(!_menuTarget) return;
 
-    appSidebarLeft.createToolsMenu(menuTarget(), true);
-    menuTarget().classList.add('sidebar-tools-button', 'is-visible');
-    menuTarget().append(props.notificationsElement);
+    appSidebarLeft.createToolsMenu(_menuTarget);
+    _menuTarget.classList.add('sidebar-tools-button', 'is-visible');
+    _menuTarget.append(props.notificationsElement);
   });
 
   let contextMenu: ReturnType<typeof createFolderContextMenu>;
@@ -197,16 +204,6 @@ export function FoldersSidebarContent(props: {
       className: 'folders-sidebar__folder-item',
       listenTo: folderItemsContainer
     });
-
-    (async() => {
-      const filters = await rootScope.managers.filtersStorage.getDialogFilters();
-      const folderFilters = filters.filter((filter) => filter.id !== FOLDER_ID_ARCHIVE);
-
-      const folderItems = await Promise.all(folderFilters.map(makeFolderItemPayload));
-      const orderedFolderItems = await getFolderItemsInOrder(folderItems, rootScope.managers);
-
-      setFolderItems(orderedFolderItems);
-    })()
 
     listenerSetter.add(rootScope)('dialog_flush', ({dialog}) => {
       if(!dialog) return;
@@ -240,6 +237,23 @@ export function FoldersSidebarContent(props: {
       contextMenu.destroy();
     });
   });
+
+  createEffect(() => {
+    if(!props.isFiltersInited) return;
+
+    const folderFilters = props.filters.filter((filter) => filter.id !== FOLDER_ID_ARCHIVE);
+
+    let cleaned = false;
+    onCleanup(() => void (cleaned = true));
+
+    (async() => {
+      const folderItems = await Promise.all(folderFilters.map(makeFolderItemPayload));
+      const orderedFolderItems = await getFolderItemsInOrder(folderItems, rootScope.managers);
+
+      if(!cleaned) setFolderItems(orderedFolderItems);
+    })();
+  });
+
 
   const updateCanShowAddFolders = () => {
     const selectedItem = folderItemRefs[selectedFolderId()];
@@ -325,17 +339,28 @@ export function renderFoldersSidebarContent(
   notificationsElement: HTMLElement,
   HotReloadGuardProvider: typeof SolidJSHotReloadGuardProvider,
   middleware: Middleware
-) {
-  const {hasFoldersSidebar} = useHasFoldersSidebar();
-  createRoot((dispose) => {
-    render(() => (
-      <HotReloadGuardProvider>
-        <Show when={hasFoldersSidebar()}>
-          <FoldersSidebarContent notificationsElement={notificationsElement} />
-        </Show>
-      </HotReloadGuardProvider>
-    ), element);
+): FoldersSidebarControls {
+  const [hasFoldersSidebar] = useHasFoldersSidebar();
+  const [filters, setFilters] = createSignal<MyDialogFilter[]>([]);
+  const [isFiltersInited, setIsFiltersInited] = createSignal(false);
 
-    middleware.onDestroy(() => dispose());
-  });
+  const dispose = render(() => (
+    <HotReloadGuardProvider>
+      <Show when={hasFoldersSidebar()}>
+        <FoldersSidebarContent
+          notificationsElement={notificationsElement}
+          filters={filters()}
+          isFiltersInited={isFiltersInited()}
+        />
+      </Show>
+    </HotReloadGuardProvider>
+  ), element);
+  middleware.onDestroy(dispose);
+
+  return {
+    hydrateFilters: (filters) => batch(() => {
+      setFilters(filters);
+      setIsFiltersInited(true);
+    })
+  };
 }
