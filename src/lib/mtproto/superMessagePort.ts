@@ -289,6 +289,18 @@ class SuperMessagePort<
         return;
       }
 
+      // try {
+      //   const perf = performance.now();
+      //   const clone = structuredClone(task); clone;
+      //   this.log('postMessage clone time',
+      //     task.type,
+      //     performance.now() - perf,
+      //     task.type === 'batch' ? task.payload.length : undefined
+      //   );
+      // } catch(err) {
+      //   console.error('postMessage clone error', err);
+      // }
+
       port.postMessage(task, task.transfer as any);
     });
   }
@@ -602,14 +614,14 @@ class SuperMessagePort<
       }, timeout);
     }
 
-    if(IS_WORKER) {
+    if(IS_WORKER/*  || true */) {
       promise.finally(() => {
         clearInterval(interval);
       });
 
       const interval = ctx.setInterval(() => {
         this.log.error('task still has no result', task, port);
-      }, 60e3);
+      }, IS_WORKER ? 60e3 : 5e3);
     } else if(false) {
       // let timedOut = false;
       const startTime = Date.now();

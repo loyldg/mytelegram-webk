@@ -632,6 +632,10 @@ a {
   color: var(--link-color);
 }
 
+.link-color {
+  color: var(--link-color);
+}
+
 button,
 input,
 optgroup,
@@ -1791,6 +1795,10 @@ hr {
   height: 1.125rem;
   margin-inline-start: .25rem;
 
+  &.clickable {
+    pointer-events: all;
+  }
+
   .sparkles-container {
     color: var(--sparkles-color, var(--primary-text-color));
     font-size: 0.375rem;
@@ -1802,6 +1810,10 @@ hr {
 .premium-icon {
   color: var(--primary-color);
   margin-top: -.0625rem;
+
+  &.clickable {
+    pointer-events: all;
+  };
 }
 
 .badge-fake {
@@ -2168,6 +2180,10 @@ hr {
 .inline-icon {
   vertical-align: bottom;
   line-height: inherit;
+
+  &-left {
+    margin-inline-end: .125rem;
+  }
 }
 
 .icon-reflect {
@@ -2263,6 +2279,7 @@ hr {
   background: rgba(0, 0, 0, $hover-alpha);
   border-radius: 12px;
   padding: 0 6px;
+  line-height: 18px;
   display: inline-block;
 }
 
@@ -2602,4 +2619,8 @@ hr {
 
 .text-center {
   @include text-center();
+}
+
+.margin-0 {
+  margin: 0 !important;
 }

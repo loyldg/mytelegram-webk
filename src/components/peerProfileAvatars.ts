@@ -118,6 +118,13 @@ export default class PeerProfileAvatars {
     let cancel = false;
     let freeze = false;
     attachClickEvent(this.container, async(_e) => {
+      if(
+        findUpClassName(_e.target, 'profile-subtitle-rating') ||
+        findUpClassName(_e.target, 'emoji-status')
+      ) {
+        return;
+      }
+
       if(freeze) {
         cancelEvent(_e);
         return;
@@ -405,11 +412,12 @@ export default class PeerProfileAvatars {
 
             if(!listLoader.current) {
               const chatFull = result[0];
+              const chatPhoto = chatFull?.chat_photo;
               const message = findAndSplice(messages, (message) => {
-                return ((message as Message.messageService).action as MessageAction.messageActionChannelEditPhoto).photo.id === chatFull.chat_photo.id;
+                return ((message as Message.messageService).action as MessageAction.messageActionChannelEditPhoto).photo.id === chatPhoto?.id;
               }) as Message.messageService;
 
-              listLoader.current = message || await this.managers.appMessagesManager.generateFakeAvatarMessage(this.peerId, chatFull.chat_photo);
+              listLoader.current = message || (chatPhoto && await this.managers.appMessagesManager.generateFakeAvatarMessage(this.peerId, chatPhoto));
             }
 
             // console.log('avatars loaded:', value);

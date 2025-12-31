@@ -11,7 +11,7 @@
 
 import type {MyTopPeer} from './appUsersManager';
 import tsNow from '../../helpers/tsNow';
-import {ChannelParticipantsFilter, ChannelsChannelParticipants, ChannelParticipant, Chat, ChatFull, ChatParticipants, ChatPhoto, ExportedChatInvite, InputChannel, InputFile, SendMessageAction, Update, UserFull, Photo, PhotoSize, Updates, ChatParticipant, PeerSettings, SendAsPeer, InputGroupCall} from '../../layer';
+import {ChannelParticipantsFilter, ChannelsChannelParticipants, ChannelParticipant, Chat, ChatFull, ChatParticipants, ChatPhoto, ExportedChatInvite, InputChannel, InputFile, SendMessageAction, Update, UserFull, Photo, PhotoSize, Updates, ChatParticipant, PeerSettings, SendAsPeer, InputGroupCall, Birthday, TextWithEntities} from '../../layer';
 import SearchIndex from '../searchIndex';
 import {AppManager} from './manager';
 import getServerMessageId from './utils/messageId/getServerMessageId';
@@ -26,10 +26,9 @@ import getPeerActiveUsernames from './utils/peers/getPeerActiveUsernames';
 import getParticipantsCount from './utils/chats/getParticipantsCount';
 import callbackifyAll from '../../helpers/callbackifyAll';
 import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
+import {PEER_FULL_TTL} from '../mtproto/mtproto_config';
 
 export type UserTyping = Partial<{userId: UserId, action: SendMessageAction, timeout: number}>;
-
-const PEER_FULL_TTL = 3 * 60e3;
 
 type GetChannelParticipantsOptions = {
   id: ChatId,
@@ -119,35 +118,11 @@ export class AppProfileManager extends AppManager {
       this.invalidateChannelParticipants(chatId);
     });
 
-    this.rootScope.addEventListener('peer_bio_edit', (peerId) => {
-      this.rootScope.dispatchEvent('user_full_update', peerId.toUserId());
-    });
-
     this.typingsInPeer = {};
     this.peerSettings = {};
   }
 
-  /* public saveBotInfo(botInfo: any) {
-    const botId = botInfo && botInfo.user_id;
-    if(!botId) {
-      return null;
-    }
-
-    const commands: any = {};
-    botInfo.commands.forEach((botCommand: any) => {
-      commands[botCommand.command] = botCommand.description;
-    });
-
-    return this.botInfos[botId] = {
-      id: botId,
-      version: botInfo.version,
-      shareText: botInfo.share_text,
-      description: botInfo.description,
-      commands: commands
-    };
-  } */
-
-  public getProfile(id: UserId, override?: true) {
+  public getProfile(id: UserId, override?: boolean) {
     if(this.usersFull[id] && !override && Date.now() < this.fullExpiration[id.toPeerId()]) {
       return this.usersFull[id];
     }
@@ -193,10 +168,6 @@ export class AppProfileManager extends AppManager {
         this.usersFull[id] = userFull;
         this.fullExpiration[peerId] = Date.now() + PEER_FULL_TTL;
 
-        /* if(userFull.bot_info) {
-          userFull.bot_info = this.saveBotInfo(userFull.bot_info) as any;
-        } */
-
         // appMessagesManager.savePinnedMessage(id, userFull.pinned_msg_id);
 
         this.rootScope.dispatchEvent('user_full_update', id);
@@ -213,7 +184,7 @@ export class AppProfileManager extends AppManager {
     return intro && (intro.title || intro.description || intro.sticker);
   }
 
-  public getProfileByPeerId(peerId: PeerId, override?: true) {
+  public getProfileByPeerId(peerId: PeerId, override?: boolean) {
     if(this.appPeersManager.isAnyChat(peerId)) return this.getChatFull(peerId.toChatId(), override);
     else return this.getProfile(peerId.toUserId(), override);
   }
@@ -235,7 +206,7 @@ export class AppProfileManager extends AppManager {
   }
 
   public modifyCachedFullUser(userId: UserId, modify: (fullUser: UserFull) => boolean | void) {
-    this.modifyCachedFullPeer(userId.toPeerId(true), modify as any);
+    this.modifyCachedFullPeer(userId.toPeerId(false), modify as any);
   }
 
   public modifyCachedFullPeer(peerId: PeerId, modify: (fullPeer: UserFull | ChatFull) => boolean | void) {
@@ -299,7 +270,7 @@ export class AppProfileManager extends AppManager {
     });
   } */
 
-  public getChatFull(id: ChatId, override?: true) {
+  public getChatFull(id: ChatId, override?: boolean) {
     if(this.appChatsManager.isChannel(id)) {
       return this.getChannelFull(id, override);
     }
@@ -550,7 +521,7 @@ export class AppProfileManager extends AppManager {
     });
   }
 
-  public getChannelFull(id: ChatId, override?: true) {
+  public getChannelFull(id: ChatId, override?: boolean) {
     const peerId = id.toPeerId(true);
     if(this.chatsFull[id] !== undefined && !override && Date.now() < this.fullExpiration[peerId]) {
       return this.chatsFull[id] as ChatFull.channelFull;
@@ -714,7 +685,7 @@ export class AppProfileManager extends AppManager {
 
     // ! эта строчка будет создавать race condition:
     // ! запрос вернёт chat с установленным флагом call_not_empty, хотя сам апдейт уже будет применён
-    // this.getProfileByPeerId(peerId, true);
+    this.getProfileByPeerId(peerId, true);
   }
 
   public refreshFullPeerIfNeeded(peerId: PeerId) {
@@ -732,17 +703,9 @@ export class AppProfileManager extends AppManager {
     }).then((user) => {
       this.appUsersManager.saveApiUser(user);
 
-      if(about !== undefined) {
-        const peerId = user.id.toPeerId();
-        const userFull = this.usersFull[user.id];
-        if(userFull) {
-          userFull.about = about;
-        }
-
-        this.rootScope.dispatchEvent('peer_bio_edit', peerId);
-      }
-
-      return this.getProfile(user.id, true);
+      this.modifyCachedFullUser(user.id, (userFull) => {
+        userFull.about = about;
+      });
     });
   }
 
@@ -761,16 +724,9 @@ export class AppProfileManager extends AppManager {
         });
       }
 
-      const userFull = this.getCachedFullUser(botId);
-      if(about !== undefined) {
-        if(userFull) {
-          userFull.about = about;
-        }
-
-        this.rootScope.dispatchEvent('peer_bio_edit', botId.toPeerId());
-      }
-
-      return this.getProfile(botId, true);
+      this.modifyCachedFullUser(botId, (userFull) => {
+        userFull.about = about;
+      });
     });
   }
 
@@ -900,7 +856,7 @@ export class AppProfileManager extends AppManager {
 
   public canGiftPremium(userId: UserId) {
     const user = this.appUsersManager.getUser(userId);
-    if(user?.pFlags?.premium) {
+    if(user?.pFlags?.premium || user?.pFlags?.bot_forum_view) {
       return false;
     }
 
@@ -1046,6 +1002,11 @@ export class AppProfileManager extends AppManager {
     const action = update.action;
     let typing = typings.find((t) => t.userId === fromId);
 
+    if(update._ === 'updateUserTyping' && action._ === 'sendMessageTextDraftAction') {
+      this.appMessagesManager.handleTypingBotforumUpdate(update);
+      return;
+    }
+
     if((action as SendMessageAction.sendMessageEmojiInteraction).msg_id) {
       (action as SendMessageAction.sendMessageEmojiInteraction).msg_id = this.appMessagesIdsManager.generateMessageId((action as SendMessageAction.sendMessageEmojiInteraction).msg_id, (update as Update.updateChannelUserTyping).channel_id);
     }
@@ -1147,4 +1108,52 @@ export class AppProfileManager extends AppManager {
     const peerId = this.appPeersManager.getPeerId(update.peer);
     this.rootScope.dispatchEvent('peer_settings', {peerId, settings: update.settings});
   };
+
+  public setMyBirthday(date: Birthday | null) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'account.updateBirthday',
+      params: {
+        birthday: date ?? undefined
+      },
+      processResult: (result) => {
+        this.modifyCachedFullUser(this.rootScope.myId, (userFull) => {
+          userFull.birthday = date ?? undefined;
+          return true;
+        });
+      }
+    });
+  }
+
+  public suggestUserBirthday(userId: UserId, date: Birthday) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'users.suggestBirthday',
+      params: {
+        id: this.appUsersManager.getUserInput(userId),
+        birthday: date
+      },
+      processResult: (updates) => {
+        if(!updates) return
+
+        this.apiUpdatesManager.processUpdateMessage(updates);
+      }
+    });
+  }
+
+  public updateUserNote(userId: UserId, note: TextWithEntities) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'contacts.updateContactNote',
+      params: {
+        id: this.appUsersManager.getUserInput(userId),
+        note: note
+      },
+      processResult: (result) => {
+        if(!result) return
+
+        this.modifyCachedFullUser(userId, (userFull) => {
+          userFull.note = note.text === '' ? undefined : note;
+          return true;
+        });
+      }
+    });
+  }
 }

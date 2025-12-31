@@ -47,6 +47,7 @@ import formatStarsAmount from '../../lib/appManagers/utils/payments/formatStarsA
 import wrapLocalSticker from '../wrappers/localSticker';
 import bigInt from 'big-integer';
 import safeWindowOpen from '../../helpers/dom/safeWindowOpen';
+import {IconTsx} from '../iconTsx';
 
 export function StarsStrokeStar(props: {stroke?: boolean, style?: JSX.HTMLAttributes<HTMLDivElement>['style']}) {
   return (
@@ -136,11 +137,18 @@ export function StarsAmount(props: {stars: Long}) {
   );
 }
 
-export function StarsChange(props: {stars: Long, isRefund?: boolean, noSign?: boolean, reverse?: boolean, inline?: boolean}) {
+export function StarsChange(props: {
+  stars: Long,
+  isRefund?: boolean,
+  noSign?: boolean,
+  reverse?: boolean,
+  inline?: boolean,
+  ton?: boolean
+}) {
   return (
     <div class={classNames('popup-stars-pay-amount', +props.stars > 0 ? 'green' : 'danger', props.reverse && 'reverse', props.inline && 'inline')}>
       {`${+props.stars > 0 && !props.noSign ? '+' : ''}${props.stars}`}
-      <StarsStar />
+      {props.ton ? <IconTsx icon="ton" /> : <StarsStar />}
       {props.isRefund && <span class="popup-stars-pay-amount-status">{i18n('StarsRefunded')}</span>}
     </div>
   );
@@ -348,6 +356,7 @@ export default class PopupStars extends PopupElement {
   private appConfig: MTAppConfig;
   private toppedUp: boolean;
   private ton: boolean;
+  private spendPurposePeerId: PeerId;
 
   constructor(options: {
     paymentForm?: PaymentsPaymentForm.paymentsPaymentFormStars,
@@ -357,7 +366,8 @@ export default class PopupStars extends PopupElement {
     purpose?: PopupStars['purpose'],
     giftPeerId?: PeerId,
     peerId?: PeerId,
-    ton?: boolean
+    ton?: boolean,
+    spendPurposePeerId?: PeerId
   } = {}) {
     super('popup-stars', {
       closable: true,
@@ -422,8 +432,8 @@ export default class PopupStars extends PopupElement {
           <Row.Title><b>{_title}</b></Row.Title>
           <Row.Midtitle>{midtitle}</Row.Midtitle>
           <Row.Subtitle>{subtitleStatus ? [subtitle, ' — ', subtitleStatus] : subtitle}</Row.Subtitle>
-          <Row.RightContent><StarsChange stars={formatStarsAmount(transaction.amount)} /></Row.RightContent>
-          <Row.Media mediaSize="abitbigger">{media}</Row.Media>
+          <Row.RightContent><StarsChange stars={formatStarsAmount(transaction.amount)} ton={transaction.amount._ === 'starsTonAmount'} /></Row.RightContent>
+          <Row.Media size="abitbigger">{media}</Row.Media>
         </Row>
       );
 
@@ -472,7 +482,7 @@ export default class PopupStars extends PopupElement {
               [formatFullSentTime(subscription.until_date, undefined, true)]
             )}</Row.Subtitle>
           <Row.RightContent>{isCancelled && (<span class="popup-stars-cancelled danger">{i18n('Stars.Subscriptions.Cancelled')}</span>)}</Row.RightContent>
-          <Row.Media mediaSize="abitbigger">{avatar.node}</Row.Media>
+          <Row.Media size="abitbigger">{avatar.node}</Row.Media>
         </Row>
       );
 
@@ -616,7 +626,10 @@ export default class PopupStars extends PopupElement {
                     _: 'inputStorePaymentStarsTopup',
                     amount: option.amount,
                     currency: option.currency,
-                    stars: option.stars
+                    stars: option.stars,
+                    spend_purpose_peer: this.spendPurposePeerId && this.spendPurposePeerId !== rootScope.myId ?
+                      await this.managers.appPeersManager.getInputPeerById(this.spendPurposePeerId) :
+                      undefined
                   };
 
                   const inputInvoice: InputInvoice = {
@@ -671,7 +684,7 @@ export default class PopupStars extends PopupElement {
         }
 
         loading = true;
-        const starsStatus = await this.managers.appPaymentsManager.getStarsTransactions(offset, inbound);
+        const starsStatus = await this.managers.appPaymentsManager.getStarsTransactions(offset, inbound, this.ton);
         if(!middleware()) return;
 
         const promises = (starsStatus.history || []).map(this.renderTransaction);
@@ -773,7 +786,7 @@ export default class PopupStars extends PopupElement {
 
     const restSection = (
       <>
-        {this.appConfig.stars_gifts_enabled && (
+        {this.appConfig.stars_gifts_enabled && !this.ton && (
           <Section>
             <Button
               class="btn-primary btn-transparent primary"

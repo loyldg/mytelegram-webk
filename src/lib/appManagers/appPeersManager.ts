@@ -24,7 +24,7 @@ import getServerMessageId from './utils/messageId/getServerMessageId';
 import MTProtoMessagePort from '../mtproto/mtprotoMessagePort';
 import callbackify from '../../helpers/callbackify';
 
-export type PeerType = 'channel' | 'chat' | 'megagroup' | 'group' | 'saved' | 'savedDialog' | 'monoforum' | 'monoforum_thread';
+export type PeerType = 'channel' | 'chat' | 'megagroup' | 'group' | 'saved' | 'savedDialog' | 'monoforum' | 'monoforum_thread' | 'botforum_thread';
 export class AppPeersManager extends AppManager {
   public get peerId() {
     return this.appUsersManager.userId.toPeerId();
@@ -165,8 +165,8 @@ export class AppPeersManager extends AppManager {
   }
 
   public isPeerRestricted(peerId: PeerId) {
-    return callbackify(this.appPrivacyManager.getSensitiveContentSettings(), (settings) => {
-      return isPeerRestricted(this.getPeer(peerId), settings.sensitiveCanChange);
+    return callbackify(this.appPrivacyManager.getContentSettings(), (settings) => {
+      return isPeerRestricted(this.getPeer(peerId), !!settings.pFlags.sensitive_can_change);
     });
   }
 
@@ -182,6 +182,10 @@ export class AppPeersManager extends AppManager {
     return !peerId.isUser() && this.appChatsManager.isMonoforum(peerId.toChatId());
   }
 
+  public isBotforum(peerId?: PeerId): boolean {
+    return peerId?.isUser() && this.appUsersManager.isBotforum(peerId.toChatId());
+  }
+
   public canManageDirectMessages(peerId?: PeerId) {
     return peerId && !peerId.isUser() && this.appChatsManager.canManageDirectMessages(peerId.toChatId());
   }
@@ -189,8 +193,8 @@ export class AppPeersManager extends AppManager {
   /**
    * The amount of stars necessary to be paid for every message if the target peer had enabled it
    */
-  public async getStarsAmount(peerId: PeerId): Promise<number | undefined> {
-    if(peerId.isUser()) return this.appUsersManager.getStarsAmount(peerId.toUserId());
+  public getStarsAmount(peerId: PeerId, onlyCached?: boolean): MaybePromise<number | undefined> {
+    if(peerId.isUser()) return this.appUsersManager.getStarsAmount(peerId.toUserId(), undefined, onlyCached);
 
     return this.appChatsManager.getStarsAmount(peerId.toChatId());
   }
@@ -307,6 +311,8 @@ export class AppPeersManager extends AppManager {
       return 'savedDialog';
     } else if(this.isMonoforum(peerId)) {
       return threadId ? 'monoforum_thread' : 'monoforum';
+    } else if(this.isBotforum(peerId) && threadId) {
+      return 'botforum_thread';
     } else if(this.isMegagroup(peerId)) {
       return 'megagroup';
     } else if(this.isChannel(peerId)) {

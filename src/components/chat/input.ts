@@ -32,7 +32,7 @@ import tsNow from '../../helpers/tsNow';
 import appNavigationController, {NavigationItem} from '../appNavigationController';
 import {IS_MOBILE, IS_MOBILE_SAFARI} from '../../environment/userAgent';
 import I18n, {FormatterArguments, i18n, join, LangPackKey} from '../../lib/langPack';
-import {generateTail} from './bubbles';
+import {generateTail} from './utils';
 import findUpClassName from '../../helpers/dom/findUpClassName';
 import ButtonCorner from '../buttonCorner';
 import blurActiveElement from '../../helpers/dom/blurActiveElement';
@@ -141,7 +141,6 @@ import useStars from '../../stores/stars';
 import PopupStars from '../popups/stars';
 import SolidJSHotReloadGuardProvider from '../../lib/solidjs/hotReloadGuardProvider';
 import {makeMessageMediaInputForSuggestedPost} from '../../lib/appManagers/utils/messages/makeMessageMediaInput';
-import {useAppConfig, useAppState} from '../../stores/appState';
 import showFrozenPopup from '../popups/frozen';
 
 // console.log('Recorder', Recorder);
@@ -1609,7 +1608,7 @@ export default class ChatInput {
       return;
     }
 
-    const chat = apiManagerProxy.getChat(peerId.toChatId());
+    const chat = this.chat.peer;
     if(!chat || !(chat as MTChat.channel).pFlags.left || (chat as MTChat.channel).pFlags.broadcast) {
       return;
     }
@@ -1635,7 +1634,7 @@ export default class ChatInput {
       this.isReplyInTopicOverlayNeeded() ||
       (this.chat.peerId.isUser() && (this.chat.isUserBlocked || this.chat.isPremiumRequired)) ||
       this.getJoinButtonType() ||
-      (this.frozenBtn && useAppConfig().freeze_since_date && !(await this.chat.canSend()))
+      (this.frozenBtn && this.chat.appConfig.freeze_since_date && !(await this.chat.canSend()))
     ) {
       return this.controlContainer;
     }
@@ -1702,7 +1701,7 @@ export default class ChatInput {
       return false;
     }
 
-    const user = await this.managers.appUsersManager.getUser(peerId);
+    const user = this.chat.peer as User.user;
     return user.status?._ !== 'userStatusOnline';
   };
 
@@ -1810,6 +1809,7 @@ export default class ChatInput {
       const webPageOptions = this.webPageOptions;
       const hasLargeMedia = !!webPage?.pFlags?.has_large_media;
       const replyTo = this.getReplyTo();
+      const isBotforumAllChats = this.chat.isBotforum && !this.chat.threadId;
       draft = {
         _: 'draftMessage',
         date: tsNow(true),
@@ -1819,7 +1819,7 @@ export default class ChatInput {
           no_webpage: this.noWebPage,
           invert_media: this.invertMedia || undefined
         },
-        reply_to: replyTo ? {
+        reply_to: !isBotforumAllChats && replyTo ? {
           _: 'inputReplyToMessage',
           reply_to_msg_id: replyTo.replyToMsgId,
           top_msg_id: this.chat.threadId,
@@ -2075,7 +2075,8 @@ export default class ChatInput {
       const {isMonoforum, canManageDirectMessages, monoforumThreadId} = this.chat;
       // console.warn('[input] finishpeerchange start');
 
-      chatInput.classList.remove('hide');
+      chatInput.classList.toggle('hide', this.chat.noInput);
+
       if(goDownBtn) {
         goDownBtn.classList.toggle('is-broadcast', isBroadcast);
         goDownBtn.classList.remove('hide');
@@ -2193,7 +2194,7 @@ export default class ChatInput {
       if(this.messageInput) {
         this.updateMessageInput(
           canSend || haveSomethingInControl,
-          canSendPlain,
+          canSendPlain && !this.chat.isTemporaryThread,
           placeholderParams,
           peerId.isUser() ? options.text : undefined,
           peerId.isUser() ? options.entities : undefined
@@ -2495,7 +2496,7 @@ export default class ChatInput {
     attachClickEvent(this.messageInput, (e) => {
       if(!this.canSendPlain()) {
         toastNew({
-          langPackKey: POSTING_NOT_ALLOWED_MAP['send_plain']
+          langPackKey: this.chat.isTemporaryThread ? 'WaitForTopicCreation' : POSTING_NOT_ALLOWED_MAP['send_plain']
         });
         return;
       }
@@ -2954,7 +2955,7 @@ export default class ChatInput {
 
       if(
         this.stickersHelper &&
-        rootScope.settings.stickers.suggest !== 'none' &&
+        this.chat.appSettings.stickers.suggest !== 'none' &&
         await this.chat.canSend('send_stickers') &&
         (['messageEntityEmoji', 'messageEntityCustomEmoji'] as MessageEntity['_'][]).includes(entity?._) &&
         entity.length === value.length &&
@@ -2977,7 +2978,7 @@ export default class ChatInput {
         if(this.commandsHelper && await this.commandsHelper.checkQuery(query, this.chat.peerId)) {
           foundHelper = this.commandsHelper;
         }
-      } else if(rootScope.settings.emoji.suggest) { // emoji
+      } else if(this.chat.appSettings.emoji.suggest) { // emoji
         query = query.replace(/^\s*/, '');
         if(!value.match(/^\s*:(.+):\s*$/) && !value.match(/:[;!@#$%^&*()-=|]/) && query) {
           foundHelper = this.emojiHelper;
@@ -3104,7 +3105,7 @@ export default class ChatInput {
     }
 
     const chatId = peerId.toChatId();
-    const chat = apiManagerProxy.getChat(chatId) as MTChat.channel;
+    const chat = this.chat.peer as MTChat.channel;
 
     if(!chat.pFlags.slowmode_enabled) {
       return false;
@@ -3481,7 +3482,10 @@ export default class ChatInput {
   }
 
   public async createReplyPicker(replyTo: ChatInputReplyTo) {
-    const {peerId, threadId, monoforumThreadId} = await PopupPickUser.createReplyPicker(this.chat.isMonoforum ? {excludeMonoforums: true} : undefined);
+    const {peerId, threadId, monoforumThreadId} = await PopupPickUser.createReplyPicker({
+      excludeBotforums: true,
+      ...(this.chat.isMonoforum ? {excludeMonoforums: true} : undefined)
+    });
     this.appImManager.setInnerPeer({peerId, threadId, monoforumThreadId}).then(() => {
       replyTo.replyToMonoforumPeerId = monoforumThreadId;
       this.appImManager.chat.input.initMessageReply(replyTo);

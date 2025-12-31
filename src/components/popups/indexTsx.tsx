@@ -39,6 +39,8 @@ export type PopupButton = {
 export type PopupOptions = Partial<{
   closable: boolean,
   onBackClick: () => void | false,
+  onClose: () => void,
+  onCloseAfterTimeout: () => void,
   isConfirmationNeededOnClose: () => void | boolean | Promise<any>,
   // overlayClosable: boolean,
   withConfirm: LangPackKey | boolean,
@@ -200,6 +202,8 @@ const PopupElement = (props: {
   const destroy = () => {
     if(destroyed()) return;
 
+    props.onClose?.()
+
     setHiding(true);
     setDestroyed(true);
     setShown(false);
@@ -230,6 +234,7 @@ const PopupElement = (props: {
       }
 
       controllerContext.dispose();
+      props.onCloseAfterTimeout?.();
     }, 250);
   };
 
@@ -303,6 +308,8 @@ const PopupElement = (props: {
               return;
             }
 
+            if(props.closable === false) return
+
             hide();
           })}
         >
@@ -356,17 +363,15 @@ PopupElement.Title = (props: {
 };
 
 PopupElement.CloseButton = (props: {
+  canGoBack?: boolean,
   onBackClick?: () => void | false
   class?: string
 }) => {
   const context = useContext(PopupContext);
-  const [backState, setBackState] = createSignal(false);
 
   const handleClick = () => {
-    if(props.onBackClick && backState()) {
-      if(props.onBackClick() !== false) {
-        setBackState(false);
-      }
+    if(props.canGoBack && props.onBackClick) {
+      props.onBackClick()
     } else {
       context.hide();
     }
@@ -378,7 +383,7 @@ PopupElement.CloseButton = (props: {
       onClick={handleClick}
     >
       <Show when={props.onBackClick} fallback={<IconTsx icon="close" />}>
-        <div class={classNames('animated-close-icon', backState() && 'state-back')} />
+        <div class={classNames('animated-close-icon', props.canGoBack && 'state-back')} />
       </Show>
     </button>
   ));
@@ -450,7 +455,8 @@ PopupElement.Button = (props: {
   iconLeft?: Icon,
   iconRight?: Icon,
   class?: string,
-  noDefaultClass?: boolean
+  noDefaultClass?: boolean,
+  disabled?: boolean
 }) => {
   const context = useContext(PopupContext);
 
@@ -488,7 +494,7 @@ PopupElement.Button = (props: {
       )}
       noRipple={props.noRipple}
       onClick={handleClick}
-      disabled={disabled()}
+      disabled={props.disabled || disabled()}
       icon={props.iconLeft}
       iconAfter={props.iconRight}
       iconClass={classNames('popup-button-icon', props.iconLeft ? 'left' : 'right')}
@@ -528,7 +534,7 @@ export const addCancelButton = (buttons: PopupButton[]) => {
 export function createPopup(callback: () => JSX.Element) {
   createRoot((dispose) => {
     <PopupControllerContext.Provider value={{dispose}}>
-      {callback()}
+      {untrack(callback)}
     </PopupControllerContext.Provider>
   });
 }

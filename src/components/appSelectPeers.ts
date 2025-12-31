@@ -194,6 +194,7 @@ export default class AppSelectPeers {
     noPlaceholder?: boolean,
     excludePeerIds?: AppSelectPeers['excludePeerIds'],
     excludeMonoforums?: boolean,
+    excludeBotforums?: boolean,
     placeholderSizes?: ConstructorParameters<typeof DialogsPlaceholder>[0],
     getPeerIdFromKey?: AppSelectPeers['getPeerIdFromKey']
   }) {
@@ -244,10 +245,10 @@ export default class AppSelectPeers {
 
         if(options.excludeMonoforums) {
           const chat = apiManagerProxy.getChat(peerId.toChatId());
-          if(chat?._ === 'channel' && chat?.pFlags?.monoforum) {
-            return false;
-          }
+          if(chat?._ === 'channel' && chat?.pFlags?.monoforum) return false;
         }
+
+        if(options.excludeBotforums && apiManagerProxy.isBotforum(peerId)) return false;
 
         const notRendered = !this.renderedPeerIds.has(peerId);
         if(notRendered) this.renderedPeerIds.add(peerId);
@@ -1079,7 +1080,7 @@ export default class AppSelectPeers {
     let subtitleEl: HTMLElement;
     if(peerId.isAnyChat()) {
       subtitleEl = await getChatMembersString(peerId.toChatId());
-    } else if(peerId === rootScope.myId && this.meAsSaved) {
+    } else if(peerId === rootScope.myId) {
       subtitleEl = i18n(this.selfPresence);
     } else {
       subtitleEl = getUserStatusString(await this.managers.appUsersManager.getUser(peerId.toUserId()));

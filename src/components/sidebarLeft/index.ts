@@ -12,7 +12,7 @@ import InputSearch from '../inputSearch';
 import SidebarSlider, {SliderSuperTab} from '../slider';
 import TransitionSlider from '../transition';
 import AppNewGroupTab from './tabs/newGroup';
-import AppSearchSuper from '../appSearchSuper.';
+import AppSearchSuper from '../appSearchSuper';
 import {DateData, fillTipDates} from '../../helpers/date';
 import {MOUNT_CLASS_TO} from '../../config/debug';
 import AppSettingsTab from './tabs/settings';
@@ -51,8 +51,7 @@ import {getInstallPrompt} from '../../helpers/dom/installPrompt';
 import liteMode from '../../helpers/liteMode';
 import AppPowerSavingTab from './tabs/powerSaving';
 import AppMyStoriesTab from './tabs/myStories';
-import {joinDeepPath} from '../../helpers/object/setDeepProperty';
-import Icon, {getIconContent} from '../icon';
+import Icon from '../icon';
 import AppSelectPeers from '../appSelectPeers';
 import setBadgeContent from '../../helpers/setBadgeContent';
 import createBadge from '../../helpers/createBadge';
@@ -60,11 +59,7 @@ import {MyDocument} from '../../lib/appManagers/appDocsManager';
 import getAttachMenuBotIcon from '../../lib/appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
 import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
 import flatten from '../../helpers/array/flatten';
-import EmojiTab from '../emoticonsDropdown/tabs/emoji';
-import {EmoticonsDropdown} from '../emoticonsDropdown';
-import cloneDOMRect from '../../helpers/dom/cloneDOMRect';
-import {AccountEmojiStatuses, AttachMenuBot, EmojiStatus, User} from '../../layer';
-import filterUnique from '../../helpers/array/filterUnique';
+import {AttachMenuBot, EmojiStatus, User} from '../../layer';
 import {Middleware, MiddlewareHelper} from '../../helpers/middleware';
 import wrapEmojiStatus from '../wrappers/emojiStatus';
 import {makeMediaSize} from '../../helpers/mediaSize';
@@ -76,12 +71,11 @@ import {MAX_ACCOUNTS, MAX_ACCOUNTS_FREE} from '../../lib/accounts/constants';
 import {getCurrentAccount} from '../../lib/accounts/getCurrentAccount';
 import {createProxiedManagersForAccount} from '../../lib/appManagers/getProxiedManagers';
 import limitSymbols from '../../helpers/string/limitSymbols';
-import attachFloatingButtonMenu from '../floatingButtonMenu';
 import filterAsync from '../../helpers/array/filterAsync';
 import pause from '../../helpers/schedulers/pause';
 import AccountsLimitPopup from './accountsLimitPopup';
 import {changeAccount} from '../../lib/accounts/changeAccount';
-import uiNotificationsManager, {UiNotificationsManager} from '../../lib/appManagers/uiNotificationsManager';
+import uiNotificationsManager from '../../lib/appManagers/uiNotificationsManager';
 import {FoldersSidebarControls, renderFoldersSidebarContent} from './foldersSidebarContent';
 import SolidJSHotReloadGuardProvider from '../../lib/solidjs/hotReloadGuardProvider';
 import SwipeHandler, {getEvent} from '../swipeHandler';
@@ -106,11 +100,13 @@ import EmptySearchPlaceholder from '../emptySearchPlaceholder';
 import useHasFoldersSidebar, {useIsSidebarCollapsed} from '../../stores/foldersSidebar';
 import isObject from '../../helpers/object/isObject';
 import {useAppSettings} from '../../stores/appSettings';
+import {openEmojiStatusPicker} from './emojiStatusPicker';
 
 export const LEFT_COLUMN_ACTIVE_CLASSNAME = 'is-left-column-shown';
 
 type SearchInitResult = {
   open: (focus?: boolean) => void;
+  openWithPeerId: (peerId: PeerId) => void;
   close: () => void;
 }
 
@@ -129,7 +125,7 @@ export class AppSidebarLeft extends SidebarSlider {
   private newBtnMenu: HTMLElement;
 
   private searchGroups: {[k in 'contacts' | 'globalContacts' | 'messages' | 'people' | 'recent']: SearchGroup} = {} as any;
-  private searchSuper: AppSearchSuper;
+  public searchSuper: AppSearchSuper;
   private searchInitResult: SearchInitResult;
   private isSearchActive = false;
   private searchTriggerWhenCollapsed: HTMLElement;
@@ -153,7 +149,7 @@ export class AppSidebarLeft extends SidebarSlider {
     // this._selectTab(0); // make first tab as default
 
     this.chatListContainer = document.getElementById('chatlist-container');
-    this.inputSearch = new InputSearch();
+    this.inputSearch = new InputSearch({oldStyle: true});
     (this.inputSearch.input as HTMLInputElement).placeholder = ' ';
     const sidebarHeader = this.sidebarEl.querySelector('.item-main .sidebar-header');
     sidebarHeader.append(this.inputSearch.container);
@@ -234,96 +230,13 @@ export class AppSidebarLeft extends SidebarSlider {
     const lockButton = createLockButton();
 
     attachClickEvent(statusBtnIcon, () => {
-      const emojiTab = new EmojiTab({
-        noRegularEmoji: true,
-        managers: rootScope.managers,
-        mainSets: () => {
-          const defaultStatuses = this.managers.appStickersManager.getLocalStickerSet('inputStickerSetEmojiDefaultStatuses')
-          .then((stickerSet) => {
-            return stickerSet.documents.map((doc) => doc.id);
-          });
-
-          const convertEmojiStatuses = (emojiStatuses: AccountEmojiStatuses) => {
-            return (emojiStatuses as AccountEmojiStatuses.accountEmojiStatuses)
-            .statuses
-            .map((status) => (status as EmojiStatus.emojiStatus).document_id)
-            .filter(Boolean);
-          };
-
-          return [
-            Promise.all([
-              defaultStatuses,
-              this.managers.appUsersManager.getRecentEmojiStatuses().then(convertEmojiStatuses),
-              this.managers.appUsersManager.getDefaultEmojiStatuses().then(convertEmojiStatuses),
-              this.managers.appEmojiManager.getRecentEmojis('custom')
-            ]).then((arrays) => {
-              return filterUnique(flatten(arrays));
-            })
-          ];
-        },
-        onClick: async(emoji) => {
-          emoticonsDropdown.hideAndDestroy();
-
-          const noStatus = getIconContent('star') === emoji.emoji;
-          let emojiStatus: EmojiStatus;
-          if(noStatus) {
-            emojiStatus = {
-              _: 'emojiStatusEmpty'
-            };
-          } else {
-            emojiStatus = {
-              _: 'emojiStatus',
-              document_id: emoji.docId
-            };
-
-            fireOnNew = true;
-          }
-
-          this.managers.appUsersManager.updateEmojiStatus(emojiStatus);
-        },
-        canHaveEmojiTimer: true
-      });
-
-      const emoticonsDropdown = new EmoticonsDropdown({
-        tabsToRender: [emojiTab],
-        customParentElement: document.body,
-        getOpenPosition: () => {
-          const rect = statusBtnIcon.getBoundingClientRect();
-          const cloned = cloneDOMRect(rect);
-          cloned.left = rect.left + rect.width / 2;
-          cloned.top = rect.top + rect.height / 2;
-          return cloned;
+      openEmojiStatusPicker({
+        managers: this.managers,
+        anchorElement: statusBtnIcon,
+        onChosen: () => {
+          fireOnNew = true
         }
-      });
-
-      const textColor = 'primary-color';
-
-      emoticonsDropdown.setTextColor(textColor);
-
-      emoticonsDropdown.addEventListener('closed', () => {
-        emoticonsDropdown.hideAndDestroy();
-      });
-
-      emoticonsDropdown.onButtonClick();
-
-      emojiTab.initPromise.then(() => {
-        const emojiElement = Icon('star', 'super-emoji-premium-icon');
-        emojiElement.style.color = `var(--${textColor})`;
-
-        const category = emojiTab.getCustomCategory();
-
-        emojiTab.addEmojiToCategory({
-          category,
-          element: emojiElement,
-          batch: false,
-          prepend: true
-          // active: !iconEmojiId
-        });
-
-        // if(iconEmojiId) {
-        //   emojiTab.setActive({docId: iconEmojiId, emoji: ''});
-        // }
-      });
+      })
     });
 
     const wrapStatus = async(middleware: Middleware) => {
@@ -373,7 +286,6 @@ export class AppSidebarLeft extends SidebarSlider {
       if(isPremium) {
         await wrapStatus((statusMiddlewareHelper = middleware.create()).get());
         if(!middleware()) return;
-        sidebarHeader.append(statusBtnIcon);
         toggleRightButtons(true, await DeferredIsUsingPasscode.isUsingPasscode());
 
         const onEmojiStatusChange = () => {
@@ -402,6 +314,8 @@ export class AppSidebarLeft extends SidebarSlider {
 
       if(isUsingPasscode) sidebarHeader.append(lockButton.element);
       else lockButton.element.remove();
+
+      sidebarHeader.classList.toggle('is-input-the-last-child', !isPremium && !isUsingPasscode);
     };
 
     appImManager.addEventListener('premium_toggle', onPremium);
@@ -415,7 +329,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
     this.initNavigation();
 
-    apiManagerProxy.getState().then((state) => {
+    {
       const CHECK_UPDATE_INTERVAL = 1800e3;
       const checkUpdateInterval = setInterval(() => {
         fetch('version', {cache: 'no-cache'})
@@ -432,7 +346,7 @@ export class AppSidebarLeft extends SidebarSlider {
         })
         .catch(noop);
       }, CHECK_UPDATE_INTERVAL);
-    });
+    }
 
     this.onResize = () => {
       const rect = this.rect = this.tabsContainer.getBoundingClientRect();
@@ -518,17 +432,14 @@ export class AppSidebarLeft extends SidebarSlider {
   }
 
   public hasSomethingOpenInside() {
-    return this.hasTabsInNavigation() || this.isSearchActive || !!appDialogsManager.forumTab || appDialogsManager.hasMonoforumOpen();
+    return this.hasTabsInNavigation() || this.isSearchActive || !!appDialogsManager.forumTab;
   }
 
   public closeEverythingInside() {
     this.closeSearch();
     appDialogsManager.toggleForumTab();
 
-    const hadOpenedDrawer = appDialogsManager.closeMonoforumDrawers();
-    const hadTabs = this.closeAllTabs();
-
-    return hadTabs || hadOpenedDrawer;
+    return this.closeAllTabs();
   }
 
   private isAnimatingCollapse = false;
@@ -539,7 +450,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
     this.sidebarEl.classList.toggle('has-open-tabs', isFloating);
     this.sidebarEl.classList.toggle('has-real-tabs', this.hasTabsInNavigation());
-    this.sidebarEl.classList.toggle('has-forum-open', !!appDialogsManager.forumTab || appDialogsManager.hasMonoforumOpen());
+    this.sidebarEl.classList.toggle('has-forum-open', !!appDialogsManager.forumTab);
 
     const sidebarPlaceholder = document.querySelector('.sidebar-left-placeholder');
 
@@ -584,7 +495,7 @@ export class AppSidebarLeft extends SidebarSlider {
           );
         }
       });
-      if(!appDialogsManager.hasMonoforumOpen() && !appDialogsManager.forumTab)
+      if(!appDialogsManager.forumTab)
         appDialogsManager.xd?.toggleAvatarUnreadBadges(false, undefined);
     } else {
       const [hasFoldersSidebar] = useHasFoldersSidebar();
@@ -701,11 +612,9 @@ export class AppSidebarLeft extends SidebarSlider {
     })
   }
 
-  public createToolsMenu(mountTo?: HTMLElement, closeBefore?: boolean) {
+  public createToolsMenu(mountTo?: HTMLElement) {
     const closeTabsBefore = async(clb: () => void) => {
-      if(closeBefore) {
-        this.closeEverythingInside() && await pause(200);
-      }
+      this.closeEverythingInside() && await pause(200);
 
       clb();
     }
@@ -1160,7 +1069,7 @@ export class AppSidebarLeft extends SidebarSlider {
     });
   }
 
-  private initSearch() {
+  public initSearch() {
     if(this.searchInitResult) return this.searchInitResult;
 
     const searchContainer = this.sidebarEl.querySelector('#search-container') as HTMLDivElement;
@@ -1543,6 +1452,26 @@ export class AppSidebarLeft extends SidebarSlider {
       open: (focus = true) => {
         onFocus();
         focus && this.inputSearch.input.focus();
+      },
+      openWithPeerId: (peerId: PeerId) => {
+        onFocus();
+        this.inputSearch.input.focus();
+
+        selectedPeerId = peerId;
+
+        this.inputSearch.onChange(this.inputSearch.value = '');
+
+        const element = renderEntity(peerId);
+        this.inputSearch.container.append(element);
+
+        element.addEventListener('click', () => {
+          unselectEntity(element);
+        });
+
+        pickedElements.push(element);
+        fastRaf(() => {
+          updatePicked();
+        });
       },
       close: () => {
         close();

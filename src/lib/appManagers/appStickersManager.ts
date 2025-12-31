@@ -25,6 +25,7 @@ import SearchIndex from '../searchIndex';
 import parseEntities from '../richTextProcessor/parseEntities';
 import toArray from '../../helpers/array/toArray';
 import base64ToBytes from '../../helpers/string/base64ToBytes';
+import StickerType from '../../config/stickerType';
 
 const CACHE_TIME = 3600e3;
 
@@ -32,10 +33,10 @@ type LOCAL_STICKER_SET_ID = Extract<
   InputStickerSet['_'],
   'inputStickerSetAnimatedEmoji' | 'inputStickerSetAnimatedEmojiAnimations' |
   'inputStickerSetPremiumGifts' | 'inputStickerSetEmojiGenericAnimations' |
-  'inputStickerSetEmojiDefaultStatuses' | 'inputStickerSetEmojiDefaultTopicIcons'
+  'inputStickerSetEmojiDefaultStatuses' | 'inputStickerSetEmojiDefaultTopicIcons' | 'inputStickerSetTonGifts'
 >;
 
-type LOCAL_ID = 'EMOJI' | 'EMOJI_ANIMATIONS' | 'PREMIUM_GIFTS' | 'GENERIC_ANIMATIONS' | 'DEFAULT_STATUSES' | 'DEFAULT_TOPIC_ICONS';
+type LOCAL_ID = 'EMOJI' | 'EMOJI_ANIMATIONS' | 'PREMIUM_GIFTS' | 'GENERIC_ANIMATIONS' | 'DEFAULT_STATUSES' | 'DEFAULT_TOPIC_ICONS' | 'TON_GIFTS';
 
 const LOCAL_IDS: {[key in LOCAL_ID]: LOCAL_STICKER_SET_ID} = {
   EMOJI: 'inputStickerSetAnimatedEmoji',
@@ -43,7 +44,8 @@ const LOCAL_IDS: {[key in LOCAL_ID]: LOCAL_STICKER_SET_ID} = {
   PREMIUM_GIFTS: 'inputStickerSetPremiumGifts',
   GENERIC_ANIMATIONS: 'inputStickerSetEmojiGenericAnimations',
   DEFAULT_STATUSES: 'inputStickerSetEmojiDefaultStatuses',
-  DEFAULT_TOPIC_ICONS: 'inputStickerSetEmojiDefaultTopicIcons'
+  DEFAULT_TOPIC_ICONS: 'inputStickerSetEmojiDefaultTopicIcons',
+  TON_GIFTS: 'inputStickerSetTonGifts'
 };
 
 const LOCAL_IDS_SET: Set<LOCAL_STICKER_SET_ID> = new Set(Object.values(LOCAL_IDS) as any);
@@ -869,7 +871,7 @@ export class AppStickersManager extends AppManager {
       const stickers = [...new Set(cachedStickersAnimated.concat(cachedStickersStatic, foundStickers))]/* .filter((doc) => !doc.animated) */;
 
       forEachReverse(stickers, (sticker, idx, arr) => {
-        if((sticker.sticker === 3 && !getEnvironment().IS_WEBM_SUPPORTED) ||
+        if((sticker.sticker === StickerType.WebM && !getEnvironment().IS_WEBM_SUPPORTED) ||
           (excludePremiumEffectStickers && !this.rootScope.premium && getStickerEffectThumb(sticker))) {
           arr.splice(idx, 1);
         }

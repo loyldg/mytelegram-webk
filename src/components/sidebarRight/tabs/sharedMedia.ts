@@ -5,7 +5,7 @@
  */
 
 import rootScope, {BroadcastEvents} from '../../../lib/rootScope';
-import AppSearchSuper, {SearchSuperMediaTab, SearchSuperMediaType, SearchSuperType} from '../../appSearchSuper.';
+import AppSearchSuper, {SearchSuperMediaTab, SearchSuperMediaType, SearchSuperType} from '../../appSearchSuper';
 import SidebarSlider, {SliderSuperTab} from '../../slider';
 import TransitionSlider from '../../transition';
 import AppEditChatTab from './editChat';
@@ -15,7 +15,7 @@ import ButtonIcon from '../../buttonIcon';
 import I18n, {LangPackKey, i18n} from '../../../lib/langPack';
 import ButtonCorner from '../../buttonCorner';
 import {attachClickEvent} from '../../../helpers/dom/clickEvent';
-import PeerProfile from '../../peerProfile';
+import {renderPeerProfile} from '../../peerProfile';
 import {Chat, Message} from '../../../layer';
 import getMessageThreadId from '../../../lib/appManagers/utils/messages/getMessageThreadId';
 import AppEditTopicTab from './editTopic';
@@ -29,6 +29,9 @@ import ButtonMenuToggle from '../../buttonMenuToggle';
 import appImManager from '../../../lib/appManagers/appImManager';
 import {useIsFrozen} from '../../../stores/appState';
 import {profileStarGiftsButtonMenu} from '../../stargifts/profileList';
+import {createRoot} from 'solid-js';
+import SolidJSHotReloadGuardProvider from '../../../lib/solidjs/hotReloadGuardProvider';
+import namedPromises from '../../../helpers/namedPromises';
 
 type SharedMediaHistoryStorage = Partial<{
   [type in SearchSuperType]: {mid: number, peerId: PeerId}[]
@@ -49,7 +52,6 @@ export default class AppSharedMediaTab extends SliderSuperTab {
 
   public searchSuper: AppSearchSuper;
 
-  private profile: PeerProfile;
   private peerChanged: boolean;
 
   private titleI18n: I18n.IntlElement;
@@ -180,15 +182,6 @@ export default class AppSharedMediaTab extends SliderSuperTab {
 
     // * body
 
-    if(!this.noProfile) {
-      this.profile = new PeerProfile(this.managers, this.scrollable, this.listenerSetter, true, this.container);
-      this.profile.init();
-      this.profile.onPinnedGiftsChange = (gifts) => {
-        this.searchSuper.setPinnedGifts(gifts);
-      }
-      this.scrollable.append(this.profile.element);
-    }
-
     const HEADER_HEIGHT = 56;
     this.scrollable.onAdditionalScroll = () => {
       const rect = this.searchSuper.nav.getBoundingClientRect();
@@ -225,7 +218,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
       isHeavy: false
     });
 
-    transition(this.profile ? TitleIndex.Profile : TitleIndex.Media);
+    transition(this.noProfile ? TitleIndex.Media : TitleIndex.Profile);
 
     const transitionSubtitle = TransitionSlider({
       content: sharedMediaTransitionContainer,
@@ -237,7 +230,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     transitionSubtitle(0);
 
     attachClickEvent(this.closeBtn, (e) => {
-      if(transition.prevId() && this.profile) {
+      if(transition.prevId() && !this.noProfile) {
         this.scrollable.scrollIntoViewNew({
           element: this.scrollable.container.querySelector('.profile-content') as HTMLElement,
           position: 'start'
@@ -392,9 +385,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     // * fix scroll position to media tab because of absolute header
     this.searchSuper.scrollOffset = 56;
 
-    if(this.profile) {
-      this.profile.element.append(this.searchSuper.container);
-    } else {
+    if(this.noProfile) {
       this.scrollable.append(this.searchSuper.container);
     }
 
@@ -460,7 +451,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
 
     const {peerId} = message;
     const isForum = await this.managers.appPeersManager.isForum(peerId);
-    const threadId = getMessageThreadId(message, isForum);
+    const threadId = getMessageThreadId(message, {isForum});
 
     this._renderNewMessage(message);
     if(threadId) {
@@ -535,7 +526,6 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     ]);
 
     return () => {
-      this.profile?.cleanupHTML();
       this.editBtn.classList.add('hide');
       this.searchSuper.cleanupHTML(true);
       this.container.classList.toggle('can-add-members', canViewMembers && hasRights);
@@ -572,8 +562,6 @@ export default class AppSharedMediaTab extends SliderSuperTab {
       historyStorage
     });
 
-    this.profile?.setPeer(peerId, threadId);
-
     return true;
   }
 
@@ -581,21 +569,36 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     const {peerId, threadId} = this;
     const isSavedDialog = !!(peerId === rootScope.myId && threadId);
     const usePeerId = isSavedDialog ? threadId : peerId;
-    const [isForum, isBroadcast, isBot, peerTitle] = await Promise.all([
-      this.managers.appPeersManager.isForum(usePeerId),
-      this.managers.appPeersManager.isBroadcast(usePeerId),
-      this.managers.appPeersManager.isBot(usePeerId),
-      wrapPeerTitle({
+    const {isForum, isBotforum, isBroadcast, isBot, peerTitle} = await namedPromises({
+      isForum: this.managers.appPeersManager.isForum(usePeerId),
+      isBotforum: this.managers.appPeersManager.isBotforum(usePeerId),
+      isBroadcast: this.managers.appPeersManager.isBroadcast(usePeerId),
+      isBot: this.managers.appPeersManager.isBot(usePeerId),
+      peerTitle: wrapPeerTitle({
         peerId,
         threadId: isSavedDialog ? undefined : threadId,
         meAsNotes: isSavedDialog && threadId === rootScope.myId,
         dialog: true
       })
-    ]);
+    });
+
+    const titleKey = ((): LangPackKey => {
+      if((isForum || isBotforum) && threadId) {
+        return 'Profile.Info.Topic';
+      } else if(isBot) {
+        return 'Profile.Info.Bot';
+      } else if(isBroadcast) {
+        return 'Profile.Info.Channel';
+      } else if(usePeerId.isUser()) {
+        return 'Profile.Info.User';
+      } else {
+        return 'Profile.Info.Group';
+      }
+    })();
 
     return () => {
       this.titleI18n.compareAndUpdate({
-        key: isBot ? 'Profile.Info.Bot' : (isBroadcast ? 'Profile.Info.Channel' : (threadId && isForum ? 'Profile.Info.Topic' : (usePeerId.isUser() ? 'Profile.Info.User' : 'Profile.Info.Group')))
+        key: titleKey
       });
       this.sharedMediaTitle.replaceChildren(peerTitle);
       this.btnMenu.classList.toggle('hide', !this.isFirst || isSavedDialog || peerId !== rootScope.myId);
@@ -611,8 +614,26 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     const callbacks = await Promise.all([
       this.cleanupHTML(),
       this.toggleEditBtn(true),
-      this.profile?.fillProfileElements(),
-      this.changeTitleKey()
+      // this.profile?.fillProfileElements(),
+      this.changeTitleKey(),
+      (() => {
+        !this.noProfile && createRoot((dispose) => {
+          this.middlewareHelper.onDestroy(dispose);
+          this.scrollable.append(renderPeerProfile({
+            peerId: this.peerId,
+            threadId: this.threadId,
+            isDialog: true,
+            scrollable: this.scrollable,
+            setCollapsedOn: this.container,
+            searchSuperContainer: this.searchSuper.container,
+            onPinnedGiftsChange: (gifts) => {
+              this.searchSuper.setPinnedGifts(gifts);
+            }
+          }, SolidJSHotReloadGuardProvider));
+        });
+
+        return () => {};
+      })()
     ]);
 
     return () => {
@@ -670,7 +691,6 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     super.onCloseAfterTimeout();
 
     if(this.destroyable) {
-      this.profile?.destroy();
       this.searchSuper.destroy();
     }
   }

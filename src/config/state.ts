@@ -7,15 +7,15 @@
 import type {LiteModeKey} from '../helpers/liteMode';
 import type {AppMediaPlaybackController} from '../components/appMediaPlaybackController';
 import type {TopPeerType, MyTopPeer} from '../lib/appManagers/appUsersManager';
-import type {AccountThemes, AutoDownloadSettings, BaseTheme, NotifyPeer, PeerNotifySettings, Theme, ThemeSettings, WallPaper} from '../layer';
+import type {AccountContentSettings, AccountThemes, AutoDownloadSettings, BaseTheme, NotifyPeer, PeerNotifySettings, Theme, ThemeSettings, WallPaper} from '../layer';
 import type DialogsStorage from '../lib/storages/dialogs';
 import type FiltersStorage from '../lib/storages/filters';
 import type {AuthState, Modify} from '../types';
+import type {MTAppConfig} from '../lib/mtproto/appConfig';
+import type {ShortcutKey as PasscodeLockShortcutKey} from '../components/sidebarLeft/tabs/passcodeLock/shortcutBuilder';
 import {IS_MOBILE} from '../environment/userAgent';
 import getTimeFormat from '../helpers/getTimeFormat';
 import App from './app';
-import type {MTAppConfig} from '../lib/mtproto/appConfig';
-import type {ShortcutKey as PasscodeLockShortcutKey} from '../components/sidebarLeft/tabs/passcodeLock/shortcutBuilder';
 
 const STATE_VERSION = App.version;
 const BUILD = App.build;
@@ -110,7 +110,13 @@ export type StateSettings = {
     lockShortcutEnabled: boolean,
     lockShortcut: PasscodeLockShortcutKey[],
     canAttemptAgainOn: number | null
-  }
+  },
+  logsDiffView?: boolean
+};
+
+type CacheSomething<T> = {
+  value: T,
+  timestamp: number
 };
 
 export type State = {
@@ -148,12 +154,13 @@ export type State = {
   appConfig: MTAppConfig,
   accountThemes: AccountThemes.accountThemes,
   shownUploadSpeedTimestamp?: number,
-  dontShowPaidMessageWarningFor: PeerId[]
+  dontShowPaidMessageWarningFor: PeerId[],
   ageVerification?: {
     date: string,
     layer: number,
     clientVersion: string,
-  }
+  },
+  accountContentSettings: CacheSomething<AccountContentSettings>,
 
   // playbackParams?: StateSettings['playbackParams'], // ! MIGRATED TO SETTINGS
   // chatContextMenuHintWasShown?: StateSettings['chatContextMenuHintWasShown'], // ! MIGRATED TO SETTINGS
@@ -403,7 +410,8 @@ export const STATE_INIT: State = {
   hiddenSimilarChannels: [],
   appConfig: {} as any,
   accountThemes: {} as any,
-  dontShowPaidMessageWarningFor: []
+  dontShowPaidMessageWarningFor: [],
+  accountContentSettings: {} as any
 };
 
 export const COMMON_STATE_INIT: CommonState = {

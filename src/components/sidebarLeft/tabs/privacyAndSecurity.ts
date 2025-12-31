@@ -30,22 +30,23 @@ import getPrivacyRulesDetails from '../../../lib/appManagers/utils/privacy/getPr
 import PrivacyType from '../../../lib/appManagers/utils/privacy/privacyType';
 import confirmationPopup, {PopupConfirmationOptions} from '../../confirmationPopup';
 import noop from '../../../helpers/noop';
-import {hideToast, toastNew} from '../../toast';
+import {toastNew} from '../../toast';
 import AppPrivacyVoicesTab from './privacy/voices';
 import SettingSection from '../../settingSection';
 import AppActiveWebSessionsTab from './activeWebSessions';
 import PopupElement from '../../popups';
 import AppPrivacyAboutTab from './privacy/about';
-import PopupPremium from '../../popups/premium';
 import apiManagerProxy from '../../../lib/mtproto/mtprotoworker';
 import Icon from '../../icon';
 import {AppPrivacyMessagesTab} from '../../solidJsTabs';
 import {AppPasscodeEnterPasswordTab, AppPasscodeLockTab, providedTabs} from '../../solidJsTabs';
 import {joinDeepPath} from '../../../helpers/object/setDeepProperty';
-import {attachClickEvent} from '../../../helpers/dom/clickEvent';
-import {SensitiveContentSettings} from '../../../lib/appManagers/appPrivacyManager';
 import {AgeVerificationPopup} from '../../popups/ageVerification';
 import {clearSensitiveSpoilers} from '../../wrappers/mediaSpoiler';
+import useContentSettings from '../../../stores/contentSettings';
+import AppPrivacyBirthdayTab from './privacy/birthday';
+import ChangeLoginEmailTab from './changeLoginEmail';
+import {wrapEmailPattern} from '../../popups/emailSetup';
 
 export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
   private activeSessionsRow: Row;
@@ -58,7 +59,6 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
     return {
       appConfig: fromTab.managers.apiManager.getAppConfig(),
       globalPrivacy: fromTab.managers.appPrivacyManager.getGlobalPrivacySettings(),
-      contentSettings: fromTab.managers.appPrivacyManager.getSensitiveContentSettings(),
       webAuthorizations: fromTab.managers.appSeamlessLoginManager.getWebAuthorizations()
     };
   }
@@ -66,6 +66,7 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
   public async init(p: ReturnType<typeof AppPrivacyAndSecurityTab['getInitArgs']>) {
     this.container.classList.add('dont-u-dare-block-me');
     this.setTitle('PrivacySettings');
+    const contentSettings = useContentSettings();
 
     const SUBTITLE: LangPackKey = 'Loading';
     const promises: Promise<any>[] = [];
@@ -98,7 +99,7 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
             tab = this.slider.createTab(AppTwoStepVerificationEnterPasswordTab);
           } else if(passwordState.email_unconfirmed_pattern) {
             tab = this.slider.createTab(AppTwoStepVerificationEmailConfirmationTab);
-            tab.email = passwordState.email_unconfirmed_pattern;
+            tab.email = wrapEmailPattern(passwordState.email_unconfirmed_pattern);
             tab.length = 6;
             tab.isFirst = true;
             this.managers.passwordManager.resendPasswordEmail();
@@ -114,6 +115,19 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
 
       const twoFactorRow = new Row(twoFactorRowOptions);
       twoFactorRow.freezed = true;
+
+      const emailRow = new Row({
+        titleLangKey: 'LoginEmail',
+        subtitle: SUBTITLE,
+        icon: 'email',
+        clickable: () => {
+          this.slider.createTab(ChangeLoginEmailTab).open({
+            isInitialSetup: passwordState.login_email_pattern.includes(' ')
+          });
+        },
+        listenerSetter: this.listenerSetter
+      });
+      emailRow.freezed = true;
 
       const passcodeLockRowOptions: ConstructorParameters<typeof Row>[0] = {
         icon: 'key',
@@ -173,7 +187,13 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
       });
       websitesRow.freezed = true;
 
-      section.content.append(blockedUsersRow.container, passcodeLockRow.container, twoFactorRow.container, activeSessionsRow.container, websitesRow.container);
+      section.content.append(
+        blockedUsersRow.container,
+        passcodeLockRow.container,
+        twoFactorRow.container,
+        activeSessionsRow.container,
+        websitesRow.container
+      );
       this.scrollable.append(section.container);
 
       const setBlockedCount = (count: number) => {
@@ -207,6 +227,12 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
         passwordState = state;
         replaceContent(twoFactorRow.subtitle, i18n(state.pFlags.has_password ? 'PrivacyAndSecurity.Item.On' : 'PrivacyAndSecurity.Item.Off'));
         twoFactorRow.freezed = false;
+
+        if(state.login_email_pattern) {
+          replaceContent(emailRow.subtitle, wrapEmailPattern(state.login_email_pattern));
+          emailRow.freezed = false;
+          twoFactorRow.container.after(emailRow.container);
+        }
 
         // console.log('password state', state);
       });
@@ -317,6 +343,15 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
         listenerSetter: this.listenerSetter
       });
 
+      const birthdayRow = rowsByKeys['inputPrivacyKeyBirthday'] = new Row({
+        titleLangKey: 'Privacy.BirthdayRow',
+        subtitleLangKey: SUBTITLE,
+        clickable: () => {
+          this.slider.createTab(AppPrivacyBirthdayTab).open();
+        },
+        listenerSetter: this.listenerSetter
+      });
+
       const createPremiumTitle = (langKey: LangPackKey) => {
         const fragment = document.createDocumentFragment();
         const icon = Icon('star', 'privacy-premium-icon');
@@ -407,7 +442,8 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
         linkAccountRow,
         groupChatsAddRow,
         voicesRow,
-        messagesRow
+        messagesRow,
+        birthdayRow
       ].filter(Boolean).map((row) => row.container));
       this.scrollable.append(section.container);
 
@@ -477,8 +513,6 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
         checkboxField
       });
 
-      let contentSettings: SensitiveContentSettings;
-
       let pendingChange = false;
       checkboxField.input.addEventListener('change', (evt) => {
         const newEnabled = checkboxField.checked;
@@ -487,12 +521,12 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
           return;
         }
 
-        if(newEnabled && contentSettings.needAgeVerification && !contentSettings.ageVerified) {
+        if(newEnabled && contentSettings.needAgeVerification() && !contentSettings.ageVerified()) {
           checkboxField.input.checked = false;
           AgeVerificationPopup.create().then((verified) => {
             if(verified) {
               checkboxField.setValueSilently(true);
-              clearSensitiveSpoilers()
+              clearSensitiveSpoilers();
             }
           })
           return;
@@ -503,7 +537,7 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
         this.managers.appPrivacyManager.setContentSettings({
           sensitive_enabled: newEnabled
         }).catch(() => {
-          toastNew({langPackKey: 'Error.AnError'})
+          toastNew({langPackKey: 'Error.AnError'});
           checkboxField.setValueSilently(!newEnabled);
         }).finally(() => {
           pendingChange = false;
@@ -512,17 +546,10 @@ export default class AppPrivacyAndSecurityTab extends SliderSuperTabEventable {
 
       section.content.append(row.container);
 
-      const promise = p.contentSettings.then((settings) => {
-        if(!settings.sensitiveCanChange) {
-          return;
-        }
-
-        contentSettings = settings;
-        checkboxField.setValueSilently(settings.sensitiveEnabled);
+      if(contentSettings.sensitiveCanChange()) {
+        checkboxField.setValueSilently(contentSettings.sensitiveEnabled());
         section.container.classList.remove('hide');
-      });
-
-      promises.push(promise);
+      }
 
       this.scrollable.append(section.container);
     }

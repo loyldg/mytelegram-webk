@@ -1260,27 +1260,23 @@ const Stories = (props: {
       }
     });
 
-    if(!untrack(noSound)) apiManagerProxy.getState().then((state) => {
+    if(!untrack(noSound)) {
       const [appSettings, setAppSettings] = useAppSettings();
       if(!cleaned && !appSettings.seenTooltips.storySound) {
-        runWithOwner(owner, () => {
-          const playingMemo = createMemo((prev) => prev || (isActive() && stories.startTime));
-          createEffect(() => {
-            if(playingMemo()) {
-              const {close} = showTooltip({
-                ...muteTooltipOptions,
-                textElement: i18n('Story.SoundTooltip')
-              });
-              setTooltipCloseCallback(() => close);
-            }
-          });
+        const playingMemo = createMemo((prev) => prev || (isActive() && stories.startTime));
+        createEffect(() => {
+          if(playingMemo()) {
+            const {close} = showTooltip({
+              ...muteTooltipOptions,
+              textElement: i18n('Story.SoundTooltip')
+            });
+            setTooltipCloseCallback(() => close);
+          }
         });
 
         setAppSettings('seenTooltips', 'storySound', true);
       }
-    });
-
-    const owner = getOwner();
+    }
   };
 
   const setStoryMeta = (story: StoryItem.storyItemSkipped | StoryItem.storyItem) => {
@@ -2625,7 +2621,10 @@ const Stories = (props: {
       onClick={(e) => {
         if(!isActive()) {
           actions.set({peer: props.state, index: props.state.index});
-        } else if(findUpClassName(e.target, styles.ViewerStoryRepost)) {
+        } else if(
+          findUpClassName(e.target, styles.ViewerStoryRepost) ||
+          findUpClassName(e.target, styles.ViewerStoryHeaderRepost)
+        ) {
           const story = currentStory();
           const repostInfo = getStoryRepostInfo(story as StoryItem.storyItem);
           if(!repostInfo) {
@@ -2639,7 +2638,7 @@ const Stories = (props: {
           if(fwdFrom?.from || mediaAreaChannelPost) {
             props.close(() => {
               const peerId = fwdFrom ? getPeerId(fwdFrom.from) : mediaAreaChannelPost.channel_id.toPeerId(true);
-              if(fwdFrom?.story_id) {
+              if(fwdFrom?.story_id && !findUpClassName(e.target, styles.ViewerStoryHeaderRepost)) {
                 createStoriesViewerWithPeer({
                   peerId,
                   id: fwdFrom.story_id
@@ -2759,21 +2758,6 @@ const Stories = (props: {
       {ret}
     </Show>
   );
-}
-
-export type PassthroughProps<E extends Element> = {element: E} & ParentProps & JSX.HTMLAttributes<E>;
-export function Passthrough<E extends Element>(props: PassthroughProps<E>): E {
-  const owner = getOwner();
-  let content: JSX.Element;
-
-  createEffect(() => {
-    content ||= runWithOwner(owner, () => props.children);
-    const [_, others] = splitProps(props, ['element']);
-    const isSvg = props.element instanceof SVGElement;
-    assign(props.element, others, isSvg);
-  });
-
-  return props.element;
 }
 
 export default function StoriesViewer(props: {

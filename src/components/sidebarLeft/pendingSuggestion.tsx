@@ -3,7 +3,7 @@ import {useAppState} from '../../stores/appState';
 import Row from '../rowTsx';
 import styles from './pendingSuggestion.module.scss';
 import {render} from 'solid-js/web';
-import {createEffect, createSignal, JSX, onMount, Show, splitProps} from 'solid-js';
+import {createEffect, createMemo, createSignal, JSX, onMount, Show, splitProps} from 'solid-js';
 import classNames from '../../helpers/string/classNames';
 import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
 import {useIsSidebarCollapsed} from '../../stores/foldersSidebar';
@@ -16,6 +16,10 @@ import {toastNew} from '../toast';
 import Animated from '../../helpers/solid/animations';
 import uiNotificationsManager from '../../lib/appManagers/uiNotificationsManager';
 import cancelEvent from '../../helpers/dom/cancelEvent';
+import {usePendingSuggestions} from '../../stores/promo';
+import showBirthdayPopup, {saveMyBirthday} from '../popups/birthday';
+import {showEmailSetupPopup} from '../popups/emailSetup';
+import rootScope from '../../lib/rootScope';
 
 const PendingSuggestion = (props: Parameters<typeof Row>[0] & {closable?: () => void}) => {
   // const [, rest] = splitProps(props, ['closable']);
@@ -141,6 +145,55 @@ function NotificationsSuggestion() {
     </Show>
   );
 }
+const BIRTHDAY_SETUP_SUGGESTION_KEY = 'BIRTHDAY_SETUP';
+const EMAIL_SETUP_KEY = 'SETUP_LOGIN_EMAIL';
+const EMAIL_SETUP_KEY_NOSKIP = 'SETUP_LOGIN_EMAIL_NOSKIP';
+
+function BirthdaySetupSuggestion() {
+  const [isSidebarCollapsed] = useIsSidebarCollapsed();
+
+  const emoji = () => wrapEmojiText('🎂');
+
+  const onDismissed = () => {
+    rootScope.managers.appPromoManager.dismissSuggestion(BIRTHDAY_SETUP_SUGGESTION_KEY);
+  };
+
+  const onClick = () => {
+    showBirthdayPopup({
+      onSave: async(date) => {
+        if(await saveMyBirthday(date)) {
+          rootScope.managers.appPromoManager.dismissSuggestion(BIRTHDAY_SETUP_SUGGESTION_KEY);
+          return;
+        }
+        return false;
+      }
+    });
+  };
+
+  return (
+    <Show
+      when={isSidebarCollapsed()}
+      fallback={
+        <PendingSuggestion
+          class={styles.secondary}
+          clickable={onClick}
+          closable={onDismissed}
+        >
+          <PendingSuggestion.Title>{i18n('Suggestion.BirthdaySetup', [emoji()])}</PendingSuggestion.Title>
+          <PendingSuggestion.Subtitle>{i18n('Suggestion.BirthdaySetup.Subtitle')}</PendingSuggestion.Subtitle>
+        </PendingSuggestion>
+      }
+    >
+      <RippleElement
+        component="div"
+        class={classNames(styles.collapsed, 'hover-effect')}
+        onClick={onClick}
+      >
+        {documentFragmentToNodes(emoji())}
+      </RippleElement>
+    </Show>
+  );
+}
 
 export function renderPendingSuggestion(toElement: HTMLElement) {
   toElement.classList.add(styles.container);
@@ -149,6 +202,7 @@ export function renderPendingSuggestion(toElement: HTMLElement) {
     const [{appConfig}] = useAppState();
     const [appSettings, setAppSettings] = useAppSettings();
     const [element, setElement] = createSignal<JSX.Element>();
+    const pendingSuggestions = usePendingSuggestions();
 
     // * test
     // onMount(() => {
@@ -158,9 +212,34 @@ export function renderPendingSuggestion(toElement: HTMLElement) {
     // });
 
     createEffect(() => {
+      const pendingSuggestions$ = pendingSuggestions();
+      if(pendingSuggestions$.has(EMAIL_SETUP_KEY) || pendingSuggestions$.has(EMAIL_SETUP_KEY_NOSKIP)) {
+        rootScope.managers.appPromoManager.getPromoData(true).then((data) => {
+          const noskip = data.pendingSuggestions.includes(EMAIL_SETUP_KEY_NOSKIP);
+          if(data.pendingSuggestions.includes(EMAIL_SETUP_KEY) || noskip) {
+            showEmailSetupPopup({
+              noskip,
+              purpose: {_: 'emailVerifyPurposeLoginChange'},
+              onDismiss: () => {
+                if(!noskip) {
+                  rootScope.managers.appPromoManager.dismissSuggestion(EMAIL_SETUP_KEY);
+                }
+              },
+              onSuccess: () => {
+                toastNew({langPackKey: 'EmailSetup.SetupToast'});
+              }
+            });
+          }
+        });
+      }
+    });
+
+    createEffect(() => {
       let element: JSX.Element;
       if(appConfig.freeze_since_date) {
         element = FrozenSuggestion();
+      } else if(pendingSuggestions().has(BIRTHDAY_SETUP_SUGGESTION_KEY)) {
+        element = BirthdaySetupSuggestion();
       } else if(
         !appSettings.notifications.suggested &&
         Notification.permission !== 'granted'

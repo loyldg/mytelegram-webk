@@ -71,10 +71,6 @@
       // }
     }
 
-    .chatlist-chat {
-      min-height: 4rem;
-      padding-inline-start: .75rem;
-    }
   }
 }
 
@@ -212,6 +208,7 @@
 
   &-emoticons-container {
     flex: 1 1 auto;
+    overflow: hidden;
 
     .sidebar-left-section {
       padding: 0 !important;
@@ -234,4 +231,9 @@
       }
     }
   }
+}
+
+.topic-dialogs-override .chatlist-chat {
+  min-height: 4rem;
+  padding-inline-start: .75rem;
 }

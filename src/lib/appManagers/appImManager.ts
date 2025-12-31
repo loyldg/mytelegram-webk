@@ -25,7 +25,7 @@ import {MOUNT_CLASS_TO} from '../../config/debug';
 import appNavigationController from '../../components/appNavigationController';
 import AppPrivateSearchTab from '../../components/sidebarRight/tabs/search';
 import I18n, {i18n, join, LangPackKey} from '../langPack';
-import {ChatFull, ChatParticipants, Message, MessageAction, MessageMedia, SendMessageAction, User, Chat as MTChat, UrlAuthResult, WallPaper, Config, AttachMenuBot, Peer, InputChannel, HelpPeerColors, Reaction, Document, MessageEntity, PeerColor, SponsoredMessage, InputGroupCall} from '../../layer';
+import {ChatFull, ChatParticipants, Message, MessageAction, MessageMedia, SendMessageAction, User, Chat as MTChat, UrlAuthResult, WallPaper, Config, AttachMenuBot, Peer, InputChannel, HelpPeerColors, Reaction, Document, MessageEntity, PeerColor, SponsoredMessage, InputGroupCall, WebPage} from '../../layer';
 import PeerTitle from '../../components/peerTitle';
 import {PopupPeerCheckboxOptions} from '../../components/popups/peer';
 import blurActiveElement from '../../helpers/dom/blurActiveElement';
@@ -111,14 +111,12 @@ import {findUpAvatar} from '../../components/avatarNew';
 import safePlay from '../../helpers/dom/safePlay';
 import {RequestWebViewOptions} from './appAttachMenuBotsManager';
 import PopupWebApp from '../../components/popups/webApp';
-import {getPeerColorIndexByPeer, getPeerColorsByPeer, setPeerColors} from './utils/peers/getPeerColorById';
+import {getPeerColorIndexByPeer, getPeerColorsByPeer, makeColorsGradient, setPeerColors} from './utils/peers/getPeerColorById';
 import {savedReactionTags} from '../../components/chat/reactions';
-import {setAppState} from '../../stores/appState';
+import {setAppState, useAppState} from '../../stores/appState';
 import rtmpCallsController, {RtmpCallInstance} from '../calls/rtmpCallsController';
 import {AppMediaViewerRtmp} from '../../components/appMediaViewerRtmp';
 import useProfileColors from '../../hooks/useProfileColors';
-import {DEFAULT_BACKGROUND_SLUG} from '../../config/app';
-import blur from '../../helpers/blur';
 import {wrapSlowModeLeftDuration} from '../../components/wrappers/wrapDuration';
 import {splitFullMid} from '../../components/chat/bubbles';
 import getSelectedNodes from '../../helpers/dom/getSelectedNodes';
@@ -134,8 +132,9 @@ import useLockScreenShortcut from './utils/useLockScreenShortcut';
 import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '../../components/chat/paidMessagesInterceptor';
 import IS_WEB_APP_BROWSER_SUPPORTED from '../../environment/webAppBrowserSupport';
 import ChatAudio from '../../components/chat/audio';
-import PopupAboutAd from '../../components/popups/aboutAd';
 import AudioAssetPlayer from '../../helpers/audioAssetPlayer';
+import {getRgbColorFromTelegramColor, rgbIntToHex} from '../../helpers/color';
+import {MyMessage} from './appMessagesManager';
 
 export type ChatSavedPosition = {
   mids: number[],
@@ -156,7 +155,9 @@ export type ChatSetPeerOptions = {
   text?: string,
   entities?: MessageEntity[],
   call?: string | number,
-  isDeleting?: boolean
+  isDeleting?: boolean,
+  fromTemporaryThread?: boolean,
+  messages?: MyMessage[]
 } & Partial<ChatSearchKeys>;
 
 export type ChatSetInnerPeerOptions = Modify<ChatSetPeerOptions, {
@@ -583,7 +584,7 @@ export class AppImManager extends EventListenerBase<{
       const {accountNumber} = options;
       const managers = createProxiedManagersForAccount(accountNumber);
       const isForum = await managers.appPeersManager.isForum(options.message.peerId);
-      const threadId = getMessageThreadId(options.message, isForum);
+      const threadId = getMessageThreadId(options.message, {isForum});
 
       if(
         this.chat.peerId === options.message.peerId &&
@@ -622,7 +623,16 @@ export class AppImManager extends EventListenerBase<{
     });
 
     rootScope.addEventListener('message_sent', () => {
-      if(rootScope.settings.notifications.sentMessageSound) {
+      if(!rootScope.settings.notifications.sentMessageSound) {
+        return;
+      }
+
+      const currentTab = apiManagerProxy.getTabState();
+      const accountOtherTabs = apiManagerProxy.getAllTabStates().filter((tab) =>
+        tab.accountNumber === currentTab.accountNumber &&
+        tab.id !== currentTab.id
+      );
+      if(!currentTab.idleStartTime || accountOtherTabs.every((tab) => tab.idleStartTime < currentTab.idleStartTime)) {
         this.audioAssetPlayer.playWithThrottle({name: 'message_sent', volume: 0.2}, 300);
       }
     });
@@ -700,9 +710,6 @@ export class AppImManager extends EventListenerBase<{
       savedReactionTags.splice(0, savedReactionTags.length, ...tags);
     });
 
-    // * preload sensitive content settings
-    this.managers.appPrivacyManager.getSensitiveContentSettings();
-
     // new PasscodeLockScreenControler().lock();
 
     this.onHashChange(true);
@@ -712,6 +719,11 @@ export class AppImManager extends EventListenerBase<{
     this.handlePeerColors();
     this.checkForShare();
     this.init();
+
+    // setTimeout(() => {
+    //   const message = apiManagerProxy.getMessageByPeer(61004386, 1837709);
+    //   openInstantViewInAppBrowser(((message as Message.message).media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage);
+    // }, 100);
 
     // PopupElement.createPopup(PopupAboutAd);
 
@@ -780,9 +792,8 @@ export class AppImManager extends EventListenerBase<{
   }
 
   public async pushBotIdAsConfirmed(botId: BotId) {
-    const state = await apiManagerProxy.getState();
-    state.confirmedWebViews.push(botId);
-    await this.managers.appStateManager.pushToState('confirmedWebViews', state.confirmedWebViews);
+    const [appState, setAppState] = useAppState();
+    await setAppState('confirmedWebViews', [...appState.confirmedWebViews, botId]);
   }
 
   public async confirmBotWebView(options: {
@@ -791,8 +802,12 @@ export class AppImManager extends EventListenerBase<{
     ignoreConfirmedState?: boolean,
     showDisclaimer?: boolean
   }): Promise<boolean> {
-    const state = await apiManagerProxy.getState();
-    if(options.ignoreConfirmedState || options.showDisclaimer || !state.confirmedWebViews.includes(options.botId)) {
+    const [appState] = useAppState();
+    if(
+      options.ignoreConfirmedState ||
+      options.showDisclaimer ||
+      !appState.confirmedWebViews.includes(options.botId)
+    ) {
       const haveWriteAccess = await this.confirmBotWebViewInner(options);
       await this.pushBotIdAsConfirmed(options.botId);
       return haveWriteAccess;
@@ -1432,6 +1447,7 @@ export class AppImManager extends EventListenerBase<{
 
     const channelId = isChannel ? (options.peer as MTChat.channel).id : undefined;
     const isForum = !!(options.peer as MTChat.channel).pFlags.forum;
+    const isBotforum = !!(options.peer?._ === 'user' && options.peer?.pFlags?.bot_forum_view);
 
     await Promise.all(keys.map(async(key) => {
       options[key] &&= await this.managers.appMessagesIdsManager.generateMessageId(options[key], channelId);
@@ -1452,11 +1468,15 @@ export class AppImManager extends EventListenerBase<{
       return;
     }
 
+    if(!commentId && !threadId && !lastMsgId && isBotforum) {
+      appDialogsManager.toggleForumTabByPeerId(peerId, true);
+    }
+
     // handle t.me/username/thread or t.me/username/messageId
     if(isForum && lastMsgId && !threadId) {
       const message = await this.managers.appMessagesManager.reloadMessages(peerId, lastMsgId);
       if(message) {
-        threadId = options.threadId = getMessageThreadId(message, isForum);
+        threadId = options.threadId = getMessageThreadId(message, {isForum});
       } else {
         threadId = options.threadId = lastMsgId;
         lastMsgId = options.lastMsgId = undefined;
@@ -1520,7 +1540,7 @@ export class AppImManager extends EventListenerBase<{
     threadId: number,
     stack?: ChatSetPeerOptions['stack']
   }) {
-    if(await this.managers.appChatsManager.isForum(options.peerId.toChatId())) {
+    if(await this.managers.appChatsManager.isForum(options.peerId.toChatId()) || await this.managers.appPeersManager.isBotforum(options.peerId)) {
       await this.managers.dialogsStorage.getForumTopicOrReload(options.peerId, options.threadId);
       return this.setInnerPeer(options);
     }
@@ -1639,7 +1659,7 @@ export class AppImManager extends EventListenerBase<{
 
   public async joinGroupCall(peerId: PeerId, groupCallId?: GroupCallId) {
     const chatId = peerId.toChatId();
-    const hasRights = this.managers.appChatsManager.hasRights(chatId, 'manage_call');
+    const hasRights = await this.managers.appChatsManager.hasRights(chatId, 'manage_call');
     const next = async() => {
       const chatFull = await this.managers.appProfileManager.getChatFull(chatId);
       let call: MyGroupCall;
@@ -1853,10 +1873,6 @@ export class AppImManager extends EventListenerBase<{
     const changedAutoplay = !!c.filter((key) => animationIntersector.setAutoplay(liteMode.isAvailable(key), key)).length;
     if(changedLoop || changedAutoplay) {
       animationIntersector.checkAnimations2(false);
-    }
-
-    for(const chat of this.chats) {
-      chat.setAutoDownloadMedia();
     }
 
     I18n.setTimeFormat(rootScope.settings.timeFormat);
@@ -2374,7 +2390,7 @@ export class AppImManager extends EventListenerBase<{
       if(options.threadId) {
         if(options.peerId === rootScope.myId) {
           options.type = ChatType.Saved;
-        } else if(!apiManagerProxy.isForum(options.peerId)) {
+        } else if(!apiManagerProxy.isForum(options.peerId) && !apiManagerProxy.isBotforum(options.peerId)) {
           options.type = ChatType.Discussion;
         }
       }
@@ -2749,6 +2765,8 @@ export class AppImManager extends EventListenerBase<{
     return options1.peerId === options2.peerId &&
       options1.threadId === options2.threadId &&
       options1.monoforumThreadId === options2.monoforumThreadId &&
+      (options1.type !== ChatType.Static && options2.type !== ChatType.Static) &&
+      (options1.type !== ChatType.Logs && options2.type !== ChatType.Logs) &&
       (typeof(options1.type) !== typeof(options2.type) || options1.type === options2.type);
   }
 
@@ -2796,6 +2814,8 @@ export class AppImManager extends EventListenerBase<{
     // }
 
     const peer = apiManagerProxy.getPeer(peerId);
+    if(!color && peer?._ === 'user') color = peer.color
+
     let peerColorRgbValue: string, peerBorderBackgroundValue: string;
     if(messageHighlighting || colorAsOut) {
       const colors = getPeerColorsByPeer(peer);
@@ -2803,6 +2823,16 @@ export class AppImManager extends EventListenerBase<{
       const property = messageHighlighting ? 'message-empty' : 'message-out';
       peerColorRgbValue = `var(--${property}-primary-color-rgb)`;
       peerBorderBackgroundValue = `var(--${property}-peer-${Math.max(1, length)}-border-background)`;
+    } else if(color?._ === 'peerColorCollectible') {
+      let colors = color.colors
+      let accentColor = color.accent_color
+      if(themeController.isNight()) {
+        if(color.dark_accent_color) accentColor = color.dark_accent_color
+        if(color.dark_colors) colors = color.dark_colors
+      }
+
+      peerColorRgbValue = getRgbColorFromTelegramColor(accentColor).join(', ')
+      peerBorderBackgroundValue = makeColorsGradient(colors.map(it => rgbIntToHex(it)))
     } else {
       const colorIndex = (color as PeerColor.peerColor)?.color ?? getPeerColorIndexByPeer(peer);
       if(colorIndex === -1) {

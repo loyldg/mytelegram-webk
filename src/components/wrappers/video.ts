@@ -7,7 +7,6 @@
 import {IS_SAFARI} from '../../environment/userAgent';
 import {IS_H265_SUPPORTED} from '../../environment/videoSupport';
 import {animateSingle} from '../../helpers/animation';
-import {ChatAutoDownloadSettings} from '../../helpers/autoDownload';
 import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
 import cancelEvent from '../../helpers/dom/cancelEvent';
 import {attachClickEvent} from '../../helpers/dom/clickEvent';
@@ -51,6 +50,7 @@ import debounce from '../../helpers/schedulers/debounce';
 import {isFullScreen} from '../../helpers/dom/fullScreen';
 import ButtonIcon from '../buttonIcon';
 import overlayCounter from '../../helpers/overlayCounter';
+import {ChatAutoDownloadSettings} from '../../hooks/useAutoDownloadSettings';
 
 const MAX_VIDEO_AUTOPLAY_SIZE = 50 * 1024 * 1024; // 50 MB
 export const USE_VIDEO_OBSERVER = false;
@@ -82,7 +82,7 @@ mediaSizes.addEventListener('changeScreen', (from, to) => {
 
 let turnedObserverOn = false;
 
-export default async function wrapVideo({doc, altDoc, container, message, boxWidth, boxHeight, withTail, isOut, middleware, lazyLoadQueue, noInfo, group, onlyPreview, noPreview, withoutPreloader, loadPromises, noPlayButton, photoSize, videoSize, searchContext, autoDownload, managers = rootScope.managers, noAutoplayAttribute, ignoreStreaming, canAutoplay, useBlur, observer, setShowControlsOn, uploadingFileName, onGlobalMedia, onLoad}: {
+export default async function wrapVideo({doc, altDoc, container, message, boxWidth, boxHeight, withTail, isOut, middleware, lazyLoadQueue, noInfo, group, onlyPreview, noPreview, withoutPreloader, loadPromises, noPlayButton, photoSize, videoSize, searchContext, autoDownload, managers = rootScope.managers, noAutoplayAttribute, ignoreStreaming, canAutoplay, useBlur, observer, setShowControlsOn, uploadingFileName, onGlobalMedia, onLoad, withPreview}: {
   doc: MyDocument,
   altDoc?: MyDocument,
   container?: HTMLElement,
@@ -98,6 +98,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
   group?: AnimationItemGroup,
   onlyPreview?: boolean,
   noPreview?: boolean,
+  withPreview?: boolean,
   withoutPreloader?: boolean,
   loadPromises?: Promise<any>[],
   autoDownload?: ChatAutoDownloadSettings,
@@ -408,7 +409,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
   }
 
   let photoRes: Awaited<ReturnType<typeof wrapPhoto>>;
-  if(message || onlyPreview) {
+  if(message || onlyPreview || withPreview) {
     photoRes = await wrapPhoto({
       photo: doc,
       message,

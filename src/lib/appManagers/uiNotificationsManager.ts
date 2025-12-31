@@ -43,7 +43,7 @@ import {StateSettings} from '../../config/state';
 import {useAppSettings} from '../../stores/appSettings';
 import {unwrap} from 'solid-js/store';
 import AudioAssetPlayer from '../../helpers/audioAssetPlayer';
-import {createEffect, on} from 'solid-js';
+import {createEffect, createRoot, on} from 'solid-js';
 
 type MyNotification = Notification & {
   hidden?: boolean,
@@ -198,7 +198,9 @@ export class UiNotificationsManager {
       });
     }
 
-    createEffect(on(() => this.settings.push, this.onPushConditionsChange));
+    createRoot((dispose) => {
+      createEffect(on(() => this.settings.push, this.onPushConditionsChange));
+    });
 
     rootScope.addEventListener('dialogs_multiupdate', () => {
       // unregisterTopMsgs()
@@ -349,7 +351,7 @@ export class UiNotificationsManager {
       managers: account.managers
     };
 
-    const threadId = isForum ? getMessageThreadId(message, isForum) : undefined;
+    const threadId = isForum ? getMessageThreadId(message, {isForum}) : undefined;
     const notificationFromPeerId = peerReaction ? getPeerId(peerReaction.peer_id) : message.fromId;
     const peerTitle = notification.title = await getPeerTitle({...peerTitleOptions, peerId, threadId: threadId, managers: account.managers, useManagers: true});
     if(isForum) {

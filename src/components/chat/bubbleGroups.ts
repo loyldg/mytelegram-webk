@@ -11,23 +11,23 @@ import type Chat from './chat';
 import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
 import insertInDescendSortedArray from '../../helpers/array/insertInDescendSortedArray';
 import positionElementByIndex from '../../helpers/dom/positionElementByIndex';
-import {Message} from '../../layer';
+import {Message, ReplyMarkup} from '../../layer';
 import {NULL_PEER_ID, REPLIES_PEER_ID, VERIFICATION_CODES_BOT_ID} from '../../lib/mtproto/mtproto_config';
 import ChatBubbles, {SERVICE_AS_REGULAR, STICKY_OFFSET} from './bubbles';
 import forEachReverse from '../../helpers/array/forEachReverse';
 import partition from '../../helpers/array/partition';
-import noop from '../../helpers/noop';
 import getMessageThreadId from '../../lib/appManagers/utils/messages/getMessageThreadId';
 import {avatarNew} from '../avatarNew';
 import {MiddlewareHelper} from '../../helpers/middleware';
 import {ChatType} from './chat';
 import getFwdFromName from '../../lib/appManagers/utils/messages/getFwdFromName';
-import {isMessageForVerificationBot} from './utils';
+import {getMid, isMessage, isMessageForVerificationBot} from './utils';
 import {canHaveSuggestedPostReplyMarkup} from './bubbleParts/suggestedPostReplyMarkup';
 import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
-import typedElement from '../../helpers/dom/typedElement';
 import {BubbleElementAddons} from './types';
-import MonoforumSeparator from './bubbleParts/monoforumSeparator';
+import ChatThreadSeparator from './bubbleParts/chatThreadSeparator';
+import SolidJSHotReloadGuardProvider from '../../lib/solidjs/hotReloadGuardProvider';
+import {AdminLog} from '../../lib/appManagers/appChatsManager';
 
 
 type GroupItem = {
@@ -40,7 +40,7 @@ type GroupItem = {
   mounted: boolean,
   single: boolean,
   group?: BubbleGroup,
-  message: Message.message | Message.messageService, // use it only to set avatar
+  message: Message.message | Message.messageService | AdminLog, // use it only to set avatar
   reverse?: boolean
 };
 
@@ -52,6 +52,13 @@ function insertSomething<T>(to: Array<T>, what: T, sortKey: keyof T, reverse: bo
     // @ts-ignore
     return insertInDescendSortedArray(to, what, sortKey);
   }
+}
+
+function canHaveReplyMarkup(message: Message.message) {
+  const replyMarkup = message.reply_markup;
+  let replyMarkupRows = replyMarkup?._ === 'replyInlineMarkup' && replyMarkup.rows;
+  replyMarkupRows = replyMarkupRows?.filter?.((row) => row.buttons.length);
+  return !!replyMarkupRows?.length;
 }
 
 export class BubbleGroup {
@@ -79,13 +86,33 @@ export class BubbleGroup {
     this.middlewareHelper = chat.bubbles.getMiddleware().create();
   }
 
-  getAvatarOptions(message: Message.message) {
-    const fwdFrom = message.fwd_from;
-    const fwdFromId = message.fwdFromId;
+  getAvatarOptions(message: Message.message | AdminLog) {
+    const fwdFrom = isMessage(message) ? message.fwd_from : undefined;
+    const fwdFromId = isMessage(message) ? message.fwdFromId : undefined;
     const fwdFromName = getFwdFromName(fwdFrom);
-    const isForwardFromChannel = message.from_id && message.from_id._ === 'peerChannel' && message.fromId === fwdFromId;
+    const isForwardFromChannel = isMessage(message) && message.from_id && message.from_id._ === 'peerChannel' && message.fromId === fwdFromId;
     const currentPeerId = this.chat.peerId;
-    const peerId = ((fwdFrom && (/* currentPeerId === rootScope.myId ||  */currentPeerId === REPLIES_PEER_ID || currentPeerId === VERIFICATION_CODES_BOT_ID) && !fwdFromName) || isForwardFromChannel ? fwdFromId : message.fromId) || NULL_PEER_ID;
+
+    const getPeerIdForLog = (log: AdminLog) => {
+      const entry = this.chat.bubbles.resolveAdminLogUnsafe({log, noJsx: true});
+
+      if(entry?.type === 'default') {
+        if(entry.message._ === 'message') return getPeerId(
+          entry.message.from_id ||
+          entry.message.peer_id
+        );
+      }
+
+      return log?.user_id?.toPeerId();
+    };
+
+    const peerId =
+      (
+        isMessage(message) ?
+          ((fwdFrom && (/* currentPeerId === rootScope.myId ||  */currentPeerId === REPLIES_PEER_ID || currentPeerId === VERIFICATION_CODES_BOT_ID) && !fwdFromName) || isForwardFromChannel ? fwdFromId : message.fromId) :
+          getPeerIdForLog(message)
+      ) ||
+      NULL_PEER_ID;
 
     return {
       // peerId: fwdFromName ? NULL_PEER_ID : peerId,
@@ -105,7 +132,7 @@ export class BubbleGroup {
     --this.offset;
   }
 
-  createAvatar(message: Message.message | Message.messageService, options?: Partial<Parameters<typeof avatarNew>[0]>) {
+  createAvatar(message: Message.message | Message.messageService | AdminLog, options?: Partial<Parameters<typeof avatarNew>[0]>) {
     if(this.avatarLoadPromise) {
       return this.avatarLoadPromise;
     } else if(message._ === 'messageService') {
@@ -124,11 +151,7 @@ export class BubbleGroup {
     });
     this.avatar.node.classList.add('bubbles-group-avatar', 'user-avatar'/* , 'can-zoom-fade' */);
 
-    const replyMarkup = message.reply_markup;
-    let replyMarkupRows = replyMarkup?._ === 'replyInlineMarkup' && replyMarkup.rows;
-    replyMarkupRows = replyMarkupRows?.filter?.((row) => row.buttons.length);
-    replyMarkupRows?.length && this.avatar.node.classList.add('avatar-for-reply-markup');
-    canHaveSuggestedPostReplyMarkup(message) && this.avatar.node.classList.add('avatar-for-suggested-reply-markup');
+    this.updateAvatarClassNames(message);
 
     // this.avatarLoadPromise = Promise.all([
     //   avatarLoadPromise,
@@ -146,6 +169,15 @@ export class BubbleGroup {
     this.container.append(this.avatarContainer);
 
     return this.avatarLoadPromise;
+  }
+
+  updateAvatarClassNames(message = this.lastItem.message) {
+    if(!this.avatar || message?._ !== 'message') {
+      return;
+    }
+
+    this.avatar.node.classList.toggle('avatar-for-reply-markup', canHaveReplyMarkup(message));
+    this.avatar.node.classList.toggle('avatar-for-suggested-reply-markup', canHaveSuggestedPostReplyMarkup(message));
   }
 
   get firstTimestamp() {
@@ -188,6 +220,8 @@ export class BubbleGroup {
     // }
 
     const first = items[length - 1].bubble;
+
+    this.updateAvatarClassNames();
 
     if(items.length === 1) {
       first.classList.add('is-group-first', 'is-group-last');
@@ -407,44 +441,81 @@ export default class BubbleGroups {
       group.mount(true);
     });
 
-    this.addMonoforumSeparators();
+    this.addChatThreadSeparators();
+    this.addContinueLastTopicReplyMarkup();
   }
 
-  private addMonoforumSeparators() {
-    const canHaveSeparators = this.chat.isMonoforum && this.chat.canManageDirectMessages && !this.chat.monoforumThreadId;
+  private addChatThreadSeparators() {
+    const isMonoforum = this.chat.isMonoforum && this.chat.canManageDirectMessages && !this.chat.monoforumThreadId;
+    const isBotforum = this.chat.isBotforum && !this.chat.threadId;
+
+    const canHaveSeparators = isMonoforum || isBotforum;
+
     if(!canHaveSeparators) return;
 
-    let prevPeerId: number;
+    let prevKey: number;
 
     forEachReverse(this.itemsArr, (item, i) => {
-      const savedPeerId = getPeerId(item.message?.saved_peer_id);
-      if(!savedPeerId) return;
+      const message = item.message;
+      if(message._ === 'channelAdminLogEvent') return;
 
-      const bubbleAddons = typedElement<BubbleElementAddons>(item.bubble);
+      const savedPeerId = isMonoforum ? getPeerId(message?.saved_peer_id) : undefined;
+      const threadId = isBotforum ? getMessageThreadId(message, {isBotforum: true}) : undefined;
 
-      if(prevPeerId === savedPeerId) {
-        item.bubble.classList.remove('has-monoforum-separator');
-        bubbleAddons.monoforumSeparator?.remove();
+      const key = savedPeerId || threadId;
+      if(!key) return;
+
+      const bubbleAddons = item.bubble as BubbleElementAddons;
+
+      if(prevKey === key) {
+        item.bubble.classList.remove('has-chat-thread-separator');
+        bubbleAddons.chatThreadSeparator?.remove();
         return;
       }
 
-      prevPeerId = savedPeerId;
+      prevKey = key;
 
-      if(bubbleAddons.monoforumSeparator) {
-        bubbleAddons.monoforumSeparator.feedProps<false>({
+      if(bubbleAddons.chatThreadSeparator) {
+        bubbleAddons.chatThreadSeparator.feedProps<false>({
           index: -i
         });
         return;
       }
 
-      bubbleAddons.monoforumSeparator = new MonoforumSeparator;
-      bubbleAddons.monoforumSeparator.feedProps({
+      bubbleAddons.chatThreadSeparator = new ChatThreadSeparator;
+      bubbleAddons.chatThreadSeparator.HotReloadGuard = SolidJSHotReloadGuardProvider;
+      bubbleAddons.chatThreadSeparator.feedProps({
+        chat: this.chat,
         bubbles: this.chat.bubbles,
-        peerId: savedPeerId,
+        peerId: savedPeerId || this.chat.peerId,
+        threadId: savedPeerId ? undefined : threadId,
+        lastMsgId: message?.mid,
         index: -i
       });
-      item.bubble.classList.add('has-monoforum-separator');
-      item.bubble.prepend(bubbleAddons.monoforumSeparator);
+      item.bubble.classList.add('has-chat-thread-separator');
+      item.bubble.prepend(bubbleAddons.chatThreadSeparator);
+    });
+  }
+
+  /**
+   * Makes the reply markup of the last message bubble visible
+   */
+  private addContinueLastTopicReplyMarkup() {
+    if(!this.chat.isBotforum) return;
+
+    let visible = true;
+
+    this.itemsArr.forEach((item) => {
+      const bubbleAddons = item.bubble as BubbleElementAddons;
+
+      if(item.message._ !== 'message') return;
+      if(!bubbleAddons.continueLastTopicReplyMarkup) return;
+
+      bubbleAddons.continueLastTopicReplyMarkup.feedProps<false>({
+        visible: visible && !(item.message.reply_markup as ReplyMarkup.replyInlineMarkup)?.rows
+      });
+
+      visible = false;
     });
   }
 
@@ -476,7 +547,7 @@ export default class BubbleGroups {
       return;
     }
 
-    item.mid = /* item.groupMid =  */message.mid;
+    item.mid = /* item.groupMid =  */getMid(message);
     item.message = message;
     item.groupMid = this.generateGroupMid(message, item.dateTimestamp);
 
@@ -505,6 +576,8 @@ export default class BubbleGroups {
   }
 
   canItemsBeGrouped(item1: GroupItem, item2: GroupItem) {
+    if(item1.message?._ === 'channelAdminLogEvent' || item2.message?._ === 'channelAdminLogEvent') return false;
+
     if(isMessageForVerificationBot(item1.message)) return false;
 
     if(
@@ -519,7 +592,8 @@ export default class BubbleGroups {
       !item1.single &&
       !item2.single &&
       isOut1 === this.chat.isOutMessage(item2.message) &&
-      (!this.chat.isAllMessagesForum || getMessageThreadId(item1.message, true) === getMessageThreadId(item2.message, true)) &&
+      (!this.chat.isAllMessagesForum || getMessageThreadId(item1.message, {isForum: true}) === getMessageThreadId(item2.message, {isForum: true})) &&
+      (!this.chat.isBotforum || getMessageThreadId(item1.message, {isBotforum: true}) === getMessageThreadId(item2.message, {isBotforum: true})) &&
       (!this.chat.isMonoforum || getMessageThreadId(item1.message) === getMessageThreadId(item2.message)) &&
       (!isOut1 || item1.message.fromId === rootScope.myId || this.chat.isMonoforum) && // * group anonymous sending
       item1.message.peerId === item2.message.peerId &&
@@ -594,7 +668,11 @@ export default class BubbleGroups {
     this.itemsMap.delete(item.bubble);
   }
 
-  getMessageFromId(message: MyMessage) {
+  getMessageFromId(message: MyMessage | AdminLog) {
+    if(message._ === 'channelAdminLogEvent') {
+      return this.chat.peerId;
+    }
+
     let fromId = /* (this.chat.peerId.isAnyChat() && message.viaBotId) ||  */message.fromId;
 
     // fix for saved messages forward to self
@@ -605,14 +683,16 @@ export default class BubbleGroups {
     return fromId;
   }
 
-  generateGroupMid(message: MyMessage, dateTimestamp: number) {
-    const {mid, date: timestamp} = message;
+  generateGroupMid(message: MyMessage | AdminLog, dateTimestamp: number) {
+    const {date: timestamp} = message;
+    const mid = getMid(message);
     return this.chat.type === ChatType.Scheduled ? +`${(timestamp * 1000 - dateTimestamp) / 1000}.${+('' + mid).replace('.', '')}` : mid;
   }
 
-  createItem(bubble: HTMLElement, message: MyMessage, reverse: boolean) {
-    const single = !(message._ === 'message' || (message.action && SERVICE_AS_REGULAR.has(message.action._)));
-    const {mid, date: timestamp} = message;
+  createItem(bubble: HTMLElement, message: MyMessage | AdminLog, reverse: boolean) {
+    const single = !(message._ === 'message' || (message._ === 'messageService' && message.action && SERVICE_AS_REGULAR.has(message.action._)));
+    const {date: timestamp} = message;
+    const mid = getMid(message);
     const {dateTimestamp} = this.chat.bubbles.getDateForDateContainer(timestamp);
     const item: GroupItem = {
       mid,
@@ -659,7 +739,7 @@ export default class BubbleGroups {
     // }
   }
 
-  prepareForGrouping(bubble: HTMLElement, message: MyMessage, reverse: boolean) {
+  prepareForGrouping(bubble: HTMLElement, message: MyMessage | AdminLog, reverse: boolean) {
     const foundItem = this.getItemByBubble(bubble);
     if(foundItem) { // should happen only on edit
       // debugger;
