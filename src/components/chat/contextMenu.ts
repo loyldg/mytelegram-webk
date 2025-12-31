@@ -85,6 +85,9 @@ import noop from '../../helpers/noop';
 import {isSensitive} from '../../helpers/restrictions';
 import {hasSensitiveSpoiler} from '../wrappers/mediaSpoiler';
 import {useIsFrozen} from '../../stores/appState';
+import prepareTextWithEntitiesForCopying from '../../helpers/prepareTextWithEntitiesForCopying';
+import {runWithHotReloadGuard} from '../../lib/solidjs/runWithHotReloadGuard';
+import {PartialByKeys} from '../../types';
 
 type ChatContextMenuButton = ButtonMenuItemOptions & {
   verify: () => boolean | Promise<boolean>,
@@ -192,6 +195,7 @@ export default class ChatContextMenu {
   private peerId: PeerId;
   private mid: number;
   private message: Message.message | Message.messageService;
+  private messageFromLog: Message.message | Message.messageService;
   private mainMessage: Message.message | Message.messageService;
   private sponsoredMessage: SponsoredMessage;
   private noForwards: boolean;
@@ -208,7 +212,7 @@ export default class ChatContextMenu {
   private emojiInputsPromise: CancellablePromise<InputStickerSet.inputStickerSetID[]>;
   private groupedMessages: Message.message[];
   private linkToMessage: Awaited<ReturnType<ChatContextMenu['getUrlToMessage']>>;
-  private selectedMessagesText: Awaited<ReturnType<ChatContextMenu['getSelectedMessagesText']>>;
+  private selectedMessagesText: PartialByKeys<Awaited<ReturnType<ChatContextMenu['getSelectedMessagesText']>>, 'html'>;
   private selectedMessages: MyMessage[];
   private avatarPeerId: number;
 
@@ -300,6 +304,9 @@ export default class ChatContextMenu {
   }
 
   public onContextMenu = (e: MouseEvent | Touch | TouchEvent) => {
+    if(this.chat.type === ChatType.Static) return;
+
+
     let bubble: HTMLElement, contentWrapper: HTMLElement, avatar: HTMLElement;
 
     try {
@@ -341,7 +348,7 @@ export default class ChatContextMenu {
       checklistItemId = +(checklistItemElement as HTMLElement).dataset.checklistItemId;
     }
 
-    const r = async() => {
+    const prepareForMessage = async() => {
       const isSponsored = this.isSponsored = mid < 0;
       this.isSelectable = this.chat.selection.canSelectBubble(bubble);
       this.messagePeerId = bubble ? bubble.dataset.peerId.toPeerId() : undefined;
@@ -423,6 +430,28 @@ export default class ChatContextMenu {
       } else {
         this.checklistItem = undefined;
       }
+    };
+
+
+    const prepareForLog = async() => {
+      const log = this.chat.bubbles.logsByBubble.get(bubble);
+      try {
+        const entry = await this.chat.bubbles.resolveAdminLog({
+          log,
+          noJsx: true
+        });
+
+        this.selectedMessagesText = await runWithHotReloadGuard(entry.getCopyText);
+        this.messageFromLog = entry.type === 'default' ? entry.message : undefined;
+      } catch{}
+    };
+
+    const openMenu = async() => {
+      if(this.chat.type === ChatType.Logs) {
+        await prepareForLog();
+      } else {
+        await prepareForMessage();
+      }
 
       const initResult = await this.init();
       if(!initResult) {
@@ -464,7 +493,7 @@ export default class ChatContextMenu {
       reactionsCallbacks?.onAfterInit();
     };
 
-    r();
+    openMenu();
   };
 
   public cleanup() {
@@ -500,6 +529,28 @@ export default class ChatContextMenu {
   }
 
   private setButtons() {
+    if(this.chat.type === ChatType.Logs) {
+      this.buttons = [
+        {
+          icon: 'copy',
+          text: 'Copy',
+          onClick: this.onCopyClick,
+          verify: () => !!this.selectedMessagesText
+        },
+        {
+          icon: 'download',
+          text: 'DownloadMedia',
+          onClick: () => {
+            const media = getMediaFromMessage(this.messageFromLog, true);
+            if(!media) return;
+            appDownloadManager.downloadToDisc({media, queueId: this.chat.bubbles.lazyLoadQueue.queueId});
+          },
+          verify: () => this.messageFromLog && !!getMediaFromMessage(this.messageFromLog)
+        }
+      ];
+      return;
+    }
+
     if(this.isTag) {
       const tagTitle = this.reactionElement.findTitle();
       const reactionCount = this.reactionElement.reactionCount;
@@ -1283,6 +1334,7 @@ export default class ChatContextMenu {
     let reactionsMenu: ChatReactionsMenu;
     let reactionsMenuPosition: 'horizontal' | 'vertical';
     if(
+      this.chat.type !== ChatType.Logs &&
       this.message &&
       (this.message._ === 'message' || (this.message._ === 'messageService' && this.message.pFlags.reactions_are_possible)) &&
       !this.chat.selection.isSelecting &&
@@ -1476,28 +1528,12 @@ export default class ChatContextMenu {
       return peerTitle + ', [' + date + ']';
     })) : [];
 
-    const htmlParts = messages.map((message) => {
-      const wrapped = wrapRichText(message.message, {
-        entities: (message as Message.message).totalEntities || message.entities,
-        wrappingDraft: true
-      });
-      return documentFragmentToHTML(wrapped);
-    });
-
-    const parts: string[] = messages.map((message) => {
-      return message.message;
-    });
-
-    const prepare = (smth: string[]) => {
-      return smth.map((str, idx) => {
-        return meta[idx] ? meta[idx] + '\n' + str : str;
-      }).join('\n\n');
-    };
-
-    return {
-      text: prepare(parts),
-      html: prepare(htmlParts)
-    };
+    return prepareTextWithEntitiesForCopying(messages.map((message) => {
+      return {
+        text: message.message,
+        entities: (message as Message.message).totalEntities || message.entities
+      };
+    }));
   }
 
   private onSendScheduledClick = async() => {

@@ -56,6 +56,7 @@ import {NOTIFICATION_BADGE_PATH} from '../../config/notifications';
 import {createAppURLForAccount} from '../accounts/createAppURLForAccount';
 import {appSettings, setAppSettingsSilent} from '../../stores/appSettings';
 import {produce, unwrap} from 'solid-js/store';
+import {batch} from 'solid-js';
 import createNotificationImage from '../../helpers/createNotificationImage';
 import PasscodeLockScreenController from '../../components/passcodeLock/passcodeLockScreenController';
 import EncryptionKeyStore from '../passcode/keyStore';
@@ -233,21 +234,27 @@ class ApiManagerProxy extends MTProtoMessagePort {
 
       historyStorage: (payload) => {
         if(!payload.key) { // * mirroring all history storages at once
-          for(const key in payload.value) {
-            const historyStorage = payload.value[key];
-            const [, setHistoryStorage] = _useHistoryStorage(key as any);
-            if(historyStorage.searchHistorySerialized) {
-              setHistoryStorage(
-                'searchHistory',
-                SlicedArray.fromJSON<`${PeerId}_${number}`>(historyStorage.searchHistorySerialized)
-              );
-            } else {
-              setHistoryStorage(
-                'history',
-                SlicedArray.fromJSON<number>(historyStorage.historySerialized)
-              );
+          batch(() => {
+            for(const key in payload.value) {
+              const historyStorage = payload.value[key];
+              const [, setHistoryStorage] = _useHistoryStorage(key as any);
+              if(historyStorage.searchHistorySerialized) {
+                setHistoryStorage(
+                  'searchHistory',
+                  SlicedArray.fromJSON<`${PeerId}_${number}`>(historyStorage.searchHistorySerialized)
+                );
+                delete historyStorage.searchHistorySerialized;
+              } else {
+                setHistoryStorage(
+                  'history',
+                  SlicedArray.fromJSON<number>(historyStorage.historySerialized)
+                );
+                delete historyStorage.historySerialized;
+              }
+
+              setHistoryStorage(historyStorage);
             }
-          }
+          });
           return false;
         }
 
@@ -975,6 +982,10 @@ class ApiManagerProxy extends MTProtoMessagePort {
     return `${peerId}_history`;
   }
 
+  public getLogsMessagesStorage(peerId: PeerId): MessagesStorageKey {
+    return `${peerId}_logs`;
+  }
+
   public getGlobalHistoryMessagesStorage(): MessagesStorageKey {
     return this.getHistoryMessagesStorage(NULL_PEER_ID);
   }
@@ -990,9 +1001,11 @@ class ApiManagerProxy extends MTProtoMessagePort {
       return this.getMessageById(messageId);
     }
 
-    return this.getMessageFromStorage(this.getHistoryMessagesStorage(peerId), messageId);
+    return (
+      this.getMessageFromStorage(this.getHistoryMessagesStorage(peerId), messageId) ||
+      this.getMessageFromStorage(this.getLogsMessagesStorage(peerId), messageId)
+    );
   }
-
 
   public getPeerForAccount(peerId: PeerId, accountNumber: ActiveAccountNumber) {
     const managers = createProxiedManagersForAccount(accountNumber);

@@ -632,6 +632,10 @@ a {
   color: var(--link-color);
 }
 
+.link-color {
+  color: var(--link-color);
+}
+
 button,
 input,
 optgroup,
@@ -2176,6 +2180,10 @@ hr {
 .inline-icon {
   vertical-align: bottom;
   line-height: inherit;
+
+  &-left {
+    margin-inline-end: .125rem;
+  }
 }
 
 .icon-reflect {
@@ -2611,4 +2619,8 @@ hr {
 
 .text-center {
   @include text-center();
+}
+
+.margin-0 {
+  margin: 0 !important;
 }

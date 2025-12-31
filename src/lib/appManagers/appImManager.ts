@@ -25,7 +25,7 @@ import {MOUNT_CLASS_TO} from '../../config/debug';
 import appNavigationController from '../../components/appNavigationController';
 import AppPrivateSearchTab from '../../components/sidebarRight/tabs/search';
 import I18n, {i18n, join, LangPackKey} from '../langPack';
-import {ChatFull, ChatParticipants, Message, MessageAction, MessageMedia, SendMessageAction, User, Chat as MTChat, UrlAuthResult, WallPaper, Config, AttachMenuBot, Peer, InputChannel, HelpPeerColors, Reaction, Document, MessageEntity, PeerColor, SponsoredMessage, InputGroupCall} from '../../layer';
+import {ChatFull, ChatParticipants, Message, MessageAction, MessageMedia, SendMessageAction, User, Chat as MTChat, UrlAuthResult, WallPaper, Config, AttachMenuBot, Peer, InputChannel, HelpPeerColors, Reaction, Document, MessageEntity, PeerColor, SponsoredMessage, InputGroupCall, WebPage} from '../../layer';
 import PeerTitle from '../../components/peerTitle';
 import {PopupPeerCheckboxOptions} from '../../components/popups/peer';
 import blurActiveElement from '../../helpers/dom/blurActiveElement';
@@ -134,6 +134,7 @@ import IS_WEB_APP_BROWSER_SUPPORTED from '../../environment/webAppBrowserSupport
 import ChatAudio from '../../components/chat/audio';
 import AudioAssetPlayer from '../../helpers/audioAssetPlayer';
 import {getRgbColorFromTelegramColor, rgbIntToHex} from '../../helpers/color';
+import {MyMessage} from './appMessagesManager';
 
 export type ChatSavedPosition = {
   mids: number[],
@@ -155,7 +156,8 @@ export type ChatSetPeerOptions = {
   entities?: MessageEntity[],
   call?: string | number,
   isDeleting?: boolean,
-  fromTemporaryThread?: boolean
+  fromTemporaryThread?: boolean,
+  messages?: MyMessage[]
 } & Partial<ChatSearchKeys>;
 
 export type ChatSetInnerPeerOptions = Modify<ChatSetPeerOptions, {
@@ -717,6 +719,11 @@ export class AppImManager extends EventListenerBase<{
     this.handlePeerColors();
     this.checkForShare();
     this.init();
+
+    // setTimeout(() => {
+    //   const message = apiManagerProxy.getMessageByPeer(61004386, 1837709);
+    //   openInstantViewInAppBrowser(((message as Message.message).media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage);
+    // }, 100);
 
     // PopupElement.createPopup(PopupAboutAd);
 
@@ -2758,6 +2765,8 @@ export class AppImManager extends EventListenerBase<{
     return options1.peerId === options2.peerId &&
       options1.threadId === options2.threadId &&
       options1.monoforumThreadId === options2.monoforumThreadId &&
+      (options1.type !== ChatType.Static && options2.type !== ChatType.Static) &&
+      (options1.type !== ChatType.Logs && options2.type !== ChatType.Logs) &&
       (typeof(options1.type) !== typeof(options2.type) || options1.type === options2.type);
   }
 

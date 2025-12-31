@@ -51,8 +51,7 @@ import {getInstallPrompt} from '../../helpers/dom/installPrompt';
 import liteMode from '../../helpers/liteMode';
 import AppPowerSavingTab from './tabs/powerSaving';
 import AppMyStoriesTab from './tabs/myStories';
-import {joinDeepPath} from '../../helpers/object/setDeepProperty';
-import Icon, {getIconContent} from '../icon';
+import Icon from '../icon';
 import AppSelectPeers from '../appSelectPeers';
 import setBadgeContent from '../../helpers/setBadgeContent';
 import createBadge from '../../helpers/createBadge';
@@ -60,11 +59,7 @@ import {MyDocument} from '../../lib/appManagers/appDocsManager';
 import getAttachMenuBotIcon from '../../lib/appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
 import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
 import flatten from '../../helpers/array/flatten';
-import EmojiTab from '../emoticonsDropdown/tabs/emoji';
-import {EmoticonsDropdown} from '../emoticonsDropdown';
-import cloneDOMRect from '../../helpers/dom/cloneDOMRect';
-import {AccountEmojiStatuses, AttachMenuBot, EmojiStatus, User} from '../../layer';
-import filterUnique from '../../helpers/array/filterUnique';
+import {AttachMenuBot, EmojiStatus, User} from '../../layer';
 import {Middleware, MiddlewareHelper} from '../../helpers/middleware';
 import wrapEmojiStatus from '../wrappers/emojiStatus';
 import {makeMediaSize} from '../../helpers/mediaSize';
@@ -76,12 +71,11 @@ import {MAX_ACCOUNTS, MAX_ACCOUNTS_FREE} from '../../lib/accounts/constants';
 import {getCurrentAccount} from '../../lib/accounts/getCurrentAccount';
 import {createProxiedManagersForAccount} from '../../lib/appManagers/getProxiedManagers';
 import limitSymbols from '../../helpers/string/limitSymbols';
-import attachFloatingButtonMenu from '../floatingButtonMenu';
 import filterAsync from '../../helpers/array/filterAsync';
 import pause from '../../helpers/schedulers/pause';
 import AccountsLimitPopup from './accountsLimitPopup';
 import {changeAccount} from '../../lib/accounts/changeAccount';
-import uiNotificationsManager, {UiNotificationsManager} from '../../lib/appManagers/uiNotificationsManager';
+import uiNotificationsManager from '../../lib/appManagers/uiNotificationsManager';
 import {FoldersSidebarControls, renderFoldersSidebarContent} from './foldersSidebarContent';
 import SolidJSHotReloadGuardProvider from '../../lib/solidjs/hotReloadGuardProvider';
 import SwipeHandler, {getEvent} from '../swipeHandler';
@@ -155,7 +149,7 @@ export class AppSidebarLeft extends SidebarSlider {
     // this._selectTab(0); // make first tab as default
 
     this.chatListContainer = document.getElementById('chatlist-container');
-    this.inputSearch = new InputSearch();
+    this.inputSearch = new InputSearch({oldStyle: true});
     (this.inputSearch.input as HTMLInputElement).placeholder = ' ';
     const sidebarHeader = this.sidebarEl.querySelector('.item-main .sidebar-header');
     sidebarHeader.append(this.inputSearch.container);
@@ -292,7 +286,6 @@ export class AppSidebarLeft extends SidebarSlider {
       if(isPremium) {
         await wrapStatus((statusMiddlewareHelper = middleware.create()).get());
         if(!middleware()) return;
-        sidebarHeader.append(statusBtnIcon);
         toggleRightButtons(true, await DeferredIsUsingPasscode.isUsingPasscode());
 
         const onEmojiStatusChange = () => {
@@ -321,6 +314,8 @@ export class AppSidebarLeft extends SidebarSlider {
 
       if(isUsingPasscode) sidebarHeader.append(lockButton.element);
       else lockButton.element.remove();
+
+      sidebarHeader.classList.toggle('is-input-the-last-child', !isPremium && !isUsingPasscode);
     };
 
     appImManager.addEventListener('premium_toggle', onPremium);

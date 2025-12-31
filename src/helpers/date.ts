@@ -53,7 +53,15 @@ export const getWeekNumber = (date: Date) => {
   return Math.ceil((((d.getTime() - yearStart.getTime()) / ONE_DAY) + 1) / 7);
 };
 
-export function formatDate(date: Date, today?: Date, withTime?: boolean) {
+
+type FormatDateOptions = {
+  today?: Date;
+  withTime?: boolean;
+  shortMonth?: boolean;
+  overrideIntlOptions?: Intl.DateTimeFormatOptions;
+};
+
+export function formatDate(date: Date, {today, withTime, shortMonth, overrideIntlOptions}: FormatDateOptions = {}) {
   if(!today) {
     today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -61,7 +69,7 @@ export function formatDate(date: Date, today?: Date, withTime?: boolean) {
 
   const options: Intl.DateTimeFormatOptions = {
     day: 'numeric',
-    month: 'long'
+    month: shortMonth ? 'short' : 'long'
   };
 
   if(withTime) {
@@ -71,6 +79,10 @@ export function formatDate(date: Date, today?: Date, withTime?: boolean) {
 
   if(date.getFullYear() !== today.getFullYear()) {
     options.year = 'numeric';
+  }
+
+  if(overrideIntlOptions) {
+    Object.assign(options, overrideIntlOptions);
   }
 
   return new I18n.IntlDateElement({
@@ -559,22 +571,6 @@ function getDayOfWeek(q: string) {
     }
   }
   return -1;
-}
-
-export function differenceInYears(earlierDate: Date, laterDate: Date) {
-  const day1 = earlierDate.getDate();
-  const day2 = laterDate.getDate();
-  const month1 = earlierDate.getMonth();
-  const month2 = laterDate.getMonth();
-  const year1 = earlierDate.getFullYear();
-  const year2 = laterDate.getFullYear();
-  const diff = year2 - year1;
-
-  if(month1 < month2 || (month1 === month2 && day1 <= day2)) {
-    return diff;
-  } else {
-    return diff - 1;
-  }
 }
 
 MOUNT_CLASS_TO.fillTipDates = fillTipDates;
