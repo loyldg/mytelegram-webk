@@ -285,6 +285,10 @@ export class ApiManager extends ApiManagerMethods {
 
   public setBaseDcId(dcId: DcId) {
     const wasDcId = this.baseDcId;
+    if(wasDcId && wasDcId === dcId) {
+      return;
+    }
+
     if(wasDcId) { // if migrated set ondrain
       this.getNetworker(wasDcId).then((networker) => {
         this.setOnDrainIfNeeded(networker);
@@ -325,7 +329,8 @@ export class ApiManager extends ApiManagerMethods {
 
       this.baseDcId = undefined;
       // this.telegramMeNotify(false);
-      if(totalAccounts === 1 && accountNumber === 1 && !migrateAccountTo) {
+      // * totalAccounts can be 0 somehow
+      if(totalAccounts <= 1 && accountNumber === 1 && !migrateAccountTo) {
         await Promise.all([
           (async() => {
             const keys: Parameters<typeof sessionStorage['delete']>[0][] = [
@@ -396,6 +401,11 @@ export class ApiManager extends ApiManagerMethods {
 
   private generateNetworkerGetKey(dcId: DcId, transportType: TransportType, connectionType: ConnectionType) {
     return [dcId, transportType, connectionType].join('-');
+  }
+
+  public async getAuthKeyFromHex(authKeyHex: string) {
+    const authKey = bytesFromHex(authKeyHex);
+    return new MTAuthKey(authKey, (await CryptoWorker.invokeCrypto('sha1', authKey)).slice(-8));
   }
 
   public getNetworker(dcId: DcId, options: InvokeApiOptions = {}): Promise<MTPNetworker> {
@@ -472,9 +482,8 @@ export class ApiManager extends ApiManagerMethods {
           serverSaltHex = 'AAAAAAAAAAAAAAAA';
         }
 
-        const authKey = bytesFromHex(authKeyHex);
         permanent = {
-          authKey: new MTAuthKey(authKey, (await CryptoWorker.invokeCrypto('sha1', authKey)).slice(-8)),
+          authKey: await this.getAuthKeyFromHex(authKeyHex),
           serverSalt: bytesFromHex(serverSaltHex)
         };
 
