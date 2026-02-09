@@ -32,7 +32,7 @@ import tsNow from '../../helpers/tsNow';
 import appNavigationController, {NavigationItem} from '../appNavigationController';
 import {IS_MOBILE, IS_MOBILE_SAFARI} from '../../environment/userAgent';
 import I18n, {FormatterArguments, i18n, join, LangPackKey} from '../../lib/langPack';
-import {generateTail} from './utils';
+import {createAutoDeleteIcon, generateTail} from './utils';
 import findUpClassName from '../../helpers/dom/findUpClassName';
 import ButtonCorner from '../buttonCorner';
 import blurActiveElement from '../../helpers/dom/blurActiveElement';
@@ -142,6 +142,8 @@ import PopupStars from '../popups/stars';
 import SolidJSHotReloadGuardProvider from '../../lib/solidjs/hotReloadGuardProvider';
 import {makeMessageMediaInputForSuggestedPost} from '../../lib/appManagers/utils/messages/makeMessageMediaInput';
 import showFrozenPopup from '../popups/frozen';
+import {wrapAsyncClickHandler} from '../../helpers/wrapAsyncClickHandler';
+import {setPeerColorToElement} from '../peerColors';
 
 // console.log('Recorder', Recorder);
 
@@ -194,6 +196,8 @@ export default class ChatInput {
   private attachMenuButtons: ButtonMenuItemOptionsVerifiable[];
 
   public btnSuggestPost: HTMLElement;
+
+  private btnAutoDeletePeriod: HTMLElement;
 
   private sendMenu: SendMenu;
 
@@ -368,6 +372,7 @@ export default class ChatInput {
   private directMessagesHandler: ReturnType<ChatInput['createDirectMessagesHandler']>;
 
   public suggestedPost: SuggestedPostPayload;
+  private inputHelperNavigationItem: NavigationItem;
 
   constructor(
     public chat: Chat,
@@ -1130,6 +1135,11 @@ export default class ChatInput {
       this.openSuggestPostPopup();
     });
 
+    this.btnAutoDeletePeriod = ButtonIcon('auto_delete_circle_clock hide');
+    attachClickEvent(this.btnAutoDeletePeriod, wrapAsyncClickHandler(async() => {
+      await this.chat.openAutoDeleteMessagesCustomTimePopup();
+    }));
+
     this.recordTimeEl = document.createElement('div');
     this.recordTimeEl.classList.add('record-time');
 
@@ -1145,6 +1155,7 @@ export default class ChatInput {
       this.btnScheduled,
       this.btnToggleReplyMarkup,
       this.btnSuggestPost,
+      this.btnAutoDeletePeriod,
       this.attachMenu,
       this.recordTimeEl,
       this.fileInput
@@ -1417,6 +1428,17 @@ export default class ChatInput {
         } else { // updateNewMessage comes earlier than dialog appers
           this.center(true);
         }
+      }
+    });
+
+    this.listenerSetter.add(rootScope)('auto_delete_period_update', ({peerId, period}) => {
+      if(this.chat.peerId !== peerId) return;
+
+      if(period) {
+        this.btnAutoDeletePeriod.replaceChildren(createAutoDeleteIcon(period));
+        this.btnAutoDeletePeriod.classList.remove('hide');
+      } else {
+        this.btnAutoDeletePeriod.classList.add('hide');
       }
     });
   }
@@ -1891,6 +1913,8 @@ export default class ChatInput {
   public destroy() {
     // this.chat.log.error('Input destroying');
 
+    this.autocompleteHelperController.destroy();
+    appNavigationController.removeItem(this.inputHelperNavigationItem);
     this.listenerSetter.removeAll();
     this.setCurrentHover();
   }
@@ -2053,7 +2077,8 @@ export default class ChatInput {
       setSendAsCallback,
       peerTitleShort,
       isPremiumRequired,
-      appConfig
+      appConfig,
+      autoDeletePeriod
     ] = await Promise.all([
       this.managers.appPeersManager.isBroadcast(peerId),
       this.managers.appPeersManager.canPinMessage(peerId),
@@ -2066,7 +2091,8 @@ export default class ChatInput {
       sendAs ? (sendAs.setPeerId(peerId), sendAs.updateManual(true)) : undefined,
       wrapPeerTitle({peerId, onlyFirstName: true}),
       this.chat.isPremiumRequiredToContact(),
-      apiManagerProxy.getAppConfig()
+      apiManagerProxy.getAppConfig(),
+      modifyAckedPromise(this.chat.getAutoDeletePeriod())
     ]);
 
     const placeholderParams = this.messageInput ? await this.getPlaceholderParams(canSendPlain) : undefined;
@@ -2187,6 +2213,13 @@ export default class ChatInput {
 
       if(this.chat) {
         this.btnSuggestPost.classList.toggle('hide', !this.canShowSuggestPostButton(!!this.helperType));
+      }
+
+      if(this.chat) {
+        callbackify(autoDeletePeriod.result, (period) => {
+          if(period) this.btnAutoDeletePeriod.replaceChildren(createAutoDeleteIcon(period));
+          this.btnAutoDeletePeriod.classList.toggle('hide', !period);
+        });
       }
 
       this.botStartBtn.classList.toggle('hide', haveSomethingInControl);
@@ -4369,7 +4402,7 @@ export default class ChatInput {
       quote
     });
 
-    this.appImManager.setPeerColorToElement({peerId: setColorPeerId, element: replyParent});
+    setPeerColorToElement({peerId: setColorPeerId, element: replyParent});
 
     if(haveReply) {
       oldReply.replaceWith(container);
@@ -4383,11 +4416,12 @@ export default class ChatInput {
     }
 
     if(!IS_MOBILE) {
-      appNavigationController.pushItem({
+      appNavigationController.pushItem(this.inputHelperNavigationItem = {
         type: 'input-helper',
         onPop: () => {
           this.onHelperCancel();
-        }
+        },
+        context: this.chat
       });
     }
 
