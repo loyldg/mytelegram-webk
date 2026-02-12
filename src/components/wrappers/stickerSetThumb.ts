@@ -4,18 +4,19 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import createVideo from '../../helpers/dom/createVideo';
-import renderImageFromUrl from '../../helpers/dom/renderImageFromUrl';
-import {Document, DocumentAttribute, StickerSet} from '../../layer';
-import appDownloadManager from '../../lib/appManagers/appDownloadManager';
-import {AppManagers} from '../../lib/appManagers/managers';
-import lottieLoader from '../../lib/rlottie/lottieLoader';
-import rootScope from '../../lib/rootScope';
-import animationIntersector, {AnimationItemGroup} from '../animationIntersector';
-import LazyLoadQueue from '../lazyLoadQueue';
-import wrapSticker from './sticker';
-import {Middleware} from '../../helpers/middleware';
-import {EMOJI_TEXT_COLOR} from '../emoticonsDropdown';
+import createVideo from '@helpers/dom/createVideo';
+import renderImageFromUrl from '@helpers/dom/renderImageFromUrl';
+import {Document, DocumentAttribute, StickerSet} from '@layer';
+import appDownloadManager from '@lib/appDownloadManager';
+import {AppManagers} from '@lib/managers';
+import lottieLoader from '@lib/rlottie/lottieLoader';
+import rootScope from '@lib/rootScope';
+import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
+import LazyLoadQueue from '@components/lazyLoadQueue';
+import wrapSticker from '@components/wrappers/sticker';
+import {Middleware} from '@helpers/middleware';
+import {EMOJI_TEXT_COLOR} from '@components/emoticonsDropdown';
+import {getStickerSetInputById} from '@lib/appManagers/utils/stickers/getStickerSetInput';
 
 export default async function wrapStickerSetThumb({set, lazyLoadQueue, container, group, autoplay, width, height, managers = rootScope.managers, middleware, textColor}: {
   set: StickerSet.stickerSet,
@@ -93,7 +94,7 @@ export default async function wrapStickerSetThumb({set, lazyLoadQueue, container
   if(set.thumb_document_id) {
     getDocPromise = managers.appEmojiManager.getCustomEmojiDocument(set.thumb_document_id);
   } else {
-    getDocPromise = managers.appStickersManager.getStickerSet(set).then((stickerSet) => stickerSet.documents[0] as Document.document);
+    getDocPromise = managers.appStickersManager.getStickerSet(getStickerSetInputById(set)).then((stickerSet) => stickerSet.documents[0] as Document.document);
   }
 
   const doc = await getDocPromise;

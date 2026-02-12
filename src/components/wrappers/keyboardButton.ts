@@ -4,37 +4,41 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {copyTextToClipboard} from '../../helpers/clipboard';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import htmlToDocumentFragment from '../../helpers/dom/htmlToDocumentFragment';
-import toggleDisability from '../../helpers/dom/toggleDisability';
-import {KeyboardButton, Message, ReplyMarkup, InlineQueryPeerType, RequestPeerType, Chat as MTChat} from '../../layer';
-import {ChatRights} from '../../lib/appManagers/appChatsManager';
-import hasRights from '../../lib/appManagers/utils/chats/hasRights';
-import getPeerActiveUsernames from '../../lib/appManagers/utils/peers/getPeerActiveUsernames';
-import {i18n, join} from '../../lib/langPack';
-import wrapRichText from '../../lib/richTextProcessor/wrapRichText';
-import rootScope from '../../lib/rootScope';
-import AppSelectPeers, {SelectSearchPeerType} from '../appSelectPeers';
-import Chat from '../chat/chat';
-import confirmationPopup from '../confirmationPopup';
-import Icon from '../icon';
-import PopupPickUser from '../popups/pickUser';
-import {toast, toastNew} from '../toast';
-import wrapPeerTitle from './peerTitle';
+import {copyTextToClipboard} from '@helpers/clipboard';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import htmlToDocumentFragment from '@helpers/dom/htmlToDocumentFragment';
+import toggleDisability from '@helpers/dom/toggleDisability';
+import {KeyboardButton, Message, ReplyMarkup, InlineQueryPeerType, RequestPeerType, Chat as MTChat} from '@layer';
+import {ChatRights} from '@appManagers/appChatsManager';
+import hasRights from '@appManagers/utils/chats/hasRights';
+import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
+import {i18n, join} from '@lib/langPack';
+import wrapRichText from '@lib/richTextProcessor/wrapRichText';
+import rootScope from '@lib/rootScope';
+import AppSelectPeers, {SelectSearchPeerType} from '@components/appSelectPeers';
+import Chat from '@components/chat/chat';
+import confirmationPopup from '@components/confirmationPopup';
+import Icon from '@components/icon';
+import PopupPickUser from '@components/popups/pickUser';
+import {toast, toastNew} from '@components/toast';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import wrapCustomEmoji from '@components/wrappers/customEmoji';
+import {makeMediaSize} from '@helpers/mediaSize';
 
 export default function wrapKeyboardButton({
   button,
   chat,
   message,
   noTextInject,
-  replyMarkup
+  replyMarkup,
+  wrapOptions
 }: {
   button: KeyboardButton,
   chat: Chat,
   message?: Message.message,
   replyMarkup?: ReplyMarkup,
-  noTextInject?: boolean
+  noTextInject?: boolean,
+  wrapOptions?: WrapSomethingOptions
 }) {
   let text: DocumentFragment | HTMLElement = wrapRichText(button.text, {noLinks: true, noLinebreaks: true});
   let buttonEl: HTMLButtonElement | HTMLAnchorElement;
@@ -368,6 +372,40 @@ export default function wrapKeyboardButton({
 
   if(buttonIcon) {
     buttonIcon.classList.add('reply-markup-button-icon');
+  }
+
+  let bg: 'success' | 'danger' | 'primary';
+  if(button.style && buttonEl) {
+    if(button.style.pFlags.bg_success) bg = 'success';
+    else if(button.style.pFlags.bg_danger) bg = 'danger';
+    else if(button.style.pFlags.bg_primary) bg = 'primary';
+
+    if(bg) {
+      buttonEl.classList.add(
+        'reply-markup-button-bg',
+        `reply-markup-button-bg-${bg}`
+      );
+    }
+  }
+
+  if(button.style?.icon) {
+    let customEmojiSize = wrapOptions?.customEmojiSize;
+    if(customEmojiSize) {
+      customEmojiSize = makeMediaSize(
+        customEmojiSize.width - 2,
+        customEmojiSize.height - 2
+      );
+    }
+
+    text.prepend(
+      wrapCustomEmoji({
+        docIds: [button.style.icon],
+        ...wrapOptions,
+        textColor: bg ? 'white' : wrapOptions.textColor,
+        customEmojiSize
+      }),
+      ' '
+    );
   }
 
   if(!noTextInject) {

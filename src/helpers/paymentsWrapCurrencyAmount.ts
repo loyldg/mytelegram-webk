@@ -1,10 +1,10 @@
-import bigInt from 'big-integer';
-import Icon from '../components/icon';
-import Currencies from '../config/currencies';
-import I18n from '../lib/langPack';
-import {STARS_CURRENCY, TON_CURRENCY} from '../lib/mtproto/mtproto_config';
-import {numberThousandSplitterForStars} from './number/numberThousandSplitter';
-import {MOUNT_CLASS_TO} from '../config/debug';
+import bigInt, {BigInteger} from 'big-integer';
+import Icon from '@components/icon';
+import Currencies from '@config/currencies';
+import I18n from '@lib/langPack';
+import {STARS_CURRENCY, TON_CURRENCY} from '@appManagers/constants';
+import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
+import {MOUNT_CLASS_TO} from '@config/debug';
 
 // https://stackoverflow.com/a/34141813
 function number_format(number: any, decimals: any, dec_point: any, thousands_sep: any): string {
@@ -33,7 +33,7 @@ function number_format(number: any, decimals: any, dec_point: any, thousands_sep
 
 const NANOTON_DECIMALS = 9;
 
-export function formatNanoton(amount: number | string, maxDecimals: number = 2, withThousandsSep = true) {
+export function formatNanoton(amount: number | string | BigInteger, maxDecimals: number = 2, withThousandsSep = true) {
   let amountStr = String(amount);
   let negative = false;
   if(amountStr.startsWith('-')) {
@@ -88,7 +88,7 @@ export function nanotonToJsNumber(nanoton: number | string) {
 export function parseNanotonFromDecimal(decimal: string) {
   const [int, frac = '0'] = decimal.split('.');
   const intPart = int + '0'.repeat(NANOTON_DECIMALS);
-  const fracPart = frac.padEnd(NANOTON_DECIMALS, '0');
+  const fracPart = frac.padEnd(NANOTON_DECIMALS, '0').slice(0, NANOTON_DECIMALS);
   return bigInt(intPart).plus(bigInt(fracPart));
 }
 

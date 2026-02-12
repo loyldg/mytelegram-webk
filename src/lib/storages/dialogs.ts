@@ -9,41 +9,41 @@
  * https://github.com/zhukov/webogram/blob/master/LICENSE
  */
 
-import type {Chat, ForumTopic as MTForumTopic, DialogPeer, Message, MessagesForumTopics, MessagesPeerDialogs, Update, Peer, MessagesMessages, MessagesSavedDialogs} from '../../layer';
-import type {AppMessagesManager, Dialog, ForumTopic, MyMessage, SavedDialog} from '../appManagers/appMessagesManager';
-import type {AccountDatabase} from '../../config/databases/state';
-import tsNow from '../../helpers/tsNow';
-import SearchIndex from '../searchIndex';
-import {SliceEnd} from '../../helpers/slicedArray';
-import {MyDialogFilter} from './filters';
-import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '../mtproto/mtproto_config';
-import {MaybePromise, Modify, NoneToVoidFunction} from '../../types';
-import ctx from '../../environment/ctx';
-import AppStorage from '../storage';
-import forEachReverse from '../../helpers/array/forEachReverse';
-import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
-import insertInDescendSortedArray from '../../helpers/array/insertInDescendSortedArray';
-import safeReplaceObject from '../../helpers/object/safeReplaceObject';
-import getServerMessageId from '../appManagers/utils/messageId/getServerMessageId';
-import {AppManager} from '../appManagers/manager';
-import getDialogIndexKey from '../appManagers/utils/dialogs/getDialogIndexKey';
-import isObject from '../../helpers/object/isObject';
-import getDialogIndex from '../appManagers/utils/dialogs/getDialogIndex';
-import getPeerIdsFromMessage from '../appManagers/utils/messages/getPeerIdsFromMessage';
-import {AppStoragesManager} from '../appManagers/appStoragesManager';
-import defineNotNumerableProperties from '../../helpers/object/defineNotNumerableProperties';
-import setDialogIndex from '../appManagers/utils/dialogs/setDialogIndex';
-import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
-import pause from '../../helpers/schedulers/pause';
-import {BroadcastEvents} from '../rootScope';
-import assumeType from '../../helpers/assumeType';
-import makeError from '../../helpers/makeError';
-import callbackify from '../../helpers/callbackify';
-import getPeerId from '../appManagers/utils/peers/getPeerId';
-import {isDialog, isSavedDialog, isForumTopic} from '../appManagers/utils/dialogs/isDialog';
-import getDialogKey from '../appManagers/utils/dialogs/getDialogKey';
-import getDialogThreadId from '../appManagers/utils/dialogs/getDialogThreadId';
-import {isTempId} from '../appManagers/utils/messages/isTempId';
+import type {Chat, ForumTopic as MTForumTopic, DialogPeer, Message, MessagesForumTopics, MessagesPeerDialogs, Update, Peer, MessagesMessages, MessagesSavedDialogs} from '@layer';
+import type {AppMessagesManager, Dialog, ForumTopic, MyMessage, SavedDialog} from '@appManagers/appMessagesManager';
+import type {AccountDatabase} from '@config/databases/state';
+import tsNow from '@helpers/tsNow';
+import SearchIndex from '@lib/searchIndex';
+import {SliceEnd} from '@helpers/slicedArray';
+import {MyDialogFilter} from '@lib/storages/filters';
+import {CAN_HIDE_TOPIC, FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, TEST_NO_SAVED} from '@appManagers/constants';
+import {MaybePromise, Modify, NoneToVoidFunction} from '@types';
+import ctx from '@environment/ctx';
+import AppStorage from '@lib/storage';
+import forEachReverse from '@helpers/array/forEachReverse';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
+import safeReplaceObject from '@helpers/object/safeReplaceObject';
+import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import {AppManager} from '@appManagers/manager';
+import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
+import isObject from '@helpers/object/isObject';
+import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
+import getPeerIdsFromMessage from '@appManagers/utils/messages/getPeerIdsFromMessage';
+import {AppStoragesManager} from '@appManagers/appStoragesManager';
+import defineNotNumerableProperties from '@helpers/object/defineNotNumerableProperties';
+import setDialogIndex from '@appManagers/utils/dialogs/setDialogIndex';
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
+import pause from '@helpers/schedulers/pause';
+import {BroadcastEvents} from '@lib/rootScope';
+import assumeType from '@helpers/assumeType';
+import makeError from '@helpers/makeError';
+import callbackify from '@helpers/callbackify';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import {isDialog, isSavedDialog, isForumTopic} from '@appManagers/utils/dialogs/isDialog';
+import getDialogKey from '@appManagers/utils/dialogs/getDialogKey';
+import getDialogThreadId from '@appManagers/utils/dialogs/getDialogThreadId';
+import {isTempId} from '@appManagers/utils/messages/isTempId';
 
 export enum FilterType {
   Folder,
@@ -63,6 +63,7 @@ export type Folder = {
   unreadMessagesCount: number,
   unreadPeerIds: Set<PeerId>,
   unreadUnmutedPeerIds: Set<PeerId>,
+  unreadMentionsPeerIds: Set<PeerId>,
   dispatchUnreadTimeout?: number
 };
 
@@ -402,7 +403,8 @@ export default class DialogsStorage extends AppManager {
       count: null,
       unreadMessagesCount: 0,
       unreadPeerIds: new Set(),
-      unreadUnmutedPeerIds: new Set()
+      unreadUnmutedPeerIds: new Set(),
+      unreadMentionsPeerIds: new Set()
     };
 
     defineNotNumerableProperties(folder, ['dispatchUnreadTimeout']);
@@ -483,7 +485,11 @@ export default class DialogsStorage extends AppManager {
 
   public getFolderUnreadCount(filterId: number) {
     const folder = this.getFolder(filterId);
-    return {unreadUnmutedCount: folder.unreadUnmutedPeerIds.size, unreadCount: folder.unreadPeerIds.size};
+    return {
+      unreadUnmutedCount: folder.unreadUnmutedPeerIds.size,
+      unreadCount: folder.unreadPeerIds.size,
+      unreadMentionsCount: folder.unreadMentionsPeerIds.size
+    };
   }
 
   public getCachedDialogs(skipMigrated?: boolean) {
@@ -737,20 +743,36 @@ export default class DialogsStorage extends AppManager {
 
     const wasUnreadCount = this.appMessagesManager.getDialogUnreadCount(dialog);
     const wasUnmuted = this.isDialogUnmuted(dialog);
+    const wasUnreadMentionsCount = wasUnreadCount ? dialog.unread_mentions_count : 0;
 
     if(toggle !== undefined) {
       const addMessagesCount = toggle ? wasUnreadCount : -wasUnreadCount;
       // this.modifyFolderUnreadCount(folderId, addMessagesCount, !!wasUnreadCount, wasUnreadCount && wasUnmuted, dialog);
-      this.modifyFolderUnreadCount(folderId, addMessagesCount, toggle && !!wasUnreadCount, toggle && !!wasUnreadCount && wasUnmuted, dialog);
+      this.modifyFolderUnreadCount(
+        folderId,
+        addMessagesCount,
+        !!(toggle && wasUnreadCount),
+        !!(toggle && wasUnreadCount && wasUnmuted),
+        !!(toggle && wasUnreadMentionsCount),
+        dialog
+      );
       return;
     }
 
     return () => {
       const newUnreadCount = this.appMessagesManager.getDialogUnreadCount(dialog);
       const newUnmuted = this.isDialogUnmuted(dialog);
+      const newUnreadMentionsCount = newUnreadCount ? dialog.unread_mentions_count : 0;
 
       const addMessagesCount = newUnreadCount - wasUnreadCount;
-      this.modifyFolderUnreadCount(folderId, addMessagesCount, !!newUnreadCount, newUnreadCount && newUnmuted, dialog);
+      this.modifyFolderUnreadCount(
+        folderId,
+        addMessagesCount,
+        !!newUnreadCount,
+        !!(newUnreadCount && newUnmuted),
+        !!newUnreadMentionsCount,
+        dialog
+      );
     };
   }
 
@@ -759,6 +781,7 @@ export default class DialogsStorage extends AppManager {
     addMessagesCount: number,
     toggleDialog: boolean,
     toggleUnmuted: boolean,
+    toggleMentions: boolean,
     dialog: Dialog | ForumTopic
   ) {
     const {peerId} = dialog;
@@ -779,7 +802,14 @@ export default class DialogsStorage extends AppManager {
             return;
           }
 
-          this.modifyFolderUnreadCount(folderId, 0, false, false, dialog);
+          this.modifyFolderUnreadCount(
+            folderId,
+            0,
+            false,
+            false,
+            false,
+            dialog
+          );
         });
 
         return;
@@ -806,6 +836,12 @@ export default class DialogsStorage extends AppManager {
       folder.unreadUnmutedPeerIds.add(key);
     } else {
       folder.unreadUnmutedPeerIds.delete(key);
+    }
+
+    if(toggleMentions) {
+      folder.unreadMentionsPeerIds.add(key);
+    } else {
+      folder.unreadMentionsPeerIds.delete(key);
     }
 
     folder.dispatchUnreadTimeout ??= ctx.setTimeout(() => {

@@ -4,33 +4,34 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
-import {formatTime, ONE_DAY} from '../../helpers/date';
-import htmlToSpan from '../../helpers/dom/htmlToSpan';
-import setInnerHTML, {setDirection} from '../../helpers/dom/setInnerHTML';
-import {wrapCallDuration} from './wrapDuration';
-import paymentsWrapCurrencyAmount from '../../helpers/paymentsWrapCurrencyAmount';
-import {ForumTopic, Message, MessageAction, MessageEntity, MessageMedia, MessageReplyHeader, StarGift, TextWithEntities} from '../../layer';
-import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
-import I18n, {FormatterArgument, FormatterArguments, i18n, join, langPack, LangPackKey, _i18n} from '../../lib/langPack';
-import {GENERAL_TOPIC_ID} from '../../lib/mtproto/mtproto_config';
-import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
-import wrapPlainText from '../../lib/richTextProcessor/wrapPlainText';
-import wrapRichText from '../../lib/richTextProcessor/wrapRichText';
-import rootScope from '../../lib/rootScope';
-import topicAvatar from '../topicAvatar';
-import {wrapCustomEmojiAwaited} from './customEmoji';
-import getPeerTitle from './getPeerTitle';
-import wrapJoinVoiceChatAnchor from './joinVoiceChatAnchor';
-import {WrapMessageActionTextOptions} from './messageActionTextNew';
-import wrapMessageForReply, {WrapMessageForReplyOptions} from './messageForReply';
-import wrapPeerTitle from './peerTitle';
-import shouldDisplayGiftCodeAsGift from '../../helpers/shouldDisplayGiftCodeAsGift';
-import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
-import Icon from '../icon';
-import formatStarsAmount from '../../lib/appManagers/utils/payments/formatStarsAmount';
-import {getPriceChangedActionMessageLangParams} from '../../lib/lang';
-import {numberThousandSplitterForStars} from '../../helpers/number/numberThousandSplitter';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import {formatTime, ONE_DAY} from '@helpers/date';
+import htmlToSpan from '@helpers/dom/htmlToSpan';
+import setInnerHTML, {setDirection} from '@helpers/dom/setInnerHTML';
+import {wrapCallDuration} from '@components/wrappers/wrapDuration';
+import paymentsWrapCurrencyAmount from '@helpers/paymentsWrapCurrencyAmount';
+import {ForumTopic, Message, MessageAction, MessageEntity, MessageMedia, MessageReplyHeader, StarGift, TextWithEntities} from '@layer';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import I18n, {FormatterArgument, FormatterArguments, i18n, join, langPack, LangPackKey, _i18n} from '@lib/langPack';
+import {GENERAL_TOPIC_ID} from '@appManagers/constants';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import wrapPlainText from '@lib/richTextProcessor/wrapPlainText';
+import wrapRichText from '@lib/richTextProcessor/wrapRichText';
+import rootScope from '@lib/rootScope';
+import topicAvatar from '@components/topicAvatar';
+import {wrapCustomEmojiAwaited} from '@components/wrappers/customEmoji';
+import getPeerTitle from '@components/wrappers/getPeerTitle';
+import wrapJoinVoiceChatAnchor from '@components/wrappers/joinVoiceChatAnchor';
+import {WrapMessageActionTextOptions} from '@components/wrappers/messageActionTextNew';
+import wrapMessageForReply, {WrapMessageForReplyOptions} from '@components/wrappers/messageForReply';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import shouldDisplayGiftCodeAsGift from '@helpers/shouldDisplayGiftCodeAsGift';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import Icon from '@components/icon';
+import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
+import {getPriceChangedActionMessageLangParams} from '@lib/lang';
+import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
+import {getCollectibleName} from '@appManagers/utils/gifts/getCollectibleName';
 
 async function wrapLinkToMessage(options: WrapMessageForReplyOptions) {
   const wrapped = await wrapMessageForReply(options);
@@ -731,6 +732,8 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
         } else {
           if(action.pFlags.upgrade) {
             langPackKey = message.pFlags.out ? 'ActionGiftUpgradedOutbound' : 'ActionGiftUpgradedInbound'
+          } else if(message.pFlags.out && action.pFlags.from_offer) {
+            langPackKey = 'ActionGiftSold';
           } else {
             langPackKey = message.pFlags.out ? 'ActionGiftTransferredOutbound' : 'ActionGiftTransferredInbound'
           }
@@ -846,6 +849,43 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
         args = [getNameDivHTML(message.peerId, plain)];
 
         break
+      }
+      case 'messageActionStarGiftPurchaseOffer': {
+        langPackKey = message.pFlags.out ? 'StarGiftOffer.Outgoing' : 'StarGiftOffer.Incoming';
+        args = [
+          getNameDivHTML(message.peerId, plain),
+          i18n('Stars', [numberThousandSplitterForStars(action.price.amount)]),
+          getCollectibleName(action.gift as StarGift.starGiftUnique)
+        ];
+        break;
+      }
+      case 'messageActionStarGiftPurchaseOfferDeclined':
+        if(action.pFlags.expired) {
+          langPackKey = 'StarGiftOffer.ExpiredFull'
+        } else {
+          langPackKey = message.pFlags.out ? 'StarGiftOffer.RejectedFullOutgoing' : 'StarGiftOffer.RejectedFullIncoming'
+        }
+        args = [
+          getNameDivHTML(message.peerId, plain),
+          i18n('Stars', [numberThousandSplitterForStars(action.price.amount)]),
+          getCollectibleName(action.gift as StarGift.starGiftUnique)
+        ];
+        break;
+      case 'messageActionNewCreatorPending': {
+        langPackKey = 'Chat.Service.NewCreatorPending';
+        args = [
+          getNameDivHTML(action.new_creator_id.toPeerId(), plain),
+          getNameDivHTML(message.fromId, plain)
+        ];
+        break;
+      }
+      case 'messageActionChangeCreator': {
+        langPackKey = 'Chat.Service.ChangeCreator';
+        args = [
+          getNameDivHTML(message.fromId, plain),
+          getNameDivHTML(action.new_creator_id.toPeerId(), plain)
+        ];
+        break;
       }
       default:
         langPackKey = (langPack[_] || `[${action._}]`) as any;

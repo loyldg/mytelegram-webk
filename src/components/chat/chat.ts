@@ -4,82 +4,83 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {AdminLog, ChatRights} from '../../lib/appManagers/appChatsManager';
-import type {RequestWebViewOptions} from '../../lib/appManagers/appAttachMenuBotsManager';
-import type {HistoryStorageKey, MessageSendingParams, MessagesStorageKey, MyMessage, RequestHistoryOptions} from '../../lib/appManagers/appMessagesManager';
-import {AppImManager, APP_TABS, ChatSetPeerOptions} from '../../lib/appManagers/appImManager';
-import EventListenerBase from '../../helpers/eventListenerBase';
-import {logger, LogTypes} from '../../lib/logger';
-import rootScope from '../../lib/rootScope';
-import appSidebarRight from '../sidebarRight';
-import ChatBubbles, {FullMid, splitFullMid} from './bubbles';
-import ChatContextMenu from './contextMenu';
-import ChatInput from './input';
-import ChatSelection from './selection';
-import ChatTopbar from './topbar';
-import {NULL_PEER_ID, REPLIES_PEER_ID, SEND_PAID_WITH_STARS_DELAY} from '../../lib/mtproto/mtproto_config';
-import SetTransition from '../singleTransition';
-import AppPrivateSearchTab from '../sidebarRight/tabs/search';
-import renderImageFromUrl from '../../helpers/dom/renderImageFromUrl';
-import mediaSizes, {ScreenSize} from '../../helpers/mediaSizes';
-import ChatSearch from './search';
-import IS_TOUCH_SUPPORTED from '../../environment/touchSupport';
-import ChatBackgroundGradientRenderer from './gradientRenderer';
-import ChatBackgroundPatternRenderer from './patternRenderer';
-import pause from '../../helpers/schedulers/pause';
-import {AppManagers} from '../../lib/appManagers/managers';
-import SlicedArray from '../../helpers/slicedArray';
-import themeController from '../../helpers/themeController';
-import AppSharedMediaTab from '../sidebarRight/tabs/sharedMedia';
-import noop from '../../helpers/noop';
-import middlewarePromise from '../../helpers/middlewarePromise';
-import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
-import {Message, WallPaper, Chat as MTChat, Reaction, AvailableReaction, ChatFull, MessageEntity, PaymentsPaymentForm, InputPeer, ChatTheme, UserFull, User} from '../../layer';
-import animationIntersector, {AnimationItemGroup} from '../animationIntersector';
-import {getColorsFromWallPaper} from '../../helpers/color';
-import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
-import deferredPromise, {CancellablePromise, bindPromiseToDeferred} from '../../helpers/cancellablePromise';
-import {isDialog} from '../../lib/appManagers/utils/dialogs/isDialog';
-import getDialogKey from '../../lib/appManagers/utils/dialogs/getDialogKey';
-import getHistoryStorageKey, {getHistoryStorageType} from '../../lib/appManagers/utils/messages/getHistoryStorageKey';
-import isForwardOfForward from '../../lib/appManagers/utils/messages/isForwardOfForward';
-import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
-import {SendReactionOptions} from '../../lib/appManagers/appReactionsManager';
-import {MiddlewareHelper, getMiddleware} from '../../helpers/middleware';
-import {Accessor, batch, createEffect, createRoot, createSignal, on, onCleanup, untrack} from 'solid-js';
-import TopbarSearch from './topbarSearch';
-import createUnifiedSignal from '../../helpers/solid/createUnifiedSignal';
-import liteMode from '../../helpers/liteMode';
-import {useFullPeer} from '../../stores/fullPeers';
-import {useAppConfig, useAppState} from '../../stores/appState';
+import type {AdminLog, ChatRights} from '@appManagers/appChatsManager';
+import type {RequestWebViewOptions} from '@appManagers/appAttachMenuBotsManager';
+import type {HistoryStorageKey, MessageSendingParams, MessagesStorageKey, MyMessage, RequestHistoryOptions} from '@appManagers/appMessagesManager';
+import {AppImManager, APP_TABS, ChatSetPeerOptions} from '@lib/appImManager';
+import EventListenerBase from '@helpers/eventListenerBase';
+import {logger, LogTypes} from '@lib/logger';
+import rootScope from '@lib/rootScope';
+import appSidebarRight from '@components/sidebarRight';
+import ChatBubbles, {FullMid, splitFullMid} from '@components/chat/bubbles';
+import ChatContextMenu from '@components/chat/contextMenu';
+import ChatInput from '@components/chat/input';
+import ChatSelection from '@components/chat/selection';
+import ChatTopbar from '@components/chat/topbar';
+import {HIDDEN_PEER_ID, NULL_PEER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SERVICE_PEER_ID, VERIFICATION_CODES_BOT_ID} from '@appManagers/constants';
+import SetTransition from '@components/singleTransition';
+import AppPrivateSearchTab from '@components/sidebarRight/tabs/search';
+import renderImageFromUrl from '@helpers/dom/renderImageFromUrl';
+import mediaSizes, {ScreenSize} from '@helpers/mediaSizes';
+import ChatSearch from '@components/chat/search';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import ChatBackgroundGradientRenderer from '@components/chat/gradientRenderer';
+import ChatBackgroundPatternRenderer from '@components/chat/patternRenderer';
+import pause from '@helpers/schedulers/pause';
+import {AppManagers} from '@lib/managers';
+import SlicedArray from '@helpers/slicedArray';
+import themeController from '@helpers/themeController';
+import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMedia';
+import noop from '@helpers/noop';
+import middlewarePromise from '@helpers/middlewarePromise';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import {Message, WallPaper, Chat as MTChat, Reaction, AvailableReaction, ChatFull, MessageEntity, PaymentsPaymentForm, InputPeer, ChatTheme, UserFull, User, StoriesStealthMode} from '@layer';
+import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
+import {getColorsFromWallPaper} from '@helpers/color';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import deferredPromise, {CancellablePromise, bindPromiseToDeferred} from '@helpers/cancellablePromise';
+import {isDialog} from '@appManagers/utils/dialogs/isDialog';
+import getDialogKey from '@appManagers/utils/dialogs/getDialogKey';
+import getHistoryStorageKey, {getHistoryStorageType} from '@appManagers/utils/messages/getHistoryStorageKey';
+import isForwardOfForward from '@appManagers/utils/messages/isForwardOfForward';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import {SendReactionOptions} from '@appManagers/appReactionsManager';
+import {MiddlewareHelper, getMiddleware} from '@helpers/middleware';
+import {Accessor, createEffect, createRoot, createSignal, on, onCleanup, untrack} from 'solid-js';
+import TopbarSearch from '@components/chat/topbarSearch';
+import createUnifiedSignal from '@helpers/solid/createUnifiedSignal';
+import liteMode from '@helpers/liteMode';
+import {useFullPeer} from '@stores/fullPeers';
+import {useAppConfig, useAppState} from '@stores/appState';
 import {unwrap} from 'solid-js/store';
-import {averageColorFromCanvas, averageColorFromImage} from '../../helpers/averageColor';
-import highlightingColor from '../../helpers/highlightingColor';
-import callbackify from '../../helpers/callbackify';
-import useIsNightTheme from '../../hooks/useIsNightTheme';
-import useStars, {setReservedStars} from '../../stores/stars';
-import PopupElement from '../popups';
-import PopupStars from '../popups/stars';
-import {getPendingPaidReactionKey, PENDING_PAID_REACTION_SENT_ABORT_REASON, PENDING_PAID_REACTIONS} from './reactions';
-import ChatBackgroundStore from '../../lib/chatBackgroundStore';
-import appDownloadManager from '../../lib/appManagers/appDownloadManager';
-import showUndoablePaidTooltip, {paidReactionLangKeys} from './undoablePaidTooltip';
-import namedPromises from '../../helpers/namedPromises';
-import {getCurrentNewMediaPopup} from '../popups/newMedia';
-import PriceChangedInterceptor from './priceChangedInterceptor';
-import {isVerificationBot} from './utils';
-import {isSensitive} from '../../helpers/restrictions';
-import {isTempId} from '../../lib/appManagers/utils/messages/isTempId';
-import {usePeer} from '../../stores/peers';
-import {useAppSettings} from '../../stores/appSettings';
-import useHistoryStorage from '../../stores/historyStorages';
-import useAutoDownloadSettings, {ChatAutoDownloadSettings} from '../../hooks/useAutoDownloadSettings';
-import usePeerTranslation from '../../hooks/usePeerTranslation';
-import debounce from '../../helpers/schedulers/debounce';
-import appNavigationController from '../appNavigationController';
-import {LEFT_COLUMN_ACTIVE_CLASSNAME} from '../sidebarLeft';
-import {AckedResult} from '../../lib/mtproto/superMessagePort';
-import SolidJSHotReloadGuardProvider from '../../lib/solidjs/hotReloadGuardProvider';
+import {averageColorFromCanvas, averageColorFromImage} from '@helpers/averageColor';
+import highlightingColor from '@helpers/highlightingColor';
+import callbackify from '@helpers/callbackify';
+import useIsNightTheme from '@hooks/useIsNightTheme';
+import useStars, {setReservedStars} from '@stores/stars';
+import PopupElement from '@components/popups';
+import PopupStars from '@components/popups/stars';
+import {getPendingPaidReactionKey, PENDING_PAID_REACTION_SENT_ABORT_REASON, PENDING_PAID_REACTIONS} from '@components/chat/reactions';
+import ChatBackgroundStore from '@lib/chatBackgroundStore';
+import appDownloadManager from '@lib/appDownloadManager';
+import showUndoablePaidTooltip, {paidReactionLangKeys} from '@components/chat/undoablePaidTooltip';
+import namedPromises from '@helpers/namedPromises';
+import {getCurrentNewMediaPopup} from '@components/popups/newMedia';
+import PriceChangedInterceptor from '@components/chat/priceChangedInterceptor';
+import {isVerificationBot} from '@components/chat/utils';
+import {isSensitive} from '@helpers/restrictions';
+import {isTempId} from '@appManagers/utils/messages/isTempId';
+import {usePeer} from '@stores/peers';
+import {useAppSettings} from '@stores/appSettings';
+import useHistoryStorage from '@stores/historyStorages';
+import useAutoDownloadSettings, {ChatAutoDownloadSettings} from '@hooks/useAutoDownloadSettings';
+import usePeerTranslation from '@hooks/usePeerTranslation';
+import debounce from '@helpers/schedulers/debounce';
+import appNavigationController from '@components/appNavigationController';
+import {LEFT_COLUMN_ACTIVE_CLASSNAME} from '@components/sidebarLeft';
+import {AckedResult} from '@lib/superMessagePort';
+import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
+import hasRights from '@appManagers/utils/chats/hasRights';
 
 
 export enum ChatType {
@@ -133,8 +134,7 @@ export default class Chat extends EventListenerBase<{
 
   public type: ChatType;
   public messagesStorageKey: MessagesStorageKey;
-  public historyStorageKeySignal: ReturnType<typeof createUnifiedSignal<HistoryStorageKey>>;
-  public historyStorageKeyNoThreadIdSignal: ReturnType<typeof createUnifiedSignal<HistoryStorageKey>>;
+  public disposeHistoryStorage: () => void;
   public isStandalone: boolean;
 
   public noForwards: boolean;
@@ -171,6 +171,7 @@ export default class Chat extends EventListenerBase<{
   public noInput: boolean;
 
   public starsAmount: number | undefined;
+  public stealthMode: StoriesStealthMode | undefined;
 
   public animationGroup: AnimationItemGroup;
 
@@ -245,22 +246,6 @@ export default class Chat extends EventListenerBase<{
       [this.appState, this.setAppState] = useAppState();
       [this.appSettings, this.setAppSettings] = useAppSettings();
       this.appConfig = useAppConfig();
-      this.historyStorageKeySignal = createUnifiedSignal();
-      this.historyStorageKeyNoThreadIdSignal = createUnifiedSignal();
-
-      createEffect(on(
-        () => [this.historyStorageKeySignal(), this.historyStorageKeyNoThreadIdSignal()],
-        ([key, keyNoThreadId]) => {
-          this.historyStorage = useHistoryStorage(key);
-          this.historyStorageNoThreadId = useHistoryStorage(keyNoThreadId);
-
-          this.managers.appMessagesManager.toggleHistoryKeySubscription(key, true);
-          onCleanup(() => {
-            this.managers.appMessagesManager.toggleHistoryKeySubscription(key, false);
-          });
-        },
-        {defer: true}
-      ));
     });
   }
 
@@ -1154,9 +1139,22 @@ export default class Chat extends EventListenerBase<{
   }
 
   private changeHistoryStorageKey(key: HistoryStorageKey, keyNoThreadId: HistoryStorageKey) {
-    batch(() => {
-      this.historyStorageKeySignal(key);
-      this.historyStorageKeyNoThreadIdSignal(keyNoThreadId);
+    this.disposeHistoryStorage?.();
+    this.disposeHistoryStorage = undefined;
+    if(!key) {
+      return;
+    }
+
+    this.disposeHistoryStorage = createRoot((dispose) => {
+      this.historyStorage = useHistoryStorage(key);
+      this.historyStorageNoThreadId = useHistoryStorage(keyNoThreadId);
+
+      this.managers.appMessagesManager.toggleHistoryKeySubscription(key, true);
+      onCleanup(() => {
+        this.managers.appMessagesManager.toggleHistoryKeySubscription(key, false);
+      });
+
+      return dispose;
     });
   }
 
@@ -1605,6 +1603,20 @@ export default class Chat extends EventListenerBase<{
         this.managers.appPrivacyManager.setAutoDeletePeriodFor(this.peerId, period);
       }
     }).show();
+  }
+
+  public canManageAutoDelete = async() => {
+    const specialChats = [REPLIES_PEER_ID, REPLIES_HIDDEN_CHANNEL_ID.toPeerId(), VERIFICATION_CODES_BOT_ID, HIDDEN_PEER_ID, SERVICE_PEER_ID, rootScope.myId];
+    if(specialChats.includes(this.peerId)) return false;
+
+    if(this.peerId.isUser()) return true;
+
+    const {chat, isMonoforum}  = await namedPromises({
+      chat: this.managers.appChatsManager.getChat(this.peerId.toChatId()),
+      isMonoforum: this.managers.appChatsManager.isMonoforum(this.peerId.toChatId())
+    });
+
+    return !isMonoforum && hasRights(chat, 'change_info');
   }
 
   public toggleChatIfMedium() {

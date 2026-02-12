@@ -5,7 +5,7 @@
     // "target": "es5",                       /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019' or 'ESNEXT'. */
     "target": "es2015",                       /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019' or 'ESNEXT'. */
     "module": "es2020",                       /* Specify module code generation: 'none', 'commonjs', 'amd', 'system', 'umd', 'es2015', or 'ESNext'. */
-    "lib": ["es2015", "dom", "webworker", "ES2021.WeakRef"],    /* Specify library files to be included in the compilation. */
+    "lib": ["es2015", "dom", "webworker", "ES2021.WeakRef", "DOM.Iterable"],    /* Specify library files to be included in the compilation. */
     "allowJs": true,                          /* Allow javascript files to be compiled. */
     // "checkJs": true,                       /* Report errors in .js files. */
     "jsx": "preserve",                        /* Specify JSX code generation: 'preserve', 'react-native', or 'react'. */
@@ -53,6 +53,21 @@
       "solid-js/jsx-runtime": ["./src/vendor/solid"],
       "solid-js/jsx-dev-runtime": ["./src/vendor/solid"],
       "solid-transition-group": ["./src/vendor/solid-transition-group"],
+      "@components/*": ["./src/components/*"],
+      "@helpers/*": ["./src/helpers/*"],
+      "@hooks/*": ["./src/hooks/*"],
+      "@stores/*": ["./src/stores/*"],
+      "@lib/*": ["./src/lib/*"],
+      "@appManagers/*": ["./src/lib/appManagers/*"],
+      "@richTextProcessor/*": ["./src/lib/richTextProcessor/*"],
+      "@environment/*": ["./src/environment/*"],
+      "@customEmoji/*": ["./src/lib/customEmoji/*"],
+      "@rlottie/*": ["./src/lib/rlottie/*"],
+      "@config/*": ["./src/config/*"],
+      "@vendor/*": ["./src/vendor/*"],
+      "@layer": ["./src/layer.d.ts"],
+      "@types": ["./src/types.d.ts"],
+      "@/*": ["./src/*"]
     },
     // "rootDirs": [],                        /* List of root folders whose combined content represents the structure of the project at runtime. */
     // "typeRoots": [],                       /* List of folders to include type definitions from. */

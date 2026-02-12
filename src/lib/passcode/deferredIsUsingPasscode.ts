@@ -1,6 +1,6 @@
-import deferredPromise from '../../helpers/cancellablePromise';
+import deferredPromise from '@helpers/cancellablePromise';
 
-import StaticUtilityClass from '../staticUtilityClass';
+import StaticUtilityClass from '@lib/staticUtilityClass';
 
 
 export default class DeferredIsUsingPasscode extends StaticUtilityClass {
@@ -18,6 +18,10 @@ export default class DeferredIsUsingPasscode extends StaticUtilityClass {
 
     if(typeof this.value !== 'boolean') throw new Error('Is using passcode is not boolean WTF?');
 
+    return this.value;
+  }
+
+  public static isUsingPasscodeUndeferred() {
     return this.value;
   }
 

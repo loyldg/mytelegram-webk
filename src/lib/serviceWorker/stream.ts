@@ -4,61 +4,29 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import readBlobAsUint8Array from '../../helpers/blob/readBlobAsUint8Array';
-import bufferConcats from '../../helpers/bytes/bufferConcats';
-import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
-import tryPatchMp4 from '../../helpers/fixChromiumMp4';
-import debounce, {DebounceReturnType} from '../../helpers/schedulers/debounce';
-import pause from '../../helpers/schedulers/pause';
-import {InputFileLocation} from '../../layer';
-import {getCurrentAccountFromURL} from '../accounts/getCurrentAccountFromURL';
-import {ActiveAccountNumber} from '../accounts/types';
-import CacheStorageController from '../files/cacheStorage';
-import {DownloadOptions, MyUploadFile} from '../mtproto/apiFileManager';
-import {getMtprotoMessagePort, log, serviceMessagePort} from './index.service';
-import {ServiceRequestFilePartTaskPayload} from './serviceMessagePort';
-import timeout from './timeout';
+import readBlobAsUint8Array from '@helpers/blob/readBlobAsUint8Array';
+import bufferConcats from '@helpers/bytes/bufferConcats';
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
+import tryPatchMp4 from '@helpers/fixChromiumMp4';
+import debounce, {DebounceReturnType} from '@helpers/schedulers/debounce';
+import pause from '@helpers/schedulers/pause';
+import {InputFileLocation} from '@layer';
+import {getCurrentAccountFromURL} from '@lib/accounts/getCurrentAccountFromURL';
+import {ActiveAccountNumber} from '@lib/accounts/types';
+import CacheStorageController from '@lib/files/cacheStorage';
+import {DownloadOptions, MyUploadFile} from '@appManagers/apiFileManager';
+import {getMtprotoMessagePort, log, serviceMessagePort} from '@lib/serviceWorker/index.service';
+import {ServiceRequestFilePartTaskPayload} from '@lib/serviceWorker/serviceMessagePort';
+import timeout from '@lib/serviceWorker/timeout';
 
 const ctx = self as any as ServiceWorkerGlobalScope;
 
 const deferredPromises: Map<MessagePort, {[taskId: string]: CancellablePromise<MyUploadFile>}> = new Map();
 const cacheStorage = new CacheStorageController('cachedStreamChunks');
-const CHUNK_TTL = 86400;
-const CHUNK_CACHED_TIME_HEADER = 'Time-Cached';
 const USE_CACHE = true;
 const TEST_SLOW = false;
 const PRELOAD_SIZE = 20 * 1024 * 1024;
 
-const clearOldChunks = () => {
-  return cacheStorage.timeoutOperation((cache) => {
-    return cache.keys().then((requests) => {
-      const filtered: Map<DocId, Request> = new Map();
-      const timestamp = Date.now() / 1000 | 0;
-      for(const request of requests) {
-        const match = request.url.match(/\/(\d+?)\?/);
-        if(match && !filtered.has(match[1])) {
-          filtered.set(match[1], request);
-        }
-      }
-
-      const promises: Promise<any>[] = [];
-      for(const [id, request] of filtered) {
-        const promise = cache.match(request).then((response) => {
-          if((+response.headers.get(CHUNK_CACHED_TIME_HEADER) + CHUNK_TTL) <= timestamp) {
-            log('will delete stream chunk:', id);
-            return cache.delete(request, {ignoreSearch: true, ignoreVary: true});
-          }
-        });
-
-        promises.push(promise);
-      }
-
-      return Promise.all(promises);
-    });
-  });
-};
-
-setInterval(clearOldChunks, 1800e3);
 setInterval(() => {
   const mtprotoMessagePort = getMtprotoMessagePort();
   for(const [messagePort, promises] of deferredPromises) {
@@ -197,15 +165,9 @@ class Stream {
   private saveChunkToCache(deferred: Promise<Uint8Array>, alignedOffset: number, limit: number) {
     return deferred.then((bytes) => {
       const key = this.getChunkKey(alignedOffset, limit);
-      const response = new Response(bytes, {
-        headers: {
-          'Content-Length': '' + bytes.length,
-          'Content-Type': 'application/octet-stream',
-          [CHUNK_CACHED_TIME_HEADER]: '' + (Date.now() / 1000 | 0)
-        }
-      });
+      const response = new Response(bytes);
 
-      return cacheStorage.save(key, response);
+      return cacheStorage.save({entryName: key, response, size: bytes.length, contentType: 'application/octet-stream'});
     });
   }
 

@@ -4,29 +4,29 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import ripple from '../ripple';
-import animationIntersector from '../animationIntersector';
-import appNavigationController, {NavigationItem} from '../appNavigationController';
-import {i18n, LangPackKey, _i18n} from '../../lib/langPack';
-import findUpClassName from '../../helpers/dom/findUpClassName';
-import blurActiveElement from '../../helpers/dom/blurActiveElement';
-import ListenerSetter from '../../helpers/listenerSetter';
-import {attachClickEvent, simulateClickEvent} from '../../helpers/dom/clickEvent';
-import isSendShortcutPressed from '../../helpers/dom/isSendShortcutPressed';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import EventListenerBase, {EventListenerListeners} from '../../helpers/eventListenerBase';
-import {addFullScreenListener, getFullScreenElement} from '../../helpers/dom/fullScreen';
-import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
-import {AppManagers} from '../../lib/appManagers/managers';
-import overlayCounter from '../../helpers/overlayCounter';
-import Scrollable from '../scrollable';
-import {getMiddleware, MiddlewareHelper} from '../../helpers/middleware';
-import ButtonIcon from '../buttonIcon';
-import Icon from '../icon';
-import toggleDisability from '../../helpers/dom/toggleDisability';
+import ripple from '@components/ripple';
+import animationIntersector from '@components/animationIntersector';
+import appNavigationController, {NavigationItem} from '@components/appNavigationController';
+import {i18n, LangPackKey, _i18n} from '@lib/langPack';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import blurActiveElement from '@helpers/dom/blurActiveElement';
+import ListenerSetter from '@helpers/listenerSetter';
+import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
+import isSendShortcutPressed from '@helpers/dom/isSendShortcutPressed';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import EventListenerBase, {EventListenerListeners} from '@helpers/eventListenerBase';
+import {addFullScreenListener, getFullScreenElement} from '@helpers/dom/fullScreen';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import {AppManagers} from '@lib/managers';
+import overlayCounter from '@helpers/overlayCounter';
+import Scrollable from '@components/scrollable';
+import {getMiddleware, MiddlewareHelper} from '@helpers/middleware';
+import ButtonIcon from '@components/buttonIcon';
+import Icon from '@components/icon';
+import toggleDisability from '@helpers/dom/toggleDisability';
 import {JSX} from 'solid-js';
 import {render} from 'solid-js/web';
-import MarkupTooltip from '../chat/markupTooltip';
+import MarkupTooltip from '@components/chat/markupTooltip';
 
 export type PopupButton = {
   text?: HTMLElement | DocumentFragment | Text,
@@ -326,7 +326,7 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
     this.scrollable?.onAdditionalScroll?.();
   }
 
-  public show() {
+  public show(animate = true) {
     if(this.shown || this.destroyed) {
       return;
     }
@@ -354,7 +354,7 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
 
     blurActiveElement(); // * hide mobile keyboard
     appendPopupTo.append(this.element);
-    void this.element.offsetWidth; // reflow
+    if(animate) void this.element.offsetWidth; // reflow
     this.element.classList.add('active');
 
     this.onContentUpdate();

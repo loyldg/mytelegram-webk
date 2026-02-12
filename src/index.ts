@@ -6,57 +6,58 @@
 
 /* @refresh reload */
 
-import App from './config/app';
-import blurActiveElement from './helpers/dom/blurActiveElement';
-import {IS_STICKY_INPUT_BUGGED} from './helpers/dom/fixSafariStickyInputFocusing';
-import loadFonts from './helpers/dom/loadFonts';
-import IS_EMOJI_SUPPORTED from './environment/emojiSupport';
-import {IS_ANDROID, IS_APPLE, IS_APPLE_MOBILE, IS_FIREFOX, IS_MOBILE, IS_MOBILE_SAFARI, IS_SAFARI} from './environment/userAgent';
-import './materialize.scss';
-import './scss/style.scss';
-import pause from './helpers/schedulers/pause';
-import setWorkerProxy from './helpers/setWorkerProxy';
-import toggleAttributePolyfill from './helpers/dom/toggleAttributePolyfill';
-import rootScope from './lib/rootScope';
-import IS_TOUCH_SUPPORTED from './environment/touchSupport';
-import I18n, {checkLangPackForUpdates, i18n, LangPackKey} from './lib/langPack';
-import './helpers/peerIdPolyfill';
-import './lib/polyfill';
-import apiManagerProxy from './lib/mtproto/mtprotoworker';
-import getProxiedManagers from './lib/appManagers/getProxiedManagers';
-import themeController from './helpers/themeController';
-import overlayCounter from './helpers/overlayCounter';
-import singleInstance, {InstanceDeactivateReason} from './lib/mtproto/singleInstance';
-import {parseUriParamsLine} from './helpers/string/parseUriParams';
-import Modes from './config/modes';
-import {AuthState} from './types';
-import DEBUG, {IS_BETA} from './config/debug';
-import IS_INSTALL_PROMPT_SUPPORTED from './environment/installPrompt';
-import cacheInstallPrompt from './helpers/dom/installPrompt';
-import {fillLocalizedDates} from './helpers/date';
-import {nextRandomUint} from './helpers/random';
-import {IS_OVERLAY_SCROLL_SUPPORTED, USE_CUSTOM_SCROLL, USE_NATIVE_SCROLL} from './environment/overlayScrollSupport';
-import IMAGE_MIME_TYPES_SUPPORTED, {IMAGE_MIME_TYPES_SUPPORTED_PROMISE} from './environment/imageMimeTypesSupport';
-import MEDIA_MIME_TYPES_SUPPORTED from './environment/mediaMimeTypesSupport';
-import {doubleRaf} from './helpers/schedulers';
-import {getCurrentAccount} from './lib/accounts/getCurrentAccount';
-import AccountController from './lib/accounts/accountController';
-import {changeAccount} from './lib/accounts/changeAccount';
-import {MAX_ACCOUNTS_FREE, MAX_ACCOUNTS_PREMIUM} from './lib/accounts/constants';
-import sessionStorage from './lib/sessionStorage';
-import replaceChildrenPolyfill from './helpers/dom/replaceChildrenPolyfill';
-import listenForWindowPrint from './helpers/dom/windowPrint';
-import cancelImageEvents from './helpers/dom/cancelImageEvents';
-import PopupElement from './components/popups';
-import appRuntimeManager from './lib/appManagers/appRuntimeManager';
-import PasscodeLockScreenController from './components/passcodeLock/passcodeLockScreenController'; PasscodeLockScreenController;
-import type {LangPackDifference} from './layer';
-import commonStateStorage from './lib/commonStateStorage';
-import {MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_FACTOR} from './components/sidebarLeft/constants';
-import useHasFoldersSidebar, {useIsSidebarCollapsed} from './stores/foldersSidebar';
+import App from '@config/app';
+import blurActiveElement from '@helpers/dom/blurActiveElement';
+import {IS_STICKY_INPUT_BUGGED} from '@helpers/dom/fixSafariStickyInputFocusing';
+import loadFonts from '@helpers/dom/loadFonts';
+import IS_EMOJI_SUPPORTED from '@environment/emojiSupport';
+import {IS_ANDROID, IS_APPLE, IS_APPLE_MOBILE, IS_FIREFOX, IS_MOBILE, IS_MOBILE_SAFARI, IS_SAFARI} from '@environment/userAgent';
+import '@/materialize.scss';
+import '@/scss/style.scss';
+import pause from '@helpers/schedulers/pause';
+import setWorkerProxy from '@helpers/setWorkerProxy';
+import toggleAttributePolyfill from '@helpers/dom/toggleAttributePolyfill';
+import rootScope from '@lib/rootScope';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import I18n, {checkLangPackForUpdates, i18n, LangPackKey} from '@lib/langPack';
+import '@helpers/peerIdPolyfill';
+import '@lib/polyfill';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import getProxiedManagers from '@lib/getProxiedManagers';
+import themeController from '@helpers/themeController';
+import overlayCounter from '@helpers/overlayCounter';
+import singleInstance, {InstanceDeactivateReason} from '@lib/singleInstance';
+import {parseUriParamsLine} from '@helpers/string/parseUriParams';
+import Modes from '@config/modes';
+import {AuthState} from '@types';
+import DEBUG, {IS_BETA} from '@config/debug';
+import IS_INSTALL_PROMPT_SUPPORTED from '@environment/installPrompt';
+import cacheInstallPrompt from '@helpers/dom/installPrompt';
+import {fillLocalizedDates} from '@helpers/date';
+import {nextRandomUint} from '@helpers/random';
+import {IS_OVERLAY_SCROLL_SUPPORTED, USE_CUSTOM_SCROLL, USE_NATIVE_SCROLL} from '@environment/overlayScrollSupport';
+import IMAGE_MIME_TYPES_SUPPORTED, {IMAGE_MIME_TYPES_SUPPORTED_PROMISE} from '@environment/imageMimeTypesSupport';
+import MEDIA_MIME_TYPES_SUPPORTED from '@environment/mediaMimeTypesSupport';
+import {doubleRaf, fastRafPromise} from '@helpers/schedulers';
+import {getCurrentAccount} from '@lib/accounts/getCurrentAccount';
+import AccountController from '@lib/accounts/accountController';
+import {changeAccount} from '@lib/accounts/changeAccount';
+import {MAX_ACCOUNTS_FREE, MAX_ACCOUNTS_PREMIUM} from '@lib/accounts/constants';
+import sessionStorage from '@lib/sessionStorage';
+import replaceChildrenPolyfill from '@helpers/dom/replaceChildrenPolyfill';
+import listenForWindowPrint from '@helpers/dom/windowPrint';
+import cancelImageEvents from '@helpers/dom/cancelImageEvents';
+import PopupElement from '@components/popups';
+import PasscodeLockScreenController from '@components/passcodeLock/passcodeLockScreenController'; PasscodeLockScreenController;
+import type {LangPackDifference} from '@layer';
+import commonStateStorage from '@lib/commonStateStorage';
+import {MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_FACTOR} from '@components/sidebarLeft/constants';
+import useHasFoldersSidebar, {useIsSidebarCollapsed} from '@stores/foldersSidebar';
+import appNavigationController from '@components/appNavigationController';
+import {preventCrossTabDynamicImportDeadlock} from '@helpers/preventDeadlock';
 
-// import commonStateStorage from './lib/commonStateStorage';
-// import { STATE_INIT } from './config/state';
+// import commonStateStorage from '@lib/commonStateStorage';
+// import { STATE_INIT } from '@config/state';
 
 // if(DEBUG) {
 //   (async() => {
@@ -88,7 +89,7 @@ function randomlyChooseVersionFromSearch() {
       const version = localStorage.getItem('kz_version');
       if(version === 'Z' || nextRandomUint(8) > 127) {
         localStorage.setItem('kz_version', 'Z');
-        location.href = 'https://web.telegram.org/a/';
+        appNavigationController.navigateToUrl('https://web.telegram.org/a/');
       } else {
         localStorage.setItem('kz_version', 'K');
       }
@@ -290,7 +291,7 @@ function setRootClasses() {
 
 function onInstanceDeactivated(reason: InstanceDeactivateReason) {
   const onVersionClick = () => {
-    appRuntimeManager.reload();
+    appNavigationController.reload();
   };
 
   const onTabsClick = () => {
@@ -389,6 +390,10 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
   if(IS_INSTALL_PROMPT_SUPPORTED) {
     cacheInstallPrompt();
   }
+
+  // Make sure this is before checking if the app is locked.
+  // If this value is cached, and a different tab locks/unlocks, we'll see the wrong state of the app.
+  await preventCrossTabDynamicImportDeadlock();
 
   await PasscodeLockScreenController.waitForUnlock(async() => {
     rootScope.settings = await commonStateStorage.get('settings');
@@ -517,20 +522,22 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
     };
 
     if(data.isTest !== Modes.test) {
-      const urlSearchParams = new URLSearchParams(location.search);
+      const url = new URL(location.href);
       if(+params.tgWebAuthTest) {
-        urlSearchParams.set('test', '1');
+        url.searchParams.set('test', '1');
       } else {
-        urlSearchParams.delete('test');
+        url.searchParams.delete('test');
       }
 
-      location.search = urlSearchParams.toString();
+      appNavigationController.navigateToUrl(url.toString());
       return;
     }
 
     rootScope.managers.appStateManager.pushToState('authState', authState = {_: 'authStateSignImport', data});
+  }
 
-    // appNavigationController.overrideHash('?tgaddr=' + encodeURIComponent(params.tgaddr));
+  if(params.tgWebAuthToken) {
+    appNavigationController.overrideHash(params.tgaddr ? '#?tgaddr=' + encodeURIComponent(params.tgaddr) : '');
   }
 
   if(authState._ !== 'authStateSignedIn'/*  || 1 === 1 */) {
@@ -588,10 +595,11 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
       scrollable.append(placeholder.cloneNode());
     }
 
+
     try {
       await Promise.all([
-        import('./lib/mtproto/telegramMeWebManager'),
-        import('./lib/mtproto/webPushApiManager')
+        import('./lib/telegramMeWebManager'),
+        import('./lib/webPushApiManager')
       ]).then(([meModule, pushModule]) => {
         meModule.default.setAuthorized(false);
         pushModule.default.unsubscribe();
@@ -681,6 +689,7 @@ function setDocumentLangPackProperties(langPack: LangPackDifference.langPackDiff
       import('./pages/pageIm').then((module) => module.default),
       sessionStorage.get('should_animate_main')
     ]);
+
     if(shouldAnimate) {
       await sessionStorage.delete('should_animate_main');
       page.pageEl.classList.add('main-screen-enter');
