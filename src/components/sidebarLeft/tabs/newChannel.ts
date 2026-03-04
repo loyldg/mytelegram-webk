@@ -5,16 +5,19 @@
  */
 
 import appSidebarLeft from '..';
-import {InputFile} from '../../../layer';
-import InputField from '../../inputField';
-import {SliderSuperTab} from '../../slider';
-import AvatarEdit from '../../avatarEdit';
-import AppAddMembersTab from './addMembers';
-import {_i18n} from '../../../lib/langPack';
-import ButtonCorner from '../../buttonCorner';
-import appImManager from '../../../lib/appManagers/appImManager';
-import {attachClickEvent} from '../../../helpers/dom/clickEvent';
-import SettingSection from '../../settingSection';
+import {InputFile} from '@layer';
+import InputField from '@components/inputField';
+import {SliderSuperTab} from '@components/slider';
+import AvatarEdit from '@components/avatarEdit';
+import {_i18n} from '@lib/langPack';
+import ButtonCorner from '@components/buttonCorner';
+import appImManager from '@lib/appImManager';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import SettingSection from '@components/settingSection';
+import addChatUsers from '@components/addChatUsers';
+import {handleChannelsTooMuch} from '@components/popups/channelsTooMuch';
+import type {AppChatsManager} from '@lib/appManagers/appChatsManager';
+import toggleDisability from '@helpers/dom/toggleDisability';
 
 export default class AppNewChannelTab extends SliderSuperTab {
   public static noSame = true;
@@ -71,12 +74,14 @@ export default class AppNewChannelTab extends SliderSuperTab {
       const title = this.channelNameInputField.value;
       const about = this.channelDescriptionInputField.value;
 
-      this.nextBtn.disabled = true;
-      this.managers.appChatsManager.createChannel({
+      const toggle = toggleDisability(this.nextBtn, true);
+      const options: Parameters<AppChatsManager['createChannel']>[0] = {
         title,
         about,
         broadcast: true
-      }).then((channelId) => {
+      };
+      handleChannelsTooMuch(() => this.managers.appChatsManager.createChannel(options))
+      .then((channelId) => {
         if(this.uploadAvatar) {
           this.uploadAvatar().then((inputFile) => {
             this.managers.appChatsManager.editPhoto(channelId, inputFile);
@@ -86,15 +91,14 @@ export default class AppNewChannelTab extends SliderSuperTab {
         appImManager.setInnerPeer({peerId: channelId.toPeerId(true)});
 
         appSidebarLeft.removeTabFromHistory(this);
-        this.slider.createTab(AppAddMembersTab).open({
-          type: 'channel',
-          skippable: true,
-          title: 'GroupAddMembers',
-          placeholder: 'SendMessageTo',
-          takeOut: (peerIds) => {
-            return this.managers.appChatsManager.inviteToChannel(channelId, peerIds);
-          }
+        addChatUsers({
+          peerId: channelId.toPeerId(true),
+          slider: this.slider,
+          skippable: true
         });
+      }, (err) => {
+        console.error('createChannel error', err);
+        toggle();
       });
     }, {listenerSetter: this.listenerSetter});
 

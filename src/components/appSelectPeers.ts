@@ -4,54 +4,54 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {ChatRights} from '../lib/appManagers/appChatsManager';
-import type {Dialog} from '../lib/appManagers/appMessagesManager';
-import type {AppPeersManager, IsPeerType} from '../lib/appManagers/appPeersManager';
-import appDialogsManager, {DialogElement, DialogElementSize as DialogElementSize} from '../lib/appManagers/appDialogsManager';
-import rootScope from '../lib/rootScope';
-import Scrollable from './scrollable';
-import {FocusDirection} from '../helpers/fastSmoothScroll';
-import CheckboxField from './checkboxField';
-import {i18n, LangPackKey, _i18n} from '../lib/langPack';
-import findUpAttribute from '../helpers/dom/findUpAttribute';
-import findUpClassName from '../helpers/dom/findUpClassName';
-import PeerTitle from './peerTitle';
-import cancelEvent from '../helpers/dom/cancelEvent';
-import replaceContent from '../helpers/dom/replaceContent';
-import debounce from '../helpers/schedulers/debounce';
-import windowSize from '../helpers/windowSize';
-import {attachClickEvent, simulateClickEvent} from '../helpers/dom/clickEvent';
-import filterUnique from '../helpers/array/filterUnique';
-import indexOfAndSplice from '../helpers/array/indexOfAndSplice';
-import safeAssign from '../helpers/object/safeAssign';
-import findAndSplice from '../helpers/array/findAndSplice';
-import {AppManagers} from '../lib/appManagers/managers';
-import filterAsync from '../helpers/array/filterAsync';
-import getParticipantPeerId from '../lib/appManagers/utils/chats/getParticipantPeerId';
-import getChatMembersString from './wrappers/getChatMembersString';
-import getUserStatusString from './wrappers/getUserStatusString';
-import {ChannelParticipant, ChannelParticipantsFilter, ChannelsChannelParticipants, Chat, ChatParticipant, User} from '../layer';
-import canSendToUser from '../lib/appManagers/utils/users/canSendToUser';
-import hasRights from '../lib/appManagers/utils/chats/hasRights';
-import getDialogIndex from '../lib/appManagers/utils/dialogs/getDialogIndex';
-import {generateDelimiter} from './generateDelimiter';
-import SettingSection from './settingSection';
-import liteMode from '../helpers/liteMode';
-import emptyPlaceholder from './emptyPlaceholder';
-import {Middleware, MiddlewareHelper, getMiddleware} from '../helpers/middleware';
+import type {ChatRights} from '@appManagers/appChatsManager';
+import type {Dialog} from '@appManagers/appMessagesManager';
+import type {AppPeersManager, IsPeerType} from '@appManagers/appPeersManager';
+import appDialogsManager, {DialogElement, DialogElementSize as DialogElementSize} from '@lib/appDialogsManager';
+import rootScope from '@lib/rootScope';
+import Scrollable from '@components/scrollable';
+import {FocusDirection} from '@helpers/fastSmoothScroll';
+import CheckboxField from '@components/checkboxField';
+import {i18n, LangPackKey, _i18n} from '@lib/langPack';
+import findUpAttribute from '@helpers/dom/findUpAttribute';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import PeerTitle from '@components/peerTitle';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import replaceContent from '@helpers/dom/replaceContent';
+import debounce from '@helpers/schedulers/debounce';
+import windowSize from '@helpers/windowSize';
+import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
+import filterUnique from '@helpers/array/filterUnique';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import safeAssign from '@helpers/object/safeAssign';
+import findAndSplice from '@helpers/array/findAndSplice';
+import {AppManagers} from '@lib/managers';
+import filterAsync from '@helpers/array/filterAsync';
+import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
+import getChatMembersString from '@components/wrappers/getChatMembersString';
+import getUserStatusString from '@components/wrappers/getUserStatusString';
+import {ChannelParticipant, ChannelParticipantsFilter, ChannelsChannelParticipants, Chat, ChatFull, ChatParticipant, ChatParticipants, User} from '@layer';
+import canSendToUser from '@appManagers/utils/users/canSendToUser';
+import hasRights from '@appManagers/utils/chats/hasRights';
+import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
+import {generateDelimiter} from '@components/generateDelimiter';
+import SettingSection from '@components/settingSection';
+import liteMode from '@helpers/liteMode';
+import emptyPlaceholder from '@components/emptyPlaceholder';
+import {Middleware, MiddlewareHelper, getMiddleware} from '@helpers/middleware';
 import {createSignal, Setter, JSX, createRoot, createEffect} from 'solid-js';
-import DialogsPlaceholder from '../helpers/dialogsPlaceholder';
-import ListenerSetter from '../helpers/listenerSetter';
-import {avatarNew} from './avatarNew';
-import Icon from './icon';
-import wrapEmojiText from '../lib/richTextProcessor/wrapEmojiText';
-import apiManagerProxy from '../lib/mtproto/mtprotoworker';
-import {hideToast, toastNew} from './toast';
-import wrapPeerTitle from './wrappers/peerTitle';
-import anchorCallback from '../helpers/dom/anchorCallback';
-import PopupPremium from './popups/premium';
-import formatNumber from '../helpers/number/formatNumber';
-import namedPromises from '../helpers/namedPromises';
+import DialogsPlaceholder from '@helpers/dialogsPlaceholder';
+import ListenerSetter from '@helpers/listenerSetter';
+import {avatarNew} from '@components/avatarNew';
+import Icon from '@components/icon';
+import wrapEmojiText from '@richTextProcessor/wrapEmojiText';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import {hideToast, toastNew} from '@components/toast';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import PopupPremium from '@components/popups/premium';
+import formatNumber from '@helpers/number/formatNumber';
+import namedPromises from '@helpers/namedPromises';
 
 export type SelectSearchPeerType = 'contacts' | 'dialogs' | 'channelParticipants' | 'custom';
 export type FilterPeerTypeByFunc = (peer: ReturnType<AppPeersManager['getPeer']>) => boolean;
@@ -101,7 +101,7 @@ export default class AppSelectPeers {
   private exceptSelf: boolean;
   private filterPeerTypeBy: IsPeerType[] | FilterPeerTypeByFunc;
   private channelParticipantsFilter: ChannelParticipantsFilter | ((q: string) => ChannelParticipantsFilter);
-  private channelParticipantsUpdateFilter: (participant: ChannelParticipant) => boolean;
+  private channelParticipantsUpdateFilter: (participant: ChannelParticipant | ChatParticipant) => boolean;
   private meAsSaved: boolean;
   private noShadow: boolean;
   private noDelimiter: boolean;
@@ -196,7 +196,8 @@ export default class AppSelectPeers {
     excludeMonoforums?: boolean,
     excludeBotforums?: boolean,
     placeholderSizes?: ConstructorParameters<typeof DialogsPlaceholder>[0],
-    getPeerIdFromKey?: AppSelectPeers['getPeerIdFromKey']
+    getPeerIdFromKey?: AppSelectPeers['getPeerIdFromKey'],
+    topSectionContentElements?: HTMLElement[]
   }) {
     safeAssign(this, options);
 
@@ -388,6 +389,10 @@ export default class AppSelectPeers {
       section.content = section.generateContentElement();
     }
 
+    if(options.topSectionContentElements) {
+      section.content.append(...options.topSectionContentElements);
+    }
+
     // it can't have full height then
     if(!this.sectionCaption) {
       section.content.classList.add('selector-list-section-content');
@@ -460,13 +465,13 @@ export default class AppSelectPeers {
     this.container.append(this.chatsContainer);
     this.appendTo.append(this.container);
 
-    if(this.channelParticipantsUpdateFilter) this.listenerSetter.add(rootScope)('chat_participant', (update) => {
-      const newParticipant = update.new_participant;
-      const peerId = update.user_id.toPeerId(false);
-      const needAdd = this.channelParticipantsUpdateFilter(newParticipant);
-
+    const onChatParticipant = (
+      participant: ChannelParticipant | ChatParticipant,
+      peerId: PeerId,
+      needAdd = this.channelParticipantsUpdateFilter(participant)
+    ) => {
       if(needAdd) {
-        this.participants.set(peerId, newParticipant);
+        this.participants.set(peerId, participant);
       } else {
         this.participants.delete(peerId);
       }
@@ -476,7 +481,50 @@ export default class AppSelectPeers {
       } else {
         this.deletePeerId(peerId);
       }
+    };
+
+    if(this.channelParticipantsUpdateFilter) this.listenerSetter.add(rootScope)('chat_participant', (update) => {
+      if(update.channel_id.toPeerId(true) !== this.peerId) {
+        return;
+      }
+
+      onChatParticipant(update.new_participant, update.user_id.toPeerId(false));
     });
+
+    if(
+      this.channelParticipantsUpdateFilter &&
+      apiManagerProxy.getPeer(this.peerId)._ === 'chat'
+    ) {
+      this.listenerSetter.add(rootScope)('chat_full_update', async(chatId) => {
+        if(chatId.toPeerId(true) !== this.peerId) {
+          return;
+        }
+
+        const middleware = this.middlewareHelperLoader.get();
+        const chatFull = await this.managers.appProfileManager.getChatFull(this.peerId.toChatId()) as ChatFull.chatFull;
+        if(!middleware()) {
+          return;
+        }
+
+        const participants = chatFull.participants as ChatParticipants.chatParticipants;
+        const processedPeerIds = new Set<PeerId>();
+        for(const participant of participants.participants) {
+          const peerId = participant.user_id.toPeerId(false);
+          processedPeerIds.add(peerId);
+          onChatParticipant(
+            participant,
+            peerId,
+            undefined
+          );
+        }
+
+        this.participants.forEach((participant, peerId) => {
+          if(!processedPeerIds.has(peerId)) {
+            onChatParticipant(participant, peerId, false);
+          }
+        });
+      });
+    }
 
     options.middleware.onDestroy(() => {
       this.destroy();

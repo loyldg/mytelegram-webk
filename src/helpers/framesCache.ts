@@ -4,7 +4,8 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {RLottieColor} from '../lib/rlottie/rlottiePlayer';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import type {RLottieColor} from '@lib/rlottie/rlottiePlayer';
 
 export type FramesCacheMap = Map<number, Uint8ClampedArray>;
 export type FramesCacheMapNew = Map<number, HTMLCanvasElement | ImageBitmap>;
@@ -59,6 +60,7 @@ export class FramesCache {
   public releaseCache(name: string) {
     const cache = this.cache.get(name);
     if(cache && !--cache.counter) {
+      cache.clearCache();
       this.cache.delete(name);
       // console.warn('[RLottieCache] released cache', cache);
     }
@@ -82,5 +84,5 @@ export class FramesCache {
 }
 
 const framesCache = new FramesCache();
-
+MOUNT_CLASS_TO && (MOUNT_CLASS_TO.framesCache = framesCache);
 export default framesCache;

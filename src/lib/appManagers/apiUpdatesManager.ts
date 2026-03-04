@@ -9,19 +9,20 @@
  * https://github.com/zhukov/webogram/blob/master/LICENSE
  */
 
-import {ConstructorDeclMap, Message, MessageFwdHeader, Peer, StarsAmount, Update, Updates} from '../../layer';
-import {LogTypes} from '../logger';
-import assumeType from '../../helpers/assumeType';
-import App from '../../config/app';
-import filterUnique from '../../helpers/array/filterUnique';
-import {AppManager} from './manager';
-import parseMarkdown from '../richTextProcessor/parseMarkdown';
-import ctx from '../../environment/ctx';
-import EventListenerBase from '../../helpers/eventListenerBase';
-import applyMixins from '../../helpers/applyMixins';
-import tsNow from '../../helpers/tsNow';
-import formatStarsAmount from './utils/payments/formatStarsAmount';
-import debounce from '../../helpers/schedulers/debounce';
+import {ConstructorDeclMap, Message, MessageFwdHeader, Peer, StarsAmount, Update, Updates} from '@layer';
+import {LogTypes} from '@lib/logger';
+import assumeType from '@helpers/assumeType';
+import App from '@config/app';
+import filterUnique from '@helpers/array/filterUnique';
+import {AppManager} from '@appManagers/manager';
+import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
+import ctx from '@environment/ctx';
+import EventListenerBase from '@helpers/eventListenerBase';
+import applyMixins from '@helpers/applyMixins';
+import tsNow from '@helpers/tsNow';
+import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
+import debounce from '@helpers/schedulers/debounce';
+import copy from '@helpers/object/copy';
 
 type UpdatesState = {
   pendingPtsUpdates: (Update & {pts: number, pts_count: number})[],
@@ -524,7 +525,7 @@ class ApiUpdatesManager {
     const curState = channelId ? this.getChannelState(channelId, pts) : this.updatesState;
 
     const log = this.log.bindPrefix(`processUpdate${channelId ? `-${channelId}` : ''}`);
-    log('process', curState.pts, update);
+    log('process', curState.pts, copy(update));
 
     if(curState.syncLoading && !options.ignoreSyncLoading) {
       log('ignoring update, sync loading');
@@ -607,7 +608,7 @@ class ApiUpdatesManager {
 
         curState.lastPtsUpdateTime = Date.now();
       } else if(pts_count) {
-        log.warn('duplicate update');
+        log.warn('duplicate update', update);
         return false;
       }
 

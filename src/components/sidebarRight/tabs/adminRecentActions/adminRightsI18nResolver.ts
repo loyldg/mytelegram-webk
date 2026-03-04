@@ -1,5 +1,5 @@
-import {ChatAdminRights} from '../../../../layer';
-import {LangPackKey} from '../../../../lib/langPack';
+import {ChatAdminRights} from '@layer';
+import {LangPackKey} from '@lib/langPack';
 
 
 type Args = { isBroadcast: boolean };
@@ -22,6 +22,7 @@ const adminRightToI18n: Record<keyof ChatAdminRights.chatAdminRights['pFlags'], 
   add_admins: () => 'EditAdminAddAdmins',
   anonymous: () => 'EditAdminSendAnonymously',
   manage_topics: () => 'ManageTopicsPermission',
+  manage_ranks: () => 'AdminRights.Other',
 
   invite_users: ({isBroadcast}) =>
     isBroadcast ?

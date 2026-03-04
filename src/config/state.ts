@@ -4,18 +4,17 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {LiteModeKey} from '../helpers/liteMode';
-import type {AppMediaPlaybackController} from '../components/appMediaPlaybackController';
-import type {TopPeerType, MyTopPeer} from '../lib/appManagers/appUsersManager';
-import type {AccountContentSettings, AccountThemes, AutoDownloadSettings, BaseTheme, NotifyPeer, PeerNotifySettings, Theme, ThemeSettings, WallPaper} from '../layer';
-import type DialogsStorage from '../lib/storages/dialogs';
-import type FiltersStorage from '../lib/storages/filters';
-import type {AuthState, Modify} from '../types';
-import type {MTAppConfig} from '../lib/mtproto/appConfig';
-import type {ShortcutKey as PasscodeLockShortcutKey} from '../components/sidebarLeft/tabs/passcodeLock/shortcutBuilder';
-import {IS_MOBILE} from '../environment/userAgent';
-import getTimeFormat from '../helpers/getTimeFormat';
-import App from './app';
+import type {LiteModeKey} from '@helpers/liteMode';
+import type {AppMediaPlaybackController} from '@components/appMediaPlaybackController';
+import type {TopPeerType, MyTopPeer} from '@appManagers/appUsersManager';
+import type {AccountContentSettings, AccountThemes, AutoDownloadSettings, BaseTheme, NotifyPeer, PeerNotifySettings, Theme, ThemeSettings, WallPaper} from '@layer';
+import type DialogsStorage from '@lib/storages/dialogs';
+import type FiltersStorage from '@lib/storages/filters';
+import type {AuthState, Modify} from '@types';
+import type {ShortcutKey as PasscodeLockShortcutKey} from '@components/sidebarLeft/tabs/passcodeLock/shortcutBuilder';
+import {IS_MOBILE} from '@environment/userAgent';
+import getTimeFormat from '@helpers/getTimeFormat';
+import App from '@config/app';
 
 const STATE_VERSION = App.version;
 const BUILD = App.build;
@@ -93,7 +92,8 @@ export type StateSettings = {
   notifyAllAccounts: boolean,
   tabsInSidebar: boolean,
   seenTooltips: {
-    storySound: boolean
+    storySound: boolean,
+    noForwards: boolean
   },
   playbackParams: ReturnType<AppMediaPlaybackController['getPlaybackParams']>,
   translations: {
@@ -114,7 +114,10 @@ export type StateSettings = {
   logsDiffView?: boolean,
   instantView: {
     scale: number
-  }
+  },
+  cacheTTL: number,
+  cacheSize: number,
+  showArchiveInChatList: boolean,
 };
 
 type CacheSomething<T> = {
@@ -164,6 +167,7 @@ export type State = {
     clientVersion: string,
   },
   accountContentSettings: CacheSomething<AccountContentSettings>,
+
 
   // playbackParams?: StateSettings['playbackParams'], // ! MIGRATED TO SETTINGS
   // chatContextMenuHintWasShown?: StateSettings['chatContextMenuHintWasShown'], // ! MIGRATED TO SETTINGS
@@ -369,7 +373,8 @@ export const SETTINGS_INIT: StateSettings = {
   },
   chatContextMenuHintWasShown: false,
   seenTooltips: {
-    storySound: false
+    storySound: false,
+    noForwards: false
   },
   translations: {
     peers: {},
@@ -387,7 +392,10 @@ export const SETTINGS_INIT: StateSettings = {
   },
   instantView: {
     scale: 1
-  }
+  },
+  cacheTTL: 86400 * 7, // 1 week
+  cacheSize: 0, // Auto
+  showArchiveInChatList: true
 };
 
 export const STATE_INIT: State = {

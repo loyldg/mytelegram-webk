@@ -5,29 +5,29 @@
  */
 
 import {createEffect, createSignal, JSX, For, untrack, Accessor, onCleanup, Ref, createMemo} from 'solid-js';
-import {i18n} from '../../lib/langPack';
-import rootScope from '../../lib/rootScope';
-import {AvatarNew} from '../avatarNew';
-import PeerTitle from '../peerTitle';
-import {ScrollableXTsx} from '../stories/list';
-import formatNumber from '../../helpers/number/formatNumber';
-import {Chat, MessagesChats, User} from '../../layer';
-import computeLockColor from '../../helpers/computeLockColor';
-import classNames from '../../helpers/string/classNames';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import {attachClickEvent} from '../../helpers/dom/clickEvent';
-import findUpClassName from '../../helpers/dom/findUpClassName';
-import PopupPremium from '../popups/premium';
-import appImManager from '../../lib/appManagers/appImManager';
-import anchorCallback from '../../helpers/dom/anchorCallback';
-import PopupElement from '../popups';
-import PopupPickUser from '../popups/pickUser';
-import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
-import {ButtonIconTsx} from '../buttonIconTsx';
-import {IconTsx} from '../iconTsx';
-import createMiddleware from '../../helpers/solid/createMiddleware';
-import showTooltip from '../tooltip';
-import {usePeer} from '../../stores/peers';
+import {i18n} from '@lib/langPack';
+import rootScope from '@lib/rootScope';
+import {AvatarNew} from '@components/avatarNew';
+import PeerTitle from '@components/peerTitle';
+import {ScrollableXTsx} from '@components/stories/list';
+import formatNumber from '@helpers/number/formatNumber';
+import {Chat, MessagesChats, User} from '@layer';
+import computeLockColor from '@helpers/computeLockColor';
+import classNames from '@helpers/string/classNames';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import PopupPremium from '@components/popups/premium';
+import appImManager from '@lib/appImManager';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import PopupElement from '@components/popups';
+import PopupPickUser from '@components/popups/pickUser';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import {ButtonIconTsx} from '@components/buttonIconTsx';
+import {IconTsx} from '@components/iconTsx';
+import createMiddleware from '@helpers/solid/createMiddleware';
+import showTooltip from '@components/tooltip';
+import {usePeer} from '@stores/peers';
 
 let canvas: HTMLCanvasElement, context: CanvasRenderingContext2D;
 export function SimilarPeer(props: {
@@ -208,84 +208,6 @@ export default function SimilarChannels(props: {
     const count = (messagesChats as MessagesChats.messagesChatsSlice).count ?? messagesChats.chats.length;
     const hasMore = count > defaultLimit && !isPremiumFeaturesHidden;
     const rendered: Map<HTMLElement, Chat.channel> = new Map();
-
-    const Item = (chat: Chat.channel, idx: Accessor<number>) => {
-      const [badgeBackgroundUrl, setBadgeBackgroundUrl] = createSignal<string>();
-      const onImageLoad = (image: HTMLImageElement) => {
-        if(image.naturalWidth < 100) {
-          return;
-        }
-
-        // const perf = performance.now();
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        setBadgeBackgroundUrl(computeLockColor(canvas));
-        // console.log('lock color', performance.now() - perf);
-      };
-      const peerId = chat.id.toPeerId(true);
-      const isLast = hasMore && idx() === defaultLimit - 1;
-
-      const avatar = untrack(() => {
-        return AvatarNew({
-          peerId: peerId,
-          size: 60,
-          processImageOnLoad: onImageLoad
-        });
-      });
-      avatar.node.classList.add('similar-channels-channel-avatar');
-      promises.push(avatar.readyThumbPromise);
-      if(isLast) {
-        avatar.node.classList.add('similar-channels-channel-avatar-stack-first');
-      }
-
-      let nameElement: HTMLElement;
-      if(!isLast) {
-        const peerTitle = new PeerTitle();
-        promises.push(peerTitle.update({peerId}));
-        nameElement = peerTitle.element;
-      } else {
-        nameElement = i18n('MoreSimilar');
-      }
-      nameElement.classList.add('similar-channels-channel-name');
-
-      const icon = (
-        <IconTsx
-          icon={isLast ? 'premium_lock' : 'newprivate_filled'}
-          class="similar-channels-channel-badge-icon"
-        />
-      );
-
-      return (
-        <div
-          class={classNames('similar-channels-channel', isLast && 'is-last')}
-          ref={(el) => rendered.set(el, isLast ? undefined : chat)}
-        >
-          {isLast ? (
-            <div class="similar-channels-channel-avatar-stack">
-              {avatar.element}
-              <div class="similar-channels-channel-avatar-stack-middle" />
-              <div class="similar-channels-channel-avatar-stack-last" />
-            </div>
-          ) : avatar.element}
-          <span
-            class="similar-channels-channel-badge"
-            style={badgeBackgroundUrl() && {'background-image': `url(${badgeBackgroundUrl()})`}}
-          >
-            {isLast ? (
-              <>
-                {`+${count - defaultLimit}`}
-                {!untrack(premium) && icon}
-              </>
-            ) : (
-              <>
-                {icon}
-                {formatNumber(chat.participants_count || 1, 1)}
-              </>
-            )}
-          </span>
-          {nameElement}
-        </div>
-      );
-    };
 
     const middleware = createMiddleware().get();
     const promises: Promise<any>[] = [];

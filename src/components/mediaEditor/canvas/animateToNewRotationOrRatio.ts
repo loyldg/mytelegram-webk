@@ -1,19 +1,19 @@
 import {modifyMutable, produce} from 'solid-js/store';
-import {animateValue} from '../../../helpers/animateValue';
-import {lerp, lerpArray} from '../../../helpers/lerp';
-import {useMediaEditorContext} from '../context';
-import {NumberPair} from '../types';
-import {snapToViewport} from '../utils';
-import {useCropOffset} from './useCropOffset';
+import {animateValue} from '@helpers/animateValue';
+import {lerp, lerpArray} from '@helpers/lerp';
+import {useMediaEditorContext} from '@components/mediaEditor/context';
+import {NumberPair} from '@components/mediaEditor/types';
+import {snapToViewport} from '@components/mediaEditor/utils';
+import {useCropOffset} from '@components/mediaEditor/canvas/useCropOffset';
 
 
 export function animateToNewRotationOrRatio(newRotation: number) {
   const {editorState, mediaState} = useMediaEditorContext();
-  if(!editorState.imageSize) return;
+  if(!editorState.mediaSize) return;
 
   const cropOffset = useCropOffset();
 
-  const [w, h] = editorState.imageSize;
+  const [w, h] = editorState.mediaSize;
 
   const snappedRotation90 = Math.round((newRotation / Math.PI) * 2);
   const isReversedRatio = Math.abs(snappedRotation90) & 1;

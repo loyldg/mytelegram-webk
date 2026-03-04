@@ -7,73 +7,79 @@
 // * zoom part from WebZ
 // * https://github.com/Ajaxy/telegram-tt/blob/069f4f5b2f2c7c22529ccced876842e7f9cb81f4/src/components/mediaViewer/MediaViewerSlides.tsx
 
-import type {MyDocument} from '../lib/appManagers/appDocsManager';
-import type {MyPhoto} from '../lib/appManagers/appPhotosManager';
-import deferredPromise from '../helpers/cancellablePromise';
-import mediaSizes from '../helpers/mediaSizes';
-import IS_TOUCH_SUPPORTED from '../environment/touchSupport';
-import {IS_MOBILE, IS_MOBILE_SAFARI, IS_SAFARI} from '../environment/userAgent';
-import {logger} from '../lib/logger';
-import VideoPlayer from '../lib/mediaPlayer';
-import rootScope from '../lib/rootScope';
-import animationIntersector from './animationIntersector';
-import appMediaPlaybackController, {AppMediaPlaybackController} from './appMediaPlaybackController';
-import ButtonIcon from './buttonIcon';
-import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable} from './buttonMenu';
-import ButtonMenuToggle from './buttonMenuToggle';
-import ProgressivePreloader from './preloader';
-import SwipeHandler, {ZoomDetails} from './swipeHandler';
-import {formatFullSentTime} from '../helpers/date';
-import appNavigationController, {NavigationItem} from './appNavigationController';
-import {InputGroupCall, Message, PhotoSize} from '../layer';
-import findUpClassName from '../helpers/dom/findUpClassName';
-import renderImageFromUrl, {renderImageFromUrlPromise} from '../helpers/dom/renderImageFromUrl';
-import getVisibleRect from '../helpers/dom/getVisibleRect';
-import cancelEvent from '../helpers/dom/cancelEvent';
-import fillPropertyValue from '../helpers/fillPropertyValue';
-import generatePathData from '../helpers/generatePathData';
-import replaceContent from '../helpers/dom/replaceContent';
-import {doubleRaf, fastRaf} from '../helpers/schedulers';
-import RangeSelector from './rangeSelector';
-import windowSize from '../helpers/windowSize';
-import ListLoader from '../helpers/listLoader';
-import EventListenerBase from '../helpers/eventListenerBase';
-import {MyMessage} from '../lib/appManagers/appMessagesManager';
-import {NULL_PEER_ID} from '../lib/mtproto/mtproto_config';
-import {isFullScreen} from '../helpers/dom/fullScreen';
-import {attachClickEvent, hasMouseMovedSinceDown} from '../helpers/dom/clickEvent';
-import SearchListLoader from '../helpers/searchListLoader';
-import createVideo from '../helpers/dom/createVideo';
-import {AppManagers} from '../lib/appManagers/managers';
-import getMediaThumbIfNeeded from '../helpers/getStrippedThumbIfNeeded';
-import setAttachmentSize from '../helpers/setAttachmentSize';
-import wrapEmojiText from '../lib/richTextProcessor/wrapEmojiText';
-import LazyLoadQueueBase from './lazyLoadQueueBase';
-import overlayCounter from '../helpers/overlayCounter';
-import appDownloadManager from '../lib/appManagers/appDownloadManager';
-import wrapPeerTitle from './wrappers/peerTitle';
-import {toastNew} from './toast';
-import clamp from '../helpers/number/clamp';
-import debounce from '../helpers/schedulers/debounce';
-import isBetween from '../helpers/number/isBetween';
-import findUpAsChild from '../helpers/dom/findUpAsChild';
-import liteMode from '../helpers/liteMode';
-import {avatarNew, findUpAvatar} from './avatarNew';
-import {MiddlewareHelper, getMiddleware} from '../helpers/middleware';
-import onMediaLoad, {shouldIgnoreVideoError} from '../helpers/onMediaLoad';
-import handleVideoLeak from '../helpers/dom/handleVideoLeak';
-import Icon from './icon';
-import {replaceButtonIcon} from './button';
-import setCurrentTime from '../helpers/dom/setCurrentTime';
-import {MediaSize} from '../helpers/mediaSize';
-import {getRtmpStreamUrl} from '../lib/rtmp/url';
-import boxBlurCanvasRGB from '../vendor/fastBlur';
-import {i18n} from '../lib/langPack';
-import {getQualityFilesEntries} from '../lib/hls/createHlsVideoSource';
-import {snapQualityHeight} from '../lib/hls/snapQualityHeight';
-import {ButtonMenuItemWithAuxiliaryText} from '../lib/mediaPlayer/qualityLevelsSwitchButton';
-import formatBytes from '../helpers/formatBytes';
-import getDocumentURL from '../lib/appManagers/utils/docs/getDocumentURL';
+import type {MyDocument} from '@appManagers/appDocsManager';
+import type {MyPhoto} from '@appManagers/appPhotosManager';
+import deferredPromise from '@helpers/cancellablePromise';
+import mediaSizes from '@helpers/mediaSizes';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import {IS_MOBILE, IS_MOBILE_SAFARI, IS_SAFARI} from '@environment/userAgent';
+import {logger} from '@lib/logger';
+import VideoPlayer from '@lib/mediaPlayer';
+import rootScope from '@lib/rootScope';
+import animationIntersector from '@components/animationIntersector';
+import appMediaPlaybackController, {AppMediaPlaybackController} from '@components/appMediaPlaybackController';
+import ButtonIcon from '@components/buttonIcon';
+import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import ProgressivePreloader from '@components/preloader';
+import SwipeHandler, {ZoomDetails} from '@components/swipeHandler';
+import {formatFullSentTime} from '@helpers/date';
+import appNavigationController, {NavigationItem} from '@components/appNavigationController';
+import {InputGroupCall, Message, MessageMedia, PhotoSize} from '@layer';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import renderImageFromUrl, {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
+import getVisibleRect from '@helpers/dom/getVisibleRect';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import fillPropertyValue from '@helpers/fillPropertyValue';
+import generatePathData from '@helpers/generatePathData';
+import replaceContent from '@helpers/dom/replaceContent';
+import {doubleRaf, fastRaf} from '@helpers/schedulers';
+import RangeSelector from '@components/rangeSelector';
+import windowSize from '@helpers/windowSize';
+import ListLoader from '@helpers/listLoader';
+import EventListenerBase from '@helpers/eventListenerBase';
+import {MyMessage} from '@appManagers/appMessagesManager';
+import {NULL_PEER_ID} from '@appManagers/constants';
+import {isFullScreen} from '@helpers/dom/fullScreen';
+import {attachClickEvent, hasMouseMovedSinceDown} from '@helpers/dom/clickEvent';
+import SearchListLoader from '@helpers/searchListLoader';
+import createVideo from '@helpers/dom/createVideo';
+import {AppManagers} from '@lib/managers';
+import getMediaThumbIfNeeded from '@helpers/getStrippedThumbIfNeeded';
+import setAttachmentSize from '@helpers/setAttachmentSize';
+import wrapEmojiText from '@richTextProcessor/wrapEmojiText';
+import LazyLoadQueueBase from '@components/lazyLoadQueueBase';
+import overlayCounter from '@helpers/overlayCounter';
+import appDownloadManager from '@lib/appDownloadManager';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import {toastNew} from '@components/toast';
+import clamp from '@helpers/number/clamp';
+import debounce from '@helpers/schedulers/debounce';
+import isBetween from '@helpers/number/isBetween';
+import findUpAsChild from '@helpers/dom/findUpAsChild';
+import liteMode from '@helpers/liteMode';
+import {avatarNew, findUpAvatar} from '@components/avatarNew';
+import {Middleware, MiddlewareHelper, getMiddleware} from '@helpers/middleware';
+import onMediaLoad, {shouldIgnoreVideoError} from '@helpers/onMediaLoad';
+import handleVideoLeak from '@helpers/dom/handleVideoLeak';
+import Icon from '@components/icon';
+import {replaceButtonIcon} from '@components/button';
+import setCurrentTime from '@helpers/dom/setCurrentTime';
+import {MediaSize} from '@helpers/mediaSize';
+import {getRtmpStreamUrl} from '@lib/rtmp/url';
+import boxBlurCanvasRGB from '@vendor/fastBlur';
+import {i18n} from '@lib/langPack';
+import {getQualityFilesEntries} from '@lib/hls/createHlsVideoSource';
+import {snapQualityHeight} from '@lib/hls/snapQualityHeight';
+import {ButtonMenuItemWithAuxiliaryText} from '@lib/mediaPlayer/qualityLevelsSwitchButton';
+import formatBytes from '@helpers/formatBytes';
+import getDocumentURL from '@appManagers/utils/docs/getDocumentURL';
+import assumeType from '@helpers/assumeType';
+import {createRoot, createResource, createEffect, createMemo} from 'solid-js';
+import readBlobAsText from '@helpers/blob/readBlobAsText';
+import {Storyboard, StoryboardFrame} from '@lib/mediaPlayer/preview';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import cloneDOMRect from '../helpers/dom/cloneDOMRect';
 
 const ZOOM_STEP = 0.5;
 const ZOOM_INITIAL_VALUE = 1;
@@ -95,6 +101,83 @@ export type VideoTimestamp = {
   time: number;
   text?: string;
 };
+
+function prepareStoryboard({
+  message,
+  middleware
+}: {
+  message?: Message.message,
+  middleware: Middleware
+}) {
+  if(!message?.media) {
+    return;
+  }
+
+  const altDocuments = (message.media as MessageMedia.messageMediaDocument).alt_documents as MyDocument[] || [];
+  const mapDoc = altDocuments.find((d) => d.mime_type === 'application/x-tgstoryboardmap');
+  if(!mapDoc) {
+    return;
+  }
+
+  const docId = mapDoc.file_name.split(':')[1];
+  const doc = altDocuments.find((d) => d.id === docId);
+
+  if(!doc) {
+    return;
+  }
+
+  return createRoot((dispose) => {
+    middleware.onClean(dispose);
+    const [imageFileURL] = createResource(doc, () => {
+      return appDownloadManager.downloadMediaURL({media: doc});
+    });
+
+    const [image] = createResource(imageFileURL, async(url) => {
+      if(!url) {
+        return;
+      }
+
+      const image = new Image();
+      await renderImageFromUrlPromise(image, url, false);
+      return image;
+    });
+
+    const [mapFile] = createResource(mapDoc, () => {
+      return appDownloadManager.downloadMedia({media: mapDoc});
+    });
+
+    const [map] = createResource(mapFile, async(file) => {
+      if(!file) {
+        return;
+      }
+
+      const text = await readBlobAsText(file);
+      const lines = text.split('\n');
+      const fileNameLine = lines.shift();
+      const frameWidth = +lines.shift().split('=').pop();
+      const frameHeight = +lines.shift().split('=').pop();
+      if(!lines[lines.length - 1].trim()) {
+        lines.pop();
+      }
+      const frames: StoryboardFrame[] = lines.map((line) => {
+        const [time, left, top] = line.split(',').map(Number);
+        return {time, left, top};
+      });
+      return {frameWidth, frameHeight, frames};
+    });
+
+    const storyboard = createMemo<Storyboard>(() => {
+      const image$ = image();
+      const map$ = map();
+      return image$ && map$ ? {
+        image: image$,
+        ...map$
+      } : undefined;
+    });
+
+    return storyboard;
+  });
+}
 
 export default class AppMediaViewerBase<
   ContentAdditionType extends string,
@@ -958,7 +1041,7 @@ export default class AppMediaViewerBase<
 
     let realParent: HTMLElement;
 
-    let rect: DOMRect;
+    let rect: DOMRectEditable;
     if(target) {
       if(findUpAvatar(target) || target.classList.contains('grid-item')/*  || target.classList.contains('document-ico') */) {
         realParent = target;
@@ -968,7 +1051,10 @@ export default class AppMediaViewerBase<
         rect = realParent.getBoundingClientRect();
       } else if(target.classList.contains('profile-avatars-avatar')) {
         realParent = findUpClassName(target, 'profile-avatars-container');
-        rect = realParent.getBoundingClientRect();
+        rect = cloneDOMRect(realParent.getBoundingClientRect())
+        // offset for header
+        rect.top += 56
+        rect.height -= 56
 
         // * if not active avatar
         if(closing && target.getBoundingClientRect().left !== rect.left) {
@@ -1377,7 +1463,7 @@ export default class AppMediaViewerBase<
     }
   }
 
-  protected setFullAspect(aspecter: HTMLDivElement, containerRect: DOMRect, rect: DOMRect) {
+  protected setFullAspect(aspecter: HTMLDivElement, containerRect: DOMRect, rect: DOMRectEditable) {
     /* let media = aspecter.firstElementChild;
     let proportion: number;
     if(media instanceof HTMLImageElement) {
@@ -1812,7 +1898,7 @@ export default class AppMediaViewerBase<
 
     const getCacheContext = (type = size?.type) => {
       if(isLiveStream) return {url: getRtmpStreamUrl(media)};
-      if(isHlsStream) return {url: getDocumentURL(media as MyDocument, {supportsHlsStreaming: true})};
+      if(isHlsStream && apiManagerProxy.isServiceWorkerOnline()) return {url: getDocumentURL(media as MyDocument, {supportsHlsStreaming: true})};
       return this.managers.thumbsStorage.getCacheContext(media, type);
     };
 
@@ -1900,6 +1986,11 @@ export default class AppMediaViewerBase<
             }
           }
 
+          const storyboard = prepareStoryboard({
+            message: message as Message.message,
+            middleware: this.middlewareHelper.get()
+          });
+
           // const play = useController ? appMediaPlaybackController.willBePlayedMedia === video : true;
           const play = !isLiveStream;
           const player = this.videoPlayer = new VideoPlayer({
@@ -1952,7 +2043,8 @@ export default class AppMediaViewerBase<
               this.close();
             },
             listenKeyboardEvents: 'always',
-            useGlobalVolume: 'auto'
+            useGlobalVolume: 'auto',
+            storyboard
           });
           this.videoPlayer?.loadQualityLevels();
 

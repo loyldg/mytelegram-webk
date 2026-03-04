@@ -4,39 +4,40 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {isIpRevealingExtension, isIpRevealingMimeType} from '../../environment/ipRevealingDocuments';
-import MEDIA_MIME_TYPES_SUPPORTED from '../../environment/mediaMimeTypesSupport';
-import {CancellablePromise} from '../../helpers/cancellablePromise';
-import {clearBadCharsAndTrim} from '../../helpers/cleanSearchText';
-import {formatFullSentTime} from '../../helpers/date';
-import {simulateClickEvent, attachClickEvent} from '../../helpers/dom/clickEvent';
-import findUpClassName from '../../helpers/dom/findUpClassName';
-import formatBytes from '../../helpers/formatBytes';
-import liteMode from '../../helpers/liteMode';
-import {MediaSizeType} from '../../helpers/mediaSizes';
-import noop from '../../helpers/noop';
-import {Message, MessageMedia, WebPage} from '../../layer';
-import {MyDocument} from '../../lib/appManagers/appDocsManager';
-import appDownloadManager, {Progress} from '../../lib/appManagers/appDownloadManager';
-import appImManager from '../../lib/appManagers/appImManager';
-import {AppManagers} from '../../lib/appManagers/managers';
-import getDownloadMediaDetails from '../../lib/appManagers/utils/download/getDownloadMediaDetails';
-import choosePhotoSize from '../../lib/appManagers/utils/photos/choosePhotoSize';
-import {joinElementsWith} from '../../lib/langPack';
-import {MAX_FILE_SAVE_SIZE} from '../../lib/mtproto/mtproto_config';
-import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
-import wrapPlainText from '../../lib/richTextProcessor/wrapPlainText';
-import rootScope from '../../lib/rootScope';
-import type {ThumbCache} from '../../lib/storages/thumbs';
-import {MediaSearchContext} from '../appMediaPlaybackController';
-import AudioElement from '../audio';
-import confirmationPopup from '../confirmationPopup';
-import LazyLoadQueue from '../lazyLoadQueue';
-import {MiddleEllipsisElement} from '../middleEllipsis';
-import ProgressivePreloader from '../preloader';
-import wrapPhoto from './photo';
-import wrapSenderToPeer from './senderToPeer';
-import wrapSentTime from './sentTime';
+import {isIpRevealingExtension, isIpRevealingMimeType} from '@environment/ipRevealingDocuments';
+import MEDIA_MIME_TYPES_SUPPORTED from '@environment/mediaMimeTypesSupport';
+import {CancellablePromise} from '@helpers/cancellablePromise';
+import {clearBadCharsAndTrim} from '@helpers/cleanSearchText';
+import {formatFullSentTime} from '@helpers/date';
+import {simulateClickEvent, attachClickEvent} from '@helpers/dom/clickEvent';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import formatBytes from '@helpers/formatBytes';
+import liteMode from '@helpers/liteMode';
+import {MediaSizeType} from '@helpers/mediaSizes';
+import noop from '@helpers/noop';
+import {Message, MessageMedia, WebPage} from '@layer';
+import {MyDocument} from '@appManagers/appDocsManager';
+import appDownloadManager, {Progress} from '@lib/appDownloadManager';
+import appImManager from '@lib/appImManager';
+import {AppManagers} from '@lib/managers';
+import getDownloadMediaDetails from '@appManagers/utils/download/getDownloadMediaDetails';
+import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
+import {joinElementsWith} from '@lib/langPack';
+import {MAX_FILE_SAVE_SIZE} from '@appManagers/constants';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import wrapPlainText from '@lib/richTextProcessor/wrapPlainText';
+import rootScope from '@lib/rootScope';
+import type {ThumbCache} from '@lib/storages/thumbs';
+import {MediaSearchContext} from '@components/appMediaPlaybackController';
+import AudioElement from '@components/audio';
+import confirmationPopup from '@components/confirmationPopup';
+import LazyLoadQueue from '@components/lazyLoadQueue';
+import {MiddleEllipsisElement} from '@components/middleEllipsis';
+import ProgressivePreloader from '@components/preloader';
+import wrapPhoto from '@components/wrappers/photo';
+import wrapSenderToPeer from '@components/wrappers/senderToPeer';
+import wrapSentTime from '@components/wrappers/sentTime';
+import {Middleware} from '@helpers/middleware';
 
 rootScope.addEventListener('document_downloading', (docId) => {
   const elements = Array.from(document.querySelectorAll(`.document[data-doc-id="${docId}"]`)) as HTMLElement[];
@@ -47,7 +48,9 @@ rootScope.addEventListener('document_downloading', (docId) => {
   });
 });
 
-export default async function wrapDocument({message,
+export default async function wrapDocument({
+  message,
+  middleware,
   withTime,
   fontWeight,
   voiceAsMusic,
@@ -69,6 +72,7 @@ export default async function wrapDocument({message,
   globalMedia
 }: {
   message: Message.message,
+  middleware: Middleware,
   withTime?: boolean,
   fontWeight?: number,
   voiceAsMusic?: boolean,
@@ -106,6 +110,7 @@ export default async function wrapDocument({message,
     audioElement.uploadingFileName = uploadingFileName;
     audioElement.shouldWrapAsVoice = shouldWrapAsVoice;
     audioElement.customAudioToTextButton = customAudioToTextButton;
+    audioElement.middleware = middleware;
 
     audioElement.audio = globalMedia as any;
     if(globalMedia) audioElement.dataset.toBeSkipped = '1';

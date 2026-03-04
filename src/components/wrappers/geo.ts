@@ -4,21 +4,21 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import assumeType from '../../helpers/assumeType';
-import getWebFileLocation from '../../helpers/getWebFileLocation';
-import liteMode from '../../helpers/liteMode';
-import makeGoogleMapsUrl from '../../helpers/makeGoogleMapsUrl';
-import mediaSizes from '../../helpers/mediaSizes';
-import {Middleware} from '../../helpers/middleware';
-import tsNow from '../../helpers/tsNow';
-import {GeoPoint, MessageMedia, Message} from '../../layer';
-import I18n, {i18n, LangPackKey, FormatterArguments} from '../../lib/langPack';
-import setBlankToAnchor from '../../lib/richTextProcessor/setBlankToAnchor';
-import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
-import {avatarNew} from '../avatarNew';
-import ChatBubbles from '../chat/bubbles';
-import GeoPin from '../geoPin';
-import wrapPhoto from './photo';
+import assumeType from '@helpers/assumeType';
+import getWebFileLocation from '@helpers/getWebFileLocation';
+import liteMode from '@helpers/liteMode';
+import makeGoogleMapsUrl from '@helpers/makeGoogleMapsUrl';
+import mediaSizes from '@helpers/mediaSizes';
+import {Middleware} from '@helpers/middleware';
+import tsNow from '@helpers/tsNow';
+import {GeoPoint, MessageMedia, Message} from '@layer';
+import I18n, {i18n, LangPackKey, FormatterArguments} from '@lib/langPack';
+import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import {avatarNew} from '@components/avatarNew';
+import ChatBubbles from '@components/chat/bubbles';
+import GeoPin from '@components/geoPin';
+import wrapPhoto from '@components/wrappers/photo';
 
 export default function wrapGeo({
   messageMedia,
@@ -171,7 +171,12 @@ export default function wrapGeo({
   let liveExpiration = isLive ? (message.date + (messageMedia as MessageMedia.messageMediaGeoLive).period) * 1000 : undefined;
   const isLiveExpired = isLive && Date.now() >= liveExpiration;
 
-  let footer: HTMLElement, title: HTMLElement, address: HTMLElement, canHaveTail: boolean;
+  const ret = {
+    canHaveTail: undefined as boolean,
+    mediaRequiresMessageDiv: undefined as boolean
+  };
+
+  let footer: HTMLElement, title: HTMLElement, address: HTMLElement;
   if(isVenue || (isLive && !isLiveExpired)) {
     bubble.classList.remove('is-message-empty');
 
@@ -186,8 +191,9 @@ export default function wrapGeo({
 
     footer.append(title, address);
     messageDiv.append(footer);
+    ret.mediaRequiresMessageDiv = true;
   } else {
-    canHaveTail = false;
+    ret.canHaveTail = false;
   }
 
   if(isLive) {
@@ -305,5 +311,5 @@ export default function wrapGeo({
     address.append(timeSpan);
   }
 
-  return canHaveTail;
+  return ret;
 }

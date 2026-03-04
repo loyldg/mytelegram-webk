@@ -4,21 +4,21 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type LazyLoadQueue from './lazyLoadQueue';
-import appDialogsManager, {AppDialogsManager, DialogDom, DialogElement, DialogElementSize} from '../lib/appManagers/appDialogsManager';
-import {getHeavyAnimationPromise} from '../hooks/useHeavyAnimationCheck';
-import isInDOM from '../helpers/dom/isInDOM';
-import positionElementByIndex from '../helpers/dom/positionElementByIndex';
-import replaceContent from '../helpers/dom/replaceContent';
-import {fastRaf} from '../helpers/schedulers';
-import SortedList, {SortedElementBase} from '../helpers/sortedList';
-import safeAssign from '../helpers/object/safeAssign';
-import {AppManagers} from '../lib/appManagers/managers';
-import getUserStatusString from './wrappers/getUserStatusString';
-import getChatMembersString from './wrappers/getChatMembersString';
-import wrapParticipantRank from './wrappers/participantRank';
-import getParticipantRank from '../lib/appManagers/utils/chats/getParticipantRank';
-import {Middleware, MiddlewareHelper} from '../helpers/middleware';
+import type LazyLoadQueue from '@components/lazyLoadQueue';
+import appDialogsManager, {AppDialogsManager, DialogDom, DialogElement, DialogElementSize} from '@lib/appDialogsManager';
+import {getHeavyAnimationPromise} from '@hooks/useHeavyAnimationCheck';
+import isInDOM from '@helpers/dom/isInDOM';
+import positionElementByIndex from '@helpers/dom/positionElementByIndex';
+import replaceContent from '@helpers/dom/replaceContent';
+import {fastRaf} from '@helpers/schedulers';
+import SortedList, {SortedElementBase} from '@helpers/sortedList';
+import safeAssign from '@helpers/object/safeAssign';
+import {AppManagers} from '@lib/managers';
+import getUserStatusString from '@components/wrappers/getUserStatusString';
+import getChatMembersString from '@components/wrappers/getChatMembersString';
+import wrapParticipantRank from '@components/wrappers/participantRank';
+import getParticipantRank from '@appManagers/utils/chats/getParticipantRank';
+import {Middleware, MiddlewareHelper} from '@helpers/middleware';
 
 interface SortedUser extends SortedElementBase<PeerId> {
   dom: DialogDom,
@@ -64,6 +64,9 @@ export default class SortedUserList extends SortedList<SortedUser> {
         } else {
           const status = getUserStatusString(await this.managers.appUsersManager.getUser(element.id));
           replaceContent(element.dom.lastMessageSpan, status);
+
+          const rank = this.ranks.get(element.id);
+          element.dialogElement.titleRight.replaceChildren(...(rank ? [wrapParticipantRank(rank)] : []));
         }
       }),
       onSort: (element, idx) => {
@@ -90,9 +93,7 @@ export default class SortedUserList extends SortedList<SortedUser> {
         });
 
         const rank = this.ranks.get(base.id);
-        if(rank) {
-          dialogElement.titleRight.replaceChildren(wrapParticipantRank(rank));
-        }
+        dialogElement.titleRight.replaceChildren(rank ? wrapParticipantRank(rank) : undefined);
 
         (base as SortedUser).dom = dialogElement.dom;
         (base as SortedUser).dialogElement = dialogElement;

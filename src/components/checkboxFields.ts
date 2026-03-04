@@ -4,16 +4,16 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import cancelEvent from '../helpers/dom/cancelEvent';
-import {attachClickEvent} from '../helpers/dom/clickEvent';
-import findUpAsChild from '../helpers/dom/findUpAsChild';
-import ListenerSetter from '../helpers/listenerSetter';
-import safeAssign from '../helpers/object/safeAssign';
-import I18n, {FormatterArguments, LangPackKey} from '../lib/langPack';
-import CheckboxField from './checkboxField';
-import Icon from './icon';
-import Row from './row';
-import {toast} from './toast';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import findUpAsChild from '@helpers/dom/findUpAsChild';
+import ListenerSetter from '@helpers/listenerSetter';
+import safeAssign from '@helpers/object/safeAssign';
+import I18n, {FormatterArguments, LangPackKey} from '@lib/langPack';
+import CheckboxField from '@components/checkboxField';
+import Icon from '@components/icon';
+import Row from '@components/row';
+import {toastNew} from '@components/toast';
 
 export type CheckboxFieldsField = {
   text?: LangPackKey,
@@ -122,7 +122,7 @@ export default class CheckboxFields<K extends CheckboxFieldsField = CheckboxFiel
       info.checkboxField.input.disabled = true;
 
       if(!info.nested) attachClickEvent(info.row.container, (e) => {
-        toast(I18n.format(info.restrictionText, true));
+        toastNew({langPackKey: info.restrictionText});
       }, {listenerSetter: this.listenerSetter});
     }
 

@@ -4,34 +4,35 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import rootScope, {BroadcastEvents} from '../../../lib/rootScope';
-import AppSearchSuper, {SearchSuperMediaTab, SearchSuperMediaType, SearchSuperType} from '../../appSearchSuper';
-import SidebarSlider, {SliderSuperTab} from '../../slider';
-import TransitionSlider from '../../transition';
-import AppEditChatTab from './editChat';
-import AppEditContactTab from './editContact';
-import Button from '../../button';
-import ButtonIcon from '../../buttonIcon';
-import I18n, {LangPackKey, i18n} from '../../../lib/langPack';
-import ButtonCorner from '../../buttonCorner';
-import {attachClickEvent} from '../../../helpers/dom/clickEvent';
-import {renderPeerProfile} from '../../peerProfile';
-import {Chat, Message} from '../../../layer';
-import getMessageThreadId from '../../../lib/appManagers/utils/messages/getMessageThreadId';
-import AppEditTopicTab from './editTopic';
-import liteMode from '../../../helpers/liteMode';
-import AppEditBotTab from './editBot';
-import addChatUsers from '../../addChatUsers';
-import apiManagerProxy from '../../../lib/mtproto/mtprotoworker';
-import getPeerId from '../../../lib/appManagers/utils/peers/getPeerId';
-import wrapPeerTitle from '../../wrappers/peerTitle';
-import ButtonMenuToggle from '../../buttonMenuToggle';
-import appImManager from '../../../lib/appManagers/appImManager';
-import {useIsFrozen} from '../../../stores/appState';
-import {profileStarGiftsButtonMenu} from '../../stargifts/profileList';
+import rootScope, {BroadcastEvents} from '@lib/rootScope';
+import AppSearchSuper, {SearchSuperMediaTab, SearchSuperMediaType, SearchSuperType} from '@components/appSearchSuper';
+import SidebarSlider, {SliderSuperTab} from '@components/slider';
+import TransitionSlider from '@components/transition';
+import AppEditChatTab from '@components/sidebarRight/tabs/editChat';
+import AppEditContactTab from '@components/sidebarRight/tabs/editContact';
+import Button from '@components/button';
+import ButtonIcon from '@components/buttonIcon';
+import I18n, {LangPackKey, i18n} from '@lib/langPack';
+import ButtonCorner from '@components/buttonCorner';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import {renderPeerProfile} from '@components/peerProfile';
+import {Chat, Message} from '@layer';
+import getMessageThreadId from '@appManagers/utils/messages/getMessageThreadId';
+import AppEditTopicTab from '@components/sidebarRight/tabs/editTopic';
+import liteMode from '@helpers/liteMode';
+import AppEditBotTab from '@components/sidebarRight/tabs/editBot';
+import addChatUsers from '@components/addChatUsers';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import appImManager from '@lib/appImManager';
+import {useIsFrozen} from '@stores/appState';
+import {profileStarGiftsButtonMenu} from '@components/stargifts/profileList';
 import {createRoot} from 'solid-js';
-import SolidJSHotReloadGuardProvider from '../../../lib/solidjs/hotReloadGuardProvider';
-import namedPromises from '../../../helpers/namedPromises';
+import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
+import namedPromises from '@helpers/namedPromises';
+import hasRights from '@lib/appManagers/utils/chats/hasRights';
 
 type SharedMediaHistoryStorage = Partial<{
   [type in SearchSuperType]: {mid: number, peerId: PeerId}[]
@@ -184,7 +185,8 @@ export default class AppSharedMediaTab extends SliderSuperTab {
 
     const HEADER_HEIGHT = 56;
     this.scrollable.onAdditionalScroll = () => {
-      const rect = this.searchSuper.nav.getBoundingClientRect();
+      const isSingle = this.searchSuper.navScrollableContainer.classList.contains('is-single');
+      const rect = (isSingle ? this.searchSuper.container : this.searchSuper.nav).getBoundingClientRect();
       if(!rect.width) return;
 
       const top = rect.top - 1;
@@ -440,8 +442,9 @@ export default class AppSharedMediaTab extends SliderSuperTab {
         this.threadId === threadId
       ) {
         this.searchSuper.usedFromHistory[inputFilter] += filtered.length;
-        this.searchSuper.performSearchResult(filtered, mediaTab, false);
-        this.searchSuper.setCounter(mediaTab.type, this.searchSuper.counters[mediaTab.type] + filtered.length);
+        this.searchSuper.performSearchResult({messages: filtered, mediaTab, append: false}).then((length) => {
+          this.searchSuper.setCounter(mediaTab.type, this.searchSuper.counters[mediaTab.type] + length);
+        });
       }
     }
   }
@@ -459,7 +462,13 @@ export default class AppSharedMediaTab extends SliderSuperTab {
     }
   }
 
-  public _deleteDeletedMessages(historyStorage: SharedMediaHistoryStorage, peerId: PeerId, mids: number[], threadId?: number) {
+  public _deleteDeletedMessages(
+    historyStorage: SharedMediaHistoryStorage,
+    peerId: PeerId,
+    mids: number[],
+    threadId?: number
+  ) {
+    const notFound: Set<SearchSuperMediaTab> = new Set();
     for(const mid of mids) {
       for(const mediaTab of this.searchSuper.mediaTabs) {
         const inputFilter = mediaTab.inputFilter;
@@ -470,9 +479,6 @@ export default class AppSharedMediaTab extends SliderSuperTab {
         const isGood = mediaTab.type === 'saved' ?
           this.peerId === threadId :
           this.peerId === peerId && this.threadId === threadId;
-        if(isGood) {
-          this.searchSuper.setCounter(mediaTab.type, this.searchSuper.counters[mediaTab.type] - mids.length);
-        }
 
         const idx = history.findIndex((m) => m.mid === mid);
         if(idx === -1) {
@@ -494,6 +500,13 @@ export default class AppSharedMediaTab extends SliderSuperTab {
             if(idx !== -1 && this.searchSuper.usedFromHistory[inputFilter] >= (idx + 1)) {
               --this.searchSuper.usedFromHistory[inputFilter];
             }
+
+            this.searchSuper.setCounter(
+              mediaTab.type,
+              this.searchSuper.counters[mediaTab.type] - 1
+            );
+          } else {
+            notFound.add(mediaTab);
           }
         }
 
@@ -501,6 +514,25 @@ export default class AppSharedMediaTab extends SliderSuperTab {
         // break;
       }
     }
+
+    const filters = Array.from(notFound).map((mediaTab) => ({_: mediaTab.inputFilter}));
+    if(!filters.length) {
+      return;
+    }
+
+    const middleware = this.searchSuper.middleware.get();
+    this.searchSuper.getSearchCounters(filters).then((counters) => {
+      if(!middleware()) {
+        return;
+      }
+
+      notFound.forEach((mediaTab) => {
+        const counter = counters.find((c) => c.filter._ === mediaTab.inputFilter);
+        if(counter) {
+          this.searchSuper.setCounter(mediaTab.type, counter.count);
+        }
+      });
+    });
   }
 
   public deleteDeletedMessages(peerId: PeerId, msgs: BroadcastEvents['history_delete']['msgs']) {
@@ -645,7 +677,6 @@ export default class AppSharedMediaTab extends SliderSuperTab {
 
   private async toggleEditBtn(manual: true): Promise<() => void>;
   private async toggleEditBtn(manual?: false): Promise<void>;
-
   private async toggleEditBtn(manual?: boolean): Promise<(() => void) | void> {
     const {peerId} = this;
     let show: boolean;
@@ -660,7 +691,7 @@ export default class AppSharedMediaTab extends SliderSuperTab {
         show = await this.managers.dialogsStorage.canManageTopic(await this.managers.dialogsStorage.getForumTopic(peerId, this.threadId));
       } else {
         const chat = apiManagerProxy.getChat(chatId);
-        show = !!(chat as Chat.channel).admin_rights || await this.managers.appChatsManager.hasRights(chatId, 'change_info');
+        show = hasRights(chat, 'change_info');
       }
     }
 

@@ -1,20 +1,26 @@
-import {attachClickEvent} from '../helpers/dom/clickEvent';
-import cloneDOMRect from '../helpers/dom/cloneDOMRect';
-import getRichValueWithCaret from '../helpers/dom/getRichValueWithCaret';
-import deepEqual from '../helpers/object/deepEqual';
-import {MessageEntity, TextWithEntities} from '../layer';
-import getEmojiEntityFromEmoji from '../lib/richTextProcessor/getEmojiEntityFromEmoji';
-import wrapEmojiText from '../lib/richTextProcessor/wrapEmojiText';
-import wrapRichText from '../lib/richTextProcessor/wrapRichText';
-import rootScope from '../lib/rootScope';
-import ButtonIcon from './buttonIcon';
-import {EmoticonsDropdown} from './emoticonsDropdown';
-import EmojiTab from './emoticonsDropdown/tabs/emoji';
-import InputField, {InputFieldOptions, insertRichTextAsHTML} from './inputField';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import cloneDOMRect from '@helpers/dom/cloneDOMRect';
+import getRichValueWithCaret from '@helpers/dom/getRichValueWithCaret';
+import deepEqual from '@helpers/object/deepEqual';
+import {MessageEntity, TextWithEntities} from '@layer';
+import getEmojiEntityFromEmoji from '@lib/richTextProcessor/getEmojiEntityFromEmoji';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import wrapRichText from '@lib/richTextProcessor/wrapRichText';
+import rootScope from '@lib/rootScope';
+import ButtonIcon from '@components/buttonIcon';
+import {EmoticonsDropdown} from '@components/emoticonsDropdown';
+import EmojiTab from '@components/emoticonsDropdown/tabs/emoji';
+import InputField, {InputFieldOptions, insertRichTextAsHTML} from '@components/inputField';
 
-import styles from './inputFieldEmoji.module.scss';
+import styles from '@components/inputFieldEmoji.module.scss';
 
-const createEmojiDropdownButton = ({inputField}: {inputField: InputFieldEmoji}) => {
+const createEmojiDropdownButton = ({
+  inputField,
+  onEmoticonsDropdown
+}: {
+  inputField: InputFieldEmoji,
+  onEmoticonsDropdown: (emoticonsDropdown: EmoticonsDropdown) => void
+}) => {
   const button = ButtonIcon('smile ' + styles.EmojiButton);
   if(inputField.options.withLinebreaks) {
     button.classList.add(styles.multiline);
@@ -78,9 +84,11 @@ const createEmojiDropdownButton = ({inputField}: {inputField: InputFieldEmoji}) 
     });
 
     emoticonsDropdown.onButtonClick();
+
+    onEmoticonsDropdown(emoticonsDropdown);
   });
 
-  return {button, emoticonsDropdown};
+  return {button};
 };
 
 export class InputFieldEmoji extends InputField {
@@ -93,13 +101,17 @@ export class InputFieldEmoji extends InputField {
       ...options
     })
 
-    const {button, emoticonsDropdown} = createEmojiDropdownButton({inputField: this});
-    this.emoticonsDropdown = emoticonsDropdown;
+    const {button} = createEmojiDropdownButton({
+      inputField: this,
+      onEmoticonsDropdown: (emoticonsDropdown) => {
+        this.emoticonsDropdown = emoticonsDropdown;
+      }
+    });
     this.input.after(button);
   }
 
   public cleanup() {
-    this.emoticonsDropdown.hideAndDestroy();
+    this.emoticonsDropdown?.hideAndDestroy();
   }
 
   get richValue(): TextWithEntities {

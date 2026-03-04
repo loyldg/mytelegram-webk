@@ -4,34 +4,36 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import appMediaPlaybackController, {AppMediaPlaybackController} from '../appMediaPlaybackController';
-import DivAndCaption from '../divAndCaption';
-import PinnedContainer from './pinnedContainer';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import {attachClickEvent} from '../../helpers/dom/clickEvent';
-import replaceContent from '../../helpers/dom/replaceContent';
-import PeerTitle from '../peerTitle';
-import {i18n} from '../../lib/langPack';
-import {formatFullSentTime} from '../../helpers/date';
-import ButtonIcon from '../buttonIcon';
-import {DocumentAttribute} from '../../layer';
-import MediaProgressLine from '../mediaProgressLine';
-import VolumeSelector from '../volumeSelector';
-import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
-import {AppManagers} from '../../lib/appManagers/managers';
-import Icon from '../icon';
-import {replaceButtonIcon} from '../button';
-import getFwdFromName from '../../lib/appManagers/utils/messages/getFwdFromName';
-import toHHMMSS from '../../helpers/string/toHHMMSS';
-import {PlaybackRateButton} from '../../components/playbackRateButton';
-import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
-import {doubleRaf} from '../../helpers/schedulers';
-import ListenerSetter from '../../helpers/listenerSetter';
-import SetTransition from '../singleTransition';
-import {ChatType} from './chat';
-import type {AppImManager} from '../../lib/appManagers/appImManager';
-import findUpClassName from '../../helpers/dom/findUpClassName';
-import toggleDisability from '../../helpers/dom/toggleDisability';
+import appMediaPlaybackController, {AppMediaPlaybackController} from '@components/appMediaPlaybackController';
+import DivAndCaption from '@components/divAndCaption';
+import PinnedContainer from '@components/chat/pinnedContainer';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import replaceContent from '@helpers/dom/replaceContent';
+import PeerTitle from '@components/peerTitle';
+import {i18n} from '@lib/langPack';
+import {formatFullSentTime} from '@helpers/date';
+import ButtonIcon from '@components/buttonIcon';
+import {DocumentAttribute} from '@layer';
+import MediaProgressLine from '@components/mediaProgressLine';
+import VolumeSelector from '@components/volumeSelector';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import {AppManagers} from '@lib/managers';
+import Icon from '@components/icon';
+import {replaceButtonIcon} from '@components/button';
+import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
+import toHHMMSS from '@helpers/string/toHHMMSS';
+import {PlaybackRateButton} from '@components/playbackRateButton';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import {doubleRaf} from '@helpers/schedulers';
+import ListenerSetter from '@helpers/listenerSetter';
+import SetTransition from '@components/singleTransition';
+import {ChatType} from '@components/chat/chat';
+import type {AppImManager} from '@lib/appImManager';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import toggleDisability from '@helpers/dom/toggleDisability';
+import appSidebarRight from '../sidebarRight';
+import AppSavedMusicTab from '../sidebarRight/tabs/savedMusic';
 
 export default class ChatAudio extends PinnedContainer {
   private toggleEl: HTMLElement;
@@ -102,6 +104,22 @@ export default class ChatAudio extends PinnedContainer {
 
       const mid = +this.container.dataset.mid;
       const peerId = this.container.dataset.peerId.toPeerId();
+      const savedMusicDocId = this.container.dataset.savedMusicDocId; // todo
+      if(savedMusicDocId) {
+        const prevTab = appSidebarRight.getTab(AppSavedMusicTab)
+        if(prevTab?.peerId === peerId) {
+          appSidebarRight.toggleSidebar(true);
+          return;
+        }
+
+        const tab = appSidebarRight.createTab(AppSavedMusicTab);
+        tab.peerId = peerId;
+        tab.open();
+        appSidebarRight.toggleSidebar(true);
+        if(prevTab) setTimeout(() => prevTab.close(), 300)
+        return
+      }
+
       const searchContext = appMediaPlaybackController.getSearchContext();
       this.appImManager.setInnerPeer({
         peerId,
@@ -234,7 +252,7 @@ export default class ChatAudio extends PinnedContainer {
     this.toggle(true);
   };
 
-  private onMediaPlay = ({doc, message, media, playbackParams}: ReturnType<AppMediaPlaybackController['getPlayingDetails']>) => {
+  private onMediaPlay = ({doc, message, media, playbackParams, isSavedMusic}: ReturnType<AppMediaPlaybackController['getPlayingDetails']>) => {
     let title: string | HTMLElement | DocumentFragment, subtitle: string | HTMLElement | DocumentFragment;
     const isMusic = doc.type !== 'voice' && doc.type !== 'round';
     if(!isMusic) {
@@ -264,7 +282,8 @@ export default class ChatAudio extends PinnedContainer {
     this.fill({
       title,
       subtitle,
-      message
+      message,
+      savedMusicDocId: isSavedMusic ? doc.id : undefined
     });
     this.setPlayIcon(media.paused);
     this.toggle(false);

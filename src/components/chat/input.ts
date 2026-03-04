@@ -4,146 +4,161 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {MyDocument} from '../../lib/appManagers/appDocsManager';
-import type {MyDraftMessage} from '../../lib/appManagers/appDraftsManager';
-import type {AppMessagesManager, MessageSendingParams, MyMessage, SuggestedPostPayload} from '../../lib/appManagers/appMessagesManager';
-import type Chat from './chat';
-import {AppImManager, APP_TABS} from '../../lib/appManagers/appImManager';
+import type {MyDocument} from '@appManagers/appDocsManager';
+import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
+import type {MyDraftMessage} from '@appManagers/appDraftsManager';
+import type {AppMessagesManager, MessageSendingParams, MyMessage, SuggestedPostPayload} from '@appManagers/appMessagesManager';
+import type Chat from '@components/chat/chat';
+import {AppImManager, APP_TABS} from '@lib/appImManager';
 import '../../../public/recorder.min';
-import IS_TOUCH_SUPPORTED from '../../environment/touchSupport';
-import opusDecodeController from '../../lib/opusDecodeController';
-import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '../buttonMenu';
-import emoticonsDropdown, {EmoticonsDropdown} from '../emoticonsDropdown';
-import PopupCreatePoll from '../popups/createPoll';
-import PopupForward from '../popups/forward';
-import PopupNewMedia, {getCurrentNewMediaPopup} from '../popups/newMedia';
-import {toast, toastNew} from '../toast';
-import {MessageEntity, DraftMessage, WebPage, Message, UserFull, AttachMenuPeerType, BotMenuButton, MessageMedia, InputReplyTo, Chat as MTChat, User, ChatFull, Dialog} from '../../layer';
-import StickersHelper from './stickersHelper';
-import ButtonIcon from '../buttonIcon';
-import ButtonMenuToggle from '../buttonMenuToggle';
-import ListenerSetter, {Listener} from '../../helpers/listenerSetter';
-import Button, {replaceButtonIcon} from '../button';
-import PopupSchedule from '../popups/schedule';
-import SendMenu from './sendContextMenu';
-import rootScope from '../../lib/rootScope';
-import PopupPinMessage from '../popups/unpinMessage';
-import tsNow from '../../helpers/tsNow';
-import appNavigationController, {NavigationItem} from '../appNavigationController';
-import {IS_MOBILE, IS_MOBILE_SAFARI} from '../../environment/userAgent';
-import I18n, {FormatterArguments, i18n, join, LangPackKey} from '../../lib/langPack';
-import {createAutoDeleteIcon, generateTail} from './utils';
-import findUpClassName from '../../helpers/dom/findUpClassName';
-import ButtonCorner from '../buttonCorner';
-import blurActiveElement from '../../helpers/dom/blurActiveElement';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import cancelSelection from '../../helpers/dom/cancelSelection';
-import {attachClickEvent, simulateClickEvent} from '../../helpers/dom/clickEvent';
-import isInputEmpty from '../../helpers/dom/isInputEmpty';
-import isSendShortcutPressed from '../../helpers/dom/isSendShortcutPressed';
-import placeCaretAtEnd from '../../helpers/dom/placeCaretAtEnd';
-import getRichValueWithCaret from '../../helpers/dom/getRichValueWithCaret';
-import EmojiHelper from './emojiHelper';
-import CommandsHelper from './commandsHelper';
-import AutocompleteHelperController from './autocompleteHelperController';
-import AutocompleteHelper from './autocompleteHelper';
-import MentionsHelper from './mentionsHelper';
-import fixSafariStickyInput from '../../helpers/dom/fixSafariStickyInput';
-import ReplyKeyboard from './replyKeyboard';
-import InlineHelper from './inlineHelper';
-import debounce from '../../helpers/schedulers/debounce';
-import {putPreloader} from '../putPreloader';
-import SetTransition from '../singleTransition';
-import PeerTitle from '../peerTitle';
-import {fastRaf} from '../../helpers/schedulers';
-import PopupDeleteMessages from '../popups/deleteMessages';
-import fixSafariStickyInputFocusing, {IS_STICKY_INPUT_BUGGED} from '../../helpers/dom/fixSafariStickyInputFocusing';
-import PopupPeer from '../popups/peer';
-import appMediaPlaybackController from '../appMediaPlaybackController';
-import {BOT_START_PARAM, GENERAL_TOPIC_ID, NULL_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SEND_WHEN_ONLINE_TIMESTAMP} from '../../lib/mtproto/mtproto_config';
-import setCaretAt from '../../helpers/dom/setCaretAt';
-import DropdownHover from '../../helpers/dropdownHover';
-import findUpTag from '../../helpers/dom/findUpTag';
-import toggleDisability from '../../helpers/dom/toggleDisability';
-import callbackify from '../../helpers/callbackify';
-import ChatBotCommands from './botCommands';
-import copy from '../../helpers/object/copy';
-import toHHMMSS from '../../helpers/string/toHHMMSS';
-import documentFragmentToHTML from '../../helpers/dom/documentFragmentToHTML';
-import PopupElement from '../popups';
-import getEmojiEntityFromEmoji from '../../lib/richTextProcessor/getEmojiEntityFromEmoji';
-import mergeEntities from '../../lib/richTextProcessor/mergeEntities';
-import parseEntities from '../../lib/richTextProcessor/parseEntities';
-import parseMarkdown from '../../lib/richTextProcessor/parseMarkdown';
-import wrapDraftText from '../../lib/richTextProcessor/wrapDraftText';
-import wrapDraft from '../wrappers/draft';
-import wrapMessageForReply from '../wrappers/messageForReply';
-import getServerMessageId from '../../lib/appManagers/utils/messageId/getServerMessageId';
-import {AppManagers} from '../../lib/appManagers/managers';
-import contextMenuController from '../../helpers/contextMenuController';
-import {emojiFromCodePoints} from '../../vendor/emoji';
-import {modifyAckedPromise} from '../../helpers/modifyAckedResult';
-import ChatSendAs from './sendAs';
-import filterAsync from '../../helpers/array/filterAsync';
-import InputFieldAnimated from '../inputFieldAnimated';
-import getStickerEffectThumb from '../../lib/appManagers/utils/stickers/getStickerEffectThumb';
-import PopupStickers from '../popups/stickers';
-import wrapPeerTitle from '../wrappers/peerTitle';
-import wrapReply from '../wrappers/reply';
-import {getEmojiFromElement} from '../emoticonsDropdown/tabs/emoji';
-import RichInputHandler from '../../helpers/dom/richInputHandler';
-import {insertRichTextAsHTML} from '../inputField';
-import draftsAreEqual from '../../lib/appManagers/utils/drafts/draftsAreEqual';
-import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
-import getAttachMenuBotIcon from '../../lib/appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
-import forEachReverse from '../../helpers/array/forEachReverse';
-import {MARKDOWN_ENTITIES} from '../../lib/richTextProcessor';
-import IMAGE_MIME_TYPES_SUPPORTED from '../../environment/imageMimeTypesSupport';
-import VIDEO_MIME_TYPES_SUPPORTED from '../../environment/videoMimeTypesSupport';
-import {ChatRights} from '../../lib/appManagers/appChatsManager';
-import getPeerActiveUsernames from '../../lib/appManagers/utils/peers/getPeerActiveUsernames';
-import replaceContent from '../../helpers/dom/replaceContent';
-import getTextWidth from '../../helpers/canvas/getTextWidth';
-import {FontFull} from '../../config/font';
-import {ChatType} from './chat';
-import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
-import idleController from '../../helpers/idleController';
-import Icon from '../icon';
-import setBadgeContent from '../../helpers/setBadgeContent';
-import createBadge from '../../helpers/createBadge';
-import deepEqual from '../../helpers/object/deepEqual';
-import {clearMarkdownExecutions, createMarkdownCache, handleMarkdownShortcut, maybeClearUndoHistory, processCurrentFormatting} from '../../helpers/dom/markdown';
-import MarkupTooltip from './markupTooltip';
-import PopupPremium from '../popups/premium';
-import PopupPickUser from '../popups/pickUser';
-import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
-import {isSavedDialog} from '../../lib/appManagers/utils/dialogs/isDialog';
-import getFwdFromName from '../../lib/appManagers/utils/messages/getFwdFromName';
-import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
-import eachSecond from '../../helpers/eachSecond';
-import {wrapSlowModeLeftDuration} from '../wrappers/wrapDuration';
-import showTooltip from '../tooltip';
-import createContextMenu from '../../helpers/dom/createContextMenu';
-import {Accessor, createEffect, createMemo, createRoot, createSignal, onCleanup, Setter} from 'solid-js';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import opusDecodeController from '@lib/opusDecodeController';
+import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
+import emoticonsDropdown, {EmoticonsDropdown} from '@components/emoticonsDropdown';
+import PopupCreatePoll from '@components/popups/createPoll';
+import PopupForward from '@components/popups/forward';
+import PopupNewMedia, {getCurrentNewMediaPopup} from '@components/popups/newMedia';
+import {toast, toastNew} from '@components/toast';
+import {MessageEntity, DraftMessage, WebPage, Message, UserFull, AttachMenuPeerType, BotMenuButton, MessageMedia, InputReplyTo, Chat as MTChat, User, ChatFull, Dialog, PhotoSize, Photo, Document} from '@layer';
+import StickersHelper from '@components/chat/stickersHelper';
+import ButtonIcon from '@components/buttonIcon';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import ListenerSetter, {Listener} from '@helpers/listenerSetter';
+import Button, {replaceButtonIcon} from '@components/button';
+import PopupSchedule from '@components/popups/schedule';
+import SendMenu from '@components/chat/sendContextMenu';
+import rootScope from '@lib/rootScope';
+import PopupPinMessage from '@components/popups/unpinMessage';
+import tsNow from '@helpers/tsNow';
+import appNavigationController, {NavigationItem} from '@components/appNavigationController';
+import {IS_MOBILE, IS_MOBILE_SAFARI} from '@environment/userAgent';
+import I18n, {FormatterArguments, i18n, join, LangPackKey} from '@lib/langPack';
+import {AttachedMediaType, canUploadAsWhenEditing, createAutoDeleteIcon, generateTail, getMediaTypeForMessage, slowModeTimer} from '@components/chat/utils';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import ButtonCorner from '@components/buttonCorner';
+import blurActiveElement from '@helpers/dom/blurActiveElement';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import cancelSelection from '@helpers/dom/cancelSelection';
+import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
+import isInputEmpty from '@helpers/dom/isInputEmpty';
+import isSendShortcutPressed from '@helpers/dom/isSendShortcutPressed';
+import placeCaretAtEnd from '@helpers/dom/placeCaretAtEnd';
+import getRichValueWithCaret from '@helpers/dom/getRichValueWithCaret';
+import EmojiHelper from '@components/chat/emojiHelper';
+import CommandsHelper from '@components/chat/commandsHelper';
+import AutocompleteHelperController from '@components/chat/autocompleteHelperController';
+import AutocompleteHelper from '@components/chat/autocompleteHelper';
+import MentionsHelper from '@components/chat/mentionsHelper';
+import fixSafariStickyInput from '@helpers/dom/fixSafariStickyInput';
+import ReplyKeyboard from '@components/chat/replyKeyboard';
+import InlineHelper from '@components/chat/inlineHelper';
+import debounce from '@helpers/schedulers/debounce';
+import {putPreloader} from '@components/putPreloader';
+import SetTransition from '@components/singleTransition';
+import PeerTitle from '@components/peerTitle';
+import {fastRaf} from '@helpers/schedulers';
+import PopupDeleteMessages from '@components/popups/deleteMessages';
+import fixSafariStickyInputFocusing, {IS_STICKY_INPUT_BUGGED} from '@helpers/dom/fixSafariStickyInputFocusing';
+import PopupPeer from '@components/popups/peer';
+import appMediaPlaybackController from '@components/appMediaPlaybackController';
+import {BOT_START_PARAM, GENERAL_TOPIC_ID, NULL_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SEND_WHEN_ONLINE_TIMESTAMP} from '@appManagers/constants';
+import setCaretAt from '@helpers/dom/setCaretAt';
+import DropdownHover from '@helpers/dropdownHover';
+import findUpTag from '@helpers/dom/findUpTag';
+import toggleDisability from '@helpers/dom/toggleDisability';
+import callbackify from '@helpers/callbackify';
+import ChatBotCommands from '@components/chat/botCommands';
+import copy from '@helpers/object/copy';
+import toHHMMSS from '@helpers/string/toHHMMSS';
+import documentFragmentToHTML from '@helpers/dom/documentFragmentToHTML';
+import PopupElement from '@components/popups';
+import getEmojiEntityFromEmoji from '@lib/richTextProcessor/getEmojiEntityFromEmoji';
+import mergeEntities from '@lib/richTextProcessor/mergeEntities';
+import parseEntities from '@lib/richTextProcessor/parseEntities';
+import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
+import wrapDraftText from '@lib/richTextProcessor/wrapDraftText';
+import wrapDraft from '@components/wrappers/draft';
+import wrapMessageForReply from '@components/wrappers/messageForReply';
+import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import {AppManagers} from '@lib/managers';
+import contextMenuController from '@helpers/contextMenuController';
+import {emojiFromCodePoints} from '@vendor/emoji';
+import {modifyAckedPromise} from '@helpers/modifyAckedResult';
+import ChatSendAs from '@components/chat/sendAs';
+import filterAsync from '@helpers/array/filterAsync';
+import InputFieldAnimated from '@components/inputFieldAnimated';
+import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
+import PopupStickers from '@components/popups/stickers';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import wrapReply from '@components/wrappers/reply';
+import {getEmojiFromElement} from '@components/emoticonsDropdown/tabs/emoji';
+import RichInputHandler from '@helpers/dom/richInputHandler';
+import {insertRichTextAsHTML} from '@components/inputField';
+import draftsAreEqual from '@appManagers/utils/drafts/draftsAreEqual';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import getAttachMenuBotIcon from '@appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
+import forEachReverse from '@helpers/array/forEachReverse';
+import {MARKDOWN_ENTITIES} from '@lib/richTextProcessor';
+import IMAGE_MIME_TYPES_SUPPORTED from '@environment/imageMimeTypesSupport';
+import VIDEO_MIME_TYPES_SUPPORTED from '@environment/videoMimeTypesSupport';
+import {ChatRights} from '@appManagers/appChatsManager';
+import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
+import replaceContent from '@helpers/dom/replaceContent';
+import getTextWidth from '@helpers/canvas/getTextWidth';
+import {FontFull} from '@config/font';
+import {ChatType} from '@components/chat/chat';
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
+import idleController from '@helpers/idleController';
+import Icon from '@components/icon';
+import setBadgeContent from '@helpers/setBadgeContent';
+import createBadge from '@helpers/createBadge';
+import deepEqual from '@helpers/object/deepEqual';
+import {clearMarkdownExecutions, createMarkdownCache, handleMarkdownShortcut, maybeClearUndoHistory, processCurrentFormatting} from '@helpers/dom/markdown';
+import MarkupTooltip from '@components/chat/markupTooltip';
+import PopupPremium from '@components/popups/premium';
+import PopupPickUser from '@components/popups/pickUser';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import {isSavedDialog} from '@appManagers/utils/dialogs/isDialog';
+import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import eachSecond from '@helpers/eachSecond';
+import {wrapSlowModeLeftDuration} from '@components/wrappers/wrapDuration';
+import showTooltip from '@components/tooltip';
+import createContextMenu from '@helpers/dom/createContextMenu';
+import {Accessor, createEffect, createMemo, createRoot, createSignal, on, onCleanup, Setter} from 'solid-js';
 import {createStore} from 'solid-js/store';
-import SelectedEffect from './selectedEffect';
-import windowSize from '../../helpers/windowSize';
-import {numberThousandSplitterForStars} from '../../helpers/number/numberThousandSplitter';
-import accumulate from '../../helpers/array/accumulate';
-import splitStringByLength from '../../helpers/string/splitStringByLength';
-import PaidMessagesInterceptor, {PAYMENT_REJECTED} from './paidMessagesInterceptor';
-import asyncThrottle from '../../helpers/schedulers/asyncThrottle';
-import focusInput from '../../helpers/dom/focusInput';
-import {PopupChecklist} from '../popups/checklist';
-import assumeType from '../../helpers/assumeType';
-import {formatFullSentTime} from '../../helpers/date';
-import useStars from '../../stores/stars';
-import PopupStars from '../popups/stars';
-import SolidJSHotReloadGuardProvider from '../../lib/solidjs/hotReloadGuardProvider';
-import {makeMessageMediaInputForSuggestedPost} from '../../lib/appManagers/utils/messages/makeMessageMediaInput';
-import showFrozenPopup from '../popups/frozen';
-import {wrapAsyncClickHandler} from '../../helpers/wrapAsyncClickHandler';
-import {setPeerColorToElement} from '../peerColors';
+import SelectedEffect from '@components/chat/selectedEffect';
+import windowSize from '@helpers/windowSize';
+import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
+import accumulate from '@helpers/array/accumulate';
+import splitStringByLength from '@helpers/string/splitStringByLength';
+import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '@components/chat/paidMessagesInterceptor';
+import asyncThrottle from '@helpers/schedulers/asyncThrottle';
+import focusInput from '@helpers/dom/focusInput';
+import {PopupChecklist} from '@components/popups/checklist';
+import assumeType from '@helpers/assumeType';
+import {formatFullSentTime} from '@helpers/date';
+import useStars from '@stores/stars';
+import PopupStars from '@components/popups/stars';
+import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
+import {makeMessageMediaInputForSuggestedPost} from '@appManagers/utils/messages/makeMessageMediaInput';
+import showFrozenPopup from '@components/popups/frozen';
+import {wrapAsyncClickHandler} from '@helpers/wrapAsyncClickHandler';
+import {setPeerColorToElement} from '@components/peerColors';
+import getMainGroupedMessage from '@lib/appManagers/utils/messages/getMainGroupedMessage';
+import appDownloadManager, {DownloadBlob} from '@lib/appDownloadManager';
+import {MediaEditorProps} from '@components/mediaEditor/mediaEditor';
+import {NumberPair} from '@components/mediaEditor/types';
+import {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
+import AttachMenuButton from './attachMenuButton';
+import pause from '@helpers/schedulers/pause';
+import onMediaLoad from '@helpers/onMediaLoad';
+import createVideo from '@helpers/dom/createVideo';
+import {MAX_EDITABLE_VIDEO_SIZE} from '@components/mediaEditor/support';
+import getDocumentDownloadOptions from '@lib/appManagers/utils/docs/getDocumentDownloadOptions';
+import getPhotoDownloadOptions from '@lib/appManagers/utils/photos/getPhotoDownloadOptions';
+import {getFileNameByLocation} from '@helpers/fileName';
+import {Middleware, getMiddleware, MiddlewareHelper} from '@helpers/middleware';
 
 // console.log('Recorder', Recorder);
 
@@ -167,6 +182,13 @@ export type ChatInputReplyTo = Pick<MessageSendingParams, 'replyToMsgId' | 'repl
 
 const CLASS_NAME = 'chat-input';
 const PEER_EXCEPTIONS = new Set<ChatType>([ChatType.Scheduled, ChatType.Stories, ChatType.Saved]);
+
+type WatchDownloadProgressArgs<T> = {
+  getDownloadPromise: () => DownloadBlob;
+  getResult: () => Promise<T>;
+  middleware: Middleware;
+  cancel: () => void;
+};
 
 export default class ChatInput {
   // private static AUTO_COMPLETE_REG_EXP = /(\s|^)((?::|.)(?!.*[:@]).*|(?:[@\/]\S*))$/;
@@ -192,7 +214,7 @@ export default class ChatInput {
 
   private replyKeyboard: ReplyKeyboard;
 
-  public attachMenu: HTMLElement;
+  public attachMenu: InstanceType<typeof AttachMenuButton>;
   private attachMenuButtons: ButtonMenuItemOptionsVerifiable[];
 
   public btnSuggestPost: HTMLElement;
@@ -271,7 +293,7 @@ export default class ChatInput {
   private helperWaitingForward: boolean;
   private helperWaitingReply: boolean;
 
-  public willAttachType: 'document' | 'media';
+  public willAttachType: AttachedMediaType;
 
   private autocompleteHelperController: AutocompleteHelperController;
   private stickersHelper: StickersHelper;
@@ -280,6 +302,7 @@ export default class ChatInput {
   private mentionsHelper: MentionsHelper;
   private inlineHelper: InlineHelper;
   private listenerSetter: ListenerSetter;
+  private middlewareHelper: MiddlewareHelper;
   private hoverListenerSetter: ListenerSetter;
 
   private pinnedControlBtn: HTMLButtonElement;
@@ -368,11 +391,13 @@ export default class ChatInput {
 
   public paidMessageInterceptor: PaidMessagesInterceptor;
 
+  private fileInputState: ReturnType<ChatInput['createFileInputState']>;
   private starsState: ReturnType<ChatInput['createStarsState']>;
   private directMessagesHandler: ReturnType<ChatInput['createDirectMessagesHandler']>;
 
   public suggestedPost: SuggestedPostPayload;
   private inputHelperNavigationItem: NavigationItem;
+  private placeholderParamsMiddlewareHelper: MiddlewareHelper;
 
   constructor(
     public chat: Chat,
@@ -382,6 +407,7 @@ export default class ChatInput {
   ) {
     this.listenerSetter = new ListenerSetter();
     this.hoverListenerSetter = new ListenerSetter();
+    this.middlewareHelper = getMiddleware();
     this.excludeParts = {};
     this.isFocused = false;
     this.emoticonsDropdown = emoticonsDropdown;
@@ -424,6 +450,8 @@ export default class ChatInput {
     if(!this.excludeParts.downButton) {
       this.constructGoDownButton();
     }
+
+    this.placeholderParamsMiddlewareHelper = getMiddleware();
 
     // * constructor end
 
@@ -501,6 +529,7 @@ export default class ChatInput {
       this.paidMessageInterceptor.dispose();
     });
 
+    this.fileInputState = this.createFileInputState();
     this.starsState = this.createStarsState();
     this.directMessagesHandler = this.createDirectMessagesHandler();
   }
@@ -804,7 +833,8 @@ export default class ChatInput {
       listenerSetter: this.listenerSetter,
       managers: this.managers,
       btnHover: this.btnToggleReplyMarkup,
-      chatInput: this
+      chatInput: this,
+      middleware: this.middlewareHelper.get()
     });
     this.listenerSetter.add(this.replyKeyboard)('open', () => this.btnToggleReplyMarkup.classList.add('active'));
     this.listenerSetter.add(this.replyKeyboard)('close', () => this.btnToggleReplyMarkup.classList.remove('active'));
@@ -1004,10 +1034,13 @@ export default class ChatInput {
 
     // const getSendMediaRights = () => Promise.all([this.chat.canSend('send_photos'), this.chat.canSend('send_videos')]).then(([photos, videos]) => ({photos, videos}));
 
+    const inputThis = this;
+
     this.attachMenuButtons = [{
       icon: 'image',
       text: 'Chat.Input.Attach.PhotoOrVideo',
-      onClick: () => this.onAttachClick(false, true, true)
+      onClick: () => this.onAttachClick(false, true, true),
+      verify: () => canUploadAsWhenEditing({asWhat: 'media', message: this.editMessage})
       // verify: () => getSendMediaRights().then(({photos, videos}) => photos && videos)
     }, /* {
       icon: 'image',
@@ -1022,13 +1055,24 @@ export default class ChatInput {
     }, */ {
       icon: 'document',
       text: 'Chat.Input.Attach.Document',
-      onClick: () => this.onAttachClick(true)
+      onClick: () => this.onAttachClick(true),
+      verify: () => canUploadAsWhenEditing({asWhat: 'document', message: this.editMessage})
       // verify: () => this.chat.canSend('send_docs')
+    }, {
+      icon: 'brush',
+      get text() {
+        return inputThis.editMessage?.media?._ === 'messageMediaPhoto' ?
+          'EditThisPhoto' :
+          'EditThisVideo';
+      },
+      onClick: () => this.editMediaWithEditor(),
+      verify: () => this.editMessage && getMediaTypeForMessage(this.editMessage) === 'media' && canEditMediaWithEditor(this.editMessage?.media)
     }, {
       icon: 'gift',
       text: 'GiftPremium',
       onClick: () => this.chat.appImManager.giftPremium(this.chat.peerId),
       verify: () => {
+        if(this.editMsgId) return;
         return this.chat && Promise.all([
           this.chat.canGiftPremium(),
           this.managers.apiManager.getAppConfig()
@@ -1046,9 +1090,12 @@ export default class ChatInput {
 
         PopupElement.createPopup(PopupCreatePoll, this.chat).show();
       },
-      verify: () => (!this.chat.isMonoforum && this.chat.peerId.isAnyChat()) || this.chat.isBot
+      verify: () => {
+        if(this.editMsgId) return;
+        return (!this.chat.isMonoforum && this.chat.peerId.isAnyChat()) || this.chat.isBot;
+      }
     }, {
-      icon: 'poll',
+      icon: 'checkround',
       text: 'Checklist',
       onClick: async() => {
         if(this.chat.peerId.isAnyChat()) {
@@ -1066,17 +1113,20 @@ export default class ChatInput {
 
         PopupElement.createPopup(PopupChecklist, {chat: this.chat}).show();
       },
-      verify: () => !this.chat.isMonoforum
+      verify: () => !this.editMsgId && !this.chat.isMonoforum
     }];
 
     const attachMenuButtons = this.attachMenuButtons.slice();
-    this.attachMenu = ButtonMenuToggle({
+    this.attachMenu = new AttachMenuButton;
+
+    ButtonMenuToggle({
+      container: this.attachMenu,
       buttonOptions: {noRipple: true},
       listenerSetter: this.listenerSetter,
       direction: 'top-left',
       buttons: this.attachMenuButtons,
       onOpenBefore: this.excludeParts.attachMenu ? undefined : async() => {
-        const attachMenuBots = this.chat.isMonoforum ? [] : await this.managers.appAttachMenuBotsManager.getAttachMenuBots();
+        const attachMenuBots = (this.chat.isMonoforum || this.editMsgId) ? [] : await this.managers.appAttachMenuBotsManager.getAttachMenuBots();
         const buttons = attachMenuButtons.slice();
         const attachMenuBotsButtons = attachMenuBots.filter((attachMenuBot) => {
           return attachMenuBot.pFlags.show_in_attach_menu;
@@ -1128,12 +1178,11 @@ export default class ChatInput {
       }
     });
     this.attachMenu.classList.add('attach-file');
-    this.attachMenu.firstElementChild.replaceWith(Icon('attach'));
 
     this.btnSuggestPost = ButtonIcon('suggested hide');
-    attachClickEvent(this.btnSuggestPost, () => {
-      this.openSuggestPostPopup();
-    });
+    attachClickEvent(this.btnSuggestPost, wrapAsyncClickHandler(async() => {
+      await this.openSuggestPostPopup();
+    }));
 
     this.btnAutoDeletePeriod = ButtonIcon('auto_delete_circle_clock hide');
     attachClickEvent(this.btnAutoDeletePeriod, wrapAsyncClickHandler(async() => {
@@ -1444,7 +1493,7 @@ export default class ChatInput {
   }
 
   public onAttachClick = async(documents?: boolean, photos?: boolean, videos?: boolean) => {
-    if(await this.showSlowModeTooltipIfNeeded({
+    if(!this.editMessage && await this.showSlowModeTooltipIfNeeded({
       element: this.attachMenu
     })) {
       return;
@@ -1914,8 +1963,10 @@ export default class ChatInput {
     // this.chat.log.error('Input destroying');
 
     this.autocompleteHelperController.destroy();
+    this.placeholderParamsMiddlewareHelper.destroy();
     appNavigationController.removeItem(this.inputHelperNavigationItem);
     this.listenerSetter.removeAll();
+    this.middlewareHelper.destroy();
     this.setCurrentHover();
   }
 
@@ -2078,7 +2129,8 @@ export default class ChatInput {
       peerTitleShort,
       isPremiumRequired,
       appConfig,
-      autoDeletePeriod
+      autoDeletePeriod,
+      canManageAutoDelete
     ] = await Promise.all([
       this.managers.appPeersManager.isBroadcast(peerId),
       this.managers.appPeersManager.canPinMessage(peerId),
@@ -2087,12 +2139,13 @@ export default class ChatInput {
       this.chat?.canSend('send_plain') || true,
       this.getNeededFakeContainer(startParam),
       modifyAckedPromise(this.managers.acknowledged.appProfileManager.getProfileByPeerId(peerId)),
-      btnScheduled ? modifyAckedPromise(this.managers.acknowledged.appMessagesManager.getScheduledMessages(peerId)) : undefined,
+      btnScheduled && !this.chat.threadId ? modifyAckedPromise(this.managers.acknowledged.appMessagesManager.getScheduledMessages(peerId)) : undefined,
       sendAs ? (sendAs.setPeerId(peerId), sendAs.updateManual(true)) : undefined,
       wrapPeerTitle({peerId, onlyFirstName: true}),
       this.chat.isPremiumRequiredToContact(),
       apiManagerProxy.getAppConfig(),
-      modifyAckedPromise(this.chat.getAutoDeletePeriod())
+      modifyAckedPromise(this.chat.getAutoDeletePeriod()),
+      this.chat.canManageAutoDelete()
     ]);
 
     const placeholderParams = this.messageInput ? await this.getPlaceholderParams(canSendPlain) : undefined;
@@ -2217,10 +2270,12 @@ export default class ChatInput {
 
       if(this.chat) {
         callbackify(autoDeletePeriod.result, (period) => {
-          if(period) this.btnAutoDeletePeriod.replaceChildren(createAutoDeleteIcon(period));
-          this.btnAutoDeletePeriod.classList.toggle('hide', !period);
+          if(canManageAutoDelete && period) this.btnAutoDeletePeriod.replaceChildren(createAutoDeleteIcon(period));
+          this.btnAutoDeletePeriod.classList.toggle('hide', !(canManageAutoDelete && period));
         });
       }
+
+      haveSomethingInControl ||= this.chat.isBotforum && this.chat.canManageBotforumTopics;
 
       this.botStartBtn.classList.toggle('hide', haveSomethingInControl);
 
@@ -2345,7 +2400,8 @@ export default class ChatInput {
     this.updateOffset('commands', forwards, skipAnimation, useRafs, true);
   }
 
-  private async getPlaceholderParams(canSend?: boolean): Promise<Parameters<ChatInput['updateMessageInputPlaceholder']>[0]> {
+  public async getPlaceholderParams(canSend?: boolean): Promise<Parameters<ChatInput['updateMessageInputPlaceholder']>[0]> {
+    this.placeholderParamsMiddlewareHelper.clean();
     canSend ??= await this.chat.canSend('send_plain');
     const {peerId, threadId, isForum, type} = this.chat;
     let key: LangPackKey, args: FormatterArguments, inputStarsCountEl: HTMLElement;
@@ -2361,13 +2417,23 @@ export default class ChatInput {
         this.chat.monoforumThreadId || this.directMessagesHandler.store.isReplying ?
           'Message' :
           'ChannelDirectMessages.ChooseMessage';
+    } else if(this.chat.isBotforum && !this.chat.canManageBotforumTopics && !this.chat.threadId) {
+      key = 'OffThreadMessage'
     } else if(
       (this.sendAsPeerId !== undefined && this.sendAsPeerId !== rootScope.myId) ||
       await this.managers.appMessagesManager.isAnonymousSending(peerId)
     ) {
       key = 'SendAnonymously';
     } else if(type === ChatType.Stories) {
-      key = 'Story.ReplyPlaceholder';
+      const stealthModeActiveUntilDate = this.chat.stealthMode?.active_until_date || 0;
+      if(stealthModeActiveUntilDate > tsNow(true)) {
+        const {element, dispose} = slowModeTimer(() => stealthModeActiveUntilDate - tsNow(true));
+        key = 'Stories.StealthMode.Placeholder';
+        args = [element];
+        this.placeholderParamsMiddlewareHelper.get().onClean(dispose);
+      } else {
+        key = 'Story.ReplyPlaceholder';
+      }
     } else if(isForum && type === ChatType.Chat && !threadId) {
       const topic = await this.managers.dialogsStorage.getForumTopic(peerId, GENERAL_TOPIC_ID);
       if(topic) {
@@ -2390,7 +2456,15 @@ export default class ChatInput {
     return {key, args, inputStarsCountEl};
   }
 
-  private updateMessageInputPlaceholder({key, args = [], inputStarsCountEl}: {key: LangPackKey, args?: FormatterArguments, inputStarsCountEl?: HTMLElement}) {
+  public updateMessageInputPlaceholder({
+    key,
+    args = [],
+    inputStarsCountEl
+  }: {
+    key: LangPackKey,
+    args?: FormatterArguments,
+    inputStarsCountEl?: HTMLElement
+  }) {
     // console.warn('[input] update placeholder');
     // const i = I18n.weakMap.get(this.messageInput) as I18n.IntlElement;
     const i = I18n.weakMap.get(this.messageInputField.placeholder) as I18n.IntlElement;
@@ -3159,17 +3233,9 @@ export default class ChatInput {
         return false;
       }
 
-      const s = document.createElement('span');
-      onClose = eachSecond(() => {
-        const leftDuration = getLeftDuration();
-        s.replaceChildren(wrapSlowModeLeftDuration(leftDuration));
-
-        if(!leftDuration) {
-          close();
-        }
-      }, true);
-
-      textElement = i18n('SlowModeHint', [s]);
+      const {element, dispose} = slowModeTimer(getLeftDuration);
+      onClose = dispose;
+      textElement = i18n('SlowModeHint', [element]);
     }
 
     const {close} = showTooltip({
@@ -3322,7 +3388,7 @@ export default class ChatInput {
       }).catch((e: Error) => {
         switch(e.name as string) {
           case 'NotAllowedError': {
-            toast('Please allow access to your microphone');
+            toastNew({langPackKey: 'NoMicrophoneAccess'});
             break;
           }
 
@@ -3666,6 +3732,32 @@ export default class ChatInput {
     return {store, set};
   });
 
+  private createFileInputState = () => createRoot((dispose) => {
+    this.getMiddleware()?.onDestroy(() => void dispose());
+
+    const [store, set] = createStore({
+      isEditing: false,
+      isSuggesting: false
+    });
+
+    const isMultiple = createMemo(() => !store.isEditing && !store.isSuggesting);
+
+    createEffect(() => {
+      if(!this.fileInput) return;
+      this.fileInput.multiple = isMultiple();
+    });
+
+    createEffect(on(() => store.isEditing, (isEditing) => {
+      this.attachMenu.feedProps({
+        isEditing: isEditing
+      });
+    }, {
+      defer: true
+    }));
+
+    return {store, set};
+  });
+
   private createDirectMessagesHandler = () => createRoot((dispose) => {
     this.getMiddleware()?.onDestroy(() => void dispose());
 
@@ -3678,11 +3770,11 @@ export default class ChatInput {
     createEffect(() => {
       if(!store.isMonoforumAllChats) return;
 
-      this.getPlaceholderParams().then(params => this.updateMessageInputPlaceholder(params));
+      this.getPlaceholderParams().then((params) => this.updateMessageInputPlaceholder(params));
 
       if(store.isReplying) return;
 
-      this.messageInputField?.input?.classList.add('hide')
+      this.messageInputField?.input?.classList.add('hide');
       this.attachMenu?.classList.add('hide');
       this.messageInputField?.setHidden(true);
       this.btnToggleEmoticons?.setAttribute('disabled', '');
@@ -3701,11 +3793,11 @@ export default class ChatInput {
     });
 
     createEffect(() => {
-      this.getPlaceholderParams().then(params => this.updateMessageInputPlaceholder(params));
+      this.getPlaceholderParams().then((params) => this.updateMessageInputPlaceholder(params));
 
       if(!store.isSuggestingUneditablePostChange) return;
 
-      this.messageInputField?.input?.classList.add('hide')
+      this.messageInputField?.input?.classList.add('hide');
       this.messageInputField?.setHidden(true);
       this.btnToggleEmoticons?.setAttribute('disabled', '');
       this.autocompleteHelperController.hideOtherHelpers();
@@ -3841,7 +3933,7 @@ export default class ChatInput {
             noWebPage,
             webPage: this.getWebPagePromise ? undefined : this.willSendWebPage,
             webPageOptions: this.webPageOptions,
-            invertMedia: this.willSendWebPage ? this.invertMedia : undefined
+            invertMedia: this.willSendWebPage ? this.invertMedia : this.editMessage?.pFlags?.invert_media
           }
         );
 
@@ -3877,10 +3969,23 @@ export default class ChatInput {
       const forwarding = copy(this.forwarding);
       // setTimeout(() => {
       for(const fromPeerId in forwarding) {
+        const mids = forwarding[fromPeerId];
+        if(mids.length === 1) {
+          const msg = await this.managers.appMessagesManager.getMessageByPeer(fromPeerId.toPeerId(), mids[0]) as Message.message;
+          if(msg?.pFlags?.fakeForSavedMusic) {
+            const doc = (msg.media as MessageMedia.messageMediaDocument).document as MyDocument;
+            this.managers.appMessagesManager.sendOther({
+              ...sendingParams,
+              inputMedia: {_: 'inputMediaDocument', id: getDocumentInput(doc), pFlags: {}}
+            });
+            this.managers.appMessagesManager.deleteMessageFromHistoryStorage(fromPeerId.toPeerId(), mids[0]);
+            continue;
+          }
+        }
         this.managers.appMessagesManager.forwardMessages({
           ...sendingParams,
           fromPeerId: fromPeerId.toPeerId(),
-          mids: forwarding[fromPeerId],
+          mids,
           dropAuthor: this.forwardElements && this.forwardElements.hideSender.checkboxField.checked,
           dropCaptions: this.isDroppingCaptions()
         }).catch(async(err: ApiError) => {
@@ -4218,7 +4323,7 @@ export default class ChatInput {
       if(!message) { // load missing replying message
         title = i18n('Loading');
 
-        this.managers.appMessagesManager.reloadMessages(replyToPeerId, replyToMsgId).then((_message) => {
+        this.managers.appMessagesManager.reloadMessage(replyToPeerId, replyToMsgId).then((_message) => {
           if(!deepEqual(this.getReplyTo(), replyTo)) {
             return;
           }
@@ -4280,7 +4385,7 @@ export default class ChatInput {
     this.center(true);
   }
 
-  public clearHelper(type?: ChatInputHelperType) {
+  public clearHelper(type?: ChatInputHelperType, willHaveHelper?: boolean) {
     if(this.helperType === 'edit' && type !== 'edit') {
       this.clearInput();
     }
@@ -4299,9 +4404,13 @@ export default class ChatInput {
     if(type !== 'suggested') {
       this.suggestedPost = undefined;
       this.btnSuggestPost.classList.toggle('hide', !this.canShowSuggestPostButton(false))
-      this.fileInput.multiple = true;
       this.directMessagesHandler.set({isSuggestingUneditablePostChange: false});
     }
+
+    this.fileInputState.set({
+      isEditing: false,
+      isSuggesting: false
+    });
 
     this.editMsgId = this.editMessage = undefined;
     this.helperType = this.helperFunc = undefined;
@@ -4313,7 +4422,11 @@ export default class ChatInput {
       this.restoreInputLock = undefined;
     }
 
-    if(this.chat.container && this.chat.container.classList.contains('is-helper-active')) {
+    if(
+      this.chat.container &&
+      this.chat.container.classList.contains('is-helper-active') &&
+      !willHaveHelper
+    ) {
       appNavigationController.removeByType('input-helper');
       this.chat.container.classList.remove('is-helper-active');
       this.t();
@@ -4376,14 +4489,15 @@ export default class ChatInput {
     }
 
     if(type !== 'webpage') {
-      this.clearHelper(type);
+      this.clearHelper(type, true);
       this.helperType = type;
       this.helperFunc = callerFunc;
     }
 
-    if(type === 'suggested') {
-      this.fileInput.multiple = false;
-    }
+    this.fileInputState.set({
+      isEditing: type === 'edit',
+      isSuggesting: type === 'suggested'
+    });
 
     this.btnSuggestPost?.classList.toggle('hide', !this.canShowSuggestPostButton(true));
 
@@ -4497,5 +4611,262 @@ export default class ChatInput {
     }
 
     return element;
+  }
+
+  private async tryGetEditMediaElementFromChat() {
+    const groupedId = this.editMessage?.grouped_id;
+    const groupedMessages = groupedId ? await this.managers.appMessagesManager.getMessagesByGroupedId(groupedId) : undefined;
+
+    const mainMessage = groupedId ? getMainGroupedMessage(groupedMessages) : this.editMessage;
+    const mainMessageMid = mainMessage?.mid;
+
+    if(!mainMessage) return;
+    const bubble = this.chat.bubbles.getBubble(mainMessage.peerId, mainMessageMid);
+    if(!bubble) return;
+
+    let mediaElement: Element;
+    const mediaSelectors = ['.media-video', '.media-container-aspecter .media-photo', '.media-photo']; // Prioritize video over photo, as there might be both (probably the photo is the thumbnail)
+    const getMedia = (element: Element) => mediaSelectors.map(selector => element.querySelector(selector)).filter(Boolean)[0];
+    if(groupedId) {
+      const groupedItem = bubble.querySelector(`.grouped-item[data-mid="${this.editMessage.mid}"]`);
+      mediaElement = getMedia(groupedItem);
+    } else {
+      mediaElement = getMedia(bubble);
+    }
+
+    if(!(mediaElement instanceof HTMLImageElement || mediaElement instanceof HTMLVideoElement)) return;
+
+    const bcr = mediaElement.getBoundingClientRect();
+    if(!bcr.width || !bcr.height) return;
+
+    const bubblesBcr = this.chat.bubbles.container.getBoundingClientRect();
+
+    if(bcr.top < bubblesBcr.top || bcr.bottom > bubblesBcr.bottom) return;
+
+    return mediaElement;
+  }
+
+  private async editMediaWithEditor(): Promise<void> {
+    if(!this.editMessage) return;
+
+    const media = this.editMessage.media;
+
+    const mediaElement = await this.tryGetEditMediaElementFromChat();
+
+    const payload = getOpenMediaPayload(media);
+    if(!payload) return;
+
+    const middlewareHelper = this.getMiddleware().create();
+    const middleware = middlewareHelper.get();
+
+    let downloadPromise: DownloadBlob;
+    const {result, waitBeforeCleanup} = await this.watchDownloadProgress({
+      getDownloadPromise: () => (downloadPromise = payload.downloadMediaBlob()),
+      getResult: async() => {
+        const mediaBlob = await downloadPromise;
+        const mediaUrl = await apiManagerProxy.invoke('createObjectURL', mediaBlob);
+        let createdMediaElement: HTMLVideoElement | HTMLImageElement;
+        try {
+          createdMediaElement = !mediaElement ? await payload.createCanvasSource(mediaUrl, middleware) : undefined;
+        } catch{}
+
+        return {mediaBlob, mediaUrl, createdMediaElement};
+      },
+      middleware,
+      cancel: () => middlewareHelper.destroy()
+    });
+
+    if(!result) return;
+
+    if(!middleware()) return;
+
+    const {mediaBlob, mediaUrl, createdMediaElement} = result;
+
+    if(!mediaElement && !createdMediaElement) return;
+
+    const {openMediaEditorFromMedia, openMediaEditorFromMediaNoAnimation} = await import('@components/mediaEditor');
+
+    if(!middleware()) return;
+
+    const openEditor = mediaElement ? openMediaEditorFromMedia : openMediaEditorFromMediaNoAnimation;
+    const usedMediaElement = mediaElement || createdMediaElement;
+
+    waitBeforeCleanup().then(() => {
+      middlewareHelper.destroy();
+    });
+
+    openEditor({
+      managers: this.managers,
+      mediaSrc: mediaUrl,
+      mediaType: payload.mediaType,
+      getMediaBlob: () => Promise.resolve(mediaBlob),
+      rect: usedMediaElement.getBoundingClientRect(),
+      animatedCanvasSize: getSourceSize(usedMediaElement),
+      source: usedMediaElement,
+      onClose: () => { },
+      onEditFinish: async(result) => {
+        const popup = new PopupNewMedia(this.chat, [
+          {
+            file: new File([mediaBlob], payload.fileName, {type: mediaBlob.type}),
+            editResult: result
+          }
+        ], 'media');
+
+        popup.show(false);
+      },
+      canImageResultInGIF: !this.isEditingMediaFromAlbum()
+    });
+  }
+
+  private async watchDownloadProgress<T>({getDownloadPromise, getResult, middleware, cancel}: WatchDownloadProgressArgs<T>) {
+    const minProgress = 0.1;
+
+    let result: T, wasLoading = false, timeout: number, waitBeforeCleanup: () => Promise<void> = async() => {};
+
+    try {
+      const downloadPromise = getDownloadPromise();
+
+      middleware.onDestroy(() => {
+        downloadPromise.cancel?.();
+
+        if(!wasLoading) return;
+        this.attachMenu.feedProps({
+          isLoading: false,
+          loadingProgress: undefined,
+          onCancel: undefined
+        });
+      });
+
+      downloadPromise.addNotifyListener((details: {done: number, total: number}) => {
+        if(!middleware()) return;
+
+        this.attachMenu.feedProps({
+          loadingProgress: Math.max(minProgress, details.done / details.total) || minProgress
+        });
+      });
+
+      // Late start in case the media is cached
+      timeout = self.setTimeout(() => {
+        wasLoading = true;
+        this.attachMenu.feedProps({
+          isLoading: true,
+          loadingProgress: minProgress,
+          onCancel: () => {
+            cancel();
+          }
+        });
+      }, 120);
+
+      result = await getResult();
+    } finally {
+      self.clearTimeout(timeout);
+
+      if(wasLoading) {
+        this.attachMenu.feedProps({
+          loadingProgress: 1
+        });
+
+        await pause(150); // wait for the loading animation to animate to full
+
+        waitBeforeCleanup = () => pause(400);
+      }
+    }
+
+    return {result, waitBeforeCleanup};
+  }
+
+  private isEditingMediaFromAlbum() {
+    return !!this.editMessage?.grouped_id;
+  }
+}
+
+function getOpenMediaPayload(media: MessageMedia | null | undefined) {
+  if(!media) return;
+  if(media._ === 'messageMediaPhoto' && media.photo?._ === 'photo') return getOpenMediaPhotoPayload(media.photo);
+  if(media._ === 'messageMediaDocument' && media.document?._ === 'document') return getOpenMediaVideoPayload(media.document);
+}
+
+function canEditMediaWithEditor(media: MessageMedia) {
+  return !!getOpenMediaPayload(media);
+}
+
+type OpenMediaPayload = {
+  fileName: string;
+  mediaType: MediaEditorProps['mediaType']
+  createCanvasSource: (url: string, middleware: Middleware) => Promise<HTMLImageElement | HTMLVideoElement>;
+  downloadMediaBlob: () => DownloadBlob;
+};
+
+function getOpenMediaPhotoPayload(photo: Photo.photo): OpenMediaPayload {
+  const photoSizes = photo.sizes.slice().filter((size) => (size as PhotoSize.photoSize).w) as PhotoSize.photoSize[];
+  photoSizes.sort((a, b) => b.size - a.size);
+  const fullPhotoSize = photoSizes?.[0];
+
+  if(!fullPhotoSize?.w || !fullPhotoSize?.h) return;
+
+  return {
+    fileName: tryGetFileName(() => getFileNameByLocation(getPhotoDownloadOptions(photo, fullPhotoSize).location)),
+    mediaType: 'image',
+    createCanvasSource: createImageSource,
+    downloadMediaBlob: () =>
+      appDownloadManager.downloadMedia({
+        media: photo,
+        thumb: fullPhotoSize
+      })
+  };
+}
+
+function getOpenMediaVideoPayload(document: Document.document): OpenMediaPayload {
+  if(!document.size || document.size > MAX_EDITABLE_VIDEO_SIZE) return;
+
+  return {
+    fileName: tryGetFileName(() => document.file_name || getFileNameByLocation(getDocumentDownloadOptions(document).location)),
+    mediaType: 'video',
+    createCanvasSource: createVideoSource,
+    downloadMediaBlob: () =>
+      appDownloadManager.downloadMedia({
+        media: document,
+        thumb: undefined
+      })
+  };
+}
+
+async function createImageSource(url: string) {
+  const img = new Image();
+  await renderImageFromUrlPromise(img, url);
+  return img;
+}
+
+async function createVideoSource(url: string, middleware: Middleware) {
+  const video = createVideo({middleware});
+
+  video.playsInline = true;
+  video.src = url;
+  video.controls = false;
+  video.muted = true;
+  video.preload = 'auto';
+
+  const deferred = deferredPromise<void>();
+  video.requestVideoFrameCallback(() => {
+    deferred.resolve();
+  });
+
+  await onMediaLoad(video);
+
+  await deferred;
+
+  return video;
+}
+
+function getSourceSize(source: HTMLVideoElement | HTMLImageElement): NumberPair {
+  return source instanceof HTMLVideoElement ? [source.videoWidth, source.videoHeight] : [source.naturalWidth, source.naturalHeight];
+}
+
+function tryGetFileName(fn: () => string) {
+  const defaultFileName = 'edited-media';
+  try {
+    return fn() || defaultFileName;
+  } catch{
+    return 'edited-media';
   }
 }

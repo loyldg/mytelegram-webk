@@ -4,9 +4,9 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {MOUNT_CLASS_TO} from '../../config/debug';
-import rootScope from '../../lib/rootScope';
-import mediaSizes from '../mediaSizes';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import rootScope from '@lib/rootScope';
+import mediaSizes from '@helpers/mediaSizes';
 
 export type CustomProperty = string;
 
@@ -53,6 +53,10 @@ export class CustomProperties {
   }
 
   public getPropertyAsColor(name: CustomProperty) {
+    if(name[0] === '#') {
+      return name;
+    }
+
     const value = this.getProperty(name);
     if(value[0] === '#') {
       return value;

@@ -4,17 +4,17 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {LiteModeKey} from '../helpers/liteMode';
-import type RLottiePlayer from '../lib/rlottie/rlottiePlayer';
-import rootScope from '../lib/rootScope';
-import {MOUNT_CLASS_TO} from '../config/debug';
-import isInDOM from '../helpers/dom/isInDOM';
-import indexOfAndSplice from '../helpers/array/indexOfAndSplice';
-import forEachReverse from '../helpers/array/forEachReverse';
-import idleController from '../helpers/idleController';
-import {fastRaf} from '../helpers/schedulers';
-import {Middleware} from '../helpers/middleware';
-import safePlay from '../helpers/dom/safePlay';
+import type {LiteModeKey} from '@helpers/liteMode';
+import type RLottiePlayer from '@lib/rlottie/rlottiePlayer';
+import rootScope from '@lib/rootScope';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import isInDOM from '@helpers/dom/isInDOM';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import forEachReverse from '@helpers/array/forEachReverse';
+import idleController from '@helpers/idleController';
+import {fastRaf} from '@helpers/schedulers';
+import {Middleware} from '@helpers/middleware';
+import safePlay from '@helpers/dom/safePlay';
 
 export type AnimationItemGroup = '' | 'none' | 'chat' | 'lock' |
   'STICKERS-POPUP' | 'emoticons-dropdown' | 'STICKERS-SEARCH' | 'GIFS-SEARCH' |
@@ -87,9 +87,13 @@ export class AnimationIntersector {
             this.checkAnimation(animation, true);
 
             const _animation = animation.animation;
-            if(animation.type === 'lottie'/*  && animation.cachingDelta === 2 */) {
+            if(
+              animation.type === 'lottie' &&
+              (_animation as RLottiePlayer).paused
+              /*  && animation.cachingDelta === 2 */
+            ) {
               // console.warn('will clear cache', player);
-              (_animation as RLottiePlayer).clearCache();
+              (_animation as RLottiePlayer).clearCacheWhenSafe();
             }/*  else if(animation instanceof HTMLVideoElement && animation.src) {
               animation.dataset.src = animation.src;
               animation.src = '';

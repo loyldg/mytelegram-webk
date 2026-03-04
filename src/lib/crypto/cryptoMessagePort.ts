@@ -4,10 +4,11 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {CryptoMethods} from './crypto_methods';
-import SuperMessagePort from '../mtproto/superMessagePort';
-import {MOUNT_CLASS_TO} from '../../config/debug';
-import {IS_WORKER} from '../../helpers/context';
+import {CryptoMethods} from '@lib/crypto/crypto_methods';
+import SuperMessagePort from '@lib/superMessagePort';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import {IS_WORKER} from '@helpers/context';
+import type {ThreadedWorkerEvents} from '@lib/mainWorker/mainMessagePort';
 
 
 type CryptoEvent = {
@@ -15,7 +16,7 @@ type CryptoEvent = {
     SuperMessagePort.TransferableResultValue<ReturnType<CryptoMethods[T]>>,
   port: (payload: void, source: MessageEventSource, event: MessageEvent) => void,
   terminate: () => void
-};
+} & ThreadedWorkerEvents;
 
 export class CryptoMessagePort<Master extends boolean = false> extends SuperMessagePort<CryptoEvent, CryptoEvent, Master> {
   private lastIndex: number;

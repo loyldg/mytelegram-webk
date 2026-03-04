@@ -205,7 +205,6 @@
 
   @include respond-to(not-handhelds) {
     --right-column-width: calc(#{$large-screen} / 4);
-    // --right-column-width: calc(400px);
 
     --chat-input-size: #{$chat-input-size};
     --chat-input-padding: #{$chat-padding};
@@ -570,6 +569,7 @@ html.no-backdrop {
 html {
   font-size: 16px;
   //overflow: hidden;
+  overscroll-behavior: auto;
   -webkit-font-smoothing: antialiased;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
@@ -2512,8 +2512,9 @@ hr {
 
 .xtr {
   &-icon {
-    vertical-align: bottom;
-    line-height: inherit;
+    margin-top: 1px;
+    display: inline-block;
+    vertical-align: text-top;
   }
 }
 

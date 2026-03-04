@@ -1,17 +1,16 @@
-import {createEffect, createSignal, Show} from 'solid-js';
+import SaveButton from '@components/saveButton';
+import Section from '@components/section';
+import StarRangeInput from '@components/sidebarLeft/tabs/privacy/messages/starsRangeInput';
+import useStarsCommissionAndWithdrawalPrice from '@components/sidebarLeft/tabs/privacy/messages/useStarsCommissionAndWithdrawalPrice';
+import type {AppDirectMessagesTab} from '@components/solidJsTabs';
+import {useSuperTab} from '@components/solidJsTabs/superTabProvider';
+import StaticSwitch from '@components/staticSwitch';
+import useIsConfirmationNeededOnClose from '@hooks/useIsConfirmationNeededOnClose';
+import {i18n} from '@lib/langPack';
+import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
+import {createMemo, createSignal, Show} from 'solid-js';
 import {Portal} from 'solid-js/web';
 import {Transition} from 'solid-transition-group';
-import throttle from '../../../helpers/schedulers/throttle';
-import useIsConfirmationNeededOnClose from '../../../hooks/useIsConfirmationNeededOnClose';
-import {i18n} from '../../../lib/langPack';
-import {useHotReloadGuard} from '../../../lib/solidjs/hotReloadGuard';
-import SaveButton from '../../saveButton';
-import Section from '../../section';
-import StarRangeInput from '../../sidebarLeft/tabs/privacy/messages/starsRangeInput';
-import useStarsCommissionAndWithdrawalPrice from '../../sidebarLeft/tabs/privacy/messages/useStarsCommissionAndWithdrawalPrice';
-import type {AppDirectMessagesTab} from '../../solidJsTabs';
-import {useSuperTab} from '../../solidJsTabs/superTabProvider';
-import StaticSwitch from '../../staticSwitch';
 
 
 const ChannelDirectMessages = () => {
@@ -29,15 +28,9 @@ const ChannelDirectMessages = () => {
   const [enabled, setEnabled] = createSignal(initialEnabled);
   const [stars, setStars] = createSignal(initialStars);
 
-  const [hasChanges, setHasChanges] = createSignal(false);
+  const hasChanges = createMemo(() => initialEnabled !== enabled() || (enabled() && initialStars !== stars()));
 
   const {commissionPercents, willReceiveDollars} = useStarsCommissionAndWithdrawalPrice(stars);
-
-  const throttledSetHasChanges = throttle(setHasChanges, 200);
-
-  createEffect(() => {
-    throttledSetHasChanges(initialEnabled !== enabled() || (enabled() && initialStars !== stars()));
-  });
 
   let isSaving = false;
 

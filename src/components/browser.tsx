@@ -6,58 +6,59 @@
 
 import {Portal} from 'solid-js/web';
 import {batch, createContext, createEffect, createRoot, For, onCleanup, onMount, useContext, JSX, createMemo, createSignal, Accessor, untrack, createResource, Resource, on, createReaction, Show, createRenderEffect, createComputed, Setter} from 'solid-js';
-import styles from './browser.module.scss';
-import {ButtonIconTsx} from './buttonIconTsx';
-import getTextWidth from '../helpers/canvas/getTextWidth';
-import {FontFull, FontFullBold} from '../config/font';
+import styles from '@components/browser.module.scss';
+import {ButtonIconTsx} from '@components/buttonIconTsx';
+import getTextWidth from '@helpers/canvas/getTextWidth';
+import {FontFull, FontFullBold} from '@config/font';
 import {createStore, reconcile, unwrap} from 'solid-js/store';
-import untrackActions from '../helpers/solid/untrackActions';
-import classNames from '../helpers/string/classNames';
-import Scrollable from './scrollable2';
-import fastSmoothScroll from '../helpers/fastSmoothScroll';
-import {IconTsx} from './iconTsx';
-import {ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from './buttonMenu';
-import {attachContextMenuListener} from '../helpers/dom/attachContextMenuListener';
-import ListenerSetter from '../helpers/listenerSetter';
-import findUpClassName from '../helpers/dom/findUpClassName';
-import contextMenuController from '../helpers/contextMenuController';
-import positionMenu from '../helpers/positionMenu';
-import copy from '../helpers/object/copy';
-import {filterButtonMenuItems} from './buttonMenuToggle';
-import Animated from '../helpers/solid/animations';
-import WebApp, {WebAppLaunchOptions} from './webApp';
-import deferredPromise from '../helpers/cancellablePromise';
-import documentFragmentToNodes from '../helpers/dom/documentFragmentToNodes';
-import wrapEmojiText from '../lib/richTextProcessor/wrapEmojiText';
-import I18n, {i18n} from '../lib/langPack';
-import {avatarNew} from './avatarNew';
-import {getMiddleware} from '../helpers/middleware';
-import MovablePanel from '../helpers/movablePanel';
-import {MovableState} from './movableElement';
+import untrackActions from '@helpers/solid/untrackActions';
+import classNames from '@helpers/string/classNames';
+import Scrollable from '@components/scrollable2';
+import fastSmoothScroll from '@helpers/fastSmoothScroll';
+import {IconTsx} from '@components/iconTsx';
+import {ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
+import {attachContextMenuListener} from '@helpers/dom/attachContextMenuListener';
+import ListenerSetter from '@helpers/listenerSetter';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import contextMenuController from '@helpers/contextMenuController';
+import positionMenu from '@helpers/positionMenu';
+import copy from '@helpers/object/copy';
+import {filterButtonMenuItems} from '@components/buttonMenuToggle';
+import Animated from '@helpers/solid/animations';
+import WebApp, {WebAppLaunchOptions} from '@components/webApp';
+import deferredPromise from '@helpers/cancellablePromise';
+import documentFragmentToNodes from '@helpers/dom/documentFragmentToNodes';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import I18n, {i18n} from '@lib/langPack';
+import {avatarNew} from '@components/avatarNew';
+import {getMiddleware} from '@helpers/middleware';
+import MovablePanel from '@helpers/movablePanel';
+import {MovableState} from '@components/movableElement';
 import {Ref, resolveElements, resolveFirst} from '@solid-primitives/refs';
-import Section from './section';
-import InputSearch from './inputSearch';
-import rootScope from '../lib/rootScope';
-import {SimilarPeer} from './chat/similarChannels';
-import SearchIndex from '../lib/searchIndex';
-import {useUser} from '../stores/peers';
-import {Page, User} from '../layer';
-import getPeerActiveUsernames from '../lib/appManagers/utils/peers/getPeerActiveUsernames';
-import internalLinkProcessor from '../lib/appManagers/internalLinkProcessor';
-import {INTERNAL_LINK_TYPE} from '../lib/appManagers/internalLink';
-import {InstantView} from './instantView';
-import {WebPage} from '../layer';
-import SolidJSHotReloadGuardProvider from '../lib/solidjs/hotReloadGuardProvider';
-import {copyTextToClipboard} from '../helpers/clipboard';
-import safeWindowOpen from '../helpers/dom/safeWindowOpen';
-import wrapTelegramRichText from '../lib/richTextProcessor/wrapTelegramRichText';
-import limitSymbols from '../helpers/string/limitSymbols';
-import {toastNew} from './toast';
-import pause from '../helpers/schedulers/pause';
-import assumeType from '../helpers/assumeType';
-import {useAppSettings} from '../stores/appSettings';
-import cancelEvent from '../helpers/dom/cancelEvent';
-import clamp from '../helpers/number/clamp';
+import Section from '@components/section';
+import InputSearch from '@components/inputSearch';
+import rootScope from '@lib/rootScope';
+import {SimilarPeer} from '@components/chat/similarChannels';
+import SearchIndex from '@lib/searchIndex';
+import {useUser} from '@stores/peers';
+import {Page, User} from '@layer';
+import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
+import internalLinkProcessor from '@lib/internalLinkProcessor';
+import {INTERNAL_LINK_TYPE} from '@lib/internalLink';
+import {InstantView} from '@components/instantView';
+import {WebPage} from '@layer';
+import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
+import {copyTextToClipboard} from '@helpers/clipboard';
+import safeWindowOpen from '@helpers/dom/safeWindowOpen';
+import wrapTelegramRichText from '@lib/richTextProcessor/wrapTelegramRichText';
+import limitSymbols from '@helpers/string/limitSymbols';
+import {toastNew} from '@components/toast';
+import pause from '@helpers/schedulers/pause';
+import assumeType from '@helpers/assumeType';
+import {useAppSettings} from '@stores/appSettings';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import clamp from '@helpers/number/clamp';
+import windowSize from '@helpers/windowSize';
 
 type BrowserPageProps<T = {}> = T & {
   title: string, // plain text
@@ -195,7 +196,7 @@ function BrowserHeader(props: {
     }
 
     const listenerSetter = new ListenerSetter();
-    const copied = page.menuButtons.map((button) => button.element ? button : copy(button));
+    const copied = page.menuButtons.map((button) => (button = unwrap(button), button.element ? button : copy(button)));
     const buttons = (await filterButtonMenuItems(copied)).map((button) => {
       button.options = {listenerSetter};
       return button;
@@ -300,10 +301,12 @@ function BrowserHeader(props: {
       >
         {collapsedTitle()}
       </div>
-      <BrowserHeaderButton
-        icon={state.collapsed ? 'app_expand' : 'app_shrink'}
-        onClick={() => actions.toggleCollapsed()}
-      />
+      <Show when={state.canCollapse}>
+        <BrowserHeaderButton
+          icon={state.collapsed ? 'app_expand' : 'app_shrink'}
+          onClick={() => actions.toggleCollapsed()}
+        />
+      </Show>
     </div>
   );
 }
@@ -313,7 +316,8 @@ type BrowserContextState = {
   index: number,
   page: BrowserPageProps,
   destroyed: boolean,
-  collapsed: boolean
+  collapsed: boolean,
+  canCollapse: boolean
 };
 type BrowserContextActions = {
   add: (page: BrowserPageProps) => void,
@@ -321,7 +325,8 @@ type BrowserContextActions = {
   close: (page: BrowserPageProps) => void,
   destroy: () => void,
   toggleCollapsed: (collapse?: boolean) => void,
-  replace: (page: BrowserPageProps, originalPage: BrowserPageProps) => void
+  replace: (page: BrowserPageProps, originalPage: BrowserPageProps) => void,
+  setCanCollapse: (canCollapse: boolean) => void
 };
 
 export type BrowserContextValue = [
@@ -339,7 +344,8 @@ function createBrowserStore(props: {
       return state.pages[state.index];
     },
     destroyed: false,
-    collapsed: false
+    collapsed: false,
+    canCollapse: true
   };
 
   const [state, setState] = createStore<BrowserContextState>(initialState);
@@ -418,6 +424,10 @@ function createBrowserStore(props: {
       setState('destroyed', true);
     },
     toggleCollapsed: (collapse) => {
+      if(!untrack(() => state.canCollapse)) {
+        collapse = false;
+      }
+
       setState('collapsed', collapse ?? ((v) => !v));
     },
     replace: (page, originalPage) => {
@@ -425,6 +435,12 @@ function createBrowserStore(props: {
       page = makeBrowserPage(page);
       originalPage.dispose();
       setState('pages', state.pages.findIndex((_page) => _page.id === originalPage.id), reconcile(page));
+    },
+    setCanCollapse: (canCollapse) => {
+      setState({
+        canCollapse,
+        ...(!canCollapse && {collapsed: false})
+      });
     }
   });
 
@@ -490,6 +506,26 @@ function Browser(props: {
 
     createEffect(() => {
       const {movable} = movablePanel;
+      if(!movable) {
+        createEffect(() => {
+          setMovableState({
+            width: windowSize.width - 16,
+            height: Math.min(688, windowSize.height - 16 * 2)
+          });
+
+          ref.style.width = movableState().width + 'px';
+          ref.style.height = movableState().height + 'px';
+        });
+
+        actions.setCanCollapse(false);
+        ref.classList.add(styles.noMovable);
+        onCleanup(() => {
+          actions.setCanCollapse(true);
+          ref.classList.remove(styles.noMovable);
+        });
+        return;
+      }
+
       const {collapsed} = state;
       const collapsedWidth = 328;
       const collapsedHeight = 48;

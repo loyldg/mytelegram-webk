@@ -4,53 +4,55 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {createSignal} from 'solid-js';
-import {hexToRgb, calculateLuminance, getTextColor, calculateOpacity, rgbaToRgb, rgbIntToHex} from '../helpers/color';
-import {attachClickEvent} from '../helpers/dom/clickEvent';
-import safeWindowOpen from '../helpers/dom/safeWindowOpen';
-import ListenerSetter from '../helpers/listenerSetter';
-import safeAssign from '../helpers/object/safeAssign';
-import themeController from '../helpers/themeController';
-import {AttachMenuBot, DataJSON, WebViewResult, Document, MessagesPreparedInlineMessage} from '../layer';
-import appImManager from '../lib/appManagers/appImManager';
-import {InternalLink, INTERNAL_LINK_TYPE} from '../lib/appManagers/internalLink';
-import internalLinkProcessor from '../lib/appManagers/internalLinkProcessor';
-import {AppManagers} from '../lib/appManagers/managers';
-import getAttachMenuBotIcon from '../lib/appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
-import {LangPackKey} from '../lib/langPack';
-import wrapEmojiText, {EmojiTextTsx} from '../lib/richTextProcessor/wrapEmojiText';
-import rootScope from '../lib/rootScope';
-import {TelegramWebViewEventMap, AnyFunction, TelegramWebViewSendEventMap} from '../types';
-import ButtonTsx from './buttonTsx';
-import {ButtonMenuItemOptionsVerifiable} from './buttonMenu';
-import confirmationPopup from './confirmationPopup';
-import PopupElement from './popups';
-import PopupPeer, {PopupPeerOptions} from './popups/peer';
-import PopupPickUser from './popups/pickUser';
-import TelegramWebView from './telegramWebView';
-import wrapAttachBotIcon from './wrappers/attachBotIcon';
-import getPeerTitle from './wrappers/getPeerTitle';
-import wrapPeerTitle from './wrappers/peerTitle';
-import classNames from '../helpers/string/classNames';
+import {Accessor, createSignal, Show} from 'solid-js';
+import {hexToRgb, calculateLuminance, getTextColor, calculateOpacity, rgbaToRgb, rgbIntToHex, mixColors, rgbaToHexa} from '@helpers/color';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import safeWindowOpen from '@helpers/dom/safeWindowOpen';
+import ListenerSetter from '@helpers/listenerSetter';
+import safeAssign from '@helpers/object/safeAssign';
+import themeController from '@helpers/themeController';
+import {AttachMenuBot, DataJSON, WebViewResult, Document, MessagesPreparedInlineMessage} from '@layer';
+import appImManager from '@lib/appImManager';
+import {InternalLink, INTERNAL_LINK_TYPE} from '@lib/internalLink';
+import internalLinkProcessor from '@lib/internalLinkProcessor';
+import {AppManagers} from '@lib/managers';
+import getAttachMenuBotIcon from '@appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
+import {LangPackKey} from '@lib/langPack';
+import wrapEmojiText, {EmojiTextTsx} from '@lib/richTextProcessor/wrapEmojiText';
+import rootScope from '@lib/rootScope';
+import {TelegramWebViewEventMap, AnyFunction, TelegramWebViewSendEventMap} from '@types';
+import ButtonTsx from '@components/buttonTsx';
+import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import confirmationPopup from '@components/confirmationPopup';
+import PopupElement from '@components/popups';
+import PopupPeer, {PopupPeerOptions} from '@components/popups/peer';
+import PopupPickUser from '@components/popups/pickUser';
+import TelegramWebView from '@components/telegramWebView';
+import wrapAttachBotIcon from '@components/wrappers/attachBotIcon';
+import getPeerTitle from '@components/wrappers/getPeerTitle';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import classNames from '@helpers/string/classNames';
 import {render} from 'solid-js/web';
-import {attachClassName} from '../helpers/solid/classname';
-import PopupWebAppEmojiStatusAccess from './popups/webAppEmojiStatusAccess';
-import {toastNew} from './toast';
-import tsNow from '../helpers/tsNow';
-import PopupPremium from './popups/premium';
-import {MyDocument} from '../lib/appManagers/appDocsManager';
-import PopupWebAppLocationAccess from './popups/webAppLocationAccess';
-import appSidebarRight from './sidebarRight';
-import {IS_SAFARI} from '../environment/userAgent';
-import {Transition} from '../vendor/solid-transition-group';
-import {PreloaderTsx} from './putPreloader';
-import ButtonIcon from './buttonIcon';
-import ButtonMenuToggle from './buttonMenuToggle';
-import type {RequestWebViewOptions} from '../lib/appManagers/appAttachMenuBotsManager';
-import {createSvgFromBytes} from '../helpers/bytes/getPathFromBytes';
-import PopupWebAppPreparedMessage from './popups/webAppPreparedMessage';
-import appDownloadManager from '../lib/appManagers/appDownloadManager';
-import IS_WEB_APP_BROWSER_SUPPORTED from '../environment/webAppBrowserSupport';
+import {attachClassName} from '@helpers/solid/classname';
+import PopupWebAppEmojiStatusAccess from '@components/popups/webAppEmojiStatusAccess';
+import {toastNew} from '@components/toast';
+import tsNow from '@helpers/tsNow';
+import PopupPremium from '@components/popups/premium';
+import {MyDocument} from '@appManagers/appDocsManager';
+import PopupWebAppLocationAccess from '@components/popups/webAppLocationAccess';
+import appSidebarRight from '@components/sidebarRight';
+import {IS_SAFARI} from '@environment/userAgent';
+import {Transition} from '@vendor/solid-transition-group';
+import {PreloaderTsx} from '@components/putPreloader';
+import ButtonIcon from '@components/buttonIcon';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import type {RequestWebViewOptions} from '@appManagers/appAttachMenuBotsManager';
+import {createSvgFromBytes} from '@helpers/bytes/getPathFromBytes';
+import PopupWebAppPreparedMessage from '@components/popups/webAppPreparedMessage';
+import appDownloadManager from '@lib/appDownloadManager';
+import IS_WEB_APP_BROWSER_SUPPORTED from '@environment/webAppBrowserSupport';
+import {wrapAdaptiveCustomEmoji} from '@components/wrappers/customEmojiSimple';
+import createMiddleware from '@helpers/solid/createMiddleware';
 
 const SANDBOX_ATTRIBUTES = [
   'allow-scripts',
@@ -168,7 +170,9 @@ export default class WebApp {
       is_progress_visible: false,
       color: 'primary',
       text: '',
-      text_color: '#ffffff'
+      text_color: '#ffffff',
+      has_shine_effect: false,
+      icon_custom_emoji_id: undefined
     });
     let mainButtonRef: HTMLElement;
     const [secondaryButtonState, setSecondaryButtonState] = createSignal<TelegramWebViewEventMap['web_app_setup_secondary_button']>({
@@ -178,7 +182,9 @@ export default class WebApp {
       color: 'primary',
       text: '',
       text_color: '#ffffff',
-      position: 'left'
+      position: 'left',
+      has_shine_effect: false,
+      icon_custom_emoji_id: undefined
     });
     let secondaryButtonRef: HTMLElement;
 
@@ -209,6 +215,33 @@ export default class WebApp {
       (mainButtonState().is_visible && secondaryButtonState().is_visible) && `has-two-buttons position-${secondaryButtonState().position}`,
     ));
 
+    const ButtonContent = (props: {
+      state: Accessor<TelegramWebViewEventMap['web_app_setup_main_button'] | TelegramWebViewEventMap['web_app_setup_secondary_button']>
+    }) => {
+      return (
+        <Transition name="fade" mode="outin">
+          <span class="web-app-button-content text-overflow-no-wrap">
+            <Show
+              when={!props.state().is_progress_visible}
+              fallback={<PreloaderTsx />}
+            >
+              <Show when={props.state().icon_custom_emoji_id}>
+                {(docId) => wrapAdaptiveCustomEmoji({
+                  docId: docId(),
+                  size: 20,
+                  wrapOptions: {
+                    middleware: createMiddleware().get(),
+                    textColor: props.state().text_color
+                  }
+                }).container}
+              </Show>
+              <EmojiTextTsx text={props.state().text} />
+            </Show>
+          </span>
+        </Transition>
+      );
+    };
+
     return (
       <>
         <ButtonTsx
@@ -220,16 +253,12 @@ export default class WebApp {
             'web-app-button-secondary',
             secondaryButtonState().is_visible && 'is-visible',
             secondaryButtonState().is_active && 'is-active',
+            secondaryButtonState().has_shine_effect && 'shimmer'
           )}
           disabled={!secondaryButtonState().is_active}
           onClick={() => this.telegramWebView.dispatchWebViewEvent('secondary_button_pressed', undefined)}
         >
-          <Transition name="fade" mode="outin">
-            {secondaryButtonState().is_progress_visible ?
-              <PreloaderTsx /> :
-              <EmojiTextTsx text={secondaryButtonState().text} />
-            }
-          </Transition>
+          <ButtonContent state={secondaryButtonState} />
         </ButtonTsx>
         <ButtonTsx
           ref={mainButtonRef}
@@ -238,16 +267,12 @@ export default class WebApp {
             'web-app-button',
             'btn-color-primary',
             mainButtonState().is_visible && 'is-visible',
+            mainButtonState().has_shine_effect && 'shimmer'
           )}
           disabled={!mainButtonState().is_active}
           onClick={() => this.telegramWebView.dispatchWebViewEvent('main_button_pressed', undefined)}
         >
-          <Transition name="fade" mode="outin">
-            {mainButtonState().is_progress_visible ?
-              <PreloaderTsx /> :
-              <EmojiTextTsx text={mainButtonState().text} />
-            }
-          </Transition>
+          <ButtonContent state={mainButtonState} />
         </ButtonTsx>
       </>
     );
@@ -995,8 +1020,8 @@ export default class WebApp {
       web_app_set_background_color: ({color}) => this.setBodyColor(color),
       web_app_set_header_color: this.setHeaderColor,
       web_app_switch_inline_query: this.switchInlineQuery,
-      web_app_setup_main_button: opts => this.setMainButtonState(opts),
-      web_app_setup_secondary_button: opts => this.setSecondaryButtonState(opts),
+      web_app_setup_main_button: (opts) => this.setMainButtonState(opts),
+      web_app_setup_secondary_button: (opts) => this.setSecondaryButtonState(opts),
       web_app_setup_back_button: this.setupBackButton,
       web_app_setup_settings_button: this.setupSettingsButton,
       web_app_setup_closing_behavior: ({need_confirmation}) => this.isCloseConfirmationNeeded = !!need_confirmation,
@@ -1065,7 +1090,10 @@ export default class WebApp {
       }),
       web_app_trigger_haptic_feedback: this.handleHapticFeedback,
       web_app_set_bottom_bar_color: ({color}) => {
-        this.footer.style.background = color;
+        this.footer.style.setProperty('--bg-color', color);
+        const luminance = calculateLuminance(hexToRgb(color));
+        const borderColor = mixColors(luminance > 0.5 ? [0, 0, 0] : [255, 255, 255], hexToRgb(color), 0.2);
+        this.footer.style.setProperty('--border-color', rgbaToHexa(borderColor));
       },
       // we can't use w3c sensors reliably with iframes unfortunately: https://w3c.github.io/sensors/#focused-area :c
       web_app_start_accelerometer: (data) => {
@@ -1159,7 +1187,7 @@ export default class WebApp {
       web_app_secure_storage_restore_key: ({req_id}) => telegramWebView.dispatchWebViewEvent('secure_storage_failed', {req_id, error: 'UNSUPPORTED'}),
       web_app_secure_storage_clear: ({req_id}) => telegramWebView.dispatchWebViewEvent('secure_storage_failed', {req_id, error: 'UNSUPPORTED'}),
       web_app_share_to_story: () => {
-        toastNew({langPackKey:'BotStorySharingNotSupported'});
+        toastNew({langPackKey: 'BotStorySharingNotSupported'});
       },
       web_app_send_prepared_message: this.debouncePopupMethod(async({id}) => {
         let message: MessagesPreparedInlineMessage.messagesPreparedInlineMessage;
@@ -1167,7 +1195,7 @@ export default class WebApp {
           message = await this.managers.appBotsManager.getPreparedMessage(this.webViewOptions.botId, id);
         } catch(err) {
           this.telegramWebView.dispatchWebViewEvent('prepared_message_failed', {error: (err as any).code});
-          return
+          return;
         }
 
         const popup = PopupElement.createPopup(PopupWebAppPreparedMessage, {

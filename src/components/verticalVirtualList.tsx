@@ -1,8 +1,8 @@
 import {createSignal, onCleanup, onMount, Component, createSelector, createMemo, For, Show, Ref, createComputed, on, Accessor, untrack} from 'solid-js';
 
-import createAnimatedValue from '../helpers/solid/createAnimatedValue';
-import ListenerSetter from '../helpers/listenerSetter';
-import useElementSize from '../hooks/useElementSize';
+import createAnimatedValue from '@helpers/solid/createAnimatedValue';
+import ListenerSetter from '@helpers/listenerSetter';
+import useElementSize from '@hooks/useElementSize';
 
 
 export type VerticalVirtualListItemProps<T = any> = {
@@ -22,6 +22,8 @@ const VerticalVirtualList: Component<{
 
   itemHeight: number;
   thresholdPadding: number;
+
+  animate: boolean;
 
   forceHostHeight?: boolean;
   extraPaddingBottom?: number;
@@ -58,6 +60,8 @@ const VerticalVirtualList: Component<{
     onScrollShift
   });
 
+  const canAnimate = createMemo(() => shouldAnimate() && props.animate);
+
   const isVisible = createSelector(
     () => [scrollAmount(), hostSize.height, props.itemHeight, props.thresholdPadding] as const,
     (
@@ -71,7 +75,7 @@ const VerticalVirtualList: Component<{
 
 
   const Item: Component<{idx: number, item: any}> = (itemProps) => {
-    const animatedTop = createAnimatedValue(() => itemProps.idx * props.itemHeight, 120, undefined, shouldAnimate);
+    const animatedTop = createAnimatedValue(() => itemProps.idx * props.itemHeight, 120, undefined, canAnimate);
 
     return (
       <props.ListItem

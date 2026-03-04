@@ -4,26 +4,27 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import assumeType from '../../../helpers/assumeType';
-import createContextMenu from '../../../helpers/dom/createContextMenu';
-import positionElementByIndex from '../../../helpers/dom/positionElementByIndex';
-import Sortable from '../../../helpers/dom/sortable';
-import {joinDeepPath} from '../../../helpers/object/setDeepProperty';
-import {StickerSet, MessagesAllStickers} from '../../../layer';
-import {i18n, LangPackKey} from '../../../lib/langPack';
-import wrapEmojiText from '../../../lib/richTextProcessor/wrapEmojiText';
-import rootScope from '../../../lib/rootScope';
-import CheckboxField from '../../checkboxField';
-import LazyLoadQueue from '../../lazyLoadQueue';
-import PopupElement from '../../popups';
-import PopupStickers from '../../popups/stickers';
-import Row from '../../row';
-import SettingSection from '../../settingSection';
-import SliderSuperTab from '../../sliderTab';
-import wrapStickerSetThumb from '../../wrappers/stickerSetThumb';
-import wrapStickerToRow from '../../wrappers/stickerToRow';
-import AppQuickReactionTab from './quickReaction';
-import {useAppSettings} from '../../../stores/appSettings';
+import assumeType from '@helpers/assumeType';
+import createContextMenu from '@helpers/dom/createContextMenu';
+import positionElementByIndex from '@helpers/dom/positionElementByIndex';
+import Sortable from '@helpers/dom/sortable';
+import {joinDeepPath} from '@helpers/object/setDeepProperty';
+import {StickerSet, MessagesAllStickers} from '@layer';
+import {i18n, LangPackKey} from '@lib/langPack';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import rootScope from '@lib/rootScope';
+import CheckboxField from '@components/checkboxField';
+import LazyLoadQueue from '@components/lazyLoadQueue';
+import PopupElement from '@components/popups';
+import PopupStickers from '@components/popups/stickers';
+import Row from '@components/row';
+import SettingSection from '@components/settingSection';
+import SliderSuperTab from '@components/sliderTab';
+import wrapStickerSetThumb from '@components/wrappers/stickerSetThumb';
+import wrapStickerToRow from '@components/wrappers/stickerToRow';
+import AppQuickReactionTab from '@components/sidebarLeft/tabs/quickReaction';
+import {useAppSettings} from '@stores/appSettings';
+import {getStickerSetInputById} from '@lib/appManagers/utils/stickers/getStickerSetInput';
 export default class AppStickersAndEmojiTab extends SliderSuperTab {
   public static getInitArgs() {
     return {
@@ -211,7 +212,7 @@ export default class AppStickersAndEmojiTab extends SliderSuperTab {
           subtitleLangArgs: [stickerSet.count],
           havePadding: true,
           clickable: () => {
-            PopupElement.createPopup(PopupStickers, {id: stickerSet.id, access_hash: stickerSet.access_hash}).show();
+            PopupElement.createPopup(PopupStickers, getStickerSetInputById(stickerSet)).show();
           },
           listenerSetter: this.listenerSetter
         });

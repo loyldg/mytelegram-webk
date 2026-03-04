@@ -1,11 +1,11 @@
 import {Accessor, createComputed, createSignal, createEffect, createMemo} from 'solid-js';
 import {createStore, reconcile} from 'solid-js/store';
 
-import throttle from '../../../../../helpers/schedulers/throttle';
-import deepEqual from '../../../../../helpers/object/deepEqual';
-import {GlobalPrivacySettings} from '../../../../../layer';
+import throttle from '@helpers/schedulers/throttle';
+import deepEqual from '@helpers/object/deepEqual';
+import {GlobalPrivacySettings} from '@layer';
 
-import {MessagesPrivacyOption, MessagesTabStateStore} from './config';
+import {MessagesPrivacyOption, MessagesTabStateStore} from '@components/sidebarLeft/tabs/privacy/messages/config';
 
 
 type UseStateStoreArgs = {
@@ -41,19 +41,13 @@ const useStateStore = ({
     setStore(reconcile(structuredClone(initialState)));
   });
 
+  const isPaid = createMemo(() => store.option === MessagesPrivacyOption.Paid);
 
-  const [hasChanges, setHasChanges] = createSignal(false);
-  const throttledSetHasChanges = throttle(setHasChanges, 200, true);
-
-  // The header is jerking if updating the hasChanges too quickly WTF
-  createEffect(() => {
+  const hasChanges = createMemo(() => {
     const ignoreKeys: (keyof MessagesTabStateStore)[] = !!!isPaid() ? ['chosenPeers', 'stars'] : [];
 
-    throttledSetHasChanges(!deepEqual(store, initialState, ignoreKeys));
+    return !deepEqual(store, initialState, ignoreKeys);
   });
-
-
-  const isPaid = createMemo(() => store.option === MessagesPrivacyOption.Paid);
 
   const chosenPeersByType = (): ChosenPeersByType => ({
     chats: store.chosenPeers.filter(peer => peer.isAnyChat()).map(peer => peer.toChatId()),

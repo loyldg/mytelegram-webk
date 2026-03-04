@@ -1,81 +1,100 @@
-import {createMemo, createSignal, For, Index, JSX, Match, onMount, Show, Switch} from 'solid-js';
+import {createMemo, createSignal, Index, JSX, Match, onMount, Show, Switch} from 'solid-js';
 import PopupElement from '.';
-import {Peer, PaymentsUniqueStarGiftValueInfo, StarGift, StarGiftAttribute} from '../../layer';
-import {MyDocument} from '../../lib/appManagers/appDocsManager';
-import {StickerTsx} from '../wrappers/sticker';
-import {i18n, LangPackKey} from '../../lib/langPack';
-import {StarsStar} from './stars';
-import {PeerTitleTsx} from '../peerTitleTsx';
-import Button from '../buttonTsx';
-import {formatDate, formatFullSentTime} from '../../helpers/date';
-import appImManager from '../../lib/appManagers/appImManager';
-import {attachClickEvent} from '../../helpers/dom/clickEvent';
-import wrapRichText from '../../lib/richTextProcessor/wrapRichText';
-import {MyStarGift} from '../../lib/appManagers/appGiftsManager';
-import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
-import numberThousandSplitter from '../../helpers/number/numberThousandSplitter';
-import PopupSendGift from './sendGift';
-import Table, {TableButton, TableButtonWithTooltip, TablePeer, TableRow} from '../table';
-import {NULL_PEER_ID, STARS_CURRENCY, TON_CURRENCY} from '../../lib/mtproto/mtproto_config';
-import rootScope from '../../lib/rootScope';
-import {toastNew} from '../toast';
-import {ButtonIconTsx} from '../buttonIconTsx';
-import {StarGiftBackdrop} from '../stargifts/stargiftBackdrop';
-import {ButtonMenuToggleTsx} from '../buttonMenuToggleTsx';
-import {copyTextToClipboard} from '../../helpers/clipboard';
-import PopupPickUser from './pickUser';
-import {I18nTsx} from '../../helpers/solid/i18n';
-import tsNow from '../../helpers/tsNow';
-import {useAppState} from '../../stores/appState';
-import transferStarGift from './transferStarGift';
-import safeAssign from '../../helpers/object/safeAssign';
-import paymentsWrapCurrencyAmount from '../../helpers/paymentsWrapCurrencyAmount';
-import PopupBuyResaleGift from './buyResaleGift';
-import wrapPeerTitle from '../wrappers/peerTitle';
-import {wrapFormattedDuration} from '../wrappers/wrapDuration';
-import formatDuration from '../../helpers/formatDuration';
-import PopupSellStarGift from './sellStarGift';
-import {inputStarGiftEquals} from '../../lib/appManagers/utils/gifts/inputStarGiftEquals';
-import confirmationPopup from '../confirmationPopup';
-import {getCollectibleName} from '../../lib/appManagers/utils/gifts/getCollectibleName';
-import {updateStarGift} from '../../lib/appManagers/utils/gifts/updateStarGift';
-import wrapMessageEntities from '../../lib/richTextProcessor/wrapMessageEntities';
-import PopupStarGiftValue from './starGiftValue';
-import appSidebarRight from '../sidebarRight';
-import Icon from '../icon';
-import PopupStarGiftWear from './starGiftWear';
-import {setQuizHint} from '../poll';
-import createStarGiftUpgradePopup from './starGiftUpgrade';
-import classNames from '../../helpers/string/classNames';
-import PopupPayment from './payment';
-import {StarGiftUpgradePreview} from '../../lib/appManagers/appGiftsManager';
-import {rgbIntToHex} from '../../helpers/color';
-import wrapSticker from '../wrappers/sticker';
-import createMiddleware from '../../helpers/solid/createMiddleware';
-import RLottiePlayer from '../../lib/rlottie/rlottiePlayer';
-import Animated, {SimpleAnimation} from '../../helpers/solid/animations';
-import BezierEasing from '../../vendor/bezierEasing';
-import {AnimatedSuper} from '../animatedSuper';
-import {ConfettiContainer, ConfettiRef} from '../confetti';
+import {Peer, PaymentsUniqueStarGiftValueInfo, StarGift, StarGiftAttribute, StarGiftAttributeRarity} from '@layer';
+import {MyDocument} from '@appManagers/appDocsManager';
+import {i18n, LangPackKey} from '@lib/langPack';
+import {StarsStar} from '@components/popups/stars';
+import {PeerTitleTsx} from '@components/peerTitleTsx';
+import Button from '@components/buttonTsx';
+import {formatDate, formatFullSentTime} from '@helpers/date';
+import appImManager from '@lib/appImManager';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import wrapRichText from '@lib/richTextProcessor/wrapRichText';
+import {MyStarGift} from '@appManagers/appGiftsManager';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import numberThousandSplitter from '@helpers/number/numberThousandSplitter';
+import PopupSendGift from '@components/popups/sendGift';
+import Table, {TableButton, TableButtonWithTooltip, TablePeer, TableRow} from '@components/table';
+import {NULL_PEER_ID, STARS_CURRENCY, TON_CURRENCY} from '@appManagers/constants';
+import rootScope from '@lib/rootScope';
+import {toastNew} from '@components/toast';
+import {ButtonIconTsx} from '@components/buttonIconTsx';
+import {StarGiftBackdrop} from '@components/stargifts/stargiftBackdrop';
+import {ButtonMenuToggleTsx} from '@components/buttonMenuToggleTsx';
+import {copyTextToClipboard} from '@helpers/clipboard';
+import PopupPickUser from '@components/popups/pickUser';
+import {I18nTsx} from '@helpers/solid/i18n';
+import tsNow from '@helpers/tsNow';
+import {useAppState} from '@stores/appState';
+import transferStarGift from '@components/popups/transferStarGift';
+import safeAssign from '@helpers/object/safeAssign';
+import paymentsWrapCurrencyAmount from '@helpers/paymentsWrapCurrencyAmount';
+import PopupBuyResaleGift from '@components/popups/buyResaleGift';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import {wrapFormattedDuration} from '@components/wrappers/wrapDuration';
+import formatDuration from '@helpers/formatDuration';
+import PopupSellStarGift from '@components/popups/sellStarGift';
+import {inputStarGiftEquals} from '@appManagers/utils/gifts/inputStarGiftEquals';
+import confirmationPopup from '@components/confirmationPopup';
+import {getCollectibleName} from '@appManagers/utils/gifts/getCollectibleName';
+import {updateStarGift} from '@appManagers/utils/gifts/updateStarGift';
+import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
+import PopupStarGiftValue from '@components/popups/starGiftValue';
+import Icon from '@components/icon';
+import PopupStarGiftWear from '@components/popups/starGiftWear';
+import {setQuizHint} from '@components/poll';
+import createStarGiftUpgradePopup from '@components/popups/starGiftUpgrade';
+import classNames from '@helpers/string/classNames';
+import PopupPayment from '@components/popups/payment';
+import {StarGiftUpgradePreview} from '@appManagers/appGiftsManager';
+import {rgbIntToHex} from '@helpers/color';
+import wrapSticker from '@components/wrappers/sticker';
+import createMiddleware from '@helpers/solid/createMiddleware';
+import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
+import {SimpleAnimation} from '@helpers/solid/animations';
+import BezierEasing from '@vendor/bezierEasing';
+import {AnimatedSuper} from '@components/animatedSuper';
+import {ConfettiContainer, ConfettiRef} from '@components/confetti';
+import {PreloaderTsx} from '@components/putPreloader';
+import {showCreateStarGiftOfferPopup} from '@components/popups/createStarGiftOffer';
 
-function AttributeTableButton(props: { permille: number }) {
+function AttributeTableButton(props: {rarity: StarGiftAttributeRarity}) {
+  if(props.rarity._ !== 'starGiftAttributeRarity') {
+    const map: Record<Exclude<StarGiftAttributeRarity['_'], 'starGiftAttributeRarity'>, {langKey: LangPackKey, color: string}> = {
+      'starGiftAttributeRarityUncommon': {langKey: 'StarGiftRarityUncommon', color: 'green'},
+      'starGiftAttributeRarityRare': {langKey: 'StarGiftRarityRare', color: 'blue'},
+      'starGiftAttributeRarityEpic': {langKey: 'StarGiftRarityEpic', color: 'violet'},
+      'starGiftAttributeRarityLegendary': {langKey: 'StarGiftRarityLegendary', color: 'gold'}
+    };
+
+    return (
+      <TableButtonWithTooltip
+        class={`rarity rarity-${map[props.rarity._].color} disable-hover`}
+      >
+        {i18n(map[props.rarity._].langKey)}
+      </TableButtonWithTooltip>
+    );
+  }
+
   return (
     <TableButtonWithTooltip
-      tooltipTextElement={i18n('StarGiftAttributeTooltip', [`${props.permille / 10}%`])}
+      tooltipTextElement={i18n('StarGiftAttributeTooltip', [`${props.rarity.permille / 10}%`])}
       tooltipClass="popup-star-gift-info-tooltip"
     >
-      {props.permille / 10}%
+      {props.rarity.permille / 10}%
     </TableButtonWithTooltip>
   );
 }
 
-function AttributeValue(props: { name: string, permille: number, onClick?: () => void }) {
+export function AttributeValue(props: {name: string, rarity: StarGiftAttributeRarity, onClick?: () => void}) {
   return (
     <div class="popup-star-gift-info-attribute-value">
-      <span class="popup-star-gift-info-attribute-clickable" onClick={props.onClick}>
-        {props.name}
-      </span>
-      <AttributeTableButton permille={props.permille} />
+      {props.onClick ? (
+        <span class="popup-star-gift-info-attribute-clickable" onClick={props.onClick}>
+          {props.name}
+        </span>
+      ) : props.name}
+      <AttributeTableButton rarity={props.rarity} />
     </div>
   )
 }
@@ -98,17 +117,19 @@ function calculateEasedIntervals(count: number, duration: number): number[] {
   return intervals;
 }
 
+type AnimatedAttributeValueItem = {name: string, rarity: StarGiftAttributeRarity};
 function AnimatedAttributeValue(props: {
-  items: {name: string, rarity_permille: number}[],
-  actual: {name: string, rarity_permille: number},
+  items: AnimatedAttributeValueItem[],
+  actual: AnimatedAttributeValueItem,
   duration: number,
   count: number,
   onComplete?: () => void,
   onClick?: () => void
+  started: boolean
 }) {
   const [position, setPosition] = createSignal(0);
 
-  const items: {name: string, rarity_permille: number}[] = [];
+  const items: AnimatedAttributeValueItem[] = [];
   while(items.length < props.count - 1) {
     const left = props.count - 1 - items.length;
     items.push(...props.items.slice(0, left));
@@ -130,7 +151,27 @@ function AnimatedAttributeValue(props: {
       }, intervals[index]);
     }
 
-    scheduleNext(0);
+    function scheduleRandom() {
+      let randomIndex = Math.floor(Math.random() * items.length);
+      if(position() === randomIndex) {
+        randomIndex = (randomIndex + 1) % items.length;
+      }
+      setPosition(randomIndex);
+
+      setTimeout(() => {
+        if(props.started) {
+          scheduleNext(0);
+        } else {
+          scheduleRandom();
+        }
+      }, 150);
+    }
+
+    if(props.started) {
+      scheduleNext(0);
+    } else {
+      scheduleRandom();
+    }
   });
 
   return (
@@ -145,7 +186,7 @@ function AnimatedAttributeValue(props: {
             <Match when={index === position()}>
               <AttributeValue
                 name={item().name}
-                permille={item().rarity_permille}
+                rarity={item().rarity}
                 onClick={props.onClick}
               />
             </Match>
@@ -161,6 +202,7 @@ function UpgradeAnimation(props: {
   actualModel: StarGiftAttribute.starGiftAttributeModel,
   actualBackdrop: StarGiftAttribute.starGiftAttributeBackdrop,
   confetti: ConfettiRef,
+  onReady: () => void,
   onComplete: () => void
 }) {
   const MODELS_COUNT = 20;
@@ -201,6 +243,7 @@ function UpgradeAnimation(props: {
 
   let modelsContainer!: HTMLDivElement;
   let backdropEl!: HTMLDivElement;
+  const [loading, setLoading] = createSignal(true);
 
   onMount(async() => {
     const middleware = createMiddleware();
@@ -229,6 +272,9 @@ function UpgradeAnimation(props: {
         }
       });
     }));
+
+    props.onReady();
+    setLoading(false);
 
     const containerWidth = modelsContainer.parentElement!.offsetWidth;
     const totalModelsWidth = MODELS_COUNT * MODEL_WIDTH + (MODELS_COUNT - 1) * MODEL_GAP;
@@ -312,7 +358,10 @@ function UpgradeAnimation(props: {
         }}
       />
       <div class="popup-star-gift-info-upgrade-models-container">
-        <div ref={modelsContainer} class="popup-star-gift-info-upgrade-models" />
+        <Show when={loading()}>
+          <PreloaderTsx />
+        </Show>
+        <div ref={modelsContainer} class="popup-star-gift-info-upgrade-models" style={{display: loading() ? 'none' : undefined}} />
       </div>
     </>
   );
@@ -320,6 +369,7 @@ function UpgradeAnimation(props: {
 
 function AnimatedCollectibleNumber(props: {
   targetNumber: number,
+  started: boolean
 }) {
   let containerRef!: HTMLSpanElement;
 
@@ -406,7 +456,22 @@ function AnimatedCollectibleNumber(props: {
       }, intervals[updateCount]);
     }
 
-    scheduleNext();
+    function scheduleRandom() {
+      setTimeout(() => {
+        setDigits(0, true)
+        if(props.started) {
+          scheduleNext();
+        } else {
+          scheduleRandom()
+        }
+      }, 150);
+    }
+
+    if(props.started) {
+      scheduleNext();
+    } else {
+      scheduleRandom()
+    }
   });
 
   return <span ref={containerRef} class="animated-counter" />;
@@ -478,6 +543,7 @@ export default class PopupStarGiftInfo extends PopupElement {
     const [resellPriceTon, setResellPriceTon] = createSignal(this.gift.resellPriceTon);
     const [resellPriceStars, setResellPriceStars] = createSignal(this.gift.resellPriceStars);
     const [isWearing, setIsWearing] = createSignal(this.gift.isWearing);
+    const [upgradeAnimationStarted, setUpgradeAnimationStarted] = createSignal(false);
     const [upgradeAnimationComplete, setUpgradeAnimationComplete] = createSignal(!this.upgradeAnimation);
 
     this.listenerSetter.add(rootScope)('star_gift_update', (event) => {
@@ -600,11 +666,12 @@ export default class PopupStarGiftInfo extends PopupElement {
               duration={2000}
               count={10}
               onClick={() => handleAttributeClick(collectibleAttributes.model)}
+              started={upgradeAnimationStarted()}
             />
           ) : (
             <AttributeValue
               name={collectibleAttributes.model.name}
-              permille={collectibleAttributes.model.rarity_permille}
+              rarity={collectibleAttributes.model.rarity}
               onClick={() => handleAttributeClick(collectibleAttributes.model)}
             />
           )
@@ -619,11 +686,12 @@ export default class PopupStarGiftInfo extends PopupElement {
               duration={800}
               count={4}
               onClick={() => handleAttributeClick(collectibleAttributes.backdrop)}
+              started={upgradeAnimationStarted()}
             />
           ) : (
             <AttributeValue
               name={collectibleAttributes.backdrop.name}
-              permille={collectibleAttributes.backdrop.rarity_permille}
+              rarity={collectibleAttributes.backdrop.rarity}
               onClick={() => handleAttributeClick(collectibleAttributes.backdrop)}
             />
           )
@@ -638,14 +706,14 @@ export default class PopupStarGiftInfo extends PopupElement {
               duration={1000}
               count={5}
               onClick={() => handleAttributeClick(collectibleAttributes.pattern)}
+              started={upgradeAnimationStarted()}
             />
           ) : (
-            <>
-              <span class="popup-star-gift-info-attribute-clickable" onClick={() => handleAttributeClick(collectibleAttributes.pattern)}>
-                {collectibleAttributes.pattern.name}
-              </span>
-              <AttributeTableButton permille={collectibleAttributes.pattern.rarity_permille} />
-            </>
+            <AttributeValue
+              name={collectibleAttributes.pattern.name}
+              rarity={collectibleAttributes.pattern.rarity}
+              onClick={() => handleAttributeClick(collectibleAttributes.pattern)}
+            />
           )
         ]);
 
@@ -932,6 +1000,7 @@ export default class PopupStarGiftInfo extends PopupElement {
               preview={this.upgradeAnimation}
               actualModel={collectibleAttributes.model}
               actualBackdrop={collectibleAttributes.backdrop}
+              onReady={() => setUpgradeAnimationStarted(true)}
               onComplete={() => setUpgradeAnimationComplete(true)}
               confetti={confetti}
             />
@@ -968,6 +1037,15 @@ export default class PopupStarGiftInfo extends PopupElement {
                 text: 'StarGiftChangePrice',
                 verify: () => isOwnedUniqueGift && isListed(),
                 onClick: () => handleSell(true)
+              },
+              {
+                icon: 'tag_alt_outline',
+                text: 'StarGiftOffer.CreateOffer',
+                verify: () => gift._ === 'starGiftUnique' && gift.offer_min_stars !== undefined,
+                onClick: () => showCreateStarGiftOfferPopup({
+                  gift: this.gift,
+                  onFinish: (res) => res === 'created' && this.hide()
+                })
               },
               {
                 icon: 'forward',
@@ -1022,7 +1100,7 @@ export default class PopupStarGiftInfo extends PopupElement {
                     key="StarGiftCollectibleNumWithAuthor"
                     args={[
                       this.upgradeAnimation ? (
-                        <AnimatedCollectibleNumber targetNumber={gift.num} />
+                        <AnimatedCollectibleNumber targetNumber={gift.num} started={upgradeAnimationStarted()} />
                       ) : numberThousandSplitter(gift.num, ','),
                       <PeerTitleTsx
                         peerId={getPeerId(gift.released_by)}
@@ -1038,7 +1116,7 @@ export default class PopupStarGiftInfo extends PopupElement {
                     key="StarGiftCollectibleNum"
                     args={[
                       this.upgradeAnimation ? (
-                        <AnimatedCollectibleNumber targetNumber={gift.num} />
+                        <AnimatedCollectibleNumber targetNumber={gift.num} started={upgradeAnimationStarted()} />
                       ) : numberThousandSplitter(gift.num, ',')
                     ]}
                   />

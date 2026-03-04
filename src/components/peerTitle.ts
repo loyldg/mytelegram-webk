@@ -4,20 +4,20 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import rootScope from '../lib/rootScope';
-import {i18n} from '../lib/langPack';
-import replaceContent from '../helpers/dom/replaceContent';
-import {HIDDEN_PEER_ID, NULL_PEER_ID} from '../lib/mtproto/mtproto_config';
-import limitSymbols from '../helpers/string/limitSymbols';
-import setInnerHTML, {setDirection} from '../helpers/dom/setInnerHTML';
-import safeAssign from '../helpers/object/safeAssign';
-import wrapEmojiText from '../lib/richTextProcessor/wrapEmojiText';
-import getPeerTitle from './wrappers/getPeerTitle';
-import generateTitleIcons from './generateTitleIcons';
-import {wrapTopicIcon} from './wrappers/messageActionTextNewUnsafe';
-import lottieLoader from '../lib/rlottie/lottieLoader';
-import {AsAllChatsType} from '../lib/appManagers/appDialogsManager';
-import IS_EMOJI_SUPPORTED from '../environment/emojiSupport';
+import rootScope from '@lib/rootScope';
+import {i18n} from '@lib/langPack';
+import replaceContent from '@helpers/dom/replaceContent';
+import {HIDDEN_PEER_ID, NULL_PEER_ID} from '@appManagers/constants';
+import limitSymbols from '@helpers/string/limitSymbols';
+import setInnerHTML, {setDirection} from '@helpers/dom/setInnerHTML';
+import safeAssign from '@helpers/object/safeAssign';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import getPeerTitle from '@components/wrappers/getPeerTitle';
+import generateTitleIcons from '@components/generateTitleIcons';
+import {wrapTopicIcon} from '@components/wrappers/messageActionTextNewUnsafe';
+import lottieLoader from '@lib/rlottie/lottieLoader';
+import {AsAllChatsType} from '@lib/appDialogsManager';
+import IS_EMOJI_SUPPORTED from '@environment/emojiSupport';
 
 export type PeerTitleOptions = {
   peerId?: PeerId,
@@ -195,16 +195,32 @@ export default class PeerTitle {
         getTopicIconPromise
       ]);
 
-      if(icons?.elements?.length || icons?.botVerification || topicIcon) {
+      const createInnerTitleSpan = () => {
         const inner = document.createElement('span');
         inner.classList.add('peer-title-inner');
         hasInner = true;
         setInnerHTML(inner, title);
 
+        return inner;
+      };
+
+      const setElementContent = (nodes: (Node | string)[]) => {
         const fragment = document.createDocumentFragment();
-        fragment.append(...[icons.botVerification, topicIcon, inner, ...(icons.elements ?? [])].filter(Boolean));
+        fragment.append(...nodes);
 
         setInnerHTML(this.element, fragment);
+      }
+
+      if(topicIcon) {
+        setElementContent(
+          [topicIcon, createInnerTitleSpan()].filter(Boolean)
+        );
+      } else if(icons?.elements?.length || icons?.botVerification) {
+        setElementContent(
+          [
+            icons.botVerification, topicIcon, createInnerTitleSpan(), ...(icons.elements ?? [])
+          ].filter(Boolean)
+        );
       } else {
         setInnerHTML(this.element, title);
       }
@@ -215,9 +231,11 @@ export default class PeerTitle {
 }
 
 export function changeTitleEmojiColor(element: HTMLElement, color: string) {
-  const emojiStatus = element.querySelector<HTMLElement>('.emoji-status-text-color');
-  const player = emojiStatus && lottieLoader.getAnimation(emojiStatus);
-  if(player) {
-    player.setColor(color, true);
-  }
+  const elements = element.querySelectorAll<HTMLElement>('.emoji-status-text-color');
+  elements.forEach((emojiStatus) => {
+    const player = emojiStatus && lottieLoader.getAnimation(emojiStatus);
+    if(player) {
+      player.setColor(color, true);
+    }
+  })
 }

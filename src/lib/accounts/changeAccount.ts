@@ -1,7 +1,7 @@
-import appNavigationController from '../../components/appNavigationController';
+import appNavigationController from '@components/appNavigationController';
 
-import {CURRENT_ACCOUNT_QUERY_PARAM} from './constants';
-import {ActiveAccountNumber} from './types';
+import {CURRENT_ACCOUNT_QUERY_PARAM} from '@lib/accounts/constants';
+import {ActiveAccountNumber} from '@lib/accounts/types';
 
 export function changeAccount(
   accountNumber: ActiveAccountNumber,
@@ -13,13 +13,11 @@ export function changeAccount(
   if(accountNumber === 1) url.searchParams.delete(CURRENT_ACCOUNT_QUERY_PARAM);
   else url.searchParams.set(CURRENT_ACCOUNT_QUERY_PARAM, accountNumber + '');
 
-  let newUrl = url.search ? url.pathname + url.search : url.pathname;
-  if(preserveHash) newUrl += url.hash;
+  if(!preserveHash) url.hash = '';
+
   if(newTab) {
-    window.open(newUrl, '_blank');
+    window.open(url, '_blank');
   } else {
-    appNavigationController.overrideHash();
-    history.replaceState(null, '', newUrl);
-    location.reload();
+    appNavigationController.reload(url);
   }
 }

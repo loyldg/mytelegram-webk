@@ -4,22 +4,25 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import deferredPromise from '../../../helpers/cancellablePromise';
-import {attachClickEvent} from '../../../helpers/dom/clickEvent';
-import createParticipantContextMenu from '../../../helpers/dom/createParticipantContextMenu';
-import {ChannelParticipant, Chat, ChatFull, ChatParticipant} from '../../../layer';
-import {i18n} from '../../../lib/langPack';
-import rootScope from '../../../lib/rootScope';
-import AppSelectPeers from '../../appSelectPeers';
-import ButtonCorner from '../../buttonCorner';
-import CheckboxField from '../../checkboxField';
-import PopupElement from '../../popups';
-import PopupPickUser from '../../popups/pickUser';
-import Row from '../../row';
-import SettingSection from '../../settingSection';
-import {SliderSuperTabEventable} from '../../sliderTab';
-import wrapPeerTitle from '../../wrappers/peerTitle';
-import AppUserPermissionsTab from './userPermissions';
+import deferredPromise from '@helpers/cancellablePromise';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import createParticipantContextMenu from '@helpers/dom/createParticipantContextMenu';
+import {ChannelParticipant, Chat, ChatFull, ChatParticipant} from '@layer';
+import hasRights from '@appManagers/utils/chats/hasRights';
+import {i18n} from '@lib/langPack';
+import rootScope from '@lib/rootScope';
+import AppSelectPeers from '@components/appSelectPeers';
+import ButtonCorner from '@components/buttonCorner';
+import CheckboxField from '@components/checkboxField';
+import PopupElement from '@components/popups';
+import PopupPickUser from '@components/popups/pickUser';
+import Row from '@components/row';
+import SettingSection from '@components/settingSection';
+import {SliderSuperTabEventable} from '@components/sliderTab';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import AppUserPermissionsTab from '@components/sidebarRight/tabs/userPermissions';
+import {handleChannelsTooMuch} from '@components/popups/channelsTooMuch';
+import {isParticipantAdmin} from '@lib/appManagers/utils/chats/isParticipantAdmin';
 
 export function createSelectorForParticipants(options: ConstructorParameters<typeof AppSelectPeers>[0]) {
   const deferred = deferredPromise<void>();
@@ -68,8 +71,9 @@ export default class AppChatAdministratorsTab extends SliderSuperTabEventable {
       p.appConfig
     ]);
 
+    const canAddAdmins = hasRights(chat, 'add_admins');
     this.addBtn = ButtonCorner({icon: 'addmember_filled', className: 'is-visible'});
-    this.content.append(this.addBtn);
+    if(canAddAdmins) this.content.append(this.addBtn);
 
     attachClickEvent(this.addBtn, () => {
       const popup = PopupElement.createPopup(
@@ -90,7 +94,8 @@ export default class AppChatAdministratorsTab extends SliderSuperTabEventable {
       AppUserPermissionsTab.openTab(this.slider, chatId, participant, true);
     };
 
-    const canToggleAntiSpam = !isBroadcast && (chat as Chat.chat | Chat.channel).participants_count >= appConfig.telegram_antispam_group_size_min;
+    const canSeeAntiSpam = !isBroadcast &&
+      (chat as Chat.chat | Chat.channel).participants_count >= appConfig.telegram_antispam_group_size_min;
 
     const {selector, loadPromise} = createSelectorForParticipants({
       appendTo: this.content,
@@ -106,29 +111,29 @@ export default class AppChatAdministratorsTab extends SliderSuperTabEventable {
           return i18n('ChannelCreator');
         }
 
-        const promotedBy = (participant as ChannelParticipant.channelParticipantAdmin).promoted_by.toPeerId(false);
+        const promotedBy = (
+          (participant as ChannelParticipant.channelParticipantAdmin).promoted_by ||
+          (participant as ChatParticipant.chatParticipantAdmin).inviter_id
+        ).toPeerId(false);
         return i18n('EditAdminPromotedBy', [await wrapPeerTitle({peerId: promotedBy})]);
       },
       onSelect: (peerId) => {
         const participant = this.selector.participants.get(peerId);
         openPermissions(participant);
       },
-      channelParticipantsUpdateFilter: (participant) => {
-        return ([
-          'channelParticipantAdmin',
-          'channelParticipantCreator'
-        ] as ChannelParticipant['_'][]).includes(participant?._);
-      }
+      channelParticipantsUpdateFilter: isParticipantAdmin
       // noDelimiter: canToggleAntiSpam
     });
 
     this.selector = selector;
 
-    if(canToggleAntiSpam) {
+    if(canSeeAntiSpam) {
       const section = new SettingSection({
         noDelimiter: true,
         caption: 'ChannelAntiSpamInfo'
       });
+
+      const canToggleAntiSpam = hasRights(chat, 'delete_messages');
 
       const checked = !!(chatFull as ChatFull.channelFull)?.pFlags?.antispam;
       const row = new Row({
@@ -138,19 +143,27 @@ export default class AppChatAdministratorsTab extends SliderSuperTabEventable {
           name: 'agg',
           toggle: true,
           listenerSetter: this.listenerSetter,
-          checked
+          checked,
+          disabled: !canToggleAntiSpam
         }),
         listenerSetter: this.listenerSetter
       });
 
-      this.eventListener.addEventListener('destroy', () => {
+      if(!canToggleAntiSpam) row.toggleDisability(canToggleAntiSpam);
+
+      this.listenerSetter.add(row.checkboxField.input)('change', () => {
         const _checked = row.checkboxField.checked;
         if(_checked === checked) {
           return;
         }
 
-        this.managers.appChatsManager.toggleAntiSpam(chatId, _checked);
-      }, {once: true});
+        const promise = handleChannelsTooMuch(() => this.managers.appChatsManager.toggleAntiSpam(chatId, _checked))
+        .catch((err) => {
+          console.error('toggleAntiSpam error', err);
+          row.checkboxField.setValueSilently(!_checked);
+        });
+        row.disableWithPromise(promise);
+      });
 
       section.content.append(row.container);
 

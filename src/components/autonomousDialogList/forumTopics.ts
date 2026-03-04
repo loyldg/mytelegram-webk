@@ -1,8 +1,8 @@
-import {ForumTopic} from '../../lib/appManagers/appMessagesManager';
-import {isDialog, isForumTopic} from '../../lib/appManagers/utils/dialogs/isDialog';
-import {CAN_HIDE_TOPIC} from '../../lib/mtproto/mtproto_config';
-import rootScope from '../../lib/rootScope';
-import {AutonomousDialogListBase, BaseConstructorArgs} from './base';
+import {ForumTopic} from '@appManagers/appMessagesManager';
+import {isDialog, isForumTopic} from '@appManagers/utils/dialogs/isDialog';
+import {CAN_HIDE_TOPIC} from '@appManagers/constants';
+import rootScope from '@lib/rootScope';
+import {AutonomousDialogListBase, BaseConstructorArgs} from '@components/autonomousDialogList/base';
 
 
 type ConstructorArgs = BaseConstructorArgs & {
@@ -67,7 +67,7 @@ export class AutonomousForumTopicList extends AutonomousDialogListBase<ForumTopi
       }
 
       if(isDialog(dialog)) {
-        const all = this.sortedList.getAll();
+        const all = this.sortedList.getAllDialogElementsMap();
         const entries = [...all.entries()];
         const promises = entries.map(([id]) => this.managers.dialogsStorage.getForumTopic(this.peerId, id));
         const topics = await Promise.all(promises);

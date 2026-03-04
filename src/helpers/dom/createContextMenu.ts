@@ -4,15 +4,18 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import ButtonMenu, {ButtonMenuItemOptionsVerifiable} from '../../components/buttonMenu';
-import filterAsync from '../array/filterAsync';
-import callbackify from '../callbackify';
-import contextMenuController from '../contextMenuController';
-import ListenerSetter from '../listenerSetter';
-import {getMiddleware, Middleware} from '../middleware';
-import positionMenu from '../positionMenu';
-import {attachContextMenuListener} from './attachContextMenuListener';
-import {attachClickEvent} from './clickEvent';
+import ButtonMenu, {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import filterAsync from '@helpers/array/filterAsync';
+import callbackify from '@helpers/callbackify';
+import contextMenuController from '@helpers/contextMenuController';
+import ListenerSetter from '@helpers/listenerSetter';
+import {getMiddleware, Middleware} from '@helpers/middleware';
+import positionMenu from '@helpers/positionMenu';
+import {attachContextMenuListener} from '@helpers/dom/attachContextMenuListener';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import {logger} from '@lib/logger';
+
+const log = logger('createContextMenu');
 
 export default function createContextMenu<T extends ButtonMenuItemOptionsVerifiable>({
   buttons,
@@ -66,7 +69,12 @@ export default function createContextMenu<T extends ButtonMenuItemOptionsVerifia
     const r = async() => {
       try {
         await onOpen?.(e, target);
-      } catch{
+      } catch(e) {
+        if(e instanceof Error) {
+          log.error('Error opening context menu:', e);
+        } else {
+          log('Opening context menu was blocked, reason:', e);
+        }
         onClose?.();
         return;
       }

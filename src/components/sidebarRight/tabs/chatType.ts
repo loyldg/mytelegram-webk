@@ -4,31 +4,32 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {copyTextToClipboard} from '../../../helpers/clipboard';
-import {randomLong} from '../../../helpers/random';
-import {Chat, ChatFull, ExportedChatInvite} from '../../../layer';
-import Button from '../../button';
-import {setButtonLoader} from '../../putPreloader';
-import RadioField from '../../radioField';
-import Row, {RadioFormFromRows} from '../../row';
-import {toast} from '../../toast';
-import {UsernameInputField} from '../../usernameInputField';
-import {SliderSuperTabEventable} from '../../sliderTab';
-import I18n, {i18n} from '../../../lib/langPack';
-import PopupPeer from '../../popups/peer';
-import ButtonCorner from '../../buttonCorner';
-import {attachClickEvent} from '../../../helpers/dom/clickEvent';
-import toggleDisability from '../../../helpers/dom/toggleDisability';
-import CheckboxField from '../../checkboxField';
-import rootScope from '../../../lib/rootScope';
-import SettingSection from '../../settingSection';
-import UsernamesSection from '../../usernamesSection';
-import getPeerEditableUsername from '../../../lib/appManagers/utils/peers/getPeerEditableUsername';
-import getPeerActiveUsernames from '../../../lib/appManagers/utils/peers/getPeerActiveUsernames';
-import {purchaseUsernameCaption} from '../../sidebarLeft/tabs/editProfile';
-import confirmationPopup from '../../confirmationPopup';
-import PopupElement from '../../popups';
-import apiManagerProxy from '../../../lib/mtproto/mtprotoworker';
+import {copyTextToClipboard} from '@helpers/clipboard';
+import {randomLong} from '@helpers/random';
+import {Chat, ChatFull, ExportedChatInvite} from '@layer';
+import Button from '@components/button';
+import {setButtonLoader} from '@components/putPreloader';
+import RadioField from '@components/radioField';
+import Row, {RadioFormFromRows} from '@components/row';
+import {toastNew} from '@components/toast';
+import {UsernameInputField} from '@components/usernameInputField';
+import {SliderSuperTabEventable} from '@components/sliderTab';
+import I18n, {i18n} from '@lib/langPack';
+import PopupPeer from '@components/popups/peer';
+import ButtonCorner from '@components/buttonCorner';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import toggleDisability from '@helpers/dom/toggleDisability';
+import CheckboxField from '@components/checkboxField';
+import rootScope from '@lib/rootScope';
+import SettingSection from '@components/settingSection';
+import UsernamesSection from '@components/usernamesSection';
+import getPeerEditableUsername from '@appManagers/utils/peers/getPeerEditableUsername';
+import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
+import {purchaseUsernameCaption} from '@components/sidebarLeft/tabs/editProfile';
+import confirmationPopup from '@components/confirmationPopup';
+import PopupElement from '@components/popups';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import {handleChannelsTooMuch} from '@components/popups/channelsTooMuch';
 
 export default class AppChatTypeTab extends SliderSuperTabEventable {
   public chatId: ChatId;
@@ -101,7 +102,7 @@ export default class AppChatTypeTab extends SliderSuperTabEventable {
       subtitleLangKey: isBroadcast ? 'ChannelPrivateLinkHelp' : 'MegaPrivateLinkHelp',
       clickable: () => {
         copyTextToClipboard((this.chatFull.exported_invite as ExportedChatInvite.chatInviteExported).link);
-        toast(I18n.format('LinkCopied', true));
+        toastNew({langPackKey: 'LinkCopied'});
       },
       listenerSetter: this.listenerSetter
     });
@@ -233,20 +234,27 @@ export default class AppChatTypeTab extends SliderSuperTabEventable {
         }
 
         if(changedJoinToSend || changedJoinRequest) {
-          await Promise.all([
-            changedJoinToSend && this.managers.appChatsManager.toggleJoinToSend(
+          const joinToSendValue = joinToSendRow.checkboxField.checked;
+          const joinRequestValue = joinRequestRow.checkboxField.checked;
+          const callbacks = [
+            changedJoinToSend && (() => this.managers.appChatsManager.toggleJoinToSend(
               this.chatId,
-              joinToSendRow.checkboxField.checked
-            ),
-            changedJoinRequest && this.managers.appChatsManager.toggleJoinRequest(
+              joinToSendValue
+            )),
+            changedJoinRequest && (() => this.managers.appChatsManager.toggleJoinRequest(
               this.chatId,
-              joinRequestRow.checkboxField.checked
-            )
-          ]);
+              joinRequestValue
+            ))
+          ].filter(Boolean);
+
+          for(const callback of callbacks) {
+            await handleChannelsTooMuch(callback);
+          }
         }
 
         this.close();
       } catch(err) {
+        console.error('changePrivacy error', err);
         unsetLoader();
       }
     }, {listenerSetter: this.listenerSetter});
@@ -330,7 +338,7 @@ export default class AppChatTypeTab extends SliderSuperTabEventable {
 
       this.listenerSetter.add(checkboxField.input)('change', () => {
         const toggle = row.toggleDisability(true);
-        this.managers.appChatsManager.toggleNoForwards(this.chatId, checkboxField.checked).then(() => {
+        this.managers.appProfileManager.toggleNoForwards(this.chatId.toPeerId(true), checkboxField.checked).then(() => {
           toggle();
         });
       });

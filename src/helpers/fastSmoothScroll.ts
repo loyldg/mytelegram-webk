@@ -6,11 +6,11 @@
 
 // * Jolly Cobra's fastSmoothScroll slightly patched
 
-import {dispatchHeavyAnimationEvent} from '../hooks/useHeavyAnimationCheck';
-import {fastRafPromise} from './schedulers';
-import {animateSingle, cancelAnimationByKey} from './animation';
-import isInDOM from './dom/isInDOM';
-import liteMode from './liteMode';
+import {dispatchHeavyAnimationEvent} from '@hooks/useHeavyAnimationCheck';
+import {fastRafPromise} from '@helpers/schedulers';
+import {animateSingle, cancelAnimationByKey} from '@helpers/animation';
+import isInDOM from '@helpers/dom/isInDOM';
+import liteMode from '@helpers/liteMode';
 
 const MIN_JS_DURATION = 250;
 const MAX_JS_DURATION = 600;
@@ -117,6 +117,10 @@ function scrollWithJs(options: ScrollOptions): Promise<void> {
   const elementPosition = getElementPosition ? getElementPosition({elementRect, containerRect, elementPosition: possibleElementPosition}) : possibleElementPosition;
   const elementSize = element[elementScrollSizeKey]; // margin is exclusive in DOMRect
 
+  /* const containerTrueSize = containerRect[sizeKey];
+  const containerNormalSize = getNormalSize ? getNormalSize({rect: containerRect}) : containerTrueSize;
+  const containerSize = containerNormalSize;
+  const containerSizeDifference = containerTrueSize - containerNormalSize; */
   const containerSize = getNormalSize ? getNormalSize({rect: containerRect}) : containerRect[sizeKey];
 
   let scrollPosition = container[scrollPositionKey];
@@ -143,13 +147,24 @@ function scrollWithJs(options: ScrollOptions): Promise<void> {
       if(elementSize < containerSize) {
         path = (elementPosition + elementSize / 2) - (containerSize / 2);
       } else {
-        if(options.fallbackToElementStartWhenCentering && options.fallbackToElementStartWhenCentering !== element) {
+        if(
+          options.fallbackToElementStartWhenCentering &&
+          options.fallbackToElementStartWhenCentering !== element
+        ) {
           options.element = options.fallbackToElementStartWhenCentering;
           options.position = 'start';
           return scrollWithJs(options);
         }
 
         path = elementPosition - margin;
+      }
+
+      // * check if the scroll is possible at all
+      const maxScrollPosition = container[scrollSizeKey] - containerSize;
+      if((path + scrollPosition) > maxScrollPosition) {
+        path = Math.max(0, maxScrollPosition - scrollPosition);
+      } else if((path + scrollPosition) < 0) {
+        path = Math.min(0, -scrollPosition);
       }
 
       break;
@@ -170,7 +185,7 @@ function scrollWithJs(options: ScrollOptions): Promise<void> {
       break;
   } */
 
-  if(Math.abs(path - (margin || 0)) < 1) {
+  if(Math.abs(path/*  - (margin || 0) */) < 1) {
     cancelAnimationByKey(container);
     return Promise.resolve();
   }

@@ -4,37 +4,40 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import appMediaPlaybackController from '../../components/appMediaPlaybackController';
-import {IS_APPLE_MOBILE, IS_MOBILE} from '../../environment/userAgent';
-import IS_TOUCH_SUPPORTED from '../../environment/touchSupport';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import ListenerSetter, {Listener} from '../../helpers/listenerSetter';
-import {ButtonMenuItemOptionsVerifiable} from '../../components/buttonMenu';
-import ButtonMenuToggle from '../../components/buttonMenuToggle';
-import ControlsHover from '../../helpers/dom/controlsHover';
-import {addFullScreenListener, cancelFullScreen, getFullScreenElement, isFullScreen, requestFullScreen} from '../../helpers/dom/fullScreen';
-import toHHMMSS from '../../helpers/string/toHHMMSS';
-import MediaProgressLine from '../../components/mediaProgressLine';
-import VolumeSelector from '../../components/volumeSelector';
-import debounce from '../../helpers/schedulers/debounce';
-import overlayCounter from '../../helpers/overlayCounter';
-import onMediaLoad from '../../helpers/onMediaLoad';
-import {attachClickEvent} from '../../helpers/dom/clickEvent';
-import safePlay from '../../helpers/dom/safePlay';
-import ButtonIcon from '../../components/buttonIcon';
-import Button from '../../components/button';
-import Icon from '../../components/icon';
-import setCurrentTime from '../../helpers/dom/setCurrentTime';
-import {i18n} from '../langPack';
-import {numberThousandSplitterForWatching} from '../../helpers/number/numberThousandSplitter';
-import createCanvasStream from '../../helpers/canvas/createCanvasStream';
-import simulateEvent from '../../helpers/dom/dispatchEvent';
-import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
+import appMediaPlaybackController from '@components/appMediaPlaybackController';
+import {IS_APPLE_MOBILE, IS_MOBILE} from '@environment/userAgent';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import ListenerSetter, {Listener} from '@helpers/listenerSetter';
+import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import ControlsHover from '@helpers/dom/controlsHover';
+import {addFullScreenListener, cancelFullScreen, getFullScreenElement, isFullScreen, requestFullScreen} from '@helpers/dom/fullScreen';
+import toHHMMSS from '@helpers/string/toHHMMSS';
+import MediaProgressLine from '@components/mediaProgressLine';
+import VolumeSelector from '@components/volumeSelector';
+import debounce from '@helpers/schedulers/debounce';
+import overlayCounter from '@helpers/overlayCounter';
+import onMediaLoad from '@helpers/onMediaLoad';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import safePlay from '@helpers/dom/safePlay';
+import ButtonIcon from '@components/buttonIcon';
+import Button from '@components/button';
+import Icon from '@components/icon';
+import setCurrentTime from '@helpers/dom/setCurrentTime';
+import {i18n} from '@lib/langPack';
+import {numberThousandSplitterForWatching} from '@helpers/number/numberThousandSplitter';
+import createCanvasStream from '@helpers/canvas/createCanvasStream';
+import simulateEvent from '@helpers/dom/dispatchEvent';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import {VideoTimestamp} from '@components/appMediaViewerBase';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import {Accessor, createSignal, Setter} from 'solid-js';
+
 import {createQualityLevelsSwitchButton} from './qualityLevelsSwitchButton';
 import {createPlaybackRateButton} from './playbackRateButton';
 import {createSpeedDragHandler} from './speedDragHandler';
-import {VideoTimestamp} from '../../components/appMediaViewerBase';
-import apiManagerProxy from '../mtproto/mtprotoworker';
+import {createPreview} from './preview';
 
 
 export default class VideoPlayer extends ControlsHover {
@@ -49,6 +52,7 @@ export default class VideoPlayer extends ControlsHover {
   protected playbackRateButton: ReturnType<typeof createPlaybackRateButton>;
   protected speedDragHandler: ReturnType<typeof createSpeedDragHandler>;
   protected qualityLevelsButton: ReturnType<typeof createQualityLevelsSwitchButton>;
+  protected preview: ReturnType<typeof createPreview>;
 
   protected pipButton: HTMLElement;
   protected liveMenuButton: HTMLElement;
@@ -88,6 +92,12 @@ export default class VideoPlayer extends ControlsHover {
   protected isPlaying: boolean;
   protected shouldEnableSoundOnClick: () => boolean;
 
+  protected previewParams: Parameters<typeof createPreview>[0];
+  protected previewVisible: Accessor<boolean>;
+  protected previewSetVisible: Setter<boolean>;
+  protected previewTime: Accessor<number>;
+  protected previewSetTime: Setter<number>;
+
   constructor({
     video,
     container,
@@ -106,7 +116,8 @@ export default class VideoPlayer extends ControlsHover {
     onVolumeChange,
     onFullScreen,
     onFullScreenToPip,
-    shouldEnableSoundOnClick
+    shouldEnableSoundOnClick,
+    storyboard
   }: {
     video: HTMLVideoElement,
     container?: HTMLElement,
@@ -125,7 +136,8 @@ export default class VideoPlayer extends ControlsHover {
     onVolumeChange?: VideoPlayer['onVolumeChange'],
     onFullScreen?: (active: boolean) => void,
     onFullScreenToPip?: VideoPlayer['onFullScreenToPip'],
-    shouldEnableSoundOnClick?: VideoPlayer['shouldEnableSoundOnClick']
+    shouldEnableSoundOnClick?: VideoPlayer['shouldEnableSoundOnClick'],
+    storyboard?: Parameters<typeof createPreview>[0]['storyboard']
   }) {
     super();
 
@@ -150,6 +162,16 @@ export default class VideoPlayer extends ControlsHover {
     this.hadContainer = !!container;
     this.useGlobalVolume = useGlobalVolume;
     this.shouldEnableSoundOnClick = shouldEnableSoundOnClick;
+
+    if(storyboard) {
+      [this.previewVisible, this.previewSetVisible] = createSignal(false);
+      [this.previewTime, this.previewSetTime] = createSignal(0);
+      this.previewParams = {
+        storyboard,
+        visible: this.previewVisible,
+        time: this.previewTime
+      };
+    }
 
     this.video.playbackRate = appMediaPlaybackController.playbackRate;
 
@@ -185,14 +207,34 @@ export default class VideoPlayer extends ControlsHover {
     if(this.skin === 'default' && !live) {
       const controls = this.controls = this.wrapper.querySelector('.default__controls.ckin__controls') as HTMLDivElement;
       this.gradient = this.controls.previousElementSibling as HTMLElement;
+
+      if(this.previewParams) {
+        this.preview = createPreview(this.previewParams);
+      }
+
+      const debouncedToggleControls = debounce((show: boolean) => {
+        this.wrapper.classList.toggle('show-time', show);
+      }, 200, false, true);
+
+      this.addEventListener('toggleControls', debouncedToggleControls);
+
       this.progress = new MediaProgressLine({
         videoTimestamps,
+        withTime: true,
+        appendToTimeElement: this.preview?.element,
         onSeekStart: () => {
           this.wrapper.classList.add('is-seeking');
         },
         onSeekEnd: () => {
           this.wrapper.classList.remove('is-seeking');
-        }
+        },
+        onHover: this.previewParams ? (value) => {
+          this.previewSetTime(value * this.video.duration);
+          this.previewSetVisible(true);
+        } : undefined,
+        onPointerOut: this.previewParams ? () => {
+          this.previewSetVisible(false);
+        } : undefined
       });
       this.progress.setMedia({
         media: video,
@@ -665,6 +707,7 @@ export default class VideoPlayer extends ControlsHover {
     this.qualityLevelsButton?.dispose();
     this.playbackRateButton?.dispose();
     this.speedDragHandler?.dispose();
+    this.preview?.dispose();
     this.onPlaybackRateMenuToggle =
       this.onPip =
       this.onVolumeChange =

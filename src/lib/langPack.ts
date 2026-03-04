@@ -4,25 +4,25 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type lang from '../lang';
-import type langSign from '../langSign';
-import type {State} from '../config/state';
-import {MOUNT_CLASS_TO} from '../config/debug';
-import {HelpCountry, LangPackDifference, LangPackString} from '../layer';
-import App from '../config/app';
-import rootScope from './rootScope';
-import {IS_MOBILE} from '../environment/userAgent';
-import deepEqual from '../helpers/object/deepEqual';
-import safeAssign from '../helpers/object/safeAssign';
-import capitalizeFirstLetter from '../helpers/string/capitalizeFirstLetter';
-import matchUrlProtocol from './richTextProcessor/matchUrlProtocol';
-import wrapUrl from './richTextProcessor/wrapUrl';
-import {setDirection} from '../helpers/dom/setInnerHTML';
-import setBlankToAnchor from './richTextProcessor/setBlankToAnchor';
+import type lang from '@/lang';
+import type langSign from '@/langSign';
+import type {State} from '@config/state';
+import {MOUNT_CLASS_TO} from '@config/debug';
+import {HelpCountry, LangPackDifference, LangPackString} from '@layer';
+import App from '@config/app';
+import rootScope from '@lib/rootScope';
+import {IS_MOBILE} from '@environment/userAgent';
+import deepEqual from '@helpers/object/deepEqual';
+import safeAssign from '@helpers/object/safeAssign';
+import capitalizeFirstLetter from '@helpers/string/capitalizeFirstLetter';
+import matchUrlProtocol from '@lib/richTextProcessor/matchUrlProtocol';
+import wrapUrl from '@lib/richTextProcessor/wrapUrl';
+import {setDirection} from '@helpers/dom/setInnerHTML';
+import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
 import {createSignal} from 'solid-js';
-import commonStateStorage from './commonStateStorage';
-import Icon from '../components/icon';
-import currencyStarIcon from '../components/currencyStarIcon';
+import commonStateStorage from '@lib/commonStateStorage';
+import Icon from '@components/icon';
+import currencyStarIcon from '@components/currencyStarIcon';
 
 export const langPack: {[actionType: string]: LangPackKey} = {
   'messageActionChatCreate': 'ActionCreateGroup',
@@ -455,9 +455,11 @@ namespace I18n {
     return out;
   }
 
-  export function format(key: LangPackKey, plain: true, args?: FormatterArguments): string;
-  export function format(key: LangPackKey, plain?: false, args?: FormatterArguments): ReturnType<typeof superFormatter>;
-  export function format(key: LangPackKey, plain = false, args?: FormatterArguments): ReturnType<typeof superFormatter> | string {
+  export function format<T extends boolean>(
+    key: LangPackKey,
+    plain?: T,
+    args?: FormatterArguments
+  ): T extends true ? string : ReturnType<typeof superFormatter> {
     const str = strings.get(key);
     let input: string;
     if(str) {
@@ -480,9 +482,9 @@ namespace I18n {
 
     const result = superFormatter(input, args);
     if(plain) { // * let's try a hack now... (don't want to replace []() entity)
-      return result.map((item) => item instanceof HTMLBRElement ? '\n' : (item instanceof Node ? item.textContent : item)).join('');
+      return result.map((item) => item instanceof HTMLBRElement ? '\n' : (item instanceof Node ? item.textContent : item)).join('') as any;
     } else {
-      return result;
+      return result as any;
     }
 
     /* if(plain) {
@@ -660,7 +662,7 @@ export {i18n_};
 const _i18n = I18n._i18n;
 export {_i18n};
 
-export function joinElementsWith<T extends Node | string | Array<Node | string>>(
+export function joinElementsWith<T>(
   elements: T[],
   joiner: T | string | ((isLast: boolean) => T)
 ): T[] {

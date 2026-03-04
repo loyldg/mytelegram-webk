@@ -4,17 +4,19 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import deferredPromise from '../../../helpers/cancellablePromise';
-import {attachClickEvent} from '../../../helpers/dom/clickEvent';
-import createParticipantContextMenu from '../../../helpers/dom/createParticipantContextMenu';
-import {Chat, ChatFull} from '../../../layer';
-import addChatUsers from '../../addChatUsers';
-import AppSelectPeers from '../../appSelectPeers';
-import ButtonCorner from '../../buttonCorner';
-import CheckboxField from '../../checkboxField';
-import Row from '../../row';
-import SettingSection from '../../settingSection';
-import {SliderSuperTabEventable} from '../../sliderTab';
+import deferredPromise from '@helpers/cancellablePromise';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import createParticipantContextMenu from '@helpers/dom/createParticipantContextMenu';
+import {Chat, ChatFull} from '@layer';
+import hasRights from '@appManagers/utils/chats/hasRights';
+import addChatUsers from '@components/addChatUsers';
+import AppSelectPeers from '@components/appSelectPeers';
+import ButtonCorner from '@components/buttonCorner';
+import CheckboxField from '@components/checkboxField';
+import Row from '@components/row';
+import SettingSection from '@components/settingSection';
+import {SliderSuperTabEventable} from '@components/sliderTab';
+import {handleChannelsTooMuch} from '@components/popups/channelsTooMuch';
 
 export function createSelectorForTab(options: ConstructorParameters<typeof AppSelectPeers>[0]) {
   const deferred = deferredPromise<void>();
@@ -48,8 +50,9 @@ export default class AppChatMembersTab extends SliderSuperTabEventable {
     this.container.classList.add('edit-peer-container', 'chat-members-container');
     this.setTitle(isBroadcast ? 'PeerInfo.Subscribers' : 'GroupMembers');
 
+    const canAddMembers = hasRights(chat, 'invite_users');
     this.addBtn = ButtonCorner({icon: 'addmember_filled', className: 'is-visible'});
-    this.content.append(this.addBtn);
+    if(canAddMembers) this.content.append(this.addBtn);
 
     attachClickEvent(this.addBtn, () => {
       addChatUsers({
@@ -62,7 +65,7 @@ export default class AppChatMembersTab extends SliderSuperTabEventable {
     // const participantsCount = Infinity;
     const canHideMembers = !isBroadcast &&
       participantsCount >= ((await this.managers.apiManager.getAppConfig()).hidden_members_group_size_min || 0) &&
-      !!chat.admin_rights;
+      hasRights(chat, 'just_admin');
 
     const {selector, loadPromise} = createSelectorForParticipants({
       appendTo: this.content,
@@ -93,14 +96,19 @@ export default class AppChatMembersTab extends SliderSuperTabEventable {
         listenerSetter: this.listenerSetter
       });
 
-      this.eventListener.addEventListener('destroy', () => {
+      this.listenerSetter.add(row.checkboxField.input)('change', () => {
         const _checked = row.checkboxField.checked;
         if(_checked === checked) {
           return;
         }
 
-        this.managers.appChatsManager.toggleParticipantsHidden(chatId, _checked);
-      }, {once: true});
+        const promise = handleChannelsTooMuch(() => this.managers.appChatsManager.toggleParticipantsHidden(chatId, _checked))
+        .catch((err) => {
+          console.error('toggleParticipantsHidden error', err);
+          row.checkboxField.setValueSilently(!_checked);
+        });
+        row.disableWithPromise(promise);
+      });
 
       section.content.append(row.container);
 

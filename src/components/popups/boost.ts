@@ -5,24 +5,25 @@
  */
 
 import PopupElement, {addCancelButton} from '.';
-import createBadge from '../../helpers/createBadge';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import {attachClickEvent} from '../../helpers/dom/clickEvent';
-import formatDuration from '../../helpers/formatDuration';
-import {PremiumBoostsStatus} from '../../layer';
-import appImManager from '../../lib/appManagers/appImManager';
-import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
-import {i18n} from '../../lib/langPack';
-import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
-import rootScope from '../../lib/rootScope';
-import AppSelectPeers from '../appSelectPeers';
-import confirmationPopup from '../confirmationPopup';
-import LimitLine from '../limit';
-import wrapPeerTitle from '../wrappers/peerTitle';
-import {wrapFormattedDuration} from '../wrappers/wrapDuration';
-import PopupPeer from './peer';
-import PopupPremium from './premium';
-import PopupReassignBoost from './reassignBoost';
+import createBadge from '@helpers/createBadge';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import formatDuration from '@helpers/formatDuration';
+import {PremiumBoostsStatus} from '@layer';
+import appImManager from '@lib/appImManager';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import {i18n} from '@lib/langPack';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import rootScope from '@lib/rootScope';
+import AppSelectPeers from '@components/appSelectPeers';
+import confirmationPopup from '@components/confirmationPopup';
+import LimitLine from '@components/limit';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import {wrapFormattedDuration} from '@components/wrappers/wrapDuration';
+import PopupPeer from '@components/popups/peer';
+import PopupPremium from '@components/popups/premium';
+import PopupReassignBoost from '@components/popups/reassignBoost';
+import {toastNew} from '@components/toast';
 
 const className = 'popup-boost';
 
@@ -43,12 +44,19 @@ export default class PopupBoost extends PopupPeer {
   }
 
   private async construct() {
-    let [boostsStatus, myBoosts, appConfig, isPremiumPurchaseBlocked] = await Promise.all([
-      this.managers.appBoostsManager.getBoostsStatus(this.peerId),
+    let [boostsStatus, myBoosts, appConfig, isPremiumPurchaseBlocked, isBroadcast] = await Promise.all([
+      this.managers.appBoostsManager.getBoostsStatus(this.peerId).catch(() => undefined as PremiumBoostsStatus),
       this.managers.appBoostsManager.getMyBoosts(),
       this.managers.apiManager.getAppConfig(),
-      apiManagerProxy.isPremiumPurchaseBlocked()
+      apiManagerProxy.isPremiumPurchaseBlocked(),
+      this.managers.appPeersManager.isBroadcast(this.peerId)
     ]);
+
+    if(!boostsStatus) {
+      toastNew({langPackKey: 'CantBoostChat'});
+      this.hide();
+      return;
+    }
 
     const entity = AppSelectPeers.renderEntity({
       key: this.peerId,
@@ -90,11 +98,11 @@ export default class PopupBoost extends PopupPeer {
 
     const setTitle = () => {
       if(hasMyBoost) {
-        title.replaceChildren(i18n('YouBoostedChannel'));
+        title.replaceChildren(i18n(isBroadcast ? 'YouBoostedChannel' : 'YouBoostedGroup'));
       } else if(isMaxLevel) {
         title.replaceChildren(i18n('BoostsMaxLevelReached'));
       } else if(hasStories) {
-        title.replaceChildren(i18n('HelpUpgradeChannel'));
+        title.replaceChildren(i18n(isBroadcast ? 'HelpUpgradeChannel' : 'HelpUpgradeGroup'));
       } else {
         title.replaceChildren(i18n('Boost.EnableStoriesFor'));
       }
@@ -104,13 +112,13 @@ export default class PopupBoost extends PopupPeer {
       if(updated && boostsStatus.level === 0 && hasStories) {
         this.description.replaceChildren(
           i18n(
-            'Boost.DescriptionJustReachedLevel1'
+            isBroadcast ? 'Boost.DescriptionJustReachedLevel1' : 'Boost.DescriptionJustReachedLevel1.Group'
           )
         );
       } else if(isMaxLevel || (updated && boostsStatus.level > 0)) {
         this.description.replaceChildren(
           i18n(
-            'Boost.DescriptionJustReachedLevel',
+            isBroadcast ? 'Boost.DescriptionJustReachedLevel' : 'Boost.DescriptionJustReachedLevel.Group',
             [
               boostsStatus.level,
               i18n('Boost.StoriesCount', [boostsStatus.level + 1])
@@ -130,7 +138,7 @@ export default class PopupBoost extends PopupPeer {
       } else {
         this.description.replaceChildren(
           i18n(
-            'ChannelNeedBoostsDescriptionLevel1',
+            isBroadcast ? 'ChannelNeedBoostsDescriptionLevel1' : 'GroupNeedBoostsDescriptionLevel1',
             [
               i18n('MoreBoosts', [needBoostsForNextLevel])
             ]
@@ -179,7 +187,7 @@ export default class PopupBoost extends PopupPeer {
         langKey: 'OK',
         isCancel: true
       } : {
-        langKey: 'BoostChannel',
+        langKey: isBroadcast ? 'BoostChannel' : 'BoostGroup',
         iconLeft: 'boost',
         callback: onClick
       }]));

@@ -1,8 +1,8 @@
-import {useMediaEditorContext} from '../context';
-import {snapToViewport} from '../utils';
-import {NumberPair} from '../types';
+import {useMediaEditorContext} from '@components/mediaEditor/context';
+import {snapToViewport} from '@components/mediaEditor/utils';
+import {NumberPair} from '@components/mediaEditor/types';
 
-import {useCropOffset} from './useCropOffset';
+import {useCropOffset} from '@components/mediaEditor/canvas/useCropOffset';
 
 type Options = {
   rotation: number;
@@ -24,7 +24,7 @@ export default function getConvenientPositioning({
 
   const cropOffset = useCropOffset();
 
-  const [w, h] = editorState.imageSize;
+  const [w, h] = editorState.mediaSize;
   const [imageWidth, imageHeight] = snapToViewport(w / h, cropOffset().width, cropOffset().height);
 
   const imageLeftTop = [-imageWidth / 2, imageHeight / 2];

@@ -4,37 +4,37 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {AppMessagesManager} from '../lib/appManagers/appMessagesManager';
-import IS_PARALLAX_SUPPORTED from '../environment/parallaxSupport';
-import IS_TOUCH_SUPPORTED from '../environment/touchSupport';
-import findAndSplice from '../helpers/array/findAndSplice';
-import cancelEvent from '../helpers/dom/cancelEvent';
-import {attachClickEvent, simulateClickEvent} from '../helpers/dom/clickEvent';
-import filterChatPhotosMessages from '../helpers/filterChatPhotosMessages';
-import ListenerSetter from '../helpers/listenerSetter';
-import ListLoader from '../helpers/listLoader';
-import {getMiddleware, MiddlewareHelper} from '../helpers/middleware';
-import {fastRaf} from '../helpers/schedulers';
-import {Message, ChatFull, MessageAction, Photo, User} from '../layer';
-import {AppManagers} from '../lib/appManagers/managers';
-import choosePhotoSize from '../lib/appManagers/utils/photos/choosePhotoSize';
-import {avatarNew, wrapPhotoToAvatar} from './avatarNew';
-import Scrollable from './scrollable';
-import SwipeHandler from './swipeHandler';
-import wrapPhoto from './wrappers/photo';
-import openAvatarViewer from './openAvatarViewer';
-import Icon from './icon';
-import apiManagerProxy from '../lib/mtproto/mtprotoworker';
+import type {AppMessagesManager} from '@appManagers/appMessagesManager';
+import IS_PARALLAX_SUPPORTED from '@environment/parallaxSupport';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import findAndSplice from '@helpers/array/findAndSplice';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
+import filterChatPhotosMessages from '@helpers/filterChatPhotosMessages';
+import ListenerSetter from '@helpers/listenerSetter';
+import ListLoader from '@helpers/listLoader';
+import {getMiddleware, MiddlewareHelper} from '@helpers/middleware';
+import {fastRaf} from '@helpers/schedulers';
+import {Message, ChatFull, MessageAction, Photo, User} from '@layer';
+import {AppManagers} from '@lib/managers';
+import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
+import {avatarNew, wrapPhotoToAvatar} from '@components/avatarNew';
+import Scrollable from '@components/scrollable';
+import SwipeHandler from '@components/swipeHandler';
+import wrapPhoto from '@components/wrappers/photo';
+import openAvatarViewer from '@components/openAvatarViewer';
+import Icon from '@components/icon';
+import apiManagerProxy from '@lib/apiManagerProxy';
 import {createEffect, createRoot, on} from 'solid-js';
-import {usePeerProfileAppearance} from '../hooks/useProfileColors';
-import {getHexColorFromTelegramColor} from '../helpers/color';
-import wrapEmojiPattern from './wrappers/emojiPattern';
-import {useCollapsable} from '../hooks/useCollapsable';
-import deferredPromise from '../helpers/cancellablePromise';
-import useIsNightTheme from '../hooks/useIsNightTheme';
-import customProperties from '../helpers/dom/customProperties';
-import findUpClassName from '../helpers/dom/findUpClassName';
-import {changeTitleEmojiColor} from './peerTitle';
+import {usePeerProfileAppearance} from '@hooks/useProfileColors';
+import {getHexColorFromTelegramColor} from '@helpers/color';
+import wrapEmojiPattern from '@components/wrappers/emojiPattern';
+import {useCollapsable} from '@hooks/useCollapsable';
+import deferredPromise from '@helpers/cancellablePromise';
+import useIsNightTheme from '@hooks/useIsNightTheme';
+import customProperties from '@helpers/dom/customProperties';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import {changeTitleEmojiColor} from '@components/peerTitle';
 
 const LOAD_NEAREST = 3;
 export const SHOW_NO_AVATAR = true;
@@ -63,6 +63,7 @@ export default class PeerProfileAvatars {
   private unfold: (e?: MouseEvent) => void;
   private fakeAvatar: ReturnType<typeof avatarNew>;
   private hasNoPhoto: boolean;
+  public onNeedWhiteChanged: (needWhite: boolean) => void;
 
   constructor(
     private scrollable: Scrollable,
@@ -280,7 +281,7 @@ export default class PeerProfileAvatars {
     const o = scrollable.onAdditionalScroll;
     scrollable.onAdditionalScroll = () => {
       o?.();
-      this.updateHeaderFilled();
+      fastRaf(this.updateHeaderFilled);
     };
 
     this.middlewareHelper.onDestroy(() => {
@@ -569,11 +570,10 @@ export default class PeerProfileAvatars {
       this.hasBackgroundColor = !!backgroundStr;
     };
 
-    const {colorSet, backgroundEmojiId} = usePeerProfileAppearance(this.peerId);
+    const peerProfileAppearance = usePeerProfileAppearance(this.peerId);
     const deferred = deferredPromise<void>();
     createEffect(() => {
-      const bgColors = colorSet()?.bg_colors;
-      const docId = backgroundEmojiId();
+      const {bgColors, backgroundEmojiId} = peerProfileAppearance()
       // const docId = '5301072507598550489';
 
       setBackgroundColors(bgColors);
@@ -583,7 +583,7 @@ export default class PeerProfileAvatars {
       createEffect(on(
         isNightTheme,
         () => {
-          const promise = renderBackgroundEmoji(docId, !!bgColors);
+          const promise = renderBackgroundEmoji(backgroundEmojiId, !!bgColors);
           if(promise) promise.then(deferred.resolve.bind(deferred));
           else deferred.resolve();
         }
@@ -724,6 +724,7 @@ export default class PeerProfileAvatars {
     const needWhite = this.hasBackgroundColor || !collapsed;
     if(this.setCollapsedOn.classList.contains('need-white') !== needWhite) {
       this.setCollapsedOn.classList.toggle('need-white', needWhite);
+      this.onNeedWhiteChanged?.(needWhite);
       changeTitleEmojiColor(this.info, needWhite ? 'white' : 'primary-color');
     }
     this.updateHeaderFilled();
@@ -733,11 +734,11 @@ export default class PeerProfileAvatars {
     return this.setCollapsedOn.classList.contains('is-collapsed');
   }
 
-  public updateHeaderFilled() {
+  updateHeaderFilled = () => {
     this.setCollapsedOn.classList.toggle(
       'header-filled',
       (!this.hasBackgroundColor && this.isCollapsed() && this.scrollable.scrollPosition >= 5) ||
-        this.scrollable.scrollPosition >= 240
+        this.scrollable.scrollPosition >= 200
     );
   }
 

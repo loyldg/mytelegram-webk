@@ -1,27 +1,27 @@
-import {i18n} from '../../lib/langPack';
-import {useAppState} from '../../stores/appState';
-import Row from '../rowTsx';
-import styles from './pendingSuggestion.module.scss';
+import {i18n} from '@lib/langPack';
+import {useAppState} from '@stores/appState';
+import Row from '@components/rowTsx';
+import styles from '@components/sidebarLeft/pendingSuggestion.module.scss';
 import {render} from 'solid-js/web';
 import {createEffect, createMemo, createSignal, JSX, onMount, Show, splitProps} from 'solid-js';
-import classNames from '../../helpers/string/classNames';
-import wrapEmojiText from '../../lib/richTextProcessor/wrapEmojiText';
-import {useIsSidebarCollapsed} from '../../stores/foldersSidebar';
-import RippleElement from '../rippleElement';
-import documentFragmentToNodes from '../../helpers/dom/documentFragmentToNodes';
-import showFrozenPopup from '../popups/frozen';
-import {useAppSettings} from '../../stores/appSettings';
-import Button from '../buttonTsx';
-import {toastNew} from '../toast';
-import Animated from '../../helpers/solid/animations';
-import uiNotificationsManager from '../../lib/appManagers/uiNotificationsManager';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import {usePendingSuggestions} from '../../stores/promo';
-import showBirthdayPopup, {saveMyBirthday} from '../popups/birthday';
-import {showEmailSetupPopup} from '../popups/emailSetup';
-import rootScope from '../../lib/rootScope';
-import showPasskeyPopup from '../popups/passkey';
-import IS_WEB_AUTHN_SUPPORTED from '../../environment/webAuthn';
+import classNames from '@helpers/string/classNames';
+import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import {useIsSidebarCollapsed} from '@stores/foldersSidebar';
+import RippleElement from '@components/rippleElement';
+import documentFragmentToNodes from '@helpers/dom/documentFragmentToNodes';
+import showFrozenPopup from '@components/popups/frozen';
+import {useAppSettings} from '@stores/appSettings';
+import Button from '@components/buttonTsx';
+import {toastNew} from '@components/toast';
+import Animated from '@helpers/solid/animations';
+import uiNotificationsManager from '@lib/uiNotificationsManager';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {usePendingSuggestions} from '@stores/promo';
+import showBirthdayPopup, {saveMyBirthday} from '@components/popups/birthday';
+import {showEmailSetupPopup} from '@components/popups/emailSetup';
+import rootScope from '@lib/rootScope';
+import showPasskeyPopup from '@components/popups/passkey';
+import IS_WEB_AUTHN_SUPPORTED from '@environment/webAuthn';
 
 const BIRTHDAY_SETUP_SUGGESTION_KEY = 'BIRTHDAY_SETUP';
 const EMAIL_SETUP_KEY = 'SETUP_LOGIN_EMAIL';
@@ -224,7 +224,14 @@ export function renderPendingSuggestion(toElement: HTMLElement) {
     createEffect(() => {
       const pendingSuggestions$ = pendingSuggestions();
       if(pendingSuggestions$.has(EMAIL_SETUP_KEY) || pendingSuggestions$.has(EMAIL_SETUP_KEY_NOSKIP)) {
-        rootScope.managers.appPromoManager.getPromoData(true).then((data) => {
+        Promise.all([
+          rootScope.managers.appPromoManager.getPromoData(true),
+          rootScope.managers.passwordManager.getState()
+        ]).then(([data, passwordState]) => {
+          if(passwordState.login_email_pattern && !passwordState.email_unconfirmed_pattern) {
+            return;
+          }
+
           const noskip = data.pendingSuggestions.includes(EMAIL_SETUP_KEY_NOSKIP);
           if(data.pendingSuggestions.includes(EMAIL_SETUP_KEY) || noskip) {
             showEmailSetupPopup({

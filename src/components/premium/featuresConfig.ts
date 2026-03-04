@@ -4,11 +4,11 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {FormatterArguments, LangPackKey} from '../../lib/langPack';
-import {Document} from '../../layer';
-import {ApiLimitType} from '../../lib/mtproto/api_methods';
-import {AppManagers} from '../../lib/appManagers/managers';
-import formatBytes from '../../helpers/formatBytes';
+import {FormatterArguments, LangPackKey} from '@lib/langPack';
+import {Document} from '@layer';
+import {ApiLimitType} from '@appManagers/apiManagerMethods';
+import {AppManagers} from '@lib/managers';
+import formatBytes from '@helpers/formatBytes';
 
 export interface PremiumPromoFeature {
   feature: PremiumPromoFeatureType;
@@ -316,5 +316,12 @@ export const PREMIUM_FEATURES: {[type in PremiumPromoFeatureType]?: PremiumPromo
     icon: 'premium_tags',
     titleLangKey: 'PremiumPreviewTags',
     subtitleLangKey: 'PremiumPreviewTagsDescription2'
+  },
+  pm_noforwards: {
+    feature: 'pm_noforwards',
+    icon: 'premium_speed',
+    titleLangKey: 'Premium.Boarding.NoForwards.Title',
+    subtitleLangKey: 'Premium.Boarding.NoForwards.Info',
+    videoPosition: 'top'
   }
 };

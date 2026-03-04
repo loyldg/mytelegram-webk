@@ -4,30 +4,30 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {logger, LogTypes} from '../logger';
-import {CACHE_ASSETS_NAME, requestCache} from './cache';
-import onStreamFetch, {toggleStreamInUse} from './stream';
-import {closeAllNotifications, fillPushObject, onPing, onShownNotification, resetPushAccounts} from './push';
-import CacheStorageController from '../files/cacheStorage';
-import {IS_SAFARI} from '../../environment/userAgent';
-import ServiceMessagePort from './serviceMessagePort';
-import listenMessagePort from '../../helpers/listenMessagePort';
-import {getWindowClients} from '../../helpers/context';
-import {MessageSendPort} from '../mtproto/superMessagePort';
-import handleDownload from './download';
-import onShareFetch, {checkWindowClientForDeferredShare} from './share';
-import {onRtmpFetch, onRtmpLeftCall} from './rtmp';
-import {onHlsQualityFileFetch} from '../hls/onHlsQualityFileFetch';
-import {get500ErrorResponse} from './errors';
-import {onHlsStreamFetch} from '../hls/onHlsStreamFetch';
-import {onHlsPlaylistFetch} from '../hls/onHlsPlaylistFetch';
-import {watchHlsStreamChunksLifetime} from '../hls/fetchAndConcatFileParts';
-import {setEnvironment} from '../../environment/utils';
-import cryptoMessagePort from '../crypto/cryptoMessagePort';
-import EncryptionKeyStore from '../passcode/keyStore';
-import DeferredIsUsingPasscode from '../passcode/deferredIsUsingPasscode';
-import {onBackgroundsFetch} from './backgrounds';
-import {watchMtprotoOnDev} from './watchMtprotoOnDev';
+import {logger, LogTypes} from '@lib/logger';
+import {CACHE_ASSETS_NAME, requestCache} from '@lib/serviceWorker/cache';
+import onStreamFetch, {toggleStreamInUse} from '@lib/serviceWorker/stream';
+import {closeAllNotifications, fillPushObject, onPing, onShownNotification, resetPushAccounts} from '@lib/serviceWorker/push';
+import CacheStorageController from '@lib/files/cacheStorage';
+import {IS_SAFARI} from '@environment/userAgent';
+import ServiceMessagePort from '@lib/serviceWorker/serviceMessagePort';
+import listenMessagePort from '@helpers/listenMessagePort';
+import {getWindowClients} from '@helpers/context';
+import {MessageSendPort} from '@lib/superMessagePort';
+import handleDownload from '@lib/serviceWorker/download';
+import onShareFetch, {checkWindowClientForDeferredShare} from '@lib/serviceWorker/share';
+import {onRtmpFetch, onRtmpLeftCall} from '@lib/serviceWorker/rtmp';
+import {onHlsQualityFileFetch} from '@lib/hls/onHlsQualityFileFetch';
+import {get500ErrorResponse} from '@lib/serviceWorker/errors';
+import {onHlsStreamFetch} from '@lib/hls/onHlsStreamFetch';
+import {onHlsPlaylistFetch} from '@lib/hls/onHlsPlaylistFetch';
+import {setEnvironment} from '@environment/utils';
+import cryptoMessagePort from '@lib/crypto/cryptoMessagePort';
+import EncryptionKeyStore from '@lib/passcode/keyStore';
+import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
+import {onBackgroundsFetch} from '@lib/serviceWorker/backgrounds';
+import {watchMtprotoOnDev} from '@lib/serviceWorker/watchMtprotoOnDev';
+import {watchCacheStoragesLifetime} from './clearOldCache';
 
 // #if MTPROTO_SW
 // import '../mtproto/mtproto.worker';
@@ -92,18 +92,25 @@ const sendMessagePortIfNeeded = (source: MessageSendPort) => {
   }
 };
 
-const onWindowConnected = (source: WindowClient) => {
-  log('window connected', source.id, 'windows before', connectedWindows.size);
+const onWindowConnected = (source: WindowClient, from: string) => {
+  const _log = log.bindPrefix('windowConnected');
+  _log('new', source.id, 'from', from, 'before', connectedWindows.size);
 
   if(source.frameType === 'none') {
     log.warn('maybe a bugged Safari starting window', source.id);
     return;
   }
 
-  log('windows', Array.from(connectedWindows));
+  if(connectedWindows.has(source.id)) {
+    _log('already connected', source.id);
+    return;
+  }
+
+  _log('before', Array.from(connectedWindows));
   serviceMessagePort.invokeVoid('hello', undefined, source);
   sendMessagePortIfNeeded(source);
   connectedWindows.set(source.id, source);
+  _log('after', Array.from(connectedWindows));
 
   checkWindowClientForDeferredShare(source);
 };
@@ -126,7 +133,7 @@ serviceMessagePort.addMultipleEventsListeners({
   },
 
   hello: (payload, source) => {
-    onWindowConnected(source as any as WindowClient);
+    onWindowConnected(source as any as WindowClient, 'hello');
   },
 
   shownNotification: onShownNotification,
@@ -151,7 +158,19 @@ serviceMessagePort.addMultipleEventsListeners({
     EncryptionKeyStore.save(payload);
   },
 
-  fillPushObject
+  fillPushObject,
+
+  disableCacheStoragesByNames: (names) => {
+    CacheStorageController.temporarilyToggleByNames(names, false);
+  },
+
+  enableCacheStoragesByNames: (names) => {
+    CacheStorageController.temporarilyToggleByNames(names, true);
+  },
+
+  resetOpenCacheStoragesByNames: (names) => {
+    CacheStorageController.resetOpenStoragesByNames(names);
+  }
 });
 
 const {
@@ -160,13 +179,39 @@ const {
 } = handleDownload(serviceMessagePort);
 
 // * service worker can be killed, so won't get 'hello' event
-getWindowClients().then((windowClients) => {
+async function startupCheck() {
+  const windowClients = await getWindowClients();
   const length = windowClients.length;
   log(`got ${length} windows from the start`);
   windowClients.forEach((windowClient) => {
-    onWindowConnected(windowClient);
+    if(windowClient.frameType === 'none') {
+      log.warn('skipping bugged Safari starting window', windowClient.id);
+      return;
+    }
+
+    log('checking window', windowClient.id);
+    try {
+      const promise = serviceMessagePort.invoke(
+        'hello',
+        undefined,
+        undefined,
+        windowClient
+      );
+
+      let timedOut = false;
+      const timeout = setTimeout(() => timedOut = true, 5000);
+      promise.finally(() => {
+        if(!timedOut) {
+          clearTimeout(timeout);
+          onWindowConnected(windowClient, 'startup check');
+        }
+      });
+    } catch(err) {
+      log.error('failed to send hello to window', windowClient.id, err);
+    }
   });
-});
+}
+startupCheck();
 
 const connectedWindows: Map<string, WindowClient> = new Map();
 (self as any).connectedWindows = connectedWindows;
@@ -183,17 +228,12 @@ listenMessagePort(serviceMessagePort, undefined, (source) => {
   if(!connectedWindows.size) {
     log.warn('no windows left');
 
-    DeferredIsUsingPasscode.isUsingPasscode()
-    .then((isUsingPasscode) => {
-      if(isUsingPasscode) {
-        resetPushAccounts();
-      }
-    }).finally(() => {
-      if(!connectedWindows.size) { // * make sure that the promise is resolved not because new window connected
-        EncryptionKeyStore.resetDeferred();
-        DeferredIsUsingPasscode.resetDeferred();
-      }
-    });
+    if(DeferredIsUsingPasscode.isUsingPasscodeUndeferred()) {
+      resetPushAccounts();
+    }
+
+    EncryptionKeyStore.resetDeferred();
+    DeferredIsUsingPasscode.resetDeferred();
 
     if(_mtprotoMessagePort) {
       serviceMessagePort.detachPort(_mtprotoMessagePort);
@@ -209,7 +249,17 @@ listenMessagePort(serviceMessagePort, undefined, (source) => {
 });
 // #endif
 
-watchHlsStreamChunksLifetime();
+watchCacheStoragesLifetime({
+  onStorageError: async({storageName, error}) => {
+    log(`Error clearing old cache in ${storageName}:`, error);
+    log(`Clearing cache storage ${storageName}`);
+
+    const windowClients = await getWindowClients();
+    if(!windowClients.length) return;
+
+    await serviceMessagePort.invoke('clearCacheStoragesByNames', [storageName], undefined, windowClients[0]);
+  }
+});
 
 watchMtprotoOnDev({connectedWindows, onWindowConnected});
 

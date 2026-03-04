@@ -4,20 +4,20 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {AnimationItemGroup, AnimationItemWrapper} from '../../components/animationIntersector';
-import type {Middleware} from '../../helpers/middleware';
-import type {LiteModeKey} from '../../helpers/liteMode';
-import CAN_USE_TRANSFERABLES from '../../environment/canUseTransferables';
-import IS_APPLE_MX from '../../environment/appleMx';
-import {IS_ANDROID, IS_APPLE_MOBILE, IS_APPLE, IS_SAFARI} from '../../environment/userAgent';
-import EventListenerBase from '../../helpers/eventListenerBase';
-import mediaSizes from '../../helpers/mediaSizes';
-import clamp from '../../helpers/number/clamp';
-import QueryableWorker from './queryableWorker';
-import IS_IMAGE_BITMAP_SUPPORTED from '../../environment/imageBitmapSupport';
-import framesCache, {FramesCache, FramesCacheItem} from '../../helpers/framesCache';
-import customProperties from '../../helpers/dom/customProperties';
-import readValue from '../../helpers/solid/readValue';
+import type {AnimationItemGroup, AnimationItemWrapper} from '@components/animationIntersector';
+import type {Middleware} from '@helpers/middleware';
+import type {LiteModeKey} from '@helpers/liteMode';
+import CAN_USE_TRANSFERABLES from '@environment/canUseTransferables';
+import IS_APPLE_MX from '@environment/appleMx';
+import {IS_ANDROID, IS_APPLE_MOBILE, IS_APPLE, IS_SAFARI} from '@environment/userAgent';
+import EventListenerBase from '@helpers/eventListenerBase';
+import mediaSizes from '@helpers/mediaSizes';
+import clamp from '@helpers/number/clamp';
+import rlottieMessagePort, {RLottieWorkerMethods} from '@lib/rlottie/rlottieMessagePort';
+import IS_IMAGE_BITMAP_SUPPORTED from '@environment/imageBitmapSupport';
+import framesCache, {FramesCache, FramesCacheItem} from '@helpers/framesCache';
+import customProperties from '@helpers/dom/customProperties';
+import readValue from '@helpers/solid/readValue';
 
 export type RLottieOptions = {
   container: HTMLElement | HTMLElement[],
@@ -81,9 +81,9 @@ export default class RLottiePlayer extends EventListenerBase<{
   destroy: () => void
 }> implements AnimationItemWrapper {
   public static CACHE = framesCache;
-  private static reqId = 0;
 
-  public reqId = 0;
+  public reqId: number;
+  public workerId: number;
   public curFrame: number;
   private frameCount: number;
   private fps: number;
@@ -92,8 +92,6 @@ export default class RLottiePlayer extends EventListenerBase<{
   public cacheName: string;
   private toneIndex: number;
 
-  private worker: QueryableWorker;
-
   private width = 0;
   private height = 0;
 
@@ -101,6 +99,7 @@ export default class RLottiePlayer extends EventListenerBase<{
   public canvas: HTMLCanvasElement[];
   public contexts: CanvasRenderingContext2D[];
 
+  public destroyed = false;
   public paused = true;
   // public paused = false;
   public direction = 1;
@@ -142,17 +141,17 @@ export default class RLottiePlayer extends EventListenerBase<{
   private renderedFirstFrame: boolean;
 
   private raw: boolean;
+  private clearCacheOnRafId: number;
 
-  constructor({el, worker, options}: {
+  constructor({el, options}: {
     el: RLottiePlayer['el'],
-    worker: QueryableWorker,
     options: RLottieOptions
   }) {
     super(true);
 
-    this.reqId = ++RLottiePlayer['reqId'];
+    this.reqId = rlottieMessagePort.getNextTaskId();
+    this.workerId = rlottieMessagePort.getNextWorkerIndex();
     this.el = el;
-    this.worker = worker;
 
     for(const i in options) {
       if(this.hasOwnProperty(i)) {
@@ -187,7 +186,12 @@ export default class RLottiePlayer extends EventListenerBase<{
     // * Skip ratio (30fps)
     let skipRatio: number;
     if(options.skipRatio !== undefined) skipRatio = options.skipRatio;
-    else if((IS_ANDROID || IS_APPLE_MOBILE || (IS_APPLE && !IS_SAFARI && !IS_APPLE_MX)) && this.width < 100 && this.height < 100 && !options.needUpscale) {
+    else if(
+      (IS_ANDROID || IS_APPLE_MOBILE || (IS_APPLE && !IS_SAFARI && !IS_APPLE_MX)) &&
+      this.width < 100 &&
+      this.height < 100 &&
+      !options.needUpscale
+    ) {
       skipRatio = 0.5;
     }
 
@@ -258,7 +262,7 @@ export default class RLottiePlayer extends EventListenerBase<{
     });
   }
 
-  public clearCache() {
+  private clearCache() {
     if(this.cachingDelta === Infinity) {
       return;
     }
@@ -270,20 +274,45 @@ export default class RLottiePlayer extends EventListenerBase<{
     this.cache.clearCache();
   }
 
-  public sendQuery(args: any[], transfer?: Transferable[]) {
-    this.worker.sendQuery([args.shift(), this.reqId, ...args], transfer);
+  public clearCacheWhenSafe() {
+    if(this.rafId) { // * fix early cache clearing
+      this.clearCacheOnRafId = this.rafId;
+    } else {
+      this.clearCache();
+    }
+  }
+
+  public sendQuery<T extends keyof RLottieWorkerMethods>(
+    method: T,
+    payload?: Omit<Parameters<RLottieWorkerMethods[T]>[0], 'reqId'>,
+    transfer?: Transferable[]
+  ): Promise<Awaited<ReturnType<RLottieWorkerMethods[T]>>> {
+    return rlottieMessagePort.invokeRLottie(
+      this.workerId,
+      method,
+      {...payload, reqId: this.reqId},
+      transfer
+    ) as any;
   }
 
   public loadFromData(data: RLottieOptions['animationData']) {
-    this.sendQuery([
-      'loadFromData',
-      data,
-      this.width,
-      this.height,
-      this.toneIndex,
-      this.raw
+    this.sendQuery('loadFromData', {
+      blob: data,
+      width: this.width,
+      height: this.height,
+      toneIndex: this.toneIndex,
+      raw: this.raw
       /* , this.canvas.transferControlToOffscreen() */
-    ]);
+    }).then(({frameCount, fps}) => {
+      if(this.destroyed) {
+        return;
+      }
+
+      this.onLoad(frameCount, fps);
+    }).catch((err) => {
+      console.error(err, data, this);
+      throw err;
+    });
   }
 
   public play() {
@@ -364,8 +393,13 @@ export default class RLottiePlayer extends EventListenerBase<{
   }
 
   public remove() {
+    if(this.destroyed) {
+      return;
+    }
+
+    this.destroyed = true;
     this.pause();
-    this.sendQuery(['destroy']);
+    this.sendQuery('destroy');
     if(this.cacheName) RLottiePlayer.CACHE.releaseCache(this.cacheName);
     this.dispatchEvent('destroy');
     this.cleanup();
@@ -392,10 +426,11 @@ export default class RLottiePlayer extends EventListenerBase<{
     });
   }
 
-  public renderFrame2(frame: Uint8ClampedArray | HTMLCanvasElement | ImageBitmap, frameNo: number) {
+  private renderFrame2(frame: Uint8ClampedArray | HTMLCanvasElement | ImageBitmap, frameNo: number) {
     /* this.setListenerResult('enterFrame', frameNo);
     return; */
 
+    let cachedSource: HTMLCanvasElement | ImageBitmap;
     try {
       if(frame instanceof Uint8ClampedArray) {
         this.imageData.data.set(frame);
@@ -403,7 +438,7 @@ export default class RLottiePlayer extends EventListenerBase<{
 
       // this.context.putImageData(new ImageData(frame, this.width, this.height), 0, 0);
       this.contexts.forEach((context, idx) => {
-        let cachedSource: HTMLCanvasElement | ImageBitmap = this.cache.framesNew.get(frameNo);
+        cachedSource = this.cache.framesNew.get(frameNo);
         if(!(frame instanceof Uint8ClampedArray)) {
           cachedSource = frame;
         } else if(idx > 0) {
@@ -439,7 +474,7 @@ export default class RLottiePlayer extends EventListenerBase<{
 
       this.dispatchEvent('enterFrame', frameNo);
     } catch(err) {
-      console.error('RLottiePlayer renderFrame error:', err/* , frame */, this.width, this.height);
+      console.error('RLottiePlayer renderFrame error:', err/* , frame */, this, cachedSource);
       this.autoplay = false;
       this.pause();
     }
@@ -470,8 +505,13 @@ export default class RLottiePlayer extends EventListenerBase<{
       if(delta < 0) {
         const timeout = this.frInterval > -delta ? -delta % this.frInterval : this.frInterval;
         if(this.rafId) clearTimeout(this.rafId);
-        this.rafId = window.setTimeout(() => {
+        const rafId = this.rafId = window.setTimeout(() => {
           this.renderFrame2(frame, frameNo);
+
+          if(this.clearCacheOnRafId === rafId) {
+            this.clearCacheOnRafId = undefined;
+            this.clearCache();
+          }
         }, timeout);
         // await new Promise((resolve) => setTimeout(resolve, -delta % this.frInterval));
         return;
@@ -493,7 +533,18 @@ export default class RLottiePlayer extends EventListenerBase<{
         this.clamped = new Uint8ClampedArray(this.width * this.height * 4);
       }
 
-      this.sendQuery(['renderFrame', frameNo], this.clamped ? [this.clamped.buffer] : undefined);
+      this.sendQuery('renderFrame', {frameNo}, this.clamped ? [this.clamped.buffer] : undefined)
+      .then(({frame, frameNo}) => {
+        if(this.destroyed) {
+          return;
+        }
+
+        if(this.clamped !== undefined && frame instanceof Uint8ClampedArray) {
+          this.clamped = frame;
+        }
+
+        this.renderFrame(frame, frameNo);
+      });
     }
   }
 
@@ -508,8 +559,8 @@ export default class RLottiePlayer extends EventListenerBase<{
     }
 
     if(!this.loop) {
-      this.clearCache();
       this.pause(false);
+      this.clearCacheWhenSafe();
       return false;
     }
 
@@ -517,12 +568,14 @@ export default class RLottiePlayer extends EventListenerBase<{
   }
 
   private mainLoopForwards() {
-    const {skipDelta, maxFrame} = this;
-    const frame = (this.curFrame + skipDelta) > maxFrame ? this.curFrame = (this.loop ? this.minFrame : this.maxFrame) : this.curFrame += skipDelta;
+    const {curFrame, skipDelta, loop, minFrame, maxFrame} = this;
+    const frame = (this.curFrame + skipDelta) > maxFrame ?
+      this.curFrame = (loop ? minFrame : maxFrame) :
+      this.curFrame += skipDelta;
     // console.log('mainLoopForwards', this.curFrame, skipDelta, frame);
 
     this.requestFrame(frame);
-    if((frame + skipDelta) > maxFrame) {
+    if(curFrame === frame && (frame + skipDelta) > maxFrame) {
       return this.onLap();
     }
 
@@ -530,12 +583,14 @@ export default class RLottiePlayer extends EventListenerBase<{
   }
 
   private mainLoopBackwards() {
-    const {skipDelta, minFrame} = this;
-    const frame = (this.curFrame - skipDelta) < minFrame ? this.curFrame = (this.loop ? this.maxFrame : this.minFrame) : this.curFrame -= skipDelta;
+    const {curFrame, skipDelta, loop, minFrame, maxFrame} = this;
+    const frame = (this.curFrame - skipDelta) < minFrame ?
+      this.curFrame = (loop ? maxFrame : minFrame) :
+      this.curFrame -= skipDelta;
     // console.log('mainLoopBackwards', this.curFrame, skipDelta, frame);
 
     this.requestFrame(frame);
-    if((frame - skipDelta) < minFrame) {
+    if(curFrame === frame && (frame - skipDelta) < minFrame) {
       return this.onLap();
     }
 

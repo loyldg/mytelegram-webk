@@ -4,24 +4,24 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import Button from '../../button';
-import Row from '../../row';
-import {Authorization} from '../../../layer';
-import {formatDateAccordingToTodayNew} from '../../../helpers/date';
-import {ButtonMenuSync} from '../../buttonMenu';
-import {toast} from '../../toast';
-import I18n from '../../../lib/langPack';
-import PopupPeer from '../../popups/peer';
-import findUpClassName from '../../../helpers/dom/findUpClassName';
-import {attachClickEvent} from '../../../helpers/dom/clickEvent';
-import toggleDisability from '../../../helpers/dom/toggleDisability';
-import {SliderSuperTabEventable} from '../../sliderTab';
-import findAndSplice from '../../../helpers/array/findAndSplice';
-import {attachContextMenuListener} from '../../../helpers/dom/attachContextMenuListener';
-import positionMenu from '../../../helpers/positionMenu';
-import contextMenuController from '../../../helpers/contextMenuController';
-import SettingSection from '../../settingSection';
-import PopupElement from '../../popups';
+import Button from '@components/button';
+import Row from '@components/row';
+import {Authorization} from '@layer';
+import {formatDateAccordingToTodayNew} from '@helpers/date';
+import {ButtonMenuSync} from '@components/buttonMenu';
+import I18n from '@lib/langPack';
+import PopupPeer from '@components/popups/peer';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import toggleDisability from '@helpers/dom/toggleDisability';
+import {SliderSuperTabEventable} from '@components/sliderTab';
+import findAndSplice from '@helpers/array/findAndSplice';
+import {attachContextMenuListener} from '@helpers/dom/attachContextMenuListener';
+import positionMenu from '@helpers/positionMenu';
+import contextMenuController from '@helpers/contextMenuController';
+import SettingSection from '@components/settingSection';
+import PopupElement from '@components/popups';
+import {toastNew} from '@components/toast';
 
 export default class AppActiveSessionsTab extends SliderSuperTabEventable {
   public authorizations: Authorization.authorization[];
@@ -105,7 +105,7 @@ export default class AppActiveSessionsTab extends SliderSuperTabEventable {
 
     const onError = (err: ApiError) => {
       if(err.type === 'FRESH_RESET_AUTHORISATION_FORBIDDEN') {
-        toast(I18n.format('RecentSessions.Error.FreshReset', true));
+        toastNew({langPackKey: 'RecentSessions.Error.FreshReset'});
       }
     };
 

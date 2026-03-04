@@ -1,23 +1,23 @@
-import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
-import DialogsPlaceholder from '../../helpers/dialogsPlaceholder';
-import replaceContent from '../../helpers/dom/replaceContent';
-import ListenerSetter from '../../helpers/listenerSetter';
-import throttle from '../../helpers/schedulers/throttle';
-import {SequentialCursorFetcher, SequentialCursorFetcherResult} from '../../helpers/sequentialCursorFetcher';
-import windowSize from '../../helpers/windowSize';
-import type {AppDialogsManager} from '../../lib/appManagers/appDialogsManager';
-import appImManager from '../../lib/appManagers/appImManager';
-import {AppManagers} from '../../lib/appManagers/managers';
-import getDialogIndex from '../../lib/appManagers/utils/dialogs/getDialogIndex';
-import getDialogIndexKey from '../../lib/appManagers/utils/dialogs/getDialogIndexKey';
-import {isForumTopic} from '../../lib/appManagers/utils/dialogs/isDialog';
-import {logger} from '../../lib/logger';
-import rootScope from '../../lib/rootScope';
-import {AnyDialog} from '../../lib/storages/dialogs';
-import {MonoforumDialog} from '../../lib/storages/monoforumDialogs';
-import Scrollable from '../scrollable';
-import SortedDialogList from '../sortedDialogList';
-import {AutonomousDialogList} from './dialogs';
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
+import DialogsPlaceholder from '@helpers/dialogsPlaceholder';
+import replaceContent from '@helpers/dom/replaceContent';
+import ListenerSetter from '@helpers/listenerSetter';
+import throttle from '@helpers/schedulers/throttle';
+import {SequentialCursorFetcher, SequentialCursorFetcherResult} from '@helpers/sequentialCursorFetcher';
+import windowSize from '@helpers/windowSize';
+import type {AppDialogsManager} from '@lib/appDialogsManager';
+import appImManager from '@lib/appImManager';
+import {AppManagers} from '@lib/managers';
+import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
+import getDialogIndexKey from '@appManagers/utils/dialogs/getDialogIndexKey';
+import {isForumTopic} from '@appManagers/utils/dialogs/isDialog';
+import {logger} from '@lib/logger';
+import rootScope from '@lib/rootScope';
+import {AnyDialog} from '@lib/storages/dialogs';
+import {MonoforumDialog} from '@lib/storages/monoforumDialogs';
+import Scrollable from '@components/scrollable';
+import SortedDialogList from '@components/sortedDialogList';
+import {AutonomousDialogList} from '@components/autonomousDialogList/dialogs';
 
 
 export const DIALOG_LOAD_COUNT = 20;
@@ -232,9 +232,7 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
     return result;
   }
 
-  public async loadDialogsInner(offsetIndex?: number): Promise<SequentialCursorFetcherResult<number>> {
-    const filterId = this.getFilterId();
-
+  protected async loadDialogsInner(offsetIndex?: number, removePlaceholder = true): Promise<SequentialCursorFetcherResult<number>> {
     this.checkForDialogsPlaceholder();
 
     /**
@@ -275,7 +273,7 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
 
     this.sortedList.addDeferredItems(items, result.count || 0);
 
-    this.placeholder?.detach(this.sortedList.itemsLength());
+    if(removePlaceholder) this.placeholder?.detach(this.sortedList.itemsLength());
 
     return {
       cursor: newOffsetIndex === Infinity ? undefined : newOffsetIndex,
@@ -321,12 +319,12 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
 
   public getDialogDom(key: DialogKey) {
     // return this.doms[peerId];
-    const element = this.sortedList.get(key);
+    const element = this.sortedList.getDialogElement(key);
     return element?.dom;
   }
 
   public getDialogElement(key: DialogKey) {
-    const element = this.sortedList.get(key);
+    const element = this.sortedList.getDialogElement(key);
     return element;
   }
 

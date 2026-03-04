@@ -1,5 +1,5 @@
-import {animate} from '../../../helpers/animation';
-import styles from './continuouslyTypingMessage.module.scss';
+import {animate} from '@helpers/animation';
+import styles from '@components/chat/bubbleParts/continuouslyTypingMessage.module.scss';
 
 
 type WrapContinuouslyTypingMessageArgs = {
@@ -42,7 +42,7 @@ export function wrapContinuouslyTypingMessage({root, bubble, scrollable, isEnd =
     if(ended) return;
     ended = true;
 
-    if(!isEnd) appendDots(lastTextNode);
+    if(!isEnd && lastTextNode) appendDots(lastTextNode);
   }
 
   const result = {

@@ -1,15 +1,16 @@
-import type ListenerSetter from './helpers/listenerSetter';
-import type {Middleware, MiddlewareHelper} from './helpers/middleware';
-import type {Chat, Document, Message, User} from './layer';
-import type {MediaSize} from './helpers/mediaSize';
-import type {AnimationItemGroup} from './components/animationIntersector';
-import type LazyLoadQueue from './components/lazyLoadQueue';
-import type {AppManagers} from './lib/appManagers/managers';
-import type {CustomProperty} from './helpers/dom/customProperties';
-import type Icons from './icons';
-import type {CancellablePromise} from './helpers/cancellablePromise';
-import type Languages from './lib/tinyld/languages';
-import type {ValueOrGetter} from './helpers/solid/readValue';
+import type ListenerSetter from '@helpers/listenerSetter';
+import type {Middleware, MiddlewareHelper} from '@helpers/middleware';
+import type {Chat, Document, Message, User} from '@layer';
+import type {MediaSize} from '@helpers/mediaSize';
+import type {AnimationItemGroup} from '@components/animationIntersector';
+import type LazyLoadQueue from '@components/lazyLoadQueue';
+import type {AppManagers} from '@lib/managers';
+import type {CustomProperty} from '@helpers/dom/customProperties';
+import type Icons from '@/icons';
+import type {CancellablePromise} from '@helpers/cancellablePromise';
+import type Languages from '@lib/tinyld/languages';
+import type {ValueOrGetter} from '@helpers/solid/readValue';
+import type {MTAppConfig as AppConfig} from '@/appConfig';
 
 declare global {
   interface AddEventListenerOptions extends EventListenerOptions {
@@ -91,6 +92,7 @@ declare global {
     traverseTo(key: string): void;
     updateCurrentEntry(options: NavigationEntryOptions): void;
     addEventListener(type: 'navigate', listener: (event: NavigationEvent) => void): void;
+    removeEventListener(type: 'navigate', listener: (event: NavigationEvent) => void): void;
     back(): void;
   }
 
@@ -113,6 +115,7 @@ declare global {
   type DocId = Document.document['id'];
   type Long = string | number;
   type MTLong = string;
+  type MTAppConfig = AppConfig;
 
   type AppEmoji = {emoji: string, docId?: DocId};
   type Icon = keyof typeof Icons;
@@ -120,13 +123,13 @@ declare global {
     'translations' | 'animated_emoji' | 'more_upload' | 'emoji_status' | 'profile_badge' |
     'advanced_chat_management' | 'no_ads' | 'app_icons' | 'infinite_reactions' |
     'animated_userpics' | 'premium_stickers' | 'peer_colors' | 'wallpapers' |
-    'saved_tags' | 'last_seen' | 'message_privacy';
+    'saved_tags' | 'last_seen' | 'message_privacy' | 'pm_noforwards';
 
   type MTMimeType = 'video/quicktime' | 'image/gif' | 'image/jpeg' | 'application/pdf' |
     'video/mp4' | 'image/webp' | 'audio/mpeg' | 'audio/ogg' | 'application/octet-stream' |
     'application/x-tgsticker' | 'video/webm' | 'image/svg+xml' | 'image/png' | 'application/json' |
     'application/x-tgwallpattern' | 'audio/wav' | 'image/avif' | 'image/jxl' | 'image/bmp' |
-    'application/x-mpegurl';
+    'application/x-mpegurl' | 'application/x-tgstoryboard' | 'application/x-tgstoryboardmap';
 
   type MTFileExtension = 'mov' | 'gif' | 'pdf' | 'jpg' | 'jpeg' | 'wav' |
     'tgv' | 'tgs' | 'svg' | 'mp4' | 'webm' | 'webp' | 'mp3' | 'ogg' | 'json' |
@@ -134,12 +137,13 @@ declare global {
 
   type ApiFileManagerError = 'DOWNLOAD_CANCELED' | 'UPLOAD_CANCELED' | 'FILE_TOO_BIG' | 'REFERENCE_IS_NOT_REFRESHED';
   type StorageError = 'STORAGE_OFFLINE' | 'NO_ENTRY_FOUND' | 'IDB_CREATE_TIMEOUT';
-  type ReferenceError = 'NO_NEW_CONTEXT';
+  type ReferenceError = 'NO_NEW_CONTEXT' | 'NO_CONTEXT';
   type NetworkerError = 'NETWORK_BAD_RESPONSE' | 'NETWORK_BAD_REQUEST';
   type FiltersError = 'PINNED_DIALOGS_TOO_MUCH';
+  type RLottieError = 'FRAME_OUT_OF_RANGE' | 'ITEM_DESTROYED' | 'FILE_INVALID';
 
   type LocalFileError = ApiFileManagerError | ReferenceError | StorageError;
-  type LocalErrorType = LocalFileError | NetworkerError | FiltersError |
+  type LocalErrorType = LocalFileError | NetworkerError | FiltersError | RLottieError |
     'UNKNOWN' | 'NO_DOC' | 'MIDDLEWARE' | 'PORT_DISCONNECTED' | 'NO_AUTO_DOWNLOAD' | 'CHAT_PRIVATE' | 'NO_WASM' |
     'CANCELED' | 'TIMEOUT' | 'TAB_ALREADY_OPEN';
 
@@ -169,7 +173,8 @@ declare global {
     'FILE_REFERENCE_INVALID' | 'USER_NOT_MUTUAL_CONTACT' | 'FROZEN_METHOD_INVALID' |
     'EMAIL_INVALID' | 'EMAIL_NOT_ALLOWED' | 'EMAIL_VERIFY_EXPIRED' | 'CODE_INVALID' |
     'PASSWORD_RECOVERY_NA' | '2FA_RECENT_CONFIRM' | `2FA_CONFIRM_WAIT_${number}` |
-    'PASSKEY_CREDENTIAL_NOT_FOUND' | 'SUMMARY_FLOOD_PREMIUM';
+    'PASSKEY_CREDENTIAL_NOT_FOUND' | 'SUMMARY_FLOOD_PREMIUM' | 'AUTH_TOKEN_EXPIRED' |
+    'CHANNELS_TOO_MUCH';
 
   type ErrorType = LocalErrorType | ServerErrorType;
 

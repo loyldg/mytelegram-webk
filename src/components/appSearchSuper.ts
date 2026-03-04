@@ -4,110 +4,112 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {AppMessagesManager, MyInputMessagesFilter, MyMessage, RequestHistoryOptions} from '../lib/appManagers/appMessagesManager';
-import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG, DialogDom} from '../lib/appManagers/appDialogsManager';
-import {logger} from '../lib/logger';
-import rootScope from '../lib/rootScope';
-import {SearchGroup, SearchGroupType} from './appSearch';
-import {horizontalMenu} from './horizontalMenu';
-import LazyLoadQueue from './lazyLoadQueue';
-import {putPreloader} from './putPreloader';
-import ripple from './ripple';
-import Scrollable, {ScrollableX} from './scrollable';
-import useHeavyAnimationCheck, {getHeavyAnimationPromise} from '../hooks/useHeavyAnimationCheck';
-import I18n, {LangPackKey, i18n, join} from '../lib/langPack';
-import findUpClassName from '../helpers/dom/findUpClassName';
-import {getMiddleware, Middleware, MiddlewareHelper} from '../helpers/middleware';
-import {ChannelParticipant, Chat, ChatFull, ChatParticipant, Document, Message, MessageMedia, MessagesChats, Peer, Photo, StoryItem, Update, User, UserFull, WebPage} from '../layer';
-import SortedUserList from './sortedUserList';
-import findUpTag from '../helpers/dom/findUpTag';
-import appSidebarRight from './sidebarRight';
-import mediaSizes from '../helpers/mediaSizes';
-import appImManager from '../lib/appManagers/appImManager';
-import positionElementByIndex from '../helpers/dom/positionElementByIndex';
-import IS_TOUCH_SUPPORTED from '../environment/touchSupport';
-import handleTabSwipe from '../helpers/dom/handleTabSwipe';
-import windowSize from '../helpers/windowSize';
-import {formatPhoneNumber} from '../helpers/formatPhoneNumber';
-import {ButtonMenuItemOptions, ButtonMenuSync} from './buttonMenu';
-import PopupForward from './popups/forward';
-import PopupDeleteMessages from './popups/deleteMessages';
-import Row from './row';
-import htmlToDocumentFragment from '../helpers/dom/htmlToDocumentFragment';
-import {SearchSelection} from './chat/selection';
-import {attachClickEvent, simulateClickEvent} from '../helpers/dom/clickEvent';
-import {MyDocument} from '../lib/appManagers/appDocsManager';
-import AppMediaViewer from './appMediaViewer';
-import lockTouchScroll from '../helpers/dom/lockTouchScroll';
-import copy from '../helpers/object/copy';
-import getObjectKeysAndSort from '../helpers/object/getObjectKeysAndSort';
-import safeAssign from '../helpers/object/safeAssign';
-import findAndSplice from '../helpers/array/findAndSplice';
-import {ScrollStartCallbackDimensions} from '../helpers/fastSmoothScroll';
-import setInnerHTML from '../helpers/dom/setInnerHTML';
-import {AppManagers} from '../lib/appManagers/managers';
-import choosePhotoSize from '../lib/appManagers/utils/photos/choosePhotoSize';
-import wrapWebPageDescription from './wrappers/webPageDescription';
-import wrapWebPageTitle from './wrappers/webPageTitle';
-import wrapAbbreviation from '../lib/richTextProcessor/wrapAbbreviation';
-import matchUrl from '../lib/richTextProcessor/matchUrl';
-import wrapPlainText from '../lib/richTextProcessor/wrapPlainText';
-import wrapRichText from '../lib/richTextProcessor/wrapRichText';
-import wrapSenderToPeer from './wrappers/senderToPeer';
-import wrapSentTime from './wrappers/sentTime';
-import getMediaFromMessage from '../lib/appManagers/utils/messages/getMediaFromMessage';
-import filterMessagesByInputFilter from '../lib/appManagers/utils/messages/filterMessagesByInputFilter';
-import getChatMembersString from './wrappers/getChatMembersString';
-import getUserStatusString from './wrappers/getUserStatusString';
-import getParticipantPeerId from '../lib/appManagers/utils/chats/getParticipantPeerId';
-import {attachContextMenuListener} from '../helpers/dom/attachContextMenuListener';
-import contextMenuController from '../helpers/contextMenuController';
-import positionMenu from '../helpers/positionMenu';
-import apiManagerProxy from '../lib/mtproto/mtprotoworker';
-import ListenerSetter from '../helpers/listenerSetter';
-import SwipeHandler from './swipeHandler';
-import wrapDocument from './wrappers/document';
-import wrapPhoto from './wrappers/photo';
-import wrapVideo from './wrappers/video';
-import wrapMediaSpoiler, {hasSensitiveSpoiler, onMediaSpoilerClick} from './wrappers/mediaSpoiler';
-import filterAsync from '../helpers/array/filterAsync';
-import ChatContextMenu, {getSponsoredMessageButtons} from './chat/contextMenu';
-import PopupElement from './popups';
-import getParticipantRank from '../lib/appManagers/utils/chats/getParticipantRank';
-import {NULL_PEER_ID} from '../lib/mtproto/mtproto_config';
-import createParticipantContextMenu from '../helpers/dom/createParticipantContextMenu';
-import findAndSpliceAll from '../helpers/array/findAndSpliceAll';
-import deferredPromise from '../helpers/cancellablePromise';
-import {createEffect, createRoot, on} from 'solid-js';
-import StoriesProfileList from './stories/profileList';
-import Button from './button';
-import anchorCallback from '../helpers/dom/anchorCallback';
-import PopupPremium from './popups/premium';
-import {ChatType} from './chat/chat';
-import getFwdFromName from '../lib/appManagers/utils/messages/getFwdFromName';
-import SidebarSlider from './slider';
-import setBlankToAnchor from '../lib/richTextProcessor/setBlankToAnchor';
-import cancelClickOrNextIfNotClick from '../helpers/dom/cancelClickOrNextIfNotClick';
-import createElementFromMarkup from '../helpers/createElementFromMarkup';
-import numberThousandSplitter from '../helpers/number/numberThousandSplitter';
-import {ALL_COLLECTIONS_ID, StarGiftsProfileActions, StarGiftsProfileStore} from './stargifts/profileStore';
+import type {AppMessagesManager, MyInputMessagesFilter, MyMessage, RequestHistoryOptions} from '@appManagers/appMessagesManager';
+import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG, DialogDom} from '@lib/appDialogsManager';
+import {logger} from '@lib/logger';
+import rootScope from '@lib/rootScope';
+import {SearchGroup, SearchGroupType} from '@components/appSearch';
+import {horizontalMenu} from '@components/horizontalMenu';
+import LazyLoadQueue from '@components/lazyLoadQueue';
+import {putPreloader} from '@components/putPreloader';
+import ripple from '@components/ripple';
+import Scrollable, {ScrollableX} from '@components/scrollable';
+import useHeavyAnimationCheck, {getHeavyAnimationPromise} from '@hooks/useHeavyAnimationCheck';
+import I18n, {LangPackKey, i18n, join} from '@lib/langPack';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import {getMiddleware, Middleware, MiddlewareHelper} from '@helpers/middleware';
+import {ChannelParticipant, Chat, ChatFull, ChatParticipant, ChatParticipants, Document, Message, MessageMedia, MessagesChats, MessagesFilter, Peer, Photo, StoryItem, Update, User, UserFull, WebPage} from '@layer';
+import SortedUserList from '@components/sortedUserList';
+import findUpTag from '@helpers/dom/findUpTag';
+import appSidebarRight from '@components/sidebarRight';
+import mediaSizes from '@helpers/mediaSizes';
+import appImManager from '@lib/appImManager';
+import positionElementByIndex from '@helpers/dom/positionElementByIndex';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import handleTabSwipe from '@helpers/dom/handleTabSwipe';
+import windowSize from '@helpers/windowSize';
+import {formatPhoneNumber} from '@helpers/formatPhoneNumber';
+import {ButtonMenuItemOptions, ButtonMenuSync} from '@components/buttonMenu';
+import PopupForward from '@components/popups/forward';
+import PopupDeleteMessages from '@components/popups/deleteMessages';
+import Row from '@components/row';
+import htmlToDocumentFragment from '@helpers/dom/htmlToDocumentFragment';
+import {SearchSelection} from '@components/chat/selection';
+import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
+import {MyDocument} from '@appManagers/appDocsManager';
+import AppMediaViewer from '@components/appMediaViewer';
+import lockTouchScroll from '@helpers/dom/lockTouchScroll';
+import copy from '@helpers/object/copy';
+import getObjectKeysAndSort from '@helpers/object/getObjectKeysAndSort';
+import safeAssign from '@helpers/object/safeAssign';
+import findAndSplice from '@helpers/array/findAndSplice';
+import {ScrollStartCallbackDimensions} from '@helpers/fastSmoothScroll';
+import setInnerHTML from '@helpers/dom/setInnerHTML';
+import {AppManagers} from '@lib/managers';
+import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
+import wrapWebPageDescription from '@components/wrappers/webPageDescription';
+import wrapWebPageTitle from '@components/wrappers/webPageTitle';
+import wrapAbbreviation from '@richTextProcessor/wrapAbbreviation';
+import matchUrl from '@richTextProcessor/matchUrl';
+import wrapPlainText from '@richTextProcessor/wrapPlainText';
+import wrapRichText from '@richTextProcessor/wrapRichText';
+import wrapSenderToPeer from '@components/wrappers/senderToPeer';
+import wrapSentTime from '@components/wrappers/sentTime';
+import getMediaFromMessage from '@appManagers/utils/messages/getMediaFromMessage';
+import filterMessagesByInputFilter from '@appManagers/utils/messages/filterMessagesByInputFilter';
+import getChatMembersString from '@components/wrappers/getChatMembersString';
+import getUserStatusString from '@components/wrappers/getUserStatusString';
+import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
+import {attachContextMenuListener} from '@helpers/dom/attachContextMenuListener';
+import contextMenuController from '@helpers/contextMenuController';
+import positionMenu from '@helpers/positionMenu';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import ListenerSetter from '@helpers/listenerSetter';
+import SwipeHandler from '@components/swipeHandler';
+import wrapDocument from '@components/wrappers/document';
+import wrapPhoto from '@components/wrappers/photo';
+import wrapVideo from '@components/wrappers/video';
+import wrapMediaSpoiler, {hasSensitiveSpoiler, onMediaSpoilerClick} from '@components/wrappers/mediaSpoiler';
+import filterAsync from '@helpers/array/filterAsync';
+import ChatContextMenu, {getSponsoredMessageButtons} from '@components/chat/contextMenu';
+import PopupElement from '@components/popups';
+import getParticipantRank from '@appManagers/utils/chats/getParticipantRank';
+import {NULL_PEER_ID} from '@appManagers/constants';
+import createParticipantContextMenu from '@helpers/dom/createParticipantContextMenu';
+import findAndSpliceAll from '@helpers/array/findAndSpliceAll';
+import deferredPromise from '@helpers/cancellablePromise';
+import {children, createEffect, createRoot, For, on} from 'solid-js';
+import StoriesProfileList from '@components/stories/profileList';
+import Button from '@components/button';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import PopupPremium from '@components/popups/premium';
+import {ChatType} from '@components/chat/chat';
+import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
+import SidebarSlider from '@components/slider';
+import setBlankToAnchor from '@richTextProcessor/setBlankToAnchor';
+import cancelClickOrNextIfNotClick from '@helpers/dom/cancelClickOrNextIfNotClick';
+import createElementFromMarkup from '@helpers/createElementFromMarkup';
+import numberThousandSplitter from '@helpers/number/numberThousandSplitter';
+import {ALL_COLLECTIONS_ID, StarGiftsProfileActions, StarGiftsProfileStore} from '@components/stargifts/profileStore';
 import {getFirstChild} from '@solid-primitives/refs';
-import SortedDialogList from './sortedDialogList';
-import Icon from './icon';
-import PopupReportAd from './popups/reportAd';
-import ButtonMenuToggle from './buttonMenuToggle';
-import {isSensitive} from '../helpers/restrictions';
-import {isMessageSensitive} from '../lib/appManagers/utils/messages/isMessageRestricted';
-import {MediaSearchContext} from './appMediaPlaybackController';
-import {StarGiftsProfileTab} from './stargifts/profileList';
-import {MyStarGift} from '../lib/appManagers/appGiftsManager';
-import wrapSticker from './wrappers/sticker';
+import SortedDialogList from '@components/sortedDialogList';
+import Icon from '@components/icon';
+import PopupReportAd from '@components/popups/reportAd';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import {isSensitive} from '@helpers/restrictions';
+import {isMessageSensitive} from '@appManagers/utils/messages/isMessageRestricted';
+import {MediaSearchContext} from '@components/appMediaPlaybackController';
+import {StarGiftsProfileTab} from '@components/stargifts/profileList';
+import {MyStarGift} from '@appManagers/appGiftsManager';
+import wrapSticker from '@components/wrappers/sticker';
 import {unwrap} from 'solid-js/store';
-import {usePeer} from '../stores/peers';
-import {useAppState} from '../stores/appState';
-import {AutonomousSavedDialogList} from './autonomousDialogList/savedDialogs';
-import SetTransition from './singleTransition';
-import liteMode from '../helpers/liteMode';
+import {usePeer} from '@stores/peers';
+import {useAppState} from '@stores/appState';
+import {AutonomousSavedDialogList} from '@components/autonomousDialogList/savedDialogs';
+import SetTransition from '@components/singleTransition';
+import liteMode from '@helpers/liteMode';
+import {wrapGlobalPostsSearch} from './sidebarLeft/globalPostsSearch';
+import createMiddleware from '@helpers/solid/createMiddleware';
 
 // const testScroll = false;
 
@@ -128,7 +130,7 @@ export type SearchSuperContext = {
 
 export type SearchSuperMediaType = 'stories' | 'members' | 'media' |
   'files' | 'links' | 'music' | 'chats' | 'voice' | 'groups' | 'similar' |
-  'savedDialogs' | 'saved' | 'channels' | 'apps' | 'gifts';
+  'savedDialogs' | 'saved' | 'channels' | 'apps' | 'gifts' | 'posts';
 export type SearchSuperMediaTab = {
   inputFilter?: SearchSuperType,
   name: LangPackKey,
@@ -145,6 +147,13 @@ type SearchSuperLoadTypeOptions = {
   loadCount: number,
   middleware: Middleware,
   side: 'top' | 'bottom'
+};
+
+type PerformSearchResultArgs = {
+  messages: (Message.message | Message.messageService)[];
+  mediaTab: SearchSuperMediaTab;
+  canAnimateIn?: boolean;
+  append?: boolean;
 };
 
 class SearchContextMenu {
@@ -408,7 +417,7 @@ export default class AppSearchSuper {
   public loadMutex: Promise<any>;
 
   private nextRates: Partial<{[type in SearchSuperMediaType]: number}> = {};
-  private loadPromises: Partial<{[type in SearchSuperMediaType]: Promise<void>}> = {};
+  private loadPromises: Partial<{[type in SearchSuperMediaType]: Promise<any>}> = {};
   private loaded: Partial<{[type in SearchSuperMediaType]: boolean}> = {};
   private loadedChats = false;
   private firstLoad = true;
@@ -937,12 +946,13 @@ export default class AppSearchSuper {
     return {element: div, message};
   }
 
-  private async processDocumentFilter({message, inputFilter}: ProcessSearchSuperResult) {
+  private async processDocumentFilter({message, inputFilter, middleware}: ProcessSearchSuperResult) {
     const document = getMediaFromMessage(message, true) as Document.document;
     const showSender = this.showSender || (['voice', 'round'] as MyDocument['type'][]).includes(document.type);
 
     const div = await wrapDocument({
       message,
+      middleware,
       withTime: !showSender,
       fontWeight: 400,
       voiceAsMusic: true,
@@ -1092,7 +1102,7 @@ export default class AppSearchSuper {
     }
   }
 
-  public async performSearchResult(messages: (Message.message | Message.messageService)[], mediaTab: SearchSuperMediaTab, append = true) {
+  public async performSearchResult({messages, mediaTab, canAnimateIn = false, append = true}: PerformSearchResultArgs) {
     const elemsToAppend: {element: HTMLElement, message: any}[] = [];
     const sharedMediaDiv: HTMLElement = mediaTab.contentTab;
     const promises: Promise<any>[] = [];
@@ -1111,7 +1121,7 @@ export default class AppSearchSuper {
       searchGroup = this.searchGroups.messages;
     }
 
-    if(liteMode.isAvailable('animations') && searchGroup?.container) {
+    if(canAnimateIn && liteMode.isAvailable('animations') && searchGroup?.container) {
       searchGroup.container.classList.add('is-hidden');
 
       setTimeout(() => SetTransition({
@@ -1200,7 +1210,7 @@ export default class AppSearchSuper {
       await Promise.all(promises);
       if(!middleware()) {
         // this.log.warn('peer changed');
-        return;
+        return 0;
       }
     }
 
@@ -1254,6 +1264,8 @@ export default class AppSearchSuper {
     // if(type !== 'inputMessagesFilterEmpty') {
     this.afterPerforming(inputFilter === 'inputMessagesFilterEmpty' ? 1 : length, sharedMediaDiv);
     // }
+
+    return length;
   }
 
   private afterPerforming(length: number, contentTab: HTMLElement) {
@@ -1462,29 +1474,48 @@ export default class AppSearchSuper {
 
         this.searchGroups.recent.list.replaceChildren();
 
-        appState.recentSearch.slice(0, 20).forEach(async(peerId) => {
-          const {dom} = appDialogsManager.addDialogNew({
-            peerId: peerId,
-            container: this.searchGroups.recent.list,
-            meAsSaved: true,
-            avatarSize: 'abitbigger',
-            autonomous: true,
-            wrapOptions: {
-              middleware
-            },
-            withStories: true
+        createRoot((dispose) => {
+          middleware.onClean(dispose);
+
+          const arr = For({
+            each: appState.recentSearch,
+            children: (peerId) => {
+              const middlewareHelper = createMiddleware();
+              const {dom} = appDialogsManager.addDialogNew({
+                peerId: peerId,
+                container: false,
+                meAsSaved: true,
+                avatarSize: 'abitbigger',
+                autonomous: true,
+                wrapOptions: {
+                  middleware: middlewareHelper.get()
+                },
+                withStories: true
+              });
+
+              (async() => {
+                dom.lastMessageSpan.append(await (peerId.isUser() ?
+                  Promise.resolve(getUserStatusString(await this.managers.appUsersManager.getUser(peerId.toUserId()))) :
+                  getChatMembersString(peerId.toChatId())));
+              })();
+
+              return dom.containerEl;
+            }
           });
 
-          dom.lastMessageSpan.append(await (peerId.isUser() ?
-            Promise.resolve(getUserStatusString(await this.managers.appUsersManager.getUser(peerId.toUserId()))) :
-            getChatMembersString(peerId.toChatId())));
-        });
+          const elements = children(() => arr);
+          createEffect(() => {
+            this.searchGroups.recent.list.replaceChildren(...(elements.toArray() as HTMLElement[]));
+          });
 
-        if(!appState.recentSearch.length) {
-          this.searchGroups.recent.clear();
-        } else if(setActive) {
-          this.searchGroups.recent.setActive();
-        }
+          createEffect(() => {
+            if(!appState.recentSearch.length) {
+              this.searchGroups.recent.clear();
+            } else if(setActive) {
+              this.searchGroups.recent.setActive();
+            }
+          });
+        });
       };
 
       return Promise.all([
@@ -1583,26 +1614,68 @@ export default class AppSearchSuper {
             middleware
           });
 
-          const onParticipantUpdate = (update: Update.updateChannelParticipant) => {
-            const peerId = getParticipantPeerId(update.prev_participant || update.new_participant);
-            const wasRendered = membersList.has(peerId);
-            if(wasRendered || (update.new_participant as ChannelParticipant.channelParticipantBanned).pFlags?.left) {
-              membersList.ranks.delete(peerId);
-              membersList.delete(peerId);
-              membersParticipantMap.delete(peerId);
-              this.setCounter(mediaTab.type, this.counters[mediaTab.type] - 1);
-            }
-
-            if((!update.prev_participant || wasRendered) && update.new_participant) {
-              renderParticipants([update.new_participant]);
-              this.setCounter(mediaTab.type, this.counters[mediaTab.type] + 1);
-            }
+          const deleteByPeerId = (peerId: PeerId) => {
+            membersList.ranks.delete(peerId);
+            membersList.delete(peerId);
+            membersParticipantMap.delete(peerId);
+            this.setCounter(mediaTab.type, this.counters[mediaTab.type] - 1);
           };
 
-          rootScope.addEventListener('chat_participant', onParticipantUpdate);
-          middleware.onClean(() => {
-            rootScope.removeEventListener('chat_participant', onParticipantUpdate);
-          });
+          const renderParticipant = (participant: ChannelParticipant | ChatParticipant) => {
+            renderParticipants([participant]);
+            this.setCounter(mediaTab.type, this.counters[mediaTab.type] + 1);
+          };
+
+          if(apiManagerProxy.getChat(chatId)._ === 'chat') {
+            const onChatFullUpdate = async(_chatId: ChatId) => {
+              if(chatId !== _chatId) {
+                return;
+              }
+
+              const chatFull = await this.managers.appProfileManager.getChatFull(chatId) as ChatFull.chatFull;
+              if(!middleware()) {
+                return;
+              }
+
+              const participants = chatFull.participants as ChatParticipants.chatParticipants;
+              const processedPeerIds = new Set<PeerId>();
+              for(const participant of participants.participants) {
+                const peerId = participant.user_id.toPeerId(false);
+                processedPeerIds.add(peerId);
+                renderParticipant(participant);
+              }
+
+              membersParticipantMap.forEach((participant, peerId) => {
+                if(!processedPeerIds.has(peerId)) {
+                  deleteByPeerId(peerId);
+                }
+              });
+            };
+            rootScope.addEventListener('chat_full_update', onChatFullUpdate);
+            middleware.onClean(() => {
+              rootScope.removeEventListener('chat_full_update', onChatFullUpdate);
+            });
+          } else {
+            const onParticipantUpdate = (update: Update.updateChannelParticipant) => {
+              if(chatId !== update.channel_id) {
+                return;
+              }
+
+              const peerId = getParticipantPeerId(update.prev_participant || update.new_participant);
+              const wasRendered = membersList.has(peerId);
+              if(wasRendered || (update.new_participant as ChannelParticipant.channelParticipantBanned).pFlags?.left) {
+                deleteByPeerId(peerId);
+              }
+
+              if((!update.prev_participant || wasRendered) && update.new_participant) {
+                renderParticipant(update.new_participant);
+              }
+            };
+            rootScope.addEventListener('chat_participant', onParticipantUpdate);
+            middleware.onClean(() => {
+              rootScope.removeEventListener('chat_participant', onParticipantUpdate);
+            });
+          }
         }
       }
 
@@ -1639,10 +1712,16 @@ export default class AppSearchSuper {
       for(const {peerId, rank, participant} of filtered) {
         if(rank) {
           membersList.ranks.set(peerId, rank);
+        } else {
+          membersList.ranks.delete(peerId);
         }
 
         membersParticipantMap.set(peerId, participant as ChannelParticipant);
-        membersList.add(peerId);
+        if(membersList.has(peerId)) {
+          membersList.update(peerId);
+        } else {
+          membersList.add(peerId);
+        }
       }
     };
 
@@ -1780,6 +1859,8 @@ export default class AppSearchSuper {
 
         return Promise.all(loadPromises);
       });
+
+      appDialogsManager.setListClickListener({list: chatlist, autonomous: true});
 
       await Promise.all(promises);
       return chatlist;
@@ -2067,7 +2148,23 @@ export default class AppSearchSuper {
     this.loaded[mediaTab.type] = true;
   }
 
-  private async loadGifts({mediaTab}: SearchSuperLoadTypeOptions) {
+  globalPostsSearch: ReturnType<typeof wrapGlobalPostsSearch>;
+  private async loadPosts({mediaTab, middleware}: SearchSuperLoadTypeOptions) {
+    if(!this.globalPostsSearch) {
+      this.globalPostsSearch = wrapGlobalPostsSearch({
+        middleware,
+        query: this.searchContext.query
+      });
+      mediaTab.contentTab.append(this.globalPostsSearch.dom);
+    }
+
+    this.globalPostsSearch.loadMore();
+  }
+
+  private loadGifts() {
+    const mediaTab = this.mediaTabsMap.get('gifts');
+    if(!mediaTab) return;
+
     if(!this.stargiftsStore) {
       const middleware = this.middleware.get();
       createRoot((dispose) => {
@@ -2080,6 +2177,14 @@ export default class AppSearchSuper {
           scrollParent: scrollTarget,
           onCountChange: (count) => {
             this.setCounter('gifts', count);
+
+            mediaTab.menuTab.classList.toggle('hide', count === 0);
+            let needChangeActive = false
+            if(count === 0) {
+              needChangeActive = mediaTab.menuTab.classList.contains('active');
+              mediaTab.menuTab.classList.remove('active');
+            }
+            this.updateContainerHidden(needChangeActive);
           }
         });
         createEffect(on(() => store.items, (items) => {
@@ -2126,8 +2231,10 @@ export default class AppSearchSuper {
       promise = this.loadChannels(options);
     } else if(type === 'apps') {
       promise = this.loadApps(options);
+    } else if(type === 'posts') {
+      promise = this.loadPosts(options);
     } else if(type === 'gifts') {
-      promise = this.loadGifts(options);
+      promise = this.loadGifts();
     }
 
     if(promise) {
@@ -2181,7 +2288,7 @@ export default class AppSearchSuper {
 
         this.usedFromHistory[inputFilter] = used;
         // if(messages.length) {
-        return this.performSearchResult(messages, mediaTab).finally(() => {
+        return this.performSearchResult({messages, mediaTab}).finally(() => {
           setTimeout(() => {
             this.scrollable.checkForTriggers();
           }, 0);
@@ -2262,7 +2369,7 @@ export default class AppSearchSuper {
       }
 
       // if(value.history.length) {
-      return this.performSearchResult(this.filterMessagesByType(messages, inputFilter), mediaTab);
+      return this.performSearchResult({messages: this.filterMessagesByType(messages, inputFilter), mediaTab, canAnimateIn: !offsetId});
       // }
     }).catch((err) => {
       this.log.error('load error:', err);
@@ -2280,6 +2387,11 @@ export default class AppSearchSuper {
 
   private isMessageSensitive(message: Message.message) {
     return isSensitive((usePeer(message.peerId) as User.user).restriction_reason || []) || isMessageSensitive(message);
+  }
+
+  public getSearchCounters(filters: MessagesFilter[]) {
+    const {peerId, threadId} = this.searchContext;
+    return this.managers.appMessagesManager.getSearchCounters(peerId, filters, undefined, threadId);
   }
 
   private async loadFirstTime() {
@@ -2300,16 +2412,18 @@ export default class AppSearchSuper {
       canViewGroups,
       canViewStories,
       canViewSimilar,
+      canViewGifts,
       giftsCount,
       maybePinnedGifts
     ] = await Promise.all([
-      this.managers.appMessagesManager.getSearchCounters(peerId, filters, undefined, threadId),
+      this.getSearchCounters(filters),
       this.canViewSavedDialogs(),
       this.canViewSaved(),
       this.canViewMembers(),
       this.canViewGroups(),
       this.canViewStories(),
       this.canViewSimilar(),
+      this.canViewGifts(),
       this.getGiftsCount(),
       peerId === rootScope.myId && this.managers.appGiftsManager.getPinnedGifts(peerId)
     ]);
@@ -2354,7 +2468,7 @@ export default class AppSearchSuper {
     const similarTab = this.mediaTabsMap.get('similar');
     const giftsTab = this.mediaTabsMap.get('gifts');
 
-    const showGiftsTab = giftsCount !== 0 && threadId == null;
+    const showGiftsTab = canViewGifts && giftsCount !== 0;
 
     const a: [SearchSuperMediaTab, boolean][] = [
       [savedDialogsTab, canViewSavedDialogs],
@@ -2403,14 +2517,27 @@ export default class AppSearchSuper {
       this.setPinnedGifts(maybePinnedGifts);
     }
 
-    this.container.classList.toggle('hide', !firstMediaTab);
-    this.container.parentElement.classList.toggle('search-empty', !firstMediaTab);
+    this.toggleContainerHidden(!firstMediaTab);
     if(firstMediaTab) {
       this.skipScroll = true;
       this.selectTab(this.mediaTabs.indexOf(firstMediaTab), false);
       // firstMediaTab.menuTab.classList.add('active');
 
       this.navScrollableContainer.classList.toggle('is-single', count <= 1);
+    }
+  }
+
+  private toggleContainerHidden(hidden: boolean) {
+    this.container.classList.toggle('hide', hidden);
+    this.container.parentElement.classList.toggle('search-empty', hidden);
+  }
+
+  private updateContainerHidden(changeActive = false) {
+    const visibleTabs = this.mediaTabs.filter((tab) => !tab.menuTab.classList.contains('hide'));
+    this.toggleContainerHidden(visibleTabs.length === 0);
+    this.navScrollableContainer.classList.toggle('is-single', visibleTabs.length <= 1);
+    if(changeActive && visibleTabs.length) {
+      this.selectTab(this.mediaTabs.indexOf(visibleTabs[0]), false);
     }
   }
 
@@ -2632,8 +2759,16 @@ export default class AppSearchSuper {
     }
   }
 
+  public canViewGifts() {
+    return !this.searchContext.threadId && this.mediaTabsMap.has('gifts');
+  }
+
   public async getGiftsCount() {
-    const {peerId} = this.searchContext
+    const {peerId, threadId} = this.searchContext;
+    if(threadId) {
+      return;
+    }
+
     const full = await this.managers.appProfileManager.getProfileByPeerId(peerId);
     return (full as UserFull | ChatFull.channelFull).stargifts_count ?? 0;
   }
@@ -2677,6 +2812,7 @@ export default class AppSearchSuper {
     this.membersParticipantMap = undefined;
     this.membersMiddlewareHelper?.destroy();
     this.membersMiddlewareHelper = undefined;
+    this.globalPostsSearch = undefined;
   }
 
   public cleanScrollPositions() {

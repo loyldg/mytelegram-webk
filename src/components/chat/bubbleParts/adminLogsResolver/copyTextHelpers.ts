@@ -1,18 +1,18 @@
-import {formatDate} from '../../../../helpers/date';
-import {makeDateFromTimestamp} from '../../../../helpers/date/makeDateFromTimestamp';
-import formatDuration from '../../../../helpers/formatDuration';
-import prepareTextWithEntitiesForCopying from '../../../../helpers/prepareTextWithEntitiesForCopying';
-import {ChannelAdminLogEventAction, ChatBannedRights, Message} from '../../../../layer';
-import getParticipantPeerId from '../../../../lib/appManagers/utils/chats/getParticipantPeerId';
-import {isBannedParticipant} from '../../../../lib/appManagers/utils/chats/isBannedParticipant';
-import removeChatBannedRightsFromParticipant from '../../../../lib/appManagers/utils/chats/removeChatBannedRightsFromParticipant';
-import I18n from '../../../../lib/langPack';
-import type apiManagerProxy from '../../../../lib/mtproto/mtprotoworker';
-import {useHotReloadGuard} from '../../../../lib/solidjs/hotReloadGuard';
-import {resolveAdminRightFlagI18n} from '../../../sidebarRight/tabs/adminRecentActions/adminRightsI18nResolver';
-import {participantRightsMap} from '../../../sidebarRight/tabs/adminRecentActions/participantRightsMap';
-import {diffFlags} from '../../../sidebarRight/tabs/adminRecentActions/utils';
-import {wrapFormattedDuration} from '../../../wrappers/wrapDuration';
+import {formatDate} from '@helpers/date';
+import {makeDateFromTimestamp} from '@helpers/date/makeDateFromTimestamp';
+import formatDuration from '@helpers/formatDuration';
+import prepareTextWithEntitiesForCopying from '@helpers/prepareTextWithEntitiesForCopying';
+import {ChannelAdminLogEventAction, ChatBannedRights, Message} from '@layer';
+import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
+import {isBannedParticipant} from '@appManagers/utils/chats/isBannedParticipant';
+import removeChatBannedRightsFromParticipant from '@appManagers/utils/chats/removeChatBannedRightsFromParticipant';
+import I18n from '@lib/langPack';
+import type apiManagerProxy from '@lib/apiManagerProxy';
+import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
+import {resolveAdminRightFlagI18n} from '@components/sidebarRight/tabs/adminRecentActions/adminRightsI18nResolver';
+import {participantRightsMap} from '@components/sidebarRight/tabs/adminRecentActions/participantRightsMap';
+import {diffFlags} from '@components/sidebarRight/tabs/adminRecentActions/utils';
+import {wrapFormattedDuration} from '@components/wrappers/wrapDuration';
 
 
 type ApiManagerProxyType = typeof apiManagerProxy;
@@ -198,19 +198,5 @@ export async function createTwoPeerCopyText(
   const peerTitle = await getPeerTitle({peerId, plainText: true});
   const secondPeerTitle = await getPeerTitle({peerId: secondPeerId, plainText: true});
   const text = formatText(peerTitle, secondPeerTitle);
-  return {text: `${text} [${dateText}]`};
-}
-
-export async function createConditionalCopyText(
-  timestamp: number,
-  peerId: PeerId,
-  condition: boolean,
-  formatTexts: (peerTitle: string) => {trueText: string; falseText: string}
-): Promise<CopyTextResult> {
-  const {getPeerTitle} = useHotReloadGuard();
-  const dateText = getDateTextForCopy(timestamp);
-  const peerTitle = await getPeerTitle({peerId, plainText: true});
-  const {trueText, falseText} = formatTexts(peerTitle);
-  const text = condition ? trueText : falseText;
   return {text: `${text} [${dateText}]`};
 }

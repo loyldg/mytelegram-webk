@@ -4,30 +4,30 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {MessagesReactions, type AvailableReaction, type Message, type MessagePeerReaction, type MessagesAvailableReactions, type Reaction, type ReactionCount, type Update, type Updates, ChatReactions, Peer, Document, MessagesSavedReactionTags, SavedReactionTag, AvailableEffect, MessagesAvailableEffects, MessageReactions, PaidReactionPrivacy} from '../../layer';
-import findAndSplice from '../../helpers/array/findAndSplice';
-import indexOfAndSplice from '../../helpers/array/indexOfAndSplice';
-import assumeType from '../../helpers/assumeType';
-import callbackify from '../../helpers/callbackify';
-import callbackifyAll from '../../helpers/callbackifyAll';
-import copy from '../../helpers/object/copy';
-import pause from '../../helpers/schedulers/pause';
-import tsNow from '../../helpers/tsNow';
-import {ReferenceContext} from '../mtproto/referenceDatabase';
-import {AppManager} from './manager';
-import getServerMessageId from './utils/messageId/getServerMessageId';
-import reactionsEqual from './utils/reactions/reactionsEqual';
-import MTProtoMessagePort from '../mtproto/mtprotoMessagePort';
-import availableReactionToReaction from './utils/reactions/availableReactionToReaction';
-import {NULL_PEER_ID, SEND_PAID_REACTION_ANONYMOUS_PEER_ID} from '../mtproto/mtproto_config';
-import insertInDescendSortedArray from '../../helpers/array/insertInDescendSortedArray';
-import {BroadcastEvents} from '../rootScope';
+import {MessagesReactions, type AvailableReaction, type Message, type MessagePeerReaction, type MessagesAvailableReactions, type Reaction, type ReactionCount, type Update, type Updates, ChatReactions, Peer, Document, MessagesSavedReactionTags, SavedReactionTag, AvailableEffect, MessagesAvailableEffects, MessageReactions, PaidReactionPrivacy} from '@layer';
+import findAndSplice from '@helpers/array/findAndSplice';
+import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
+import assumeType from '@helpers/assumeType';
+import callbackify from '@helpers/callbackify';
+import callbackifyAll from '@helpers/callbackifyAll';
+import copy from '@helpers/object/copy';
+import pause from '@helpers/schedulers/pause';
+import tsNow from '@helpers/tsNow';
+import {ReferenceContext} from '@lib/storages/references';
+import {AppManager} from '@appManagers/manager';
+import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import reactionsEqual from '@appManagers/utils/reactions/reactionsEqual';
+import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
+import availableReactionToReaction from '@appManagers/utils/reactions/availableReactionToReaction';
+import {NULL_PEER_ID, SEND_PAID_REACTION_ANONYMOUS_PEER_ID} from '@appManagers/constants';
+import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
+import {BroadcastEvents} from '@lib/rootScope';
 import {md5} from 'js-md5';
-import bytesFromHex from '../../helpers/bytes/bytesFromHex';
-import {bigIntFromBytes} from '../../helpers/bigInt/bigIntConversion';
+import bytesFromHex from '@helpers/bytes/bytesFromHex';
+import {bigIntFromBytes} from '@helpers/bigInt/bigIntConversion';
 import bigInt from 'big-integer';
-import forEachReverse from '../../helpers/array/forEachReverse';
-import fixEmoji from '../richTextProcessor/fixEmoji';
+import forEachReverse from '@helpers/array/forEachReverse';
+import fixEmoji from '@lib/richTextProcessor/fixEmoji';
 
 const SAVE_DOC_KEYS = [
   'static_icon' as const,
@@ -43,6 +43,10 @@ const REFERENCE_CONTEXT: ReferenceContext = {
   type: 'reactions'
 };
 
+const AVAILABLE_EFFECTS_REFERENCE_CONTEXT: ReferenceContext = {
+  type: 'availableEffects'
+};
+
 const REFRESH_TAGS_INTERVAL = 10 * 60e3;
 // const REFRESH_TAGS_INTERVAL = 15e3;
 
@@ -55,7 +59,7 @@ export type PeerAvailableReactions = {
 export type SendReactionOptions = {
   message: Message.message | Message.messageService | ReactionsContext,
   reaction?: Reaction | AvailableReaction,
-  onlyLocal?: boolean,
+  // onlyLocal?: boolean,
   onlyLocalWithUpdate?: boolean,
   onlyReturn?: boolean,
   sendAsPeerId?: PeerId,
@@ -472,14 +476,12 @@ export class AppReactionsManager extends AppManager {
   public async sendReaction({
     message,
     reaction,
-    onlyLocal,
+    // onlyLocal,
     onlyLocalWithUpdate,
     onlyReturn,
     sendAsPeerId,
     count
   }: SendReactionOptions): Promise<MessageReactions> {
-    message = this.appMessagesManager.getMessageByPeer(message.peerId, message.mid) as Message.message;
-
     if(reaction._ === 'availableReaction') {
       reaction = {
         _: 'reactionEmoji',
@@ -492,6 +494,8 @@ export class AppReactionsManager extends AppManager {
       this.apiManager.getLimit('reactions'),
       isPaidReaction && this.getPaidReactionPrivacy()
     ]);
+
+    message = this.appMessagesManager.getMessageByPeer(message.peerId, message.mid) as Message.message;
 
     // const lastSendingTimeKey = message.peerId + '_' + message.mid;
     // const lastSendingTime = this.lastSendingTimes.get(lastSendingTimeKey);
@@ -554,7 +558,7 @@ export class AppReactionsManager extends AppManager {
       };
     }
 
-    let reactions = onlyLocal ? message.reactions : copy(message.reactions);
+    let reactions = /* onlyLocal ? message.reactions :  */copy(message.reactions);
     const chosenReactions = reactions.results.filter((reactionCount) => reactionCount.chosen_order !== undefined && reactionCount.chosen_order >= 0);
     chosenReactions.sort((a, b) => b.chosen_order - a.chosen_order);
     const unsetReactions: ReactionCount[] = [];
@@ -706,15 +710,15 @@ export class AppReactionsManager extends AppManager {
       return reactions;
     }
 
-    if(onlyLocal) {
-      message.reactions = reactions;
-      this.rootScope.dispatchEvent('messages_reactions', [{
-        message: message as Message.message,
-        changedResults: [],
-        removedResults: []
-      }]);
-      return;
-    }
+    // if(onlyLocal) {
+    //   message.reactions = reactions;
+    //   this.rootScope.dispatchEvent('messages_reactions', [{
+    //     message: message as Message.message,
+    //     changedResults: [],
+    //     removedResults: []
+    //   }]);
+    //   return;
+    // }
 
     this.apiUpdatesManager.processLocalUpdate({
       _: 'updateMessageReactions',
@@ -779,7 +783,7 @@ export class AppReactionsManager extends AppManager {
         this.sendReaction({
           message,
           reaction: chosenReactions[0]?.reaction,
-          onlyLocal: true,
+          onlyLocalWithUpdate: true,
           sendAsPeerId
         });
       }
@@ -860,7 +864,7 @@ export class AppReactionsManager extends AppManager {
       processResult: (availableEffects) => {
         assumeType<MessagesAvailableEffects.messagesAvailableEffects>(availableEffects);
         availableEffects.documents.forEach((doc, idx, arr) => {
-          arr[idx] = this.appDocsManager.saveDoc(doc);
+          arr[idx] = this.appDocsManager.saveDoc(doc, AVAILABLE_EFFECTS_REFERENCE_CONTEXT);
         });
 
         availableEffects.effects.forEach((availableEffect) => {
@@ -899,14 +903,12 @@ export class AppReactionsManager extends AppManager {
     }
 
     if(savedPeerId === undefined) {
-      if(message._ === 'messageService') return
       this.processMessageReactionsChanges({
         message,
         changedResults,
         removedResults,
         savedPeerId: this.appPeersManager.getPeerId(message.saved_peer_id)
       });
-      return
     }
 
     const tags = this.savedReactionsTags.get(savedPeerId);
