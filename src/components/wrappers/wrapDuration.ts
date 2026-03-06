@@ -4,9 +4,9 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import I18n, {LangPackKey, i18n, join} from '../../lib/langPack';
-import formatDuration, {DurationType} from '../../helpers/formatDuration';
-import toHHMMSS from '../../helpers/string/toHHMMSS';
+import I18n, {LangPackKey, i18n, join} from '@lib/langPack';
+import formatDuration, {DurationType} from '@helpers/formatDuration';
+import toHHMMSS from '@helpers/string/toHHMMSS';
 
 export const DURATION_LANG_KEYS: {[type in DurationType]: LangPackKey} = {
   [DurationType.Seconds]: 'Seconds',
@@ -21,7 +21,6 @@ export const DURATION_LANG_KEYS: {[type in DurationType]: LangPackKey} = {
 export function wrapFormattedDuration(formatted: ReturnType<typeof formatDuration>, plain: true): string;
 export function wrapFormattedDuration(formatted: ReturnType<typeof formatDuration>, plain?: false): HTMLSpanElement;
 export function wrapFormattedDuration(formatted: ReturnType<typeof formatDuration>, plain?: boolean): string | HTMLSpanElement;
-
 export function wrapFormattedDuration(formatted: ReturnType<typeof formatDuration>, plain?: boolean): string | HTMLSpanElement {
   if(plain) {
     const strings = formatted.map((d) => I18n.format(DURATION_LANG_KEYS[d.type], true, [d.duration]));
@@ -57,4 +56,8 @@ export function wrapSlowModeLeftDuration(timeLeft: number) {
   } else {
     return toHHMMSS(timeLeft, true);
   }
+}
+
+export function wrapStoriesStealthModeDuration(duration: number) {
+  return wrapFormattedDuration(formatDuration(duration, 1));
 }

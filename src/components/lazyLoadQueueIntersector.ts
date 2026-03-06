@@ -4,9 +4,9 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import findAndSpliceAll from '../helpers/array/findAndSpliceAll';
-import LazyLoadQueueBase, {LazyLoadElementBase} from './lazyLoadQueueBase';
-import VisibilityIntersector from './visibilityIntersector';
+import findAndSpliceAll from '@helpers/array/findAndSpliceAll';
+import LazyLoadQueueBase, {LazyLoadElementBase} from '@components/lazyLoadQueueBase';
+import VisibilityIntersector from '@components/visibilityIntersector';
 
 export type LazyLoadElement = Omit<LazyLoadElementBase, 'load'> & {
   load: (target?: HTMLElement) => Promise<any>,
@@ -78,11 +78,11 @@ export default class LazyLoadQueueIntersector extends LazyLoadQueueBase {
   }
 
   public push(el: LazyLoadElement) {
-    super.push(el);
+    return super.push(el);
   }
 
   public unshift(el: LazyLoadElement) {
-    super.unshift(el);
+    return super.unshift(el);
   }
 
   public delete(el: Omit<LazyLoadElement, 'load'>) {

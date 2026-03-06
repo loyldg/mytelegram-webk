@@ -15,8 +15,13 @@ import path from 'path';
 const rootDir = resolve(__dirname);
 const certsDir = path.join(rootDir, 'certs');
 const ENV_LOCAL_FILE_PATH = path.join(rootDir, '.env.local');
+const LANG_PACK_LOCAL_FILE_PATH = path.join(rootDir, 'src', 'langPackLocalVersion.ts');
 
 const isDEV = process.env.NODE_ENV === 'development';
+if(!existsSync(LANG_PACK_LOCAL_FILE_PATH)) {
+  copyFileSync(path.join(rootDir, 'src', 'langPackLocalVersion.example.ts'), LANG_PACK_LOCAL_FILE_PATH);
+}
+
 if(isDEV) {
   if(!existsSync(ENV_LOCAL_FILE_PATH)) {
     copyFileSync(path.join(rootDir, '.env.local.example'), ENV_LOCAL_FILE_PATH);
@@ -71,7 +76,22 @@ const BASIC_SSL_CONFIG: Parameters<typeof basicSsl>[0] = USE_SELF_SIGNED_CERTS ?
 } : undefined;
 
 const ADDITIONAL_ALIASES = {
-  'solid-transition-group': resolve(rootDir, 'src/vendor/solid-transition-group')
+  'solid-transition-group': resolve(rootDir, 'src/vendor/solid-transition-group'),
+  '@components': resolve(rootDir, 'src/components'),
+  '@helpers': resolve(rootDir, 'src/helpers'),
+  '@hooks': resolve(rootDir, 'src/hooks'),
+  '@stores': resolve(rootDir, 'src/stores'),
+  '@lib': resolve(rootDir, 'src/lib'),
+  '@appManagers': resolve(rootDir, 'src/lib/appManagers'),
+  '@richTextProcessor': resolve(rootDir, 'src/lib/richTextProcessor'),
+  '@environment': resolve(rootDir, 'src/environment'),
+  '@customEmoji': resolve(rootDir, 'src/lib/customEmoji'),
+  '@rlottie': resolve(rootDir, 'src/lib/rlottie'),
+  '@config': resolve(rootDir, 'src/config'),
+  '@vendor': resolve(rootDir, 'src/vendor'),
+  '@layer': resolve(rootDir, 'src/layer'),
+  '@types': resolve(rootDir, 'src/types'),
+  '@': resolve(rootDir, 'src')
 };
 
 if(USE_OWN_SOLID) {

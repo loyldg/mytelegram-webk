@@ -6,104 +6,107 @@
 
 /* @refresh reload */
 
-import {animateSingle, cancelAnimationByKey} from '../../helpers/animation';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import overlayCounter from '../../helpers/overlayCounter';
-import throttle from '../../helpers/schedulers/throttle';
-import classNames from '../../helpers/string/classNames';
-import windowSize from '../../helpers/windowSize';
-import {Document, DocumentAttribute, GeoPoint, MediaArea, MessageMedia, Reaction, StoryItem, StoryView, User, Chat as MTChat, AvailableReaction, MessageEntity} from '../../layer';
-import animationIntersector from '../animationIntersector';
-import appNavigationController, {NavigationItem} from '../appNavigationController';
-import PeerTitle from '../peerTitle';
-import SwipeHandler from '../swipeHandler';
-import styles from './viewer.module.scss';
+import {animateSingle, cancelAnimationByKey} from '@helpers/animation';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import overlayCounter from '@helpers/overlayCounter';
+import throttle from '@helpers/schedulers/throttle';
+import classNames from '@helpers/string/classNames';
+import windowSize from '@helpers/windowSize';
+import {Document, DocumentAttribute, GeoPoint, MediaArea, MessageMedia, Reaction, StoryItem, StoryView, User, Chat as MTChat, AvailableReaction, MessageEntity, StoriesStealthMode} from '@layer';
+import animationIntersector from '@components/animationIntersector';
+import appNavigationController, {NavigationItem} from '@components/appNavigationController';
+import PeerTitle from '@components/peerTitle';
+import SwipeHandler from '@components/swipeHandler';
+import styles from '@components/stories/viewer.module.scss';
 import {createSignal, createEffect, JSX, For, Accessor, onCleanup, createMemo, mergeProps, splitProps, untrack, on, getOwner, runWithOwner, createRoot, ParentProps, Signal, onMount, Setter, createReaction, Show, createRenderEffect} from 'solid-js';
 import {unwrap} from 'solid-js/store';
 import {assign, Portal} from 'solid-js/web';
-import rootScope from '../../lib/rootScope';
-import ListenerSetter from '../../helpers/listenerSetter';
-import {Middleware} from '../../helpers/middleware';
-import wrapRichText, {WrapRichTextOptions} from '../../lib/richTextProcessor/wrapRichText';
-import wrapMessageEntities from '../../lib/richTextProcessor/wrapMessageEntities';
-import tsNow from '../../helpers/tsNow';
-import {LangPackKey, i18n, joinElementsWith} from '../../lib/langPack';
-import formatDuration, {DurationType} from '../../helpers/formatDuration';
-import {easeOutCubicApply} from '../../helpers/easing/easeOutCubic';
-import findUpClassName from '../../helpers/dom/findUpClassName';
-import findUpAsChild from '../../helpers/dom/findUpAsChild';
-import {onMediaCaptionClick} from '../appMediaViewer';
-import InputFieldAnimated from '../inputFieldAnimated';
-import ChatInput from '../chat/input';
-import appImManager from '../../lib/appManagers/appImManager';
-import Chat, {ChatType} from '../chat/chat';
-import middlewarePromise from '../../helpers/middlewarePromise';
-import emoticonsDropdown from '../emoticonsDropdown';
-import PopupPickUser from '../popups/pickUser';
-import ButtonMenuToggle from '../buttonMenuToggle';
-import getPeerActiveUsernames from '../../lib/appManagers/utils/peers/getPeerActiveUsernames';
-import {copyTextToClipboard} from '../../helpers/clipboard';
-import {toastNew} from '../toast';
-import debounce from '../../helpers/schedulers/debounce';
-import appDownloadManager from '../../lib/appManagers/appDownloadManager';
-import getMediaFromMessage from '../../lib/appManagers/utils/messages/getMediaFromMessage';
-import confirmationPopup from '../confirmationPopup';
-import {formatDateAccordingToTodayNew, formatFullSentTime} from '../../helpers/date';
-import getVisibleRect from '../../helpers/dom/getVisibleRect';
-import onMediaLoad from '../../helpers/onMediaLoad';
-import {AvatarNew, avatarNew} from '../avatarNew';
-import documentFragmentToNodes from '../../helpers/dom/documentFragmentToNodes';
-import {SERVICE_PEER_ID} from '../../lib/mtproto/mtproto_config';
-import idleController from '../../helpers/idleController';
-import OverlayClickHandler from '../../helpers/overlayClickHandler';
-import getStoryPrivacyType, {StoryPrivacyType} from '../../lib/appManagers/utils/stories/privacyType';
-import wrapPeerTitle from '../wrappers/peerTitle';
-import StackedAvatars from '../stackedAvatars';
-import PopupElement from '../popups';
-import {processDialogElementForReaction} from '../popups/reactedList';
-import IS_TOUCH_SUPPORTED from '../../environment/touchSupport';
-import focusInput from '../../helpers/dom/focusInput';
-import {wrapStoryMedia} from './preview';
-import {StoriesContextPeerState, useStories, StoriesProvider} from './store';
-import createUnifiedSignal from '../../helpers/solid/createUnifiedSignal';
-import setBlankToAnchor from '../../lib/richTextProcessor/setBlankToAnchor';
-import liteMode from '../../helpers/liteMode';
-import Icon from '../icon';
-import {ChatReactionsMenu} from '../chat/reactionsMenu';
-import setCurrentTime from '../../helpers/dom/setCurrentTime';
-import ReactionElement from '../chat/reaction';
-import blurActiveElement from '../../helpers/dom/blurActiveElement';
-import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
-import reactionsEqual from '../../lib/appManagers/utils/reactions/reactionsEqual';
-import wrapSticker from '../wrappers/sticker';
-import createContextMenu from '../../helpers/dom/createContextMenu';
-import isTargetAnInput from '../../helpers/dom/isTargetAnInput';
-import {setQuizHint} from '../poll';
-import {doubleRaf} from '../../helpers/schedulers';
+import rootScope from '@lib/rootScope';
+import ListenerSetter from '@helpers/listenerSetter';
+import {Middleware} from '@helpers/middleware';
+import wrapRichText, {WrapRichTextOptions} from '@lib/richTextProcessor/wrapRichText';
+import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
+import tsNow from '@helpers/tsNow';
+import {LangPackKey, i18n, joinElementsWith} from '@lib/langPack';
+import formatDuration, {DurationType} from '@helpers/formatDuration';
+import {easeOutCubicApply} from '@helpers/easing/easeOutCubic';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import findUpAsChild from '@helpers/dom/findUpAsChild';
+import {onMediaCaptionClick} from '@components/appMediaViewer';
+import InputFieldAnimated from '@components/inputFieldAnimated';
+import ChatInput from '@components/chat/input';
+import appImManager from '@lib/appImManager';
+import Chat, {ChatType} from '@components/chat/chat';
+import middlewarePromise from '@helpers/middlewarePromise';
+import emoticonsDropdown from '@components/emoticonsDropdown';
+import PopupPickUser from '@components/popups/pickUser';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
+import {copyTextToClipboard} from '@helpers/clipboard';
+import {toastNew} from '@components/toast';
+import debounce from '@helpers/schedulers/debounce';
+import appDownloadManager from '@lib/appDownloadManager';
+import getMediaFromMessage from '@appManagers/utils/messages/getMediaFromMessage';
+import confirmationPopup from '@components/confirmationPopup';
+import {formatDateAccordingToTodayNew, formatFullSentTime} from '@helpers/date';
+import getVisibleRect from '@helpers/dom/getVisibleRect';
+import onMediaLoad from '@helpers/onMediaLoad';
+import {AvatarNew, avatarNew} from '@components/avatarNew';
+import documentFragmentToNodes from '@helpers/dom/documentFragmentToNodes';
+import {SERVICE_PEER_ID} from '@appManagers/constants';
+import idleController from '@helpers/idleController';
+import OverlayClickHandler from '@helpers/overlayClickHandler';
+import getStoryPrivacyType, {StoryPrivacyType} from '@appManagers/utils/stories/privacyType';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
+import StackedAvatars from '@components/stackedAvatars';
+import PopupElement from '@components/popups';
+import {processDialogElementForReaction} from '@components/popups/reactedList';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import focusInput from '@helpers/dom/focusInput';
+import {wrapStoryMedia} from '@components/stories/preview';
+import {StoriesContextPeerState, useStories, StoriesProvider} from '@components/stories/store';
+import createUnifiedSignal from '@helpers/solid/createUnifiedSignal';
+import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
+import liteMode from '@helpers/liteMode';
+import Icon from '@components/icon';
+import {ChatReactionsMenu} from '@components/chat/reactionsMenu';
+import setCurrentTime from '@helpers/dom/setCurrentTime';
+import ReactionElement from '@components/chat/reaction';
+import blurActiveElement from '@helpers/dom/blurActiveElement';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import reactionsEqual from '@appManagers/utils/reactions/reactionsEqual';
+import wrapSticker from '@components/wrappers/sticker';
+import createContextMenu from '@helpers/dom/createContextMenu';
+import isTargetAnInput from '@helpers/dom/isTargetAnInput';
+import {setQuizHint} from '@components/poll';
+import {doubleRaf} from '@helpers/schedulers';
 import {resolveFirst} from '@solid-primitives/refs';
-import {IS_MOBILE} from '../../environment/userAgent';
-import formatNumber from '../../helpers/number/formatNumber';
-import callbackify from '../../helpers/callbackify';
-import {dispatchHeavyAnimationEvent} from '../../hooks/useHeavyAnimationCheck';
-import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
-import wrapReply from '../wrappers/reply';
-import getPeerId from '../../lib/appManagers/utils/peers/getPeerId';
-import appSidebarRight from '../sidebarRight';
-import AppStatisticsTab from '../sidebarRight/tabs/statistics';
-import getStoryRepostInfo from '../../lib/appManagers/utils/stories/repostInfo';
-import anchorCallback from '../../helpers/dom/anchorCallback';
-import {ButtonIconTsx} from '../buttonIconTsx';
-import {IconTsx} from '../iconTsx';
+import {IS_MOBILE} from '@environment/userAgent';
+import formatNumber from '@helpers/number/formatNumber';
+import callbackify from '@helpers/callbackify';
+import {dispatchHeavyAnimationEvent} from '@hooks/useHeavyAnimationCheck';
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
+import wrapReply from '@components/wrappers/reply';
+import getPeerId from '@appManagers/utils/peers/getPeerId';
+import appSidebarRight from '@components/sidebarRight';
+import AppStatisticsTab from '@components/sidebarRight/tabs/statistics';
+import getStoryRepostInfo from '@appManagers/utils/stories/repostInfo';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import {ButtonIconTsx} from '@components/buttonIconTsx';
+import {IconTsx} from '@components/iconTsx';
 import {Transition} from 'solid-transition-group';
-import {TransitionGroup} from '../../helpers/solid/transitionGroup';
-import makeGoogleMapsUrl from '../../helpers/makeGoogleMapsUrl';
-import createMiddleware from '../../helpers/solid/createMiddleware';
-import showTooltip from '../tooltip';
-import safeWindowOpen from '../../helpers/dom/safeWindowOpen';
-import wrapUrl from '../../lib/richTextProcessor/wrapUrl';
-import PopupReportAd from '../popups/reportAd';
-import {useAppSettings} from '../../stores/appSettings';
-import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '../chat/paidMessagesInterceptor';
+import {TransitionGroup} from '@helpers/solid/transitionGroup';
+import makeGoogleMapsUrl from '@helpers/makeGoogleMapsUrl';
+import createMiddleware from '@helpers/solid/createMiddleware';
+import showTooltip from '@components/tooltip';
+import safeWindowOpen from '@helpers/dom/safeWindowOpen';
+import wrapUrl from '@lib/richTextProcessor/wrapUrl';
+import PopupReportAd from '@components/popups/reportAd';
+import {useAppSettings} from '@stores/appSettings';
+import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '@components/chat/paidMessagesInterceptor';
+import showStoriesStealthModePopup from '@components/popups/storiesStealthMode';
+import {useAppConfig} from '@stores/appState';
+import {wrapFormattedDuration, wrapStoriesStealthModeDuration} from '@components/wrappers/wrapDuration';
 
 export const STORY_DURATION = 5e3;
 const STORY_HEADER_AVATAR_SIZE = 32;
@@ -505,6 +508,11 @@ const StoryInput = (props: {
         input.setReplyTo({
           replyToStoryId: props.currentStory().id
         });
+      });
+
+      createEffect(async() => {
+        chat.stealthMode = stories.stealthMode;
+        input.updateMessageInputPlaceholder(await input.getPlaceholderParams());
       });
     });
   });
@@ -2198,6 +2206,30 @@ const Stories = (props: {
         return !!(story?._ === 'storyItem' && !story.pFlags.noforwards && rootScope.premium);
       }
     }, {
+      icon: 'eyecross_outline',
+      text: 'Stories.StealthMode.View',
+      onClick: () => {
+        ignoreOnClose = true;
+        const appConfig = useAppConfig();
+        const onAnyPopupClose = bindOnAnyPopupClose(wasPlaying);
+        showStoriesStealthModePopup({
+          onActivate: () => {
+            setQuizHint({
+              title: i18n('Stories.StealthMode.Activated.Title'),
+              textElement: i18n('Stories.StealthMode.Activated.Subtitle', [
+                wrapStoriesStealthModeDuration(appConfig.stories_stealth_future_period),
+                wrapStoriesStealthModeDuration(appConfig.stories_stealth_past_period)
+              ]),
+              appendTo: storyDiv,
+              from: 'bottom',
+              duration: 8000,
+              icon: 'checkround_filled'
+            });
+          },
+          onClose: onAnyPopupClose
+        });
+      }
+    }, {
       icon: 'archive',
       text: 'ArchivePeerStories',
       onClick: () => togglePeerHidden(true),
@@ -2539,7 +2571,12 @@ const Stories = (props: {
   //   }
   // });
 
-  const onProfileClick = () => {
+  const onProfileClick = (e: MouseEvent) => {
+    // * I'm handling it elsewhere
+    if(findUpClassName(e.target, styles.ViewerStoryHeaderRepost)) {
+      return;
+    }
+
     const peerId = props.state.peerId;
     props.close(() => {
       appImManager.setInnerPeer({peerId});
@@ -2634,8 +2671,9 @@ const Stories = (props: {
             return;
           }
 
-          const {fwdFrom, mediaAreaChannelPost} = repostInfo
+          const {fwdFrom, mediaAreaChannelPost} = repostInfo;
           if(fwdFrom?.from || mediaAreaChannelPost) {
+            e.stopPropagation();
             props.close(() => {
               const peerId = fwdFrom ? getPeerId(fwdFrom.from) : mediaAreaChannelPost.channel_id.toPeerId(true);
               if(fwdFrom?.story_id && !findUpClassName(e.target, styles.ViewerStoryHeaderRepost)) {

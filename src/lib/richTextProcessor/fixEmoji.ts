@@ -4,7 +4,7 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {MessageEntity} from '../../layer';
+import {MessageEntity} from '@layer';
 
 export default function fixEmoji(text: string, entities?: MessageEntity[]) {
   /* if(!IS_EMOJI_SUPPORTED) {
@@ -32,4 +32,9 @@ export default function fixEmoji(text: string, entities?: MessageEntity[]) {
   });
 
   return text;
+}
+
+// * convert '❤️' to '❤' for server compatibility
+export function cleanEmoji(emoji: string) {
+  return emoji.replace(/\ufe0f/g, '').replace(/🏻|🏼|🏽|🏾|🏿/g, '');
 }

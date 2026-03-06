@@ -9,90 +9,90 @@
  * https://github.com/zhukov/webogram/blob/master/LICENSE
  */
 
-import type {ApiFileManager} from '../mtproto/apiFileManager';
-import type {MediaSize} from '../../helpers/mediaSize';
-import type {Progress} from './appDownloadManager';
-import type {VIDEO_MIME_TYPE} from '../../environment/videoMimeTypesSupport';
-import type {Mirrors} from '../mtproto/mtprotoworker';
-import LazyLoadQueueBase from '../../components/lazyLoadQueueBase';
-import deferredPromise, {CancellablePromise} from '../../helpers/cancellablePromise';
-import tsNow from '../../helpers/tsNow';
-import {randomLong} from '../../helpers/random';
-import {Chat, ChatFull, Dialog as MTDialog, DialogPeer, DocumentAttribute, InputMedia, InputMessage, InputPeerNotifySettings, InputSingleMedia, Message, MessageAction, MessageEntity, MessageFwdHeader, MessageMedia, MessageReplies, MessageReplyHeader, MessagesDialogs, MessagesFilter, MessagesMessages, MethodDeclMap, NotifyPeer, PeerNotifySettings, PhotoSize, SendMessageAction, Update, Photo, Updates, ReplyMarkup, InputPeer, InputPhoto, InputDocument, InputGeoPoint, WebPage, GeoPoint, ReportReason, MessagesGetDialogs, InputChannel, InputDialogPeer, ReactionCount, MessagePeerReaction, MessagesSearchCounter, Peer, MessageReactions, Document, InputFile, Reaction, ForumTopic as MTForumTopic, MessagesForumTopics, MessagesGetReplies, MessagesGetHistory, MessagesAffectedHistory, UrlAuthResult, MessagesTranscribedAudio, ReadParticipantDate, WebDocument, MessagesSearch, MessagesSearchGlobal, InputReplyTo, InputUser, MessagesSendMessage, MessagesSendMedia, MessagesGetSavedHistory, MessagesSavedDialogs, SavedDialog as MTSavedDialog, User, MissingInvitee, TextWithEntities, ChannelsSearchPosts, FactCheck, MessageExtendedMedia, SponsoredMessage, MessagesSponsoredMessages, InputGroupCall, TodoItem, TodoCompletion} from '../../layer';
-import {ArgumentTypes, InvokeApiOptions, Modify} from '../../types';
-import {logger, LogTypes} from '../logger';
-import {ReferenceContext} from '../mtproto/referenceDatabase';
-import {AnyDialog, FilterType, GLOBAL_FOLDER_ID} from '../storages/dialogs';
-import {ChatRights} from './appChatsManager';
-import {MyDocument} from './appDocsManager';
-import {MyPhoto} from './appPhotosManager';
-import DEBUG from '../../config/debug';
-import SlicedArray, {Slice, SliceEnd} from '../../helpers/slicedArray';
-import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, GENERAL_TOPIC_ID, HIDDEN_PEER_ID, MESSAGES_ALBUM_MAX_SIZE, MUTE_UNTIL, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SERVICE_PEER_ID, TEST_NO_SAVED, THUMB_TYPE_FULL, TOPIC_COLORS} from '../mtproto/mtproto_config';
-import {getMiddleware} from '../../helpers/middleware';
-import assumeType from '../../helpers/assumeType';
-import copy from '../../helpers/object/copy';
-import getObjectKeysAndSort from '../../helpers/object/getObjectKeysAndSort';
-import forEachReverse from '../../helpers/array/forEachReverse';
-import deepEqual from '../../helpers/object/deepEqual';
-import splitStringByLength from '../../helpers/string/splitStringByLength';
-import debounce from '../../helpers/schedulers/debounce';
-import {AppManager} from './manager';
-import getPhotoMediaInput from './utils/photos/getPhotoMediaInput';
-import parseMarkdown from '../richTextProcessor/parseMarkdown';
-import getServerMessageId from './utils/messageId/getServerMessageId';
-import filterMessagesByInputFilter from './utils/messages/filterMessagesByInputFilter';
-import ctx from '../../environment/ctx';
-import {getEnvironment} from '../../environment/utils';
-import getDialogIndex from './utils/dialogs/getDialogIndex';
-import defineNotNumerableProperties from '../../helpers/object/defineNotNumerableProperties';
-import getDocumentMediaInput from './utils/docs/getDocumentMediaInput';
-import getFileNameForUpload from '../../helpers/getFileNameForUpload';
-import noop from '../../helpers/noop';
-import appTabsManager from './appTabsManager';
-import MTProtoMessagePort from '../mtproto/mtprotoMessagePort';
-import getGroupedText from './utils/messages/getGroupedText';
-import pause from '../../helpers/schedulers/pause';
-import makeError from '../../helpers/makeError';
-import getStickerEffectThumb from './utils/stickers/getStickerEffectThumb';
-import getDocumentInput from './utils/docs/getDocumentInput';
-import reactionsEqual from './utils/reactions/reactionsEqual';
-import getPeerActiveUsernames from './utils/peers/getPeerActiveUsernames';
-import {BroadcastEvents} from '../rootScope';
-import setBooleanFlag from '../../helpers/object/setBooleanFlag';
-import getMessageThreadId from './utils/messages/getMessageThreadId';
-import callbackify from '../../helpers/callbackify';
-import wrapMessageEntities from '../richTextProcessor/wrapMessageEntities';
-import isLegacyMessageId from './utils/messageId/isLegacyMessageId';
-import {joinDeepPath} from '../../helpers/object/setDeepProperty';
-import insertInDescendSortedArray from '../../helpers/array/insertInDescendSortedArray';
-import {LOCAL_ENTITIES} from '../richTextProcessor';
-import {isDialog, isSavedDialog, isForumTopic, isMonoforumDialog} from './utils/dialogs/isDialog';
-import getDialogKey from './utils/dialogs/getDialogKey';
-import getHistoryStorageKey, {getSearchStorageFilterKey} from './utils/messages/getHistoryStorageKey';
-import {ApiLimitType} from '../mtproto/api_methods';
-import getFwdFromName from './utils/messages/getFwdFromName';
-import filterUnique from '../../helpers/array/filterUnique';
-import getSearchType from './utils/messages/getSearchType';
-import getMainGroupedMessage from './utils/messages/getMainGroupedMessage';
-import getUnreadReactions from './utils/messages/getUnreadReactions';
-import isMentionUnread from './utils/messages/isMentionUnread';
-import canMessageHaveFactCheck from './utils/messages/canMessageHaveFactCheck';
-import commonStateStorage from '../commonStateStorage';
-import PaidMessagesQueue from './utils/messages/paidMessagesQueue';
-import type {ConfirmedPaymentResult} from '../../components/chat/paidMessagesInterceptor';
-import RepayRequestHandler, {RepayRequest} from '../mtproto/repayRequestHandler';
-import canVideoBeAnimated from './utils/docs/canVideoBeAnimated';
-import getPhotoInput from './utils/photos/getPhotoInput';
-import {BatchProcessor} from '../../helpers/sortedList';
-import {increment, MonoforumDialog} from '../storages/monoforumDialogs';
-import formatStarsAmount from './utils/payments/formatStarsAmount';
-import {makeMessageMediaInputForSuggestedPost} from './utils/messages/makeMessageMediaInput';
-import createObservedState, {wrapObject} from '../../helpers/createObservedState';
-import createHistoryStorage, {createHistoryStorageSearchSlicedArray} from './utils/messages/createHistoryStorage';
-import {isTempId} from './utils/messages/isTempId';
-import fitSymbols from '../../helpers/string/fitSymbols';
-import isObject from '../../helpers/object/isObject';
+import type {ApiFileManager} from '@appManagers/apiFileManager';
+import type {MediaSize} from '@helpers/mediaSize';
+import type {Progress} from '@lib/appDownloadManager';
+import type {VIDEO_MIME_TYPE} from '@environment/videoMimeTypesSupport';
+import type {Mirrors} from '@lib/apiManagerProxy';
+import LazyLoadQueueBase from '@components/lazyLoadQueueBase';
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
+import tsNow from '@helpers/tsNow';
+import {randomLong} from '@helpers/random';
+import {Chat, ChatFull, Dialog as MTDialog, DialogPeer, DocumentAttribute, InputMedia, InputMessage, InputPeerNotifySettings, InputSingleMedia, Message, MessageAction, MessageEntity, MessageFwdHeader, MessageMedia, MessageReplies, MessageReplyHeader, MessagesDialogs, MessagesFilter, MessagesMessages, MethodDeclMap, NotifyPeer, PeerNotifySettings, PhotoSize, SendMessageAction, Update, Photo, Updates, ReplyMarkup, InputPeer, InputPhoto, InputDocument, InputGeoPoint, WebPage, GeoPoint, ReportReason, MessagesGetDialogs, InputChannel, InputDialogPeer, ReactionCount, MessagePeerReaction, MessagesSearchCounter, Peer, MessageReactions, Document, InputFile, Reaction, ForumTopic as MTForumTopic, MessagesForumTopics, MessagesGetReplies, MessagesGetHistory, MessagesAffectedHistory, UrlAuthResult, MessagesTranscribedAudio, ReadParticipantDate, WebDocument, MessagesSearch, MessagesSearchGlobal, InputReplyTo, InputUser, MessagesSendMessage, MessagesSendMedia, MessagesGetSavedHistory, MessagesSavedDialogs, SavedDialog as MTSavedDialog, User, MissingInvitee, TextWithEntities, ChannelsSearchPosts, FactCheck, MessageExtendedMedia, SponsoredMessage, MessagesSponsoredMessages, InputGroupCall, TodoItem, TodoCompletion, SearchPostsFlood} from '@layer';
+import {ArgumentTypes, InvokeApiOptions, Modify} from '@types';
+import {logger, LogTypes} from '@lib/logger';
+import {ReferenceContext} from '@lib/storages/references';
+import {AnyDialog, FilterType, GLOBAL_FOLDER_ID} from '@lib/storages/dialogs';
+import {ChatRights} from '@appManagers/appChatsManager';
+import {MyDocument} from '@appManagers/appDocsManager';
+import {MyPhoto} from '@appManagers/appPhotosManager';
+import DEBUG from '@config/debug';
+import SlicedArray, {Slice, SliceEnd} from '@helpers/slicedArray';
+import {FOLDER_ID_ALL, FOLDER_ID_ARCHIVE, GENERAL_TOPIC_ID, HIDDEN_PEER_ID, MESSAGES_ALBUM_MAX_SIZE, MUTE_UNTIL, NULL_PEER_ID, REAL_FOLDERS, REAL_FOLDER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SERVICE_PEER_ID, TEST_NO_SAVED, THUMB_TYPE_FULL, TOPIC_COLORS} from '@appManagers/constants';
+import {getMiddleware} from '@helpers/middleware';
+import assumeType from '@helpers/assumeType';
+import copy from '@helpers/object/copy';
+import getObjectKeysAndSort from '@helpers/object/getObjectKeysAndSort';
+import forEachReverse from '@helpers/array/forEachReverse';
+import deepEqual from '@helpers/object/deepEqual';
+import splitStringByLength from '@helpers/string/splitStringByLength';
+import debounce from '@helpers/schedulers/debounce';
+import {AppManager} from '@appManagers/manager';
+import getPhotoMediaInput from '@appManagers/utils/photos/getPhotoMediaInput';
+import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
+import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import filterMessagesByInputFilter from '@appManagers/utils/messages/filterMessagesByInputFilter';
+import ctx from '@environment/ctx';
+import {getEnvironment} from '@environment/utils';
+import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
+import defineNotNumerableProperties from '@helpers/object/defineNotNumerableProperties';
+import getDocumentMediaInput from '@appManagers/utils/docs/getDocumentMediaInput';
+import getFileNameForUpload from '@helpers/getFileNameForUpload';
+import noop from '@helpers/noop';
+import appTabsManager from '@appManagers/appTabsManager';
+import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
+import getGroupedText from '@appManagers/utils/messages/getGroupedText';
+import pause from '@helpers/schedulers/pause';
+import makeError from '@helpers/makeError';
+import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
+import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
+import reactionsEqual from '@appManagers/utils/reactions/reactionsEqual';
+import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
+import {BroadcastEvents} from '@lib/rootScope';
+import setBooleanFlag from '@helpers/object/setBooleanFlag';
+import getMessageThreadId from '@appManagers/utils/messages/getMessageThreadId';
+import callbackify from '@helpers/callbackify';
+import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
+import isLegacyMessageId from '@appManagers/utils/messageId/isLegacyMessageId';
+import {joinDeepPath} from '@helpers/object/setDeepProperty';
+import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
+import {LOCAL_ENTITIES} from '@lib/richTextProcessor';
+import {isDialog, isSavedDialog, isForumTopic, isMonoforumDialog} from '@appManagers/utils/dialogs/isDialog';
+import getDialogKey from '@appManagers/utils/dialogs/getDialogKey';
+import getHistoryStorageKey, {getSearchStorageFilterKey} from '@appManagers/utils/messages/getHistoryStorageKey';
+import {ApiLimitType} from '@appManagers/apiManagerMethods';
+import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
+import filterUnique from '@helpers/array/filterUnique';
+import getSearchType from '@appManagers/utils/messages/getSearchType';
+import getMainGroupedMessage from '@appManagers/utils/messages/getMainGroupedMessage';
+import getUnreadReactions from '@appManagers/utils/messages/getUnreadReactions';
+import isMentionUnread from '@appManagers/utils/messages/isMentionUnread';
+import canMessageHaveFactCheck from '@appManagers/utils/messages/canMessageHaveFactCheck';
+import commonStateStorage from '@lib/commonStateStorage';
+import PaidMessagesQueue from '@appManagers/utils/messages/paidMessagesQueue';
+import type {ConfirmedPaymentResult} from '@components/chat/paidMessagesInterceptor';
+import RepayRequestHandler, {RepayRequest} from '@appManagers/utils/repayRequestHandler';
+import getPhotoInput from '@appManagers/utils/photos/getPhotoInput';
+import {BatchProcessor} from '@helpers/sortedList';
+import {increment, MonoforumDialog} from '@lib/storages/monoforumDialogs';
+import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
+import {makeMessageMediaInputForSuggestedPost} from '@appManagers/utils/messages/makeMessageMediaInput';
+import createObservedState, {wrapObject} from '@helpers/createObservedState';
+import createHistoryStorage, {createHistoryStorageSearchSlicedArray} from '@appManagers/utils/messages/createHistoryStorage';
+import {isTempId} from '@appManagers/utils/messages/isTempId';
+import fitSymbols from '@helpers/string/fitSymbols';
+import isObject from '@helpers/object/isObject';
+import pickKeys from '@helpers/object/pickKeys';
 
 // console.trace('include');
 // TODO: если удалить диалог находясь в папке, то он не удалится из папки и будет виден в настройках
@@ -101,6 +101,7 @@ const DO_NOT_READ_HISTORY = false;
 const DO_NOT_SEND_MESSAGES = false;
 const SEND_MESSAGES_TO_PAID_QUEUE = false;
 const DO_NOT_DELETE_MESSAGES = false;
+const FETCH_TARGETED_MESSAGE = false;
 
 const GLOBAL_HISTORY_PEER_ID = NULL_PEER_ID;
 const TOPIC_TITLE_MAX_LENGTH = 16;
@@ -131,7 +132,11 @@ export type SendFileDetails = {
     size: MediaSize
   },
   strippedBytes: PhotoSize.photoStrippedSize['bytes'],
-  spoiler: boolean
+  spoiler: boolean,
+  /**
+   * If it's a GIF (looped)
+   */
+  isAnimated: boolean,
 }>;
 
 export type HistoryStorageKey = `${HistoryStorage['type']}_${PeerId}` | `replies_${PeerId}_${number}` | `search_${PeerId}_${SearchStorageFilterKey}_${number}`;
@@ -170,7 +175,8 @@ export type HistoryResult = {
   isEnd: ReturnType<Slice<number>['getEnds']>,
   offsetIdOffset?: number,
   nextRate?: number,
-  messages?: MyMessage[]
+  messages?: MyMessage[],
+  flood?: SearchPostsFlood
 };
 
 export type Dialog = MTDialog.dialog;
@@ -298,6 +304,8 @@ export type RequestHistoryOptions = {
   needRealOffsetIdOffset?: boolean,
   fromPeerId?: PeerId,
   isPublicHashtag?: boolean,
+  isPublicPosts?: boolean,
+  allowStars?: Long,
   isCacheableSearch?: boolean,
   hashtagType?: 'this' | 'my' | 'public',
   chatType?: 'all' | 'users' | 'groups' | 'channels',
@@ -391,6 +399,70 @@ type GenerateTypingBotforumMessageArgs = {
   peerId: PeerId;
   threadId: number;
   action: SendMessageAction.sendMessageTextDraftAction;
+};
+
+type SendFileArgs = MessageSendingParams & SendFileDetails & Partial<{
+  isRoundMessage: boolean,
+  isVoiceMessage: boolean,
+  isGroupedItem: boolean,
+  isMedia: boolean,
+
+  groupId: string,
+  caption: string,
+  entities: MessageEntity[],
+  background: boolean,
+  clearDraft: boolean,
+  noSound: boolean,
+
+  waveform: Uint8Array,
+
+  stars: number,
+  groupedMessage: Message.message,
+  useTempMediaId: boolean,
+
+  // ! only for internal use
+  processAfter?: typeof processAfter
+}>;
+
+type MakeDocumentAndMetaForSendingFileArgs = Pick<SendFileArgs,
+  | 'file'
+  | 'strippedBytes'
+  | 'entities'
+  | 'useTempMediaId'
+  | 'isVoiceMessage'
+  | 'width'
+  | 'height'
+  | 'objectURL'
+  | 'waveform'
+  | 'duration'
+  | 'isMedia'
+  | 'isRoundMessage'
+  | 'noSound'
+  | 'thumb'
+  | 'isAnimated'
+> & {
+  mediaTempId: number;
+  isDocument: boolean;
+};
+
+type EditMessageMediaArgs = {
+  message: Message.message;
+  text: string;
+  sendFileDetails: SendFileDetails;
+  options?: Partial<{
+    newMedia: InputMedia;
+    scheduleDate: number;
+    entities: MessageEntity[];
+    isMedia: boolean;
+  }> & Partial<Pick<Parameters<AppMessagesManager['sendText']>[0], 'webPage' | 'webPageOptions' | 'noWebPage' | 'invertMedia'>>
+};
+
+type InvokeEditMessageMediaArgs = {
+  message: Message.message;
+  inputMedia: InputMedia;
+  entities?: MessageEntity[];
+  scheduleDate?: number;
+  invertMedia?: boolean;
 };
 
 type MessageContext = {searchStorages?: Set<HistoryStorage>};
@@ -507,6 +579,12 @@ export class AppMessagesManager extends AppManager {
   private repayRequestHandler: RepayRequestHandler;
 
   private typingBotforumMessages: Map<PeerId, Set<string>> = new Map();
+
+  private pendingEditingMessages: Map<number, {
+    canceled?: boolean;
+    mediaTempId: number;
+    originalMessage: Message.message;
+  }> = new Map();
 
   constructor() {
     super();
@@ -743,6 +821,7 @@ export class AppMessagesManager extends AppManager {
     this.references = {};
     this.waitingTranscriptions = new Map();
     this.pendingNewBotforumTopics = {};
+    this.pendingEditingMessages = new Map();
 
     this.dialogsStorage && this.dialogsStorage.clear(init);
     this.filtersStorage && this.filtersStorage.clear(init);
@@ -835,6 +914,291 @@ export class AppMessagesManager extends AppManager {
     });
   }
 
+  public async editMessageMedia({message, text, sendFileDetails, options = {}}: EditMessageMediaArgs) {
+    let {file} = sendFileDetails;
+    const {peerId} = message;
+
+    const originalMessage = structuredClone(message);
+
+    const isDocument = !(file instanceof File) && !(file instanceof Blob);
+    if(isDocument) {
+      file = this.appDocsManager.getDoc((file as MyDocument).id) || file;
+    }
+
+    let caption = text || '';
+
+    let entities = options.entities || [];
+    if(caption) {
+      [caption, entities] = parseMarkdown(caption, entities);
+    }
+
+    const mediaTempId = this.mediaTempId++;
+
+    const {photo, document, attachType, actionName, fileType, apiFileName, attributes} = this.makeDocumentAndMetaForSendingFile({
+      file,
+      isDocument,
+      mediaTempId,
+      entities,
+      isMedia: options.isMedia,
+      ...pickKeys(sendFileDetails, [
+        'strippedBytes',
+        'width',
+        'height',
+        'objectURL',
+        'duration',
+        'thumb',
+        'isAnimated'
+      ])
+    });
+
+    const sentDeferred = deferredPromise<InputMedia>();
+
+    const uploadingFileName = !isDocument ? getFileNameForUpload(file as File | Blob) : undefined;
+    if(uploadingFileName) {
+      this.uploadFilePromises[uploadingFileName] = sentDeferred;
+    }
+
+    const media: MessageMedia = isDocument ? undefined : {
+      _: photo ? 'messageMediaPhoto' : 'messageMediaDocument',
+      pFlags: {},
+      // preloader,
+      photo,
+      document
+    };
+
+
+    if(options.invertMedia) {
+      message.pFlags.invert_media = true;
+    }
+
+    message.entities = entities;
+    message.message = caption;
+    message.media = isDocument ? {
+      _: 'messageMediaDocument',
+      pFlags: {},
+      document: file
+    } as MessageMedia.messageMediaDocument : media;
+    message.uploadingFileName = [uploadingFileName];
+
+    let
+      uploaded = false,
+      uploadPromise: ReturnType<ApiFileManager['upload']> = null
+    ;
+
+    const upload = () => {
+      if(isDocument) {
+        const inputMedia: InputMedia = {
+          _: 'inputMediaDocument',
+          id: getDocumentInput(file as MyDocument),
+          pFlags: {}
+        };
+
+        sentDeferred.resolve(inputMedia);
+      } else if(file instanceof File || file instanceof Blob) {
+        const load = () => {
+          if(!uploaded || message?.error) {
+            uploaded = false;
+
+            uploadPromise = this.apiFileManager.upload({file, fileName: uploadingFileName});
+            uploadPromise.catch((err) => {
+              if(uploaded) {
+                return;
+              }
+
+              this.log('cancelling upload', media);
+
+              // this.setTyping(peerId, {_: 'sendMessageCancelAction'}, undefined, options.threadId);
+              sentDeferred.reject(err);
+            });
+
+            uploadPromise.addNotifyListener((progress: Progress) => {
+              /* if(DEBUG) {
+                this.log('upload progress', progress);
+              } */
+
+              const percents = Math.max(1, Math.floor(100 * progress.done / progress.total));
+              // if(actionName) {
+              //   this.setTyping(peerId, {_: actionName, progress: percents | 0}, undefined, options.threadId);
+              // }
+              sentDeferred.notifyAll(progress);
+            });
+
+            sentDeferred.notifyAll({done: 0, total: file.size});
+          }
+
+          let thumbUploadPromise: ReturnType<typeof this.uploadThumbAndCover>;
+          if(attachType === 'video' && sendFileDetails.objectURL && sendFileDetails.thumb?.blob) {
+            thumbUploadPromise = this.uploadThumbAndCover({
+              blob: sendFileDetails.thumb.blob,
+              isCover: !!sendFileDetails.thumb.isCover,
+              peer: this.appPeersManager.getInputPeerById(peerId)
+            });
+          }
+
+          uploadPromise && uploadPromise.then(async(inputFile) => {
+            /* if(DEBUG) {
+              this.log('appMessagesManager: sendFile uploaded:', inputFile);
+            } */
+
+            (inputFile as InputFile.inputFile).name = apiFileName;
+            uploaded = true;
+            let inputMedia: InputMedia;
+            switch(attachType) {
+              case 'photo':
+                inputMedia = {
+                  _: 'inputMediaUploadedPhoto',
+                  file: inputFile,
+                  pFlags: {
+                    spoiler: sendFileDetails.spoiler || undefined
+                  }
+                };
+                break;
+
+              default:
+                inputMedia = {
+                  _: 'inputMediaUploadedDocument',
+                  file: inputFile,
+                  mime_type: fileType,
+                  pFlags: {
+                    force_file: actionName === 'sendMessageUploadDocumentAction' || undefined,
+                    spoiler: sendFileDetails.spoiler || undefined
+                    // nosound_video: options.noSound ? true : undefined
+                  },
+                  attributes
+                };
+            }
+
+            // if(options.stars && !options.isGroupedItem) {
+            //   inputMedia = {
+            //     _: 'inputMediaPaidMedia',
+            //     extended_media: [inputMedia],
+            //     stars_amount: '' + options.stars
+            //   };
+            // }
+
+            if(thumbUploadPromise) {
+              try {
+                const thumbUploadResult = await thumbUploadPromise;
+                assumeType<InputMedia.inputMediaUploadedDocument>(inputMedia);
+
+                inputMedia.thumb = thumbUploadResult.file;
+                inputMedia.video_cover = thumbUploadResult.coverPhoto;
+              } catch(err) {
+                this.log.error('sendFile thumb upload error:', err);
+              }
+            }
+
+            sentDeferred.resolve(inputMedia);
+          }, (error: ApiError) => {
+            this.revertMessageEdit(message.mid);
+          });
+
+          return sentDeferred;
+        };
+
+        load();
+        // if(options.isGroupedItem) {
+        // } else {
+        //   this.sendSmthLazyLoadQueue.push({
+        //     load
+        //   });
+        // }
+      }
+
+      return sentDeferred;
+    };
+
+    upload();
+
+    this.runTempUpdateForMessageEdit(message);
+
+    // Needs to be after the updateEditMessage event
+    this.pendingEditingMessages.set(message.mid, {
+      originalMessage,
+      mediaTempId
+    });
+
+    const inputMedia = await sentDeferred;
+
+    const callInvoke = (message: Message.message) => this.invokeEditMessageMedia({
+      message,
+      inputMedia,
+      entities,
+      scheduleDate: options.scheduleDate,
+      invertMedia: options.invertMedia
+    });
+
+    if(!message.pFlags.is_outgoing) {
+      return callInvoke(message);
+    }
+
+    return this.invokeAfterMessageIsSent(message.mid, 'edit', (message) => {
+      if(message?._ !== 'message') return;
+      return callInvoke(message);
+    });
+  }
+
+  private runTempUpdateForMessageEdit(message: Message.message) {
+    if(message.pFlags?.is_scheduled) {
+      this.onUpdateNewScheduledMessage({
+        _: 'updateNewScheduledMessage',
+        message
+      });
+    } else {
+      this.onUpdateEditMessage({
+        _:  'updateEditMessage',
+        message,
+        pts: 0,
+        pts_count: 0
+      });
+    }
+  }
+
+  private invokeEditMessageMedia({message, inputMedia, entities, scheduleDate, invertMedia}: InvokeEditMessageMediaArgs) {
+    const sendEntities = this.getInputEntities(entities);
+
+    const schedule_date = scheduleDate || (message.pFlags.is_scheduled ? message.date : undefined);
+    return this.apiManager.invokeApi('messages.editMessage', {
+      peer: this.appPeersManager.getInputPeerById(message.peerId),
+      id: message.id,
+      message: message.message,
+      entities: sendEntities,
+      media: inputMedia,
+      schedule_date,
+      invert_media: invertMedia
+    }).then((updates) => {
+      this.apiUpdatesManager.processUpdateMessage(updates);
+    }, (error: ApiError) => {
+      this.log.error('editMessage error:', error);
+
+      this.revertMessageEdit(message.mid);
+
+      if(error?.type === 'MESSAGE_NOT_MODIFIED') {
+        error.handled = true;
+        return;
+      }
+
+      if(error?.type === 'MESSAGE_EMPTY') {
+        error.handled = true;
+      }
+
+      throw error;
+    }).finally(() => {
+      this.pendingEditingMessages.delete(message.mid);
+    });
+  }
+
+  private revertMessageEdit(mid: number) {
+    const pending = this.pendingEditingMessages.get(mid);
+    if(!pending) return;
+
+    pending.canceled = true;
+
+    this.runTempUpdateForMessageEdit(pending.originalMessage);
+
+    this.pendingEditingMessages.delete(mid);
+  }
+
   public async transcribeAudio(message: Message.message, noPending?: boolean): Promise<MessagesTranscribedAudio> {
     const {id, peerId} = message;
 
@@ -916,7 +1280,21 @@ export class AppMessagesManager extends AppManager {
 
     this.checkSendOptions(options);
 
-    const config = await this.apiManager.getConfig();
+    const [config, appConfig] = await Promise.all([
+      this.apiManager.getConfig(),
+      this.apiManager.getAppConfig()
+    ]);
+
+    if(appConfig.emojies_send_dice?.includes(text.trim())) {
+      return this.sendOther({
+        ...options,
+        inputMedia: {
+          _: 'inputMediaDice',
+          emoticon: text.trim()
+        }
+      });
+    }
+
     const MAX_LENGTH = config.message_length_max;
     const splitted = splitStringByLength(text, MAX_LENGTH);
     text = splitted[0];
@@ -1107,28 +1485,7 @@ export class AppMessagesManager extends AppManager {
     return Promise.all(promises).then(noop);
   }
 
-  public sendFile(options: MessageSendingParams & SendFileDetails & Partial<{
-    isRoundMessage: boolean,
-    isVoiceMessage: boolean,
-    isGroupedItem: boolean,
-    isMedia: boolean,
-
-    groupId: string,
-    caption: string,
-    entities: MessageEntity[],
-    background: boolean,
-    clearDraft: boolean,
-    noSound: boolean,
-
-    waveform: Uint8Array,
-
-    stars: number,
-    groupedMessage: Message.message,
-    useTempMediaId: boolean,
-
-    // ! only for internal use
-    processAfter?: typeof processAfter
-  }>) {
+  public sendFile(options: SendFileArgs) {
     let file = options.file;
     let {peerId} = options;
     peerId = this.appPeersManager.getPeerMigratedTo(peerId) || peerId;
@@ -1143,204 +1500,54 @@ export class AppMessagesManager extends AppManager {
     const hadMessageBefore = !!options.groupedMessage;
     const message = options.groupedMessage || this.generateOutgoingMessage(peerId, options);
 
-    let attachType: 'document' | 'audio' | 'video' | 'voice' | 'photo', apiFileName: string;
-
-    const fileType = (file as Document.document).mime_type || file.type;
-    const fileName = file instanceof File ? file.name : '';
     let caption = options.caption || '';
-
-    this.log('sendFile', file, fileType);
 
     let entities = options.entities || [];
     if(caption) {
       [caption, entities] = parseMarkdown(caption, entities);
     }
 
-    const attributes: DocumentAttribute[] = [];
-
-    const isPhoto = getEnvironment().IMAGE_MIME_TYPES_SUPPORTED.has(fileType);
-
-    const strippedPhotoSize: PhotoSize.photoStrippedSize = options.strippedBytes && {
-      _: 'photoStrippedSize',
-      bytes: options.strippedBytes,
-      type: 'i'
-    };
-
     const mediaTempId = options.useTempMediaId ? this.mediaTempId++ : message.id;
-    let photo: MyPhoto, document: MyDocument;
 
-    let actionName: Extract<SendMessageAction['_'], 'sendMessageUploadAudioAction' | 'sendMessageUploadDocumentAction' | 'sendMessageUploadPhotoAction' | 'sendMessageUploadVideoAction'>;
-    if(isDocument) { // maybe it's a sticker or gif
-      attachType = 'document';
-      apiFileName = '';
-    } else if(fileType.indexOf('audio/') === 0 || ['video/ogg'].indexOf(fileType) >= 0) {
-      attachType = 'audio';
-      apiFileName = 'audio.' + (fileType.split('/')[1] === 'ogg' ? 'ogg' : 'mp3');
-      actionName = 'sendMessageUploadAudioAction';
+    const documentAndMeta = this.makeDocumentAndMetaForSendingFile({
+      mediaTempId,
+      isDocument,
+      file,
+      entities,
+      ...pickKeys(options, [
+        'strippedBytes',
+        'useTempMediaId',
+        'isVoiceMessage',
+        'width',
+        'height',
+        'objectURL',
+        'waveform',
+        'duration',
+        'isMedia',
+        'isRoundMessage',
+        'noSound',
+        'thumb',
+        'isAnimated'
+      ])
+    });
 
-      if(options.isVoiceMessage) {
-        attachType = 'voice';
-        if(message) message.pFlags.media_unread = true;
-      }
+    const {
+      document,
+      apiFileName,
+      actionName,
+      photo,
+      fileType,
+      mediaUnread,
+      attributes
+    } = documentAndMeta;
 
-      const attribute: DocumentAttribute.documentAttributeAudio = {
-        _: 'documentAttributeAudio',
-        pFlags: {
-          voice: options.isVoiceMessage || undefined
-        },
-        waveform: options.waveform,
-        duration: options.duration || undefined
-      };
+    let {
+      attachType
+    } = documentAndMeta;
 
-      attributes.push(attribute);
-    } else if(!options.isMedia) {
-      attachType = 'document';
-      apiFileName = 'document.' + fileType.split('/')[1];
-      actionName = 'sendMessageUploadDocumentAction';
-    } else if(isPhoto) {
-      attachType = 'photo';
-      apiFileName = 'photo.' + fileType.split('/')[1];
-      actionName = 'sendMessageUploadPhotoAction';
+    if(message && mediaUnread) message.pFlags.media_unread = true;
 
-      const photoSize = {
-        _: 'photoSize',
-        w: options.width,
-        h: options.height,
-        type: THUMB_TYPE_FULL,
-        location: null,
-        size: file.size
-      } as PhotoSize.photoSize;
-
-      photo = {
-        _: 'photo',
-        id: mediaTempId,
-        sizes: [photoSize],
-        w: options.width,
-        h: options.height
-      } as any;
-
-      if(strippedPhotoSize) {
-        photo.sizes.unshift(strippedPhotoSize);
-      }
-
-      this.thumbsStorage.setCacheContextURL(
-        photo,
-        photoSize.type,
-        options.objectURL || '',
-        file.size
-      );
-
-      photo = this.appPhotosManager.savePhoto(photo);
-    } else if(getEnvironment().VIDEO_MIME_TYPES_SUPPORTED.has(fileType as VIDEO_MIME_TYPE)) {
-      attachType = 'video';
-      apiFileName = 'video.mp4';
-      actionName = 'sendMessageUploadVideoAction';
-
-      const videoAttribute: DocumentAttribute.documentAttributeVideo = {
-        _: 'documentAttributeVideo',
-        pFlags: {
-          round_message: options.isRoundMessage || undefined,
-          supports_streaming: true
-        },
-        duration: options.duration,
-        w: options.width,
-        h: options.height
-      };
-
-      attributes.push(videoAttribute);
-
-      // * must follow after video attribute
-      if(canVideoBeAnimated(options.noSound, file.size)) {
-        attributes.push({
-          _: 'documentAttributeAnimated'
-        });
-      }
-    } else {
-      attachType = 'document';
-      apiFileName = 'document.' + fileType.split('/')[1];
-      actionName = 'sendMessageUploadDocumentAction';
-    }
-
-    attributes.push({_: 'documentAttributeFilename', file_name: fileName || apiFileName});
-
-    if(
-      (['document', 'video', 'audio', 'voice'] as (typeof attachType)[]).includes(attachType) &&
-      !isDocument
-    ) {
-      const thumbs: PhotoSize[] = [];
-      document = {
-        _: 'document',
-        id: mediaTempId,
-        duration: options.duration,
-        attributes,
-        w: options.width,
-        h: options.height,
-        thumbs,
-        mime_type: fileType,
-        size: file.size
-      } as any;
-
-      if(options.objectURL) {
-        this.thumbsStorage.setCacheContextURL(
-          document,
-          undefined,
-          options.objectURL,
-          file.size
-        );
-      }
-
-      let thumb: PhotoSize.photoSize;
-      if(isPhoto) {
-        attributes.push({
-          _: 'documentAttributeImageSize',
-          w: options.width,
-          h: options.height
-        });
-
-        thumb = {
-          _: 'photoSize',
-          w: options.width,
-          h: options.height,
-          type: THUMB_TYPE_FULL,
-          size: file.size
-        };
-      } else if(attachType === 'video') {
-        if(options.thumb) {
-          thumb = {
-            _: 'photoSize',
-            w: options.thumb.size.width,
-            h: options.thumb.size.height,
-            type: 'local-thumb',
-            size: options.thumb.blob.size
-          };
-
-          this.thumbsStorage.setCacheContextURL(
-            document,
-            thumb.type,
-            options.thumb.url,
-            thumb.size
-          );
-        }
-      }
-
-      if(thumb) {
-        thumbs.push(thumb);
-      }
-
-      if(strippedPhotoSize) {
-        thumbs.unshift(strippedPhotoSize);
-      }
-
-      /* if(thumbs.length) {
-        const thumb = thumbs[0] as PhotoSize.photoSize;
-        const docThumb = appPhotosManager.getDocumentCachedThumb(document.id);
-        docThumb.downloaded = thumb.size;
-        docThumb.url = thumb.url;
-      } */
-
-      document = this.appDocsManager.saveDoc(document);
-    }
-
+    this.log('sendFile', file, fileType);
     this.log('sendFile', attachType, apiFileName, file.type, options);
 
     const sentDeferred = deferredPromise<InputMedia>();
@@ -1652,6 +1859,212 @@ export class AppMessagesManager extends AppManager {
     ret.send = upload;
 
     return ret;
+  }
+
+  private makeDocumentAndMetaForSendingFile(args: MakeDocumentAndMetaForSendingFileArgs) {
+    const {file, isDocument, mediaTempId} = args;
+
+    let attachType: 'document' | 'audio' | 'video' | 'voice' | 'photo', apiFileName: string;
+    let mediaUnread: boolean;
+
+    const fileType = (file as Document.document).mime_type || file.type;
+    const fileName = file instanceof File ? file.name : '';
+
+    const attributes: DocumentAttribute[] = [];
+
+    const isPhoto = getEnvironment().IMAGE_MIME_TYPES_SUPPORTED.has(fileType);
+
+    const strippedPhotoSize: PhotoSize.photoStrippedSize = args.strippedBytes && {
+      _: 'photoStrippedSize',
+      bytes: args.strippedBytes,
+      type: 'i'
+    };
+
+    let photo: MyPhoto, document: MyDocument;
+
+    let actionName: Extract<SendMessageAction['_'], 'sendMessageUploadAudioAction' | 'sendMessageUploadDocumentAction' | 'sendMessageUploadPhotoAction' | 'sendMessageUploadVideoAction'>;
+
+    if(isDocument) { // maybe it's a sticker or gif
+      attachType = 'document';
+      apiFileName = '';
+    } else if(fileType.indexOf('audio/') === 0 || ['video/ogg'].indexOf(fileType) >= 0) {
+      attachType = 'audio';
+      apiFileName = 'audio.' + (fileType.split('/')[1] === 'ogg' ? 'ogg' : 'mp3');
+      actionName = 'sendMessageUploadAudioAction';
+
+      if(args.isVoiceMessage) {
+        attachType = 'voice';
+        mediaUnread = true;
+      }
+
+      const attribute: DocumentAttribute.documentAttributeAudio = {
+        _: 'documentAttributeAudio',
+        pFlags: {
+          voice: args.isVoiceMessage || undefined
+        },
+        waveform: args.waveform,
+        duration: args.duration || undefined
+      };
+
+      attributes.push(attribute);
+    } else if(!args.isMedia) {
+      attachType = 'document';
+      apiFileName = 'document.' + fileType.split('/')[1];
+      actionName = 'sendMessageUploadDocumentAction';
+    } else if(isPhoto) {
+      attachType = 'photo';
+      apiFileName = 'photo.' + fileType.split('/')[1];
+      actionName = 'sendMessageUploadPhotoAction';
+
+      const photoSize = {
+        _: 'photoSize',
+        w: args.width,
+        h: args.height,
+        type: THUMB_TYPE_FULL,
+        location: null,
+        size: file.size
+      } as PhotoSize.photoSize;
+
+      photo = {
+        _: 'photo',
+        id: mediaTempId,
+        sizes: [photoSize],
+        w: args.width,
+        h: args.height
+      } as any;
+
+      if(strippedPhotoSize) {
+        photo.sizes.unshift(strippedPhotoSize);
+      }
+
+      this.thumbsStorage.setCacheContextURL(
+        photo,
+        photoSize.type,
+        args.objectURL || '',
+        file.size
+      );
+
+      photo = this.appPhotosManager.savePhoto(photo);
+    } else if(getEnvironment().VIDEO_MIME_TYPES_SUPPORTED.has(fileType as VIDEO_MIME_TYPE)) {
+      attachType = 'video';
+      apiFileName = 'video.mp4';
+      actionName = 'sendMessageUploadVideoAction';
+
+      const videoAttribute: DocumentAttribute.documentAttributeVideo = {
+        _: 'documentAttributeVideo',
+        pFlags: {
+          round_message: args.isRoundMessage || undefined,
+          supports_streaming: true
+        },
+        duration: args.duration,
+        w: args.width,
+        h: args.height
+      };
+
+      attributes.push(videoAttribute);
+
+      // * must follow after video attribute
+      if(args.isAnimated) {
+        attributes.push({
+          _: 'documentAttributeAnimated'
+        });
+      }
+    } else {
+      attachType = 'document';
+      apiFileName = 'document.' + fileType.split('/')[1];
+      actionName = 'sendMessageUploadDocumentAction';
+    }
+
+    attributes.push({_: 'documentAttributeFilename', file_name: fileName || apiFileName});
+
+    if(
+      (['document', 'video', 'audio', 'voice'] as (typeof attachType)[]).includes(attachType) &&
+      !isDocument
+    ) {
+      const thumbs: PhotoSize[] = [];
+      document = {
+        _: 'document',
+        id: mediaTempId,
+        duration: args.duration,
+        attributes,
+        w: args.width,
+        h: args.height,
+        thumbs,
+        mime_type: fileType,
+        size: file.size
+      } as any;
+
+      if(args.objectURL) {
+        this.thumbsStorage.setCacheContextURL(
+          document,
+          undefined,
+          args.objectURL,
+          file.size
+        );
+      }
+
+      let thumb: PhotoSize.photoSize;
+      if(isPhoto) {
+        attributes.push({
+          _: 'documentAttributeImageSize',
+          w: args.width,
+          h: args.height
+        });
+
+        thumb = {
+          _: 'photoSize',
+          w: args.width,
+          h: args.height,
+          type: THUMB_TYPE_FULL,
+          size: file.size
+        };
+      } else if(attachType === 'video') {
+        if(args.thumb) {
+          thumb = {
+            _: 'photoSize',
+            w: args.thumb.size.width,
+            h: args.thumb.size.height,
+            type: 'local-thumb',
+            size: args.thumb.blob.size
+          };
+
+          this.thumbsStorage.setCacheContextURL(
+            document,
+            thumb.type,
+            args.thumb.url,
+            thumb.size
+          );
+        }
+      }
+
+      if(thumb) {
+        thumbs.push(thumb);
+      }
+
+      if(strippedPhotoSize) {
+        thumbs.unshift(strippedPhotoSize);
+      }
+
+      /* if(thumbs.length) {
+        const thumb = thumbs[0] as PhotoSize.photoSize;
+        const docThumb = appPhotosManager.getDocumentCachedThumb(document.id);
+        docThumb.downloaded = thumb.size;
+        docThumb.url = thumb.url;
+      } */
+
+      document = this.appDocsManager.saveDoc(document);
+    }
+
+    return {
+      document,
+      apiFileName,
+      actionName,
+      attachType,
+      photo,
+      fileType,
+      mediaUnread,
+      attributes
+    };
   }
 
   private async uploadThumbAndCover({blob, isCover, peer}: UploadThumbAndCoverArgs) {
@@ -2085,8 +2498,17 @@ export class AppMessagesManager extends AppManager {
         break;
       }
 
+      case 'inputMediaDice': {
+        media = {
+          _: 'messageMediaDice',
+          emoticon: inputMedia.emoticon,
+          value: 0
+        };
+        break;
+      }
+
       case 'messageMediaPending': {
-        media = (inputMedia as any).messageMedia;
+        media = inputMedia.messageMedia;
         break;
       }
     }
@@ -4455,6 +4877,9 @@ export class AppMessagesManager extends AppManager {
 
         if(replyTo.reply_to_msg_id) {
           replyTo.reply_to_msg_id = message.reply_to_mid = this.appMessagesIdsManager.generateMessageId(replyTo.reply_to_msg_id, replyToChannelId);
+          if(this.deletedMessages.has(`${peerId}_${replyTo.reply_to_msg_id}`)) {
+            replyTo.reply_to_msg_deleted = true;
+          }
         }
 
         if(replyTo.reply_to_top_id) {
@@ -6982,8 +7407,25 @@ export class AppMessagesManager extends AppManager {
     const newMessage = this.modifyMessage(oldMessage, () => {
       this.saveMessages([message], {storage});
       const newMessage: Message = this.getMessageFromStorage(storage, mid);
+      // if(newMessage?._ === 'message' && oldMessage?._ === 'message' && oldMessage.uploadingFileName) {
+      //   newMessage.uploadingFileName = [...oldMessage.uploadingFileName];
+      // }
+
+
       return newMessage;
     }, false, true);
+
+    const pendingEdit = this.pendingEditingMessages.get(mid);
+    if(pendingEdit && !pendingEdit.canceled) {
+      const {mediaTempId} = pendingEdit;
+      if(message._ === 'message') {
+        if(message.media?._ === 'messageMediaPhoto' && message.media.photo?._ === 'photo') {
+          this.updatePhoto(message.media.photo, '' + mediaTempId);
+        } else if(message.media?._ === 'messageMediaDocument' && message.media.document?._ === 'document') {
+          this.updateDocument(message.media.document, mediaTempId);
+        }
+      }
+    }
 
     this.handleEditedMessage(oldMessage, newMessage, storage);
 
@@ -7930,47 +8372,10 @@ export class AppMessagesManager extends AppManager {
       const {photo: newPhoto, document: newDoc} = message.media as any;
       const newExtendedMedia = (message.media as MessageMedia.messageMediaPaidMedia).extended_media as MessageExtendedMedia.messageExtendedMedia[];
 
-      const updatePhoto = (newPhoto: Photo.photo, photoId: string) => {
-        const photo = this.appPhotosManager.getPhoto(photoId);
-        if(!photo) {
-          return;
-        }
-
-        const newPhotoSize = newPhoto.sizes[newPhoto.sizes.length - 1];
-        const oldCacheContext = this.thumbsStorage.getCacheContext(photo, THUMB_TYPE_FULL);
-        this.thumbsStorage.setCacheContextURL(newPhoto, newPhotoSize.type, oldCacheContext.url, oldCacheContext.downloaded);
-
-        // const photoSize = newPhoto.sizes[newPhoto.sizes.length - 1] as PhotoSize.photoSize;
-        // const downloadOptions = getPhotoDownloadOptions(newPhoto, photoSize);
-        // const fileName = getFileNameByLocation(downloadOptions.location);
-        // this.appDownloadManager.fakeDownload(fileName, oldCacheContext.url);
-      };
-
-      const updateDocument = (newDoc: Document.document, docId: DocId) => {
-        const oldDoc = this.appDocsManager.getDoc(docId);
-        if(!oldDoc) {
-          return;
-        }
-
-        const oldCacheContext = this.thumbsStorage.getCacheContext(oldDoc);
-        if(
-          /* doc._ !== 'documentEmpty' &&  */
-          oldDoc.type &&
-          oldDoc.type !== 'sticker' &&
-          oldDoc.mime_type !== 'image/gif' &&
-          oldCacheContext.url
-        ) {
-          this.thumbsStorage.setCacheContextURL(newDoc, undefined, oldCacheContext.url, oldCacheContext.downloaded);
-
-          // const fileName = getDocumentInputFileName(newDoc);
-          // this.appDownloadManager.fakeDownload(fileName, oldCacheContext.url);
-        }
-      };
-
       if(newPhoto) {
-        updatePhoto(newPhoto, '' + tempId);
+        this.updatePhoto(newPhoto, '' + tempId);
       } else if(newDoc) {
-        updateDocument(newDoc, '' + tempId);
+        this.updateDocument(newDoc, '' + tempId);
       } else if((message.media as MessageMedia.messageMediaPoll).poll) {
         delete this.appPollsManager.polls[tempId];
         delete this.appPollsManager.results[tempId];
@@ -7980,8 +8385,8 @@ export class AppMessagesManager extends AppManager {
           const {photo} = extendedMedia.media as MessageMedia.messageMediaPhoto;
           const {document} = extendedMedia.media as MessageMedia.messageMediaDocument;
           const id = '' + (mediaTempId + idx);
-          if(photo) updatePhoto(photo as Photo.photo, id);
-          else if(document) updateDocument(document as Document.document, id);
+          if(photo) this.updatePhoto(photo as Photo.photo, id);
+          else if(document) this.updateDocument(document as Document.document, id);
         });
       }
     }
@@ -8004,6 +8409,43 @@ export class AppMessagesManager extends AppManager {
 
     this.rootScope.dispatchEvent('message_sent', {storageKey: storage.key, tempId, tempMessage, mid: message.mid, message});
   }
+
+  private updatePhoto(newPhoto: Photo.photo, photoId: string) {
+    const photo = this.appPhotosManager.getPhoto(photoId);
+    if(!photo) {
+      return;
+    }
+
+    const newPhotoSize = newPhoto.sizes[newPhoto.sizes.length - 1];
+    const oldCacheContext = this.thumbsStorage.getCacheContext(photo, THUMB_TYPE_FULL);
+    this.thumbsStorage.setCacheContextURL(newPhoto, newPhotoSize.type, oldCacheContext.url, oldCacheContext.downloaded);
+
+    // const photoSize = newPhoto.sizes[newPhoto.sizes.length - 1] as PhotoSize.photoSize;
+    // const downloadOptions = getPhotoDownloadOptions(newPhoto, photoSize);
+    // const fileName = getFileNameByLocation(downloadOptions.location);
+    // this.appDownloadManager.fakeDownload(fileName, oldCacheContext.url);
+  };
+
+  private updateDocument(newDoc: Document.document, docId: DocId) {
+    const oldDoc = this.appDocsManager.getDoc(docId);
+    if(!oldDoc) {
+      return;
+    }
+
+    const oldCacheContext = this.thumbsStorage.getCacheContext(oldDoc);
+    if(
+      /* doc._ !== 'documentEmpty' &&  */
+      oldDoc.type &&
+      oldDoc.type !== 'sticker' &&
+      oldDoc.mime_type !== 'image/gif' &&
+      oldCacheContext.url
+    ) {
+      this.thumbsStorage.setCacheContextURL(newDoc, undefined, oldCacheContext.url, oldCacheContext.downloaded);
+
+      // const fileName = getDocumentInputFileName(newDoc);
+      // this.appDownloadManager.fakeDownload(fileName, oldCacheContext.url);
+    }
+  };
 
   public incrementMaxSeenId(maxId: number) {
     if(!maxId || !(!this.maxSeenId || maxId > this.maxSeenId)) {
@@ -8096,7 +8538,8 @@ export class AppMessagesManager extends AppManager {
       message.pFlags.unread ||
       message.peerId === this.appPeersManager.peerId ||
       this.appPeersManager.isBroadcast(message.peerId) ||
-      this.appPeersManager.isMonoforum(message.peerId)
+      this.appPeersManager.isMonoforum(message.peerId) ||
+      message.pFlags.is_scheduled
     ) {
       return false;
     }
@@ -8429,7 +8872,8 @@ export class AppMessagesManager extends AppManager {
           isEnd: historyStorage.history.slice.getEnds(),
           offsetIdOffset: (historyResult as MessagesMessages.messagesMessagesSlice)?.offset_id_offset || 0,
           nextRate: (historyResult as MessagesMessages.messagesMessagesSlice)?.next_rate,
-          messages: historyResult.messages as MyMessage[]
+          messages: historyResult.messages as MyMessage[],
+          flood: (historyResult as MessagesMessages.messagesMessagesSlice)?.search_flood
         };
       }
 
@@ -8569,12 +9013,14 @@ export class AppMessagesManager extends AppManager {
     // * offset_id will be inclusive only if there is 'add_offset' <= -1 (-1 - will only include the 'offset_id')
     // * check that offset_id is not 0
     if(
+      !FETCH_TARGETED_MESSAGE &&
       offsetId &&
       getServerMessageId(offsetId) &&
       !mids.includes(offsetId) &&
       offsetIdOffset <= count &&
       (addOffset || 0) >= 0 && // ! warning
-      !searchSlicedArray
+      !searchSlicedArray &&
+      !!historyStorage.history.findSlice(offsetId)
     ) {
       let i = 0;
       for(const length = mids.length; i < length; ++i) {
@@ -8747,7 +9193,8 @@ export class AppMessagesManager extends AppManager {
           if(
             groupedIds[0] &&
             groupedIds[0] !== groupedIds[MESSAGES_ALBUM_MAX_SIZE - 1] &&
-            slice?.index === (bottom ? 0 : slice.slice.length - 1)
+            slice &&
+            slice.index === (bottom ? 0 : slice.slice.length - 1)
           ) {
             messagesSlice.forEach((message) => {
               if(message.grouped_id === groupedIds[0]) {
@@ -8907,8 +9354,16 @@ export class AppMessagesManager extends AppManager {
     chatType,
     fromPeerId,
     savedReaction,
-    isPublicHashtag
+    isPublicHashtag,
+    isPublicPosts,
+    allowStars
   }: RequestHistoryOptions) {
+    const fetchTargetedMessage = FETCH_TARGETED_MESSAGE && !addOffset;
+    if(fetchTargetedMessage) {
+      addOffset = -1;
+      limit += 1;
+    }
+
     const offsetMessage = offsetId && this.getMessageByPeer(offsetPeerId || peerId, offsetId);
     offsetPeerId ??= offsetMessage?.peerId;
 
@@ -8935,13 +9390,18 @@ export class AppMessagesManager extends AppManager {
       inputFilter ??= {_: 'inputMessagesFilterEmpty'};
     }
 
-    if(isPublicHashtag) {
+    if(isPublicHashtag || isPublicPosts) {
       const searchOptions: ChannelsSearchPosts = {
         ...commonOptions,
-        hashtag: query.slice(1),
         offset_rate: nextRate,
         offset_peer: this.appPeersManager.getInputPeerById(offsetPeerId)
       };
+      if(isPublicHashtag) {
+        searchOptions.hashtag = query.slice(1)
+      } else {
+        searchOptions.query = query
+        searchOptions.allow_paid_stars = allowStars
+      }
 
       method = 'channels.searchPosts';
       options = searchOptions;
@@ -9028,12 +9488,19 @@ export class AppMessagesManager extends AppManager {
 
     return promise.then((historyResult) => {
       if(DEBUG) {
-        this.log('requestHistory result:', peerId, historyResult, offsetId, limit, addOffset);
+        this.log('requestHistory result:', peerId, copy(historyResult), offsetId, limit, addOffset);
       }
 
       const {messages} = historyResult;
 
       this.saveApiResult(historyResult);
+
+      if(fetchTargetedMessage) {
+        const index = messages.findIndex((message) => message.id === offsetId);
+        // if(index !== -1) {
+        //   messages.splice(index, 1);
+        // }
+      }
 
       if('pts' in historyResult) {
         this.apiUpdatesManager.addChannelState(peerId.toChatId(), historyResult.pts);
@@ -9222,8 +9689,7 @@ export class AppMessagesManager extends AppManager {
     message = this.getMessageByPeerOrFromLogs(message.peerId, message.mid); // message can come from other thread
     if(!message) return;
     this.modifyMessage(message, (message) => {
-      delete message.reply_to_mid; // ! WARNING!
-      delete message.reply_to; // ! WARNING!
+      (message.reply_to as MessageReplyHeader.messageReplyHeader).reply_to_msg_deleted = true;
     }, this.getHistoryMessagesStorage(message.peerId), true); // * mirror it
   }
 
@@ -9322,7 +9788,7 @@ export class AppMessagesManager extends AppManager {
       const smth: Photo.photo | MyDocument = (c as MessageMedia.messageMediaPhoto).photo as any || (c as MessageMedia.messageMediaDocument).document as any;
 
       if(smth?.file_reference) {
-        this.referenceDatabase.deleteContext(smth.file_reference, {type: 'message', peerId: message.peerId, messageId: message.mid});
+        this.referencesStorage.deleteContext(smth.file_reference, {type: 'message', peerId: message.peerId, messageId: message.mid});
       }
 
       if('webpage' in media && media.webpage) {
@@ -9490,12 +9956,22 @@ export class AppMessagesManager extends AppManager {
   private dispatchGroupedEdit(groupedId: string, storage: MessagesStorage, deletedMids?: number[]) {
     const mids = this.getMidsByGroupedId(groupedId);
     const messages = mids.map((mid) => this.getMessageFromStorage(storage, mid)) as Message.message[];
-    this.rootScope.dispatchEvent('grouped_edit', {peerId: messages[0].peerId, groupedId, deletedMids: deletedMids || [], messages});
+    this.rootScope.dispatchEvent('grouped_edit', {
+      peerId: messages[0].peerId,
+      groupedId,
+      deletedMids: deletedMids || [],
+      messages
+    });
   }
 
   public getDialogUnreadCount(dialog: Dialog | ForumTopic | MonoforumDialog) {
     let unreadCount = dialog.unread_count;
-    if(!isForumTopic(dialog) && !isMonoforumDialog(dialog) && this.appPeersManager.isForum(dialog.peerId) && !dialog.pFlags.view_forum_as_messages) {
+    if(
+      !isForumTopic(dialog) &&
+      !isMonoforumDialog(dialog) &&
+      this.appPeersManager.isForum(dialog.peerId) &&
+      !dialog.pFlags.view_forum_as_messages
+    ) {
       const forumUnreadCount = this.dialogsStorage.getForumUnreadCount(dialog.peerId);
       if(forumUnreadCount instanceof Promise) {
         unreadCount = 0;

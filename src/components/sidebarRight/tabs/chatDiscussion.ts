@@ -4,24 +4,26 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {attachClickEvent} from '../../../helpers/dom/clickEvent';
-import findUpClassName from '../../../helpers/dom/findUpClassName';
-import shake from '../../../helpers/dom/shake';
-import toggleDisability from '../../../helpers/dom/toggleDisability';
-import appDialogsManager from '../../../lib/appManagers/appDialogsManager';
-import appImManager from '../../../lib/appManagers/appImManager';
-import getPeerActiveUsernames from '../../../lib/appManagers/utils/peers/getPeerActiveUsernames';
-import {i18n, i18n_} from '../../../lib/langPack';
-import lottieLoader from '../../../lib/rlottie/lottieLoader';
-import rootScope from '../../../lib/rootScope';
-import Button from '../../button';
-import confirmationPopup from '../../confirmationPopup';
-import SettingSection from '../../settingSection';
-import AppNewGroupTab from '../../sidebarLeft/tabs/newGroup';
-import {SliderSuperTabEventable} from '../../sliderTab';
-import {toastNew} from '../../toast';
-import getPeerTitle from '../../wrappers/getPeerTitle';
-import wrapPeerTitle from '../../wrappers/peerTitle';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import shake from '@helpers/dom/shake';
+import toggleDisability from '@helpers/dom/toggleDisability';
+import {Chat} from '@layer';
+import appDialogsManager from '@lib/appDialogsManager';
+import appImManager from '@lib/appImManager';
+import hasRights from '@appManagers/utils/chats/hasRights';
+import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
+import {i18n, i18n_} from '@lib/langPack';
+import lottieLoader from '@lib/rlottie/lottieLoader';
+import rootScope from '@lib/rootScope';
+import Button from '@components/button';
+import confirmationPopup from '@components/confirmationPopup';
+import SettingSection from '@components/settingSection';
+import AppNewGroupTab from '@components/sidebarLeft/tabs/newGroup';
+import {SliderSuperTabEventable} from '@components/sliderTab';
+import {toastNew} from '@components/toast';
+import getPeerTitle from '@components/wrappers/getPeerTitle';
+import wrapPeerTitle from '@components/wrappers/peerTitle';
 
 export default class AppChatDiscussionTab extends SliderSuperTabEventable {
   public chatId: ChatId;
@@ -56,10 +58,13 @@ export default class AppChatDiscussionTab extends SliderSuperTabEventable {
     this.chatId = chatId;
     this.linkedChatId = linkedChatId;
 
-    const [isBroadcast] = await Promise.all([
-      this.managers.appChatsManager.isBroadcast(this.chatId)
+    const [isBroadcast, chat, linkedChat] = await Promise.all([
+      this.managers.appChatsManager.isBroadcast(this.chatId),
+      this.managers.appChatsManager.getChat(this.chatId) as Promise<Chat.channel | Chat.chat>,
+      this.linkedChatId && this.managers.appChatsManager.getChat(this.linkedChatId) as Promise<Chat.channel | Chat.chat>
     ]);
 
+    const canChangeInfo = hasRights(chat, 'change_info');
     this.isBroadcast = isBroadcast;
 
     this.setTitle(isBroadcast ? 'DiscussionController.Channel.Title' : 'DiscussionController.Group.Title');
@@ -213,8 +218,12 @@ export default class AppChatDiscussionTab extends SliderSuperTabEventable {
     const loadChatsPromise = (
       isBroadcast ?
         p.chats :
-        Promise.resolve([await this.managers.appChatsManager.getChat(this.linkedChatId)])
+        Promise.resolve([])
     ).then((chats) => {
+      if(this.linkedChatId && !chats.some((chat) => chat.id === this.linkedChatId)) {
+        chats.push(linkedChat);
+      }
+
       const promises = chats.map((chat) => {
         const loadPromises: Promise<any>[] = [];
         const {dom} = appDialogsManager.addDialogNew({
@@ -253,8 +262,8 @@ export default class AppChatDiscussionTab extends SliderSuperTabEventable {
         const chatId = el.dataset.peerId.toChatId();
         el.classList.toggle('hide', this.linkedChatId ? this.linkedChatId !== chatId : false);
       });
-      unlinkSection.container.classList.toggle('hide', !this.linkedChatId);
-      createGroupBtn.classList.toggle('hide', !!this.linkedChatId);
+      unlinkSection.container.classList.toggle('hide', !this.linkedChatId || !canChangeInfo);
+      createGroupBtn.classList.toggle('hide', !!this.linkedChatId || !canChangeInfo);
     };
 
     this.listenerSetter.add(rootScope)('dialog_migrate', ({migrateFrom, migrateTo}) => {

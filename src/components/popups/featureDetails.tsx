@@ -1,10 +1,10 @@
 import {createSignal, For, JSX} from 'solid-js';
-import PopupElement from './indexTsx';
-import Row from '../rowTsx';
-import {createPopup} from './indexTsx';
-import styles from './featureDetails.module.scss';
-import classNames from '../../helpers/string/classNames';
-import StickerAndTitle, {StickerAndTitleProps} from '../stickerAndTitle';
+import PopupElement from '@components/popups/indexTsx';
+import Row from '@components/rowTsx';
+import {createPopup} from '@components/popups/indexTsx';
+import styles from '@components/popups/featureDetails.module.scss';
+import classNames from '@helpers/string/classNames';
+import StickerAndTitle, {StickerAndTitleProps} from '@components/stickerAndTitle';
 
 interface FeatureDetailsRow {
   icon: Icon;
@@ -12,7 +12,7 @@ interface FeatureDetailsRow {
   subtitle: JSX.Element;
 }
 
-interface FeatureDetailsButton {
+export interface FeatureDetailsButton {
   text: JSX.Element;
   onClick?: (close: () => void) => MaybePromise<boolean | void>;
   isCancel?: boolean;
@@ -21,7 +21,8 @@ interface FeatureDetailsButton {
 
 type FeatureDetailsPopupProps = {
   rows: FeatureDetailsRow[],
-  buttons: FeatureDetailsButton[]
+  buttons: FeatureDetailsButton[],
+  onClose?: () => void
 } & StickerAndTitleProps;
 
 export default function showFeatureDetailsPopup(props: FeatureDetailsPopupProps) {
@@ -29,7 +30,12 @@ export default function showFeatureDetailsPopup(props: FeatureDetailsPopupProps)
   const close = () => setShow(false);
 
   createPopup(() => (
-    <PopupElement class={styles.popup} containerClass={styles.popupContainer} show={show()}>
+    <PopupElement
+      class={styles.popup}
+      containerClass={styles.popupContainer}
+      show={show()}
+      onClose={props.onClose}
+    >
       <PopupElement.Header class={styles.popupHeader}>
         <PopupElement.CloseButton class={styles.popupCloseButton} />
       </PopupElement.Header>

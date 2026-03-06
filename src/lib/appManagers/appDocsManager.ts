@@ -9,26 +9,26 @@
  * https://github.com/zhukov/webogram/blob/master/LICENSE
  */
 
-import type {ThumbCache} from '../storages/thumbs';
-import {Document, DocumentAttribute, PhotoSize, WallPaper} from '../../layer';
-import {ReferenceContext} from '../mtproto/referenceDatabase';
-import {getFullDate} from '../../helpers/date/getFullDate';
-import isObject from '../../helpers/object/isObject';
-import safeReplaceArrayInObject from '../../helpers/object/safeReplaceArrayInObject';
-import {AppManager} from './manager';
-import wrapPlainText from '../richTextProcessor/wrapPlainText';
-import assumeType from '../../helpers/assumeType';
-import {getEnvironment} from '../../environment/utils';
-import MTProtoMessagePort from '../mtproto/mtprotoMessagePort';
-import getDocumentInputFileLocation from './utils/docs/getDocumentInputFileLocation';
-import getDocumentURL from './utils/docs/getDocumentURL';
-import makeError from '../../helpers/makeError';
-import {EXTENSION_MIME_TYPE_MAP} from '../../environment/mimeTypeMap';
-import {THUMB_TYPE_FULL} from '../mtproto/mtproto_config';
-import tsNow from '../../helpers/tsNow';
-import appManagersManager from './appManagersManager';
-import tryPatchMp4 from '../../helpers/fixChromiumMp4';
-import StickerType from '../../config/stickerType';
+import type {ThumbCache} from '@lib/storages/thumbs';
+import {Document, DocumentAttribute, PhotoSize, WallPaper} from '@layer';
+import {ReferenceContext} from '@lib/storages/references';
+import {getFullDate} from '@helpers/date/getFullDate';
+import isObject from '@helpers/object/isObject';
+import safeReplaceArrayInObject from '@helpers/object/safeReplaceArrayInObject';
+import {AppManager} from '@appManagers/manager';
+import wrapPlainText from '@lib/richTextProcessor/wrapPlainText';
+import assumeType from '@helpers/assumeType';
+import {getEnvironment} from '@environment/utils';
+import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
+import getDocumentInputFileLocation from '@appManagers/utils/docs/getDocumentInputFileLocation';
+import getDocumentURL from '@appManagers/utils/docs/getDocumentURL';
+import makeError from '@helpers/makeError';
+import {EXTENSION_MIME_TYPE_MAP} from '@environment/mimeTypeMap';
+import {THUMB_TYPE_FULL} from '@appManagers/constants';
+import tsNow from '@helpers/tsNow';
+import appManagersManager from '@appManagers/appManagersManager';
+import tryPatchMp4 from '@helpers/fixChromiumMp4';
+import StickerType from '@config/stickerType';
 
 export type MyDocument = Document.document;
 
@@ -37,6 +37,8 @@ export type MyDocument = Document.document;
 type WallPaperId = WallPaper.wallPaper['id'];
 
 let uploadWallPaperTempId = 0;
+
+// let TEST_FILE_REFERENCE = '5436366378309293244', TEST_FILE_REFERENCE_TIMES = 3;
 
 export class AppDocsManager extends AppManager {
   private docs: {
@@ -89,6 +91,16 @@ export class AppDocsManager extends AppManager {
     // * force it to be string everywhere, at least for HLS streaming
     doc.id = doc.id.toString();
 
+    // if(doc.id === TEST_FILE_REFERENCE) {
+    //   console.warn('Testing FILE_REFERENCE_EXPIRED', new Error().stack);
+    //   // const bytes = [1, 0, 0, 94, 36, 105, 111, 78, 62, 44, 236, 195, 129, 108, 129, 3, 9, 0, 208, 161, 139, 179, 15, 94, 167];
+    //   const bytes = [1, 0, 0, 94, 36, 105, 111, 78, 62, 44, 236, 195, 129, 108, 129, 3, 9, 0, 208, 161, 139, 179, 15, 94, 166];
+    //   doc.file_reference = bytes;
+    //   if(!--TEST_FILE_REFERENCE_TIMES) {
+    //     TEST_FILE_REFERENCE = '';
+    //   }
+    // }
+
     if(altDocuments) {
       const saved = altDocuments.map((altDoc) => this.saveDoc(altDoc, context)).filter(Boolean);
       this.altDocsByMainMediaDocument[doc.id] = saved;
@@ -99,7 +111,7 @@ export class AppDocsManager extends AppManager {
 
     if(doc.file_reference) { // * because we can have a new object w/o the file_reference while sending
       safeReplaceArrayInObject('file_reference', oldDoc, doc);
-      this.referenceDatabase.saveContext(doc.file_reference, context);
+      this.referencesStorage.saveContext(doc.file_reference, context);
     }
 
     // console.log('saveDoc', apiDoc, this.docs[apiDoc.id]);
@@ -395,7 +407,9 @@ export class AppDocsManager extends AppManager {
 
   public requestDocPart(docId: DocId, dcId: number, offset: number, limit: number) {
     const doc = this.getDoc(docId);
-    if(!doc) return Promise.reject(makeError('NO_DOC'));
+    if(!doc) {
+      return Promise.reject(makeError('NO_DOC'));
+    }
 
     const set = this.requestingDocParts[docId] ??= new Set();
 
@@ -436,7 +450,9 @@ export class AppDocsManager extends AppManager {
 
   public cancelDocPartsRequests(docId: DocId) {
     const set = this.requestingDocParts[docId];
-    if(!set) return;
+    if(!set) {
+      return;
+    }
 
     for(const cancel of set) {
       cancel();

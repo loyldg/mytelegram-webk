@@ -4,11 +4,11 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import {InputPrivacyKey, InputPrivacyRule, PrivacyRule, PrivacyKey, GlobalPrivacySettings, AccountSetContentSettings, AccountContentSettings} from '../../layer';
-import convertInputKeyToKey from '../../helpers/string/convertInputKeyToKey';
-import {AppManager} from './manager';
-import App from '../../config/app';
-import Schema from '../mtproto/schema';
+import {InputPrivacyKey, InputPrivacyRule, PrivacyRule, PrivacyKey, GlobalPrivacySettings, AccountSetContentSettings, AccountContentSettings} from '@layer';
+import convertInputKeyToKey from '@helpers/string/convertInputKeyToKey';
+import {AppManager} from '@appManagers/manager';
+import App from '@config/app';
+import Schema from '@lib/mtproto/schema';
 
 export class AppPrivacyManager extends AppManager {
   private privacy: Partial<{
@@ -125,9 +125,11 @@ export class AppPrivacyManager extends AppManager {
   }
 
   public async setAutoDeletePeriodFor(peerId: PeerId, period: number) {
-    return this.apiManager.invokeApi('messages.setHistoryTTL', {
+    const updates = await this.apiManager.invokeApi('messages.setHistoryTTL', {
       peer: this.appPeersManager.getInputPeerById(peerId),
       period
     });
+
+    this.apiUpdatesManager.processUpdateMessage(updates);
   }
 }

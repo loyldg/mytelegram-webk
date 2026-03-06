@@ -4,40 +4,41 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {PeerAvailableReactions} from '../../lib/appManagers/appReactionsManager';
-import IS_TOUCH_SUPPORTED from '../../environment/touchSupport';
-import {IS_MOBILE, IS_SAFARI} from '../../environment/userAgent';
-import filterUnique from '../../helpers/array/filterUnique';
-import assumeType from '../../helpers/assumeType';
-import callbackifyAll from '../../helpers/callbackifyAll';
-import deferredPromise from '../../helpers/cancellablePromise';
-import cancelEvent from '../../helpers/dom/cancelEvent';
-import {attachClickEvent} from '../../helpers/dom/clickEvent';
-import findUpClassName from '../../helpers/dom/findUpClassName';
-import ListenerSetter from '../../helpers/listenerSetter';
-import liteMode from '../../helpers/liteMode';
-import {Middleware, getMiddleware} from '../../helpers/middleware';
-import noop from '../../helpers/noop';
-import {fastRaf} from '../../helpers/schedulers';
-import {Message, AvailableReaction, Reaction, AvailableEffect, EmojiGroup} from '../../layer';
-import {AppManagers} from '../../lib/appManagers/managers';
-import apiManagerProxy from '../../lib/mtproto/mtprotoworker';
-import lottieLoader from '../../lib/rlottie/lottieLoader';
-import RLottiePlayer from '../../lib/rlottie/rlottiePlayer';
-import rootScope from '../../lib/rootScope';
-import animationIntersector, {AnimationItemGroup} from '../animationIntersector';
-import ButtonIcon from '../buttonIcon';
-import {EmoticonsDropdown} from '../emoticonsDropdown';
-import EmojiTab from '../emoticonsDropdown/tabs/emoji';
-import wrapSticker from '../wrappers/sticker';
-import {i18n} from '../../lib/langPack';
-import anchorCallback from '../../helpers/dom/anchorCallback';
-import PopupPremium from '../popups/premium';
-import contextMenuController from '../../helpers/contextMenuController';
-import callbackify from '../../helpers/callbackify';
-import partition from '../../helpers/array/partition';
-import {PAID_REACTION_EMOJI_DOCID} from '../../lib/customEmoji/constants';
-import {StarsStar} from '../popups/stars';
+import type {PeerAvailableReactions} from '@appManagers/appReactionsManager';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import {IS_MOBILE, IS_SAFARI} from '@environment/userAgent';
+import filterUnique from '@helpers/array/filterUnique';
+import assumeType from '@helpers/assumeType';
+import callbackifyAll from '@helpers/callbackifyAll';
+import deferredPromise from '@helpers/cancellablePromise';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import ListenerSetter from '@helpers/listenerSetter';
+import liteMode from '@helpers/liteMode';
+import {Middleware, getMiddleware} from '@helpers/middleware';
+import noop from '@helpers/noop';
+import {fastRaf} from '@helpers/schedulers';
+import {Message, AvailableReaction, Reaction, AvailableEffect, EmojiGroup} from '@layer';
+import {AppManagers} from '@lib/managers';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import lottieLoader from '@lib/rlottie/lottieLoader';
+import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
+import rootScope from '@lib/rootScope';
+import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
+import ButtonIcon from '@components/buttonIcon';
+import {EmoticonsDropdown} from '@components/emoticonsDropdown';
+import EmojiTab from '@components/emoticonsDropdown/tabs/emoji';
+import wrapSticker from '@components/wrappers/sticker';
+import {i18n} from '@lib/langPack';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import PopupPremium from '@components/popups/premium';
+import contextMenuController from '@helpers/contextMenuController';
+import callbackify from '@helpers/callbackify';
+import partition from '@helpers/array/partition';
+import {PAID_REACTION_EMOJI_DOCID} from '@lib/customEmoji/constants';
+import {StarsStar} from '@components/popups/stars';
+import {cleanEmoji} from '@lib/richTextProcessor/fixEmoji';
 
 const REACTIONS_CLASS_NAME = 'btn-menu-reactions';
 const REACTION_CLASS_NAME = REACTIONS_CLASS_NAME + '-reaction';
@@ -202,7 +203,11 @@ export class ChatReactionsMenu {
   ) {
     if(availableReactions) {
       this.availableReactions = availableReactions;
-      this.freeCustomEmoji = new Set(this.availableReactions.map((availableReaction) => availableReaction.select_animation.id));
+      this.freeCustomEmoji = new Set(
+        this.availableReactions
+        .map((availableReaction) => availableReaction.select_animation.id)
+        .concat(reactions.map((reaction) => this.reactionToDocId(reaction)))
+      );
     }
 
     const renderPromises = reactions.slice(0, REACTIONS_MAX_LENGTH).map((reaction) => {
@@ -404,7 +409,7 @@ export class ChatReactionsMenu {
         } else {
           reaction = {
             _: 'reactionEmoji',
-            emoticon: emoji.emoji
+            emoticon: cleanEmoji(emoji.emoji) // * heart can be different, like '❤' and '❤️'
           };
         }
 
@@ -423,7 +428,22 @@ export class ChatReactionsMenu {
       searchFetcher: this.isEffects ? async(q) => {
         const availableEffects = await this.managers.appReactionsManager.searchAvailableEffects({q});
         return this.splitAvailableEffects(availableEffects);
-      } : undefined,
+      } : async(q) => {
+        const emojis = await this.managers.appEmojiManager.prepareAndSearchEmojis({q, limit: Infinity, minChars: 1, addCustom: true});
+        return {
+          emojis: emojis.filter((emoji) => {
+            if(!emoji.docId) {
+              if(this.availableReactions) {
+                return this.availableReactions.some((availableReaction) => availableReaction.reaction === emoji.emoji);
+              }
+
+              return false;
+            }
+
+            return true;
+          })
+        };
+      },
       groupFetcher: this.isEffects ? async(emojiGroup) => {
         const availableEffects = await this.managers.appReactionsManager.searchAvailableEffects({emoticon: (emojiGroup as EmojiGroup.emojiGroup).emoticons});
         return this.splitAvailableEffects(availableEffects);

@@ -4,110 +4,111 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
-import type {AppMessagesManager, MyInputMessagesFilter, MyMessage, RequestHistoryOptions} from '../lib/appManagers/appMessagesManager';
-import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG, DialogDom} from '../lib/appManagers/appDialogsManager';
-import {logger} from '../lib/logger';
-import rootScope from '../lib/rootScope';
-import {SearchGroup, SearchGroupType} from './appSearch';
-import {horizontalMenu} from './horizontalMenu';
-import LazyLoadQueue from './lazyLoadQueue';
-import {putPreloader} from './putPreloader';
-import ripple from './ripple';
-import Scrollable, {ScrollableX} from './scrollable';
-import useHeavyAnimationCheck, {getHeavyAnimationPromise} from '../hooks/useHeavyAnimationCheck';
-import I18n, {LangPackKey, i18n, join} from '../lib/langPack';
-import findUpClassName from '../helpers/dom/findUpClassName';
-import {getMiddleware, Middleware, MiddlewareHelper} from '../helpers/middleware';
-import {ChannelParticipant, Chat, ChatFull, ChatParticipant, Document, Message, MessageMedia, MessagesChats, Peer, Photo, StoryItem, Update, User, UserFull, WebPage} from '../layer';
-import SortedUserList from './sortedUserList';
-import findUpTag from '../helpers/dom/findUpTag';
-import appSidebarRight from './sidebarRight';
-import mediaSizes from '../helpers/mediaSizes';
-import appImManager from '../lib/appManagers/appImManager';
-import positionElementByIndex from '../helpers/dom/positionElementByIndex';
-import IS_TOUCH_SUPPORTED from '../environment/touchSupport';
-import handleTabSwipe from '../helpers/dom/handleTabSwipe';
-import windowSize from '../helpers/windowSize';
-import {formatPhoneNumber} from '../helpers/formatPhoneNumber';
-import {ButtonMenuItemOptions, ButtonMenuSync} from './buttonMenu';
-import PopupForward from './popups/forward';
-import PopupDeleteMessages from './popups/deleteMessages';
-import Row from './row';
-import htmlToDocumentFragment from '../helpers/dom/htmlToDocumentFragment';
-import {SearchSelection} from './chat/selection';
-import {attachClickEvent, simulateClickEvent} from '../helpers/dom/clickEvent';
-import {MyDocument} from '../lib/appManagers/appDocsManager';
-import AppMediaViewer from './appMediaViewer';
-import lockTouchScroll from '../helpers/dom/lockTouchScroll';
-import copy from '../helpers/object/copy';
-import getObjectKeysAndSort from '../helpers/object/getObjectKeysAndSort';
-import safeAssign from '../helpers/object/safeAssign';
-import findAndSplice from '../helpers/array/findAndSplice';
-import {ScrollStartCallbackDimensions} from '../helpers/fastSmoothScroll';
-import setInnerHTML from '../helpers/dom/setInnerHTML';
-import {AppManagers} from '../lib/appManagers/managers';
-import choosePhotoSize from '../lib/appManagers/utils/photos/choosePhotoSize';
-import wrapWebPageDescription from './wrappers/webPageDescription';
-import wrapWebPageTitle from './wrappers/webPageTitle';
-import wrapAbbreviation from '../lib/richTextProcessor/wrapAbbreviation';
-import matchUrl from '../lib/richTextProcessor/matchUrl';
-import wrapPlainText from '../lib/richTextProcessor/wrapPlainText';
-import wrapRichText from '../lib/richTextProcessor/wrapRichText';
-import wrapSenderToPeer from './wrappers/senderToPeer';
-import wrapSentTime from './wrappers/sentTime';
-import getMediaFromMessage from '../lib/appManagers/utils/messages/getMediaFromMessage';
-import filterMessagesByInputFilter from '../lib/appManagers/utils/messages/filterMessagesByInputFilter';
-import getChatMembersString from './wrappers/getChatMembersString';
-import getUserStatusString from './wrappers/getUserStatusString';
-import getParticipantPeerId from '../lib/appManagers/utils/chats/getParticipantPeerId';
-import {attachContextMenuListener} from '../helpers/dom/attachContextMenuListener';
-import contextMenuController from '../helpers/contextMenuController';
-import positionMenu from '../helpers/positionMenu';
-import apiManagerProxy from '../lib/mtproto/mtprotoworker';
-import ListenerSetter from '../helpers/listenerSetter';
-import SwipeHandler from './swipeHandler';
-import wrapDocument from './wrappers/document';
-import wrapPhoto from './wrappers/photo';
-import wrapVideo from './wrappers/video';
-import wrapMediaSpoiler, {hasSensitiveSpoiler, onMediaSpoilerClick} from './wrappers/mediaSpoiler';
-import filterAsync from '../helpers/array/filterAsync';
-import ChatContextMenu, {getSponsoredMessageButtons} from './chat/contextMenu';
-import PopupElement from './popups';
-import getParticipantRank from '../lib/appManagers/utils/chats/getParticipantRank';
-import {NULL_PEER_ID} from '../lib/mtproto/mtproto_config';
-import createParticipantContextMenu from '../helpers/dom/createParticipantContextMenu';
-import findAndSpliceAll from '../helpers/array/findAndSpliceAll';
-import deferredPromise from '../helpers/cancellablePromise';
+import type {AppMessagesManager, MyInputMessagesFilter, MyMessage, RequestHistoryOptions} from '@appManagers/appMessagesManager';
+import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG, DialogDom} from '@lib/appDialogsManager';
+import {logger} from '@lib/logger';
+import rootScope from '@lib/rootScope';
+import {SearchGroup, SearchGroupType} from '@components/appSearch';
+import {horizontalMenu} from '@components/horizontalMenu';
+import LazyLoadQueue from '@components/lazyLoadQueue';
+import {putPreloader} from '@components/putPreloader';
+import ripple from '@components/ripple';
+import Scrollable, {ScrollableX} from '@components/scrollable';
+import useHeavyAnimationCheck, {getHeavyAnimationPromise} from '@hooks/useHeavyAnimationCheck';
+import I18n, {LangPackKey, i18n, join} from '@lib/langPack';
+import findUpClassName from '@helpers/dom/findUpClassName';
+import {getMiddleware, Middleware, MiddlewareHelper} from '@helpers/middleware';
+import {ChannelParticipant, Chat, ChatFull, ChatParticipant, Document, Message, MessageMedia, MessagesChats, Peer, Photo, StoryItem, Update, User, UserFull, WebPage} from '@layer';
+import SortedUserList from '@components/sortedUserList';
+import findUpTag from '@helpers/dom/findUpTag';
+import appSidebarRight from '@components/sidebarRight';
+import mediaSizes from '@helpers/mediaSizes';
+import appImManager from '@lib/appImManager';
+import positionElementByIndex from '@helpers/dom/positionElementByIndex';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import handleTabSwipe from '@helpers/dom/handleTabSwipe';
+import windowSize from '@helpers/windowSize';
+import {formatPhoneNumber} from '@helpers/formatPhoneNumber';
+import {ButtonMenuItemOptions, ButtonMenuSync} from '@components/buttonMenu';
+import PopupForward from '@components/popups/forward';
+import PopupDeleteMessages from '@components/popups/deleteMessages';
+import Row from '@components/row';
+import htmlToDocumentFragment from '@helpers/dom/htmlToDocumentFragment';
+import {SearchSelection} from '@components/chat/selection';
+import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
+import {MyDocument} from '@appManagers/appDocsManager';
+import AppMediaViewer from '@components/appMediaViewer';
+import lockTouchScroll from '@helpers/dom/lockTouchScroll';
+import copy from '@helpers/object/copy';
+import getObjectKeysAndSort from '@helpers/object/getObjectKeysAndSort';
+import safeAssign from '@helpers/object/safeAssign';
+import findAndSplice from '@helpers/array/findAndSplice';
+import {ScrollStartCallbackDimensions} from '@helpers/fastSmoothScroll';
+import setInnerHTML from '@helpers/dom/setInnerHTML';
+import {AppManagers} from '@lib/managers';
+import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
+import wrapWebPageDescription from '@components/wrappers/webPageDescription';
+import wrapWebPageTitle from '@components/wrappers/webPageTitle';
+import wrapAbbreviation from '@richTextProcessor/wrapAbbreviation';
+import matchUrl from '@richTextProcessor/matchUrl';
+import wrapPlainText from '@richTextProcessor/wrapPlainText';
+import wrapRichText from '@richTextProcessor/wrapRichText';
+import wrapSenderToPeer from '@components/wrappers/senderToPeer';
+import wrapSentTime from '@components/wrappers/sentTime';
+import getMediaFromMessage from '@appManagers/utils/messages/getMediaFromMessage';
+import filterMessagesByInputFilter from '@appManagers/utils/messages/filterMessagesByInputFilter';
+import getChatMembersString from '@components/wrappers/getChatMembersString';
+import getUserStatusString from '@components/wrappers/getUserStatusString';
+import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
+import {attachContextMenuListener} from '@helpers/dom/attachContextMenuListener';
+import contextMenuController from '@helpers/contextMenuController';
+import positionMenu from '@helpers/positionMenu';
+import apiManagerProxy from '@lib/apiManagerProxy';
+import ListenerSetter from '@helpers/listenerSetter';
+import SwipeHandler from '@components/swipeHandler';
+import wrapDocument from '@components/wrappers/document';
+import wrapPhoto from '@components/wrappers/photo';
+import wrapVideo from '@components/wrappers/video';
+import wrapMediaSpoiler, {hasSensitiveSpoiler, onMediaSpoilerClick} from '@components/wrappers/mediaSpoiler';
+import filterAsync from '@helpers/array/filterAsync';
+import ChatContextMenu, {getSponsoredMessageButtons} from '@components/chat/contextMenu';
+import PopupElement from '@components/popups';
+import getParticipantRank from '@appManagers/utils/chats/getParticipantRank';
+import {NULL_PEER_ID} from '@appManagers/constants';
+import createParticipantContextMenu from '@helpers/dom/createParticipantContextMenu';
+import findAndSpliceAll from '@helpers/array/findAndSpliceAll';
+import deferredPromise from '@helpers/cancellablePromise';
 import {createEffect, createRoot, on} from 'solid-js';
-import StoriesProfileList from './stories/profileList';
-import Button from './button';
-import anchorCallback from '../helpers/dom/anchorCallback';
-import PopupPremium from './popups/premium';
-import {ChatType} from './chat/chat';
-import getFwdFromName from '../lib/appManagers/utils/messages/getFwdFromName';
-import SidebarSlider from './slider';
-import setBlankToAnchor from '../lib/richTextProcessor/setBlankToAnchor';
-import cancelClickOrNextIfNotClick from '../helpers/dom/cancelClickOrNextIfNotClick';
-import createElementFromMarkup from '../helpers/createElementFromMarkup';
-import numberThousandSplitter from '../helpers/number/numberThousandSplitter';
-import {ALL_COLLECTIONS_ID, StarGiftsProfileActions, StarGiftsProfileStore} from './stargifts/profileStore';
+import StoriesProfileList from '@components/stories/profileList';
+import Button from '@components/button';
+import anchorCallback from '@helpers/dom/anchorCallback';
+import PopupPremium from '@components/popups/premium';
+import {ChatType} from '@components/chat/chat';
+import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
+import SidebarSlider from '@components/slider';
+import setBlankToAnchor from '@richTextProcessor/setBlankToAnchor';
+import cancelClickOrNextIfNotClick from '@helpers/dom/cancelClickOrNextIfNotClick';
+import createElementFromMarkup from '@helpers/createElementFromMarkup';
+import numberThousandSplitter from '@helpers/number/numberThousandSplitter';
+import {ALL_COLLECTIONS_ID, StarGiftsProfileActions, StarGiftsProfileStore} from '@components/stargifts/profileStore';
 import {getFirstChild} from '@solid-primitives/refs';
-import SortedDialogList from './sortedDialogList';
-import Icon from './icon';
-import PopupReportAd from './popups/reportAd';
-import ButtonMenuToggle from './buttonMenuToggle';
-import {isSensitive} from '../helpers/restrictions';
-import {isMessageSensitive} from '../lib/appManagers/utils/messages/isMessageRestricted';
-import {MediaSearchContext} from './appMediaPlaybackController';
-import {StarGiftsProfileTab} from './stargifts/profileList';
-import {MyStarGift} from '../lib/appManagers/appGiftsManager';
-import wrapSticker from './wrappers/sticker';
+import SortedDialogList from '@components/sortedDialogList';
+import Icon from '@components/icon';
+import PopupReportAd from '@components/popups/reportAd';
+import ButtonMenuToggle from '@components/buttonMenuToggle';
+import {isSensitive} from '@helpers/restrictions';
+import {isMessageSensitive} from '@appManagers/utils/messages/isMessageRestricted';
+import {MediaSearchContext} from '@components/appMediaPlaybackController';
+import {StarGiftsProfileTab} from '@components/stargifts/profileList';
+import {MyStarGift} from '@appManagers/appGiftsManager';
+import wrapSticker from '@components/wrappers/sticker';
 import {unwrap} from 'solid-js/store';
-import {usePeer} from '../stores/peers';
-import {useAppState} from '../stores/appState';
-import {AutonomousSavedDialogList} from './autonomousDialogList/savedDialogs';
-import SetTransition from './singleTransition';
-import liteMode from '../helpers/liteMode';
+import {usePeer} from '@stores/peers';
+import {useAppState} from '@stores/appState';
+import {AutonomousSavedDialogList} from '@components/autonomousDialogList/savedDialogs';
+import SetTransition from '@components/singleTransition';
+import liteMode from '@helpers/liteMode';
+import {wrapGlobalPostsSearch} from './sidebarLeft/globalPostsSearch';
 
 // const testScroll = false;
 
@@ -128,7 +129,7 @@ export type SearchSuperContext = {
 
 export type SearchSuperMediaType = 'stories' | 'members' | 'media' |
   'files' | 'links' | 'music' | 'chats' | 'voice' | 'groups' | 'similar' |
-  'savedDialogs' | 'saved' | 'channels' | 'apps' | 'gifts';
+  'savedDialogs' | 'saved' | 'channels' | 'apps' | 'gifts' | 'posts';
 export type SearchSuperMediaTab = {
   inputFilter?: SearchSuperType,
   name: LangPackKey,
@@ -145,6 +146,13 @@ type SearchSuperLoadTypeOptions = {
   loadCount: number,
   middleware: Middleware,
   side: 'top' | 'bottom'
+};
+
+type PerformSearchResultArgs = {
+  messages: (Message.message | Message.messageService)[];
+  mediaTab: SearchSuperMediaTab;
+  canAnimateIn?: boolean;
+  append?: boolean;
 };
 
 class SearchContextMenu {
@@ -1092,7 +1100,7 @@ export default class AppSearchSuper {
     }
   }
 
-  public async performSearchResult(messages: (Message.message | Message.messageService)[], mediaTab: SearchSuperMediaTab, append = true) {
+  public async performSearchResult({messages, mediaTab, canAnimateIn = false, append = true}: PerformSearchResultArgs) {
     const elemsToAppend: {element: HTMLElement, message: any}[] = [];
     const sharedMediaDiv: HTMLElement = mediaTab.contentTab;
     const promises: Promise<any>[] = [];
@@ -1111,7 +1119,7 @@ export default class AppSearchSuper {
       searchGroup = this.searchGroups.messages;
     }
 
-    if(liteMode.isAvailable('animations') && searchGroup?.container) {
+    if(canAnimateIn && liteMode.isAvailable('animations') && searchGroup?.container) {
       searchGroup.container.classList.add('is-hidden');
 
       setTimeout(() => SetTransition({
@@ -2067,7 +2075,23 @@ export default class AppSearchSuper {
     this.loaded[mediaTab.type] = true;
   }
 
-  private async loadGifts({mediaTab}: SearchSuperLoadTypeOptions) {
+  globalPostsSearch: ReturnType<typeof wrapGlobalPostsSearch>;
+  private async loadPosts({mediaTab, middleware}: SearchSuperLoadTypeOptions) {
+    if(!this.globalPostsSearch) {
+      this.globalPostsSearch = wrapGlobalPostsSearch({
+        middleware,
+        query: this.searchContext.query
+      });
+      mediaTab.contentTab.append(this.globalPostsSearch.dom);
+    }
+
+    this.globalPostsSearch.loadMore();
+  }
+
+  private loadGifts() {
+    const mediaTab = this.mediaTabsMap.get('gifts');
+    if(!mediaTab) return;
+
     if(!this.stargiftsStore) {
       const middleware = this.middleware.get();
       createRoot((dispose) => {
@@ -2080,6 +2104,14 @@ export default class AppSearchSuper {
           scrollParent: scrollTarget,
           onCountChange: (count) => {
             this.setCounter('gifts', count);
+
+            mediaTab.menuTab.classList.toggle('hide', count === 0);
+            let needChangeActive = false
+            if(count === 0) {
+              needChangeActive = mediaTab.menuTab.classList.contains('active');
+              mediaTab.menuTab.classList.remove('active');
+            }
+            this.updateContainerHidden(needChangeActive);
           }
         });
         createEffect(on(() => store.items, (items) => {
@@ -2126,8 +2158,8 @@ export default class AppSearchSuper {
       promise = this.loadChannels(options);
     } else if(type === 'apps') {
       promise = this.loadApps(options);
-    } else if(type === 'gifts') {
-      promise = this.loadGifts(options);
+    } else if(type === 'posts') {
+      promise = this.loadPosts(options);
     }
 
     if(promise) {
@@ -2181,7 +2213,7 @@ export default class AppSearchSuper {
 
         this.usedFromHistory[inputFilter] = used;
         // if(messages.length) {
-        return this.performSearchResult(messages, mediaTab).finally(() => {
+        return this.performSearchResult({messages, mediaTab}).finally(() => {
           setTimeout(() => {
             this.scrollable.checkForTriggers();
           }, 0);
@@ -2262,7 +2294,7 @@ export default class AppSearchSuper {
       }
 
       // if(value.history.length) {
-      return this.performSearchResult(this.filterMessagesByType(messages, inputFilter), mediaTab);
+      return this.performSearchResult({messages: this.filterMessagesByType(messages, inputFilter), mediaTab, canAnimateIn: !offsetId});
       // }
     }).catch((err) => {
       this.log.error('load error:', err);
@@ -2403,14 +2435,27 @@ export default class AppSearchSuper {
       this.setPinnedGifts(maybePinnedGifts);
     }
 
-    this.container.classList.toggle('hide', !firstMediaTab);
-    this.container.parentElement.classList.toggle('search-empty', !firstMediaTab);
+    this.toggleContainerHidden(!firstMediaTab);
     if(firstMediaTab) {
       this.skipScroll = true;
       this.selectTab(this.mediaTabs.indexOf(firstMediaTab), false);
       // firstMediaTab.menuTab.classList.add('active');
 
       this.navScrollableContainer.classList.toggle('is-single', count <= 1);
+    }
+  }
+
+  private toggleContainerHidden(hidden: boolean) {
+    this.container.classList.toggle('hide', hidden);
+    this.container.parentElement.classList.toggle('search-empty', hidden);
+  }
+
+  private updateContainerHidden(changeActive = false) {
+    const visibleTabs = this.mediaTabs.filter((tab) => !tab.menuTab.classList.contains('hide'));
+    this.toggleContainerHidden(visibleTabs.length === 0);
+    this.navScrollableContainer.classList.toggle('is-single', visibleTabs.length <= 1);
+    if(changeActive && visibleTabs.length) {
+      this.selectTab(this.mediaTabs.indexOf(visibleTabs[0]), false);
     }
   }
 
@@ -2424,6 +2469,7 @@ export default class AppSearchSuper {
       if(!middleware()) {
         return;
       }
+      this.loadGifts()
 
       this.loadFirstTimePromise = undefined;
       this.firstLoad = false;
@@ -2677,6 +2723,7 @@ export default class AppSearchSuper {
     this.membersParticipantMap = undefined;
     this.membersMiddlewareHelper?.destroy();
     this.membersMiddlewareHelper = undefined;
+    this.globalPostsSearch = undefined;
   }
 
   public cleanScrollPositions() {

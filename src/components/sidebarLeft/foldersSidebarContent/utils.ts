@@ -1,18 +1,22 @@
 
-import {FOLDER_ID_ALL} from '../../../lib/mtproto/mtproto_config';
-import type {AppManagers} from '../../../lib/appManagers/managers';
-import {MyDialogFilter} from '../../../lib/storages/filters';
-import {DialogFilter} from '../../../layer';
-import assumeType from '../../../helpers/assumeType';
+import {FOLDER_ID_ALL} from '@appManagers/constants';
+import type {AppManagers} from '@lib/managers';
+import {MyDialogFilter} from '@lib/storages/filters';
+import {DialogFilter} from '@layer';
+import assumeType from '@helpers/assumeType';
 
-import {FolderItemPayload} from './types';
+import {FolderItemPayload} from '@components/sidebarLeft/foldersSidebarContent/types';
 
 export async function getNotificationCountForFilter(filterId: number, managers: AppManagers) {
-  const {unreadUnmutedCount, unreadCount} = await managers.dialogsStorage.getFolderUnreadCount(filterId);
+  const {
+    unreadUnmutedCount,
+    unreadCount,
+    unreadMentionsCount
+  } = await managers.dialogsStorage.getFolderUnreadCount(filterId);
 
   return {
     count: filterId === FOLDER_ID_ALL ? unreadUnmutedCount : unreadCount,
-    muted: !unreadUnmutedCount && !!unreadCount
+    muted: !unreadUnmutedCount && !!unreadCount && !unreadMentionsCount
   };
 }
 
