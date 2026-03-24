@@ -10,7 +10,6 @@ import type {MyDraftMessage} from '@appManagers/appDraftsManager';
 import type {AppMessagesManager, MessageSendingParams, MyMessage, SuggestedPostPayload} from '@appManagers/appMessagesManager';
 import type Chat from '@components/chat/chat';
 import {AppImManager, APP_TABS} from '@lib/appImManager';
-import '../../../public/recorder.min';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import opusDecodeController from '@lib/opusDecodeController';
 import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
@@ -106,7 +105,7 @@ import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUserna
 import replaceContent from '@helpers/dom/replaceContent';
 import getTextWidth from '@helpers/canvas/getTextWidth';
 import {FontFull} from '@config/font';
-import {ChatType} from '@components/chat/chat';
+import {ChatType} from './chatType';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import idleController from '@helpers/idleController';
 import Icon from '@components/icon';
@@ -268,6 +267,7 @@ export default class ChatInput {
   public editMessage: Message.message;
   private noWebPage: true;
   public scheduleDate: number;
+  public scheduleRepeatPeriod: number;
   public sendSilent: true;
   public startParam: string;
   public invertMedia: boolean;
@@ -965,7 +965,7 @@ export default class ChatInput {
       sendingParams.confirmedPaymentResult = preparedPaymentResult;
 
       const duration = (Date.now() - this.recordStartTime) / 1000 | 0;
-      const dataBlob = new Blob([typedArray], {type: 'audio/ogg'});
+      const dataBlob = new Blob([typedArray as BlobPart], {type: 'audio/ogg'});
       opusDecodeController.decode(typedArray, true).then((result) => {
         opusDecodeController.setKeepAlive(false);
 
@@ -1776,7 +1776,7 @@ export default class ChatInput {
     return user.status?._ !== 'userStatusOnline';
   };
 
-  public setScheduleTimestamp(timestamp: number, callback: () => void) {
+  public setScheduleTimestamp(timestamp: number, callback: () => void, repeatPeriod?: number) {
     const middleware = this.getMiddleware();
     const minTimestamp = (Date.now() / 1000 | 0) + 10;
     if(timestamp <= minTimestamp) {
@@ -1784,6 +1784,7 @@ export default class ChatInput {
     }
 
     this.scheduleDate = timestamp;
+    this.scheduleRepeatPeriod = repeatPeriod;
     callback();
 
     if(this.chat.type !== ChatType.Scheduled && this.chat.type !== ChatType.Stories && timestamp) {
@@ -1806,7 +1807,8 @@ export default class ChatInput {
 
   public scheduleSending = async(
     callback: () => void = this.sendMessage.bind(this, true),
-    initDate = new Date()
+    initDate?: Date,
+    initRepeatPeriod?: number
   ) => {
     const middleware = this.getMiddleware();
     const canSendWhenOnline = await this.canSendWhenOnline();
@@ -1815,15 +1817,18 @@ export default class ChatInput {
     }
 
     PopupElement.createPopup(PopupSchedule, {
-      initDate,
-      onPick: (timestamp) => {
+      initDate: initDate ?? new Date(),
+      addMinutes: initDate === undefined,
+      onPick: (timestamp, repeatPeriod) => {
         if(!middleware()) {
           return;
         }
 
-        this.setScheduleTimestamp(timestamp, callback);
+        this.setScheduleTimestamp(timestamp, callback, repeatPeriod);
       },
-      canSendWhenOnline
+      canSendWhenOnline,
+      canRepeat: true,
+      initRepeatPeriod
     }).show();
   };
 
@@ -2787,7 +2792,7 @@ export default class ChatInput {
 
     this.checkAutocomplete(richValue, caretPos, entities);
 
-    processCurrentFormatting(this.messageInput);
+    processCurrentFormatting(this.messageInput, undefined, (e as InputEvent)?.inputType as any);
 
     this.updateSendBtn();
   };
@@ -3844,6 +3849,7 @@ export default class ChatInput {
     }
 
     this.scheduleDate = undefined;
+    this.scheduleRepeatPeriod = undefined;
     this.sendSilent = undefined;
 
     const {totalEntities} = this.getValueAndEntities(this.messageInput);

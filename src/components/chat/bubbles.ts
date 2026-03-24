@@ -152,7 +152,7 @@ import shouldDisplayGiftCodeAsGift from '@helpers/shouldDisplayGiftCodeAsGift';
 import anchorCallback from '@helpers/dom/anchorCallback';
 import SimilarChannels from '@components/chat/similarChannels';
 import clearMessageId from '@appManagers/utils/messageId/clearMessageId';
-import {ChatType} from '@components/chat/chat';
+import {ChatType} from './chatType';
 import {isSavedDialog} from '@appManagers/utils/dialogs/isDialog';
 import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
 import isForwardOfForward from '@appManagers/utils/messages/isForwardOfForward';
@@ -222,6 +222,8 @@ import onQuoteClick from '@helpers/dom/onQuoteClick';
 import PopupBoost from '@components/popups/boost';
 import {NoForwardsRequestContent, NoForwardsRequestReplyMarkup} from '@components/chat/bubbles/noForwardsRequest';
 import tsNow from '@helpers/tsNow';
+import wrapMessageForReply from '@components/wrappers/messageForReply';
+import canSeeMessageMedia from '@lib/appManagers/utils/messages/canSeeMessageMedia';
 
 // TODO: fix new message won't be rendered if an old one is rendering in the moment
 
@@ -362,7 +364,7 @@ let rerenderLogBubblesCallbacks: NoneToVoidFunction[];
 
 if(import.meta.hot) {
   rerenderLogBubblesCallbacks = [];
-  import.meta.hot.accept('./bubbleParts/adminLogsResolver/index.tsx', (module) => {
+  import.meta.hot.accept('./bubbleParts/adminLogsResolver/index.tsx', (module: unknown) => {
     if(!module) return;
     const {resolveAdminLog: newResolveAdminLog} = module as unknown as typeof import('./bubbleParts/adminLogsResolver');
 
@@ -786,6 +788,9 @@ export default class ChatBubbles {
         delete this.bubbles[fullTempMid];
         this.bubbles[fullMid] = bubble;
         bubble.dataset.mid = '' + mid;
+        if(this.chat.type === ChatType.Scheduled) {
+          this.bubbleGroups.changeBubbleMessage(bubble, message);
+        }
 
         const context = this.contexts.get(bubble);
         if(context) {
@@ -1914,7 +1919,11 @@ export default class ChatBubbles {
   }
 
   public createScrollSaver(reverse = true) {
-    const scrollSaver = new ScrollSaver(this.scrollable, '.bubble:not(.is-date):not(.is-sponsored)', reverse);
+    const scrollSaver = new ScrollSaver(
+      this.scrollable,
+      '.bubble:not(.is-date):not(.is-sponsored):not(.botforum-new-topic-bubble)',
+      reverse
+    );
     return scrollSaver;
   }
 
@@ -3023,7 +3032,7 @@ export default class ChatBubbles {
 
     if(bubbleFullMid) {
       const message = this.chat.getMessage(bubbleFullMid);
-      const {action} = message as Message.messageService;
+      const action = (message as Message.messageService)?.action;
       if(action?._ === 'messageActionBoostApply') {
         PopupElement.createPopup(PopupBoost, this.peerId);
         return;
@@ -5888,8 +5897,9 @@ export default class ChatBubbles {
       animationGroup: this.chat.animationGroup
     };
 
-    const isStoryMention = isMessage && (message.media as MessageMedia.messageMediaStory)?.pFlags?.via_mention;
-    const regularAsService = !!isStoryMention;
+    const isStoryMention = isMessage && !!(message.media as MessageMedia.messageMediaStory)?.pFlags?.via_mention;
+    const isSelfDestructingMedia = isMessage && !!(message.media as MessageMedia.messageMediaPhoto)?.ttl_seconds;
+    const regularAsService = isStoryMention || (isSelfDestructingMedia && !canSeeMessageMedia(message));
     let returnService: boolean;
 
     if(
@@ -6404,6 +6414,13 @@ export default class ChatBubbles {
 
           s.append(avatarContainer, text, button);
         }
+      } else if(isSelfDestructingMedia) {
+        const promise = wrapMessageForReply({
+          message,
+          ...wrapOptions
+        }).then((el) => s.append(el));
+
+        loadPromises.push(promise);
       }
       bubbleContainer.append(s);
 
@@ -6743,7 +6760,7 @@ export default class ChatBubbles {
         messageDiv.append(timeSpan, _clearfix ??= clearfix());
       });
 
-      if(I18n.isRTL ? !endsWithRTL(context.messageMessage) : haveRTLChar) {
+      if(I18n.getIsRTL() ? !endsWithRTL(context.messageMessage) : haveRTLChar) {
         timeSpan.classList.add('is-block');
       }
 

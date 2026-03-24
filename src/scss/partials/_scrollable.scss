@@ -4,6 +4,8 @@
  * https://github.com/morethanwords/tweb/blob/master/LICENSE
  */
 
+@use "../shared" as *;
+
 html.overlay-scroll {
   .scrollable::-webkit-scrollbar {
     width: 0;
@@ -174,7 +176,7 @@ html.custom-scroll {
     &-container {
       position: sticky;
       top: 0;
-      z-index: 5;
+      z-index: 4;
     }
   }
 }

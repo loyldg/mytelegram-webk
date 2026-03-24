@@ -366,8 +366,8 @@ const lang = {
   'Boost.EnableStoriesFor': 'Enable Stories For',
   'Boost.DescriptionJustReachedLevel1': 'This channel reached **Level 1** and can now post stories.',
   'Boost.DescriptionJustReachedLevel': 'This channel reached **Level %1$d** and can now post %2$s per day.',
-  'Boost.DescriptionJustReachedLevel1.Group': 'This channel reached **Level 1** and can now post stories.',
-  'Boost.DescriptionJustReachedLevel.Group': 'This channel reached **Level %1$d** and can now post %2$s per day.',
+  'Boost.DescriptionJustReachedLevel1.Group': 'This group reached **Level 1** and can now post stories.',
+  'Boost.DescriptionJustReachedLevel.Group': 'This group reached **Level %1$d** and can now post %2$s per day.',
   'Boost.StoriesCount': {
     'one_value': '**%d** story',
     'other_value': '**%d** stories'
@@ -588,6 +588,10 @@ const lang = {
   'ContactNoteRowDesc': 'only visible to you',
   'SuggestBirthdayRow': 'Suggest Date of Birth',
   'Privacy.BirthdayCaption': 'You can restrict who can see your birthday with granular precision.',
+  'PrivacySavedMusic': 'Saved Music',
+  'Privacy.SavedMusicRow': 'Who can see my saved music?',
+  'Privacy.SavedMusic': 'Who can see my saved music',
+  'Privacy.SavedMusicCaption': 'You can restrict who can see your saved music playlist with granular precision.',
   'PrivacySettings.Messages.PremiumError': 'Only subscribers of [Telegram Premium]() can restrict receiving messages.',
   'Chat.PremiumRequired': 'Subscribe to **Premium** to message **%s**.',
   'Chat.PremiumRequiredButton': 'Get Premium',
@@ -1028,8 +1032,33 @@ const lang = {
   'Stories.StealthMode.Cooldown': 'Available in %s',
   'Stories.StealthMode.Activated.Title': 'Stealth Mode On',
   'Stories.StealthMode.Activated.Subtitle': 'The creators of stories you viewed in the past **%s** or will view in the next **%s** won\'t see you in the list of viewers.',
+  'Stories.Albums.EmptyTitle': 'Organize Your Stories',
+  'Stories.Albums.EmptySubtitle': 'Add some of your stories to this album.',
+  'Stories.Albums.AddToAlbum': 'Add to Album',
+  'Stories.Albums.RemoveFromAlbum': 'Remove from Album',
+  'Stories.Albums.AddAlbum': 'Add Album',
+  'Stories.Albums.CreateAlbum': 'Create Album',
+  'Stories.Albums.AddStories': 'Add Stories',
+  'Stories.Albums.Rename': 'Rename Album',
+  'Stories.Albums.Delete': 'Delete Album',
+  'Stories.Albums.DeleteConfirm': 'Are you sure you want to delete this album?',
+  'Stories.Albums.CreateTitle': 'New Album',
+  'Stories.Albums.CreatePlaceholder': 'Album Name',
+  'Stories.Albums.RenameTitle': 'Rename Album',
+  'Stories.Albums.AddCount': {
+    'one_value': 'Add %1$d Story',
+    'other_value': 'Add %1$d Stories'
+  },
+  'Stories.Albums.Added': {
+    'one_value': 'This story was added to the album.',
+    'other_value': '%1$d stories were added to the album.'
+  },
+  'Stories.Albums.Removed': {
+    'one_value': 'This story was removed from the album.',
+    'other_value': '%1$d stories were removed from the album.'
+  },
   'LeastActiveCommunities': 'Least active communities',
-  'InactiveChannel': '%s, inactive %s',
+  'InactiveChannel': '%s, inactive for %s',
   'InactiveChannel.Group': 'group',
   'InactiveChannel.Broadcast': 'channel',
   'LeaveCommunities': {
@@ -1066,7 +1095,7 @@ const lang = {
   'EnableSharingCaption': 'You need **%s\'s** approval to enable sharing. Send a request?',
   'SendRequest': 'Send Request',
   'EnableSharingRequested': '%s would like to enable sharing in this chat, which includes:',
-  'EnableSharingRequested.You': 'You requested to enable sharing in this chat, which includes:',
+  'EnableSharingRequested.You': 'You suggested to enable sharing in this chat, which includes:',
   'EnableSharingRequested.Expired': 'Sharing enable request has expired',
   'EnableSharingRequestedList1': 'Forwarding messages',
   'EnableSharingRequestedList2': 'Saving photos and videos',
@@ -1074,6 +1103,23 @@ const lang = {
   'EnableSharing.Reject': 'Reject',
   'EnableSharing.Accept': 'Accept',
   'SharingStillDisabled': 'Sharing in this chat is still disabled',
+  'SharingStillEnabled': 'Sharing in this chat is still enabled',
+  'ReminderScheduled': 'Reminder scheduled in [Saved Messages]().',
+  'AddDate': 'Add Date',
+  'EditDate': 'Edit Date',
+  'RemoveDate': 'Remove Date',
+  'SelfDestructingOnMobile.Photo.You': 'You sent a self-destructing photo',
+  'SelfDestructingOnMobile.Video.You': 'You sent a self-destructing video',
+  'SelfDestructingOnMobile.Voice.You': 'You sent a self-destructing voice message',
+  'SelfDestructingOnMobile.Round.You': 'You sent a self-destructing round message',
+  'SelfDestructingOnMobile.Photo': '%s sent you a self-destructing photo. Please view it on your mobile.',
+  'SelfDestructingOnMobile.Video': '%s sent you a self-destructing video. Please view it on your mobile.',
+  'SelfDestructingOnMobile.Voice': '%s sent you a self-destructing voice message. Please view it on your mobile.',
+  'SelfDestructingOnMobile.Round': '%s sent you a self-destructing round message. Please view it on your mobile.',
+  'SelfDestructingOnMobile.Photo.Expired': 'Expired photo',
+  'SelfDestructingOnMobile.Video.Expired': 'Expired video',
+  'SelfDestructingOnMobile.Voice.Expired': 'Expired voice message',
+  'SelfDestructingOnMobile.Round.Expired': 'Expired video message',
 
   // * android
   'GroupsAndChannelsLimitTitle': 'Groups and Channels',
@@ -1722,6 +1768,65 @@ const lang = {
   'ScamMessage': 'SCAM',
   'FakeMessage': 'FAKE',
   'TextCopied': 'Text copied to clipboard',
+  'FormattedDate.CopyDate': 'Copy Date',
+  'FormattedDate.DateCopied': 'Date copied to clipboard',
+  'FormattedDate.JustNow': 'just now',
+  'FormattedDate.SecondsAgo': {
+    'one_value': '%1$d second ago',
+    'other_value': '%1$d seconds ago'
+  },
+  'FormattedDate.MinutesAgo': {
+    'one_value': '%1$d minute ago',
+    'other_value': '%1$d minutes ago'
+  },
+  'FormattedDate.HoursAgo': {
+    'one_value': '%1$d hour ago',
+    'other_value': '%1$d hours ago'
+  },
+  'FormattedDate.DaysAgo': {
+    'one_value': '%1$d day ago',
+    'other_value': '%1$d days ago'
+  },
+  'FormattedDate.WeeksAgo': {
+    'one_value': '%1$d week ago',
+    'other_value': '%1$d weeks ago'
+  },
+  'FormattedDate.MonthsAgo': {
+    'one_value': '%1$d month ago',
+    'other_value': '%1$d months ago'
+  },
+  'FormattedDate.YearsAgo': {
+    'one_value': '%1$d year ago',
+    'other_value': '%1$d years ago'
+  },
+  'FormattedDate.InSeconds': {
+    'one_value': 'in %1$d second',
+    'other_value': 'in %1$d seconds'
+  },
+  'FormattedDate.InMinutes': {
+    'one_value': 'in %1$d minute',
+    'other_value': 'in %1$d minutes'
+  },
+  'FormattedDate.InHours': {
+    'one_value': 'in %1$d hour',
+    'other_value': 'in %1$d hours'
+  },
+  'FormattedDate.InDays': {
+    'one_value': 'in %1$d day',
+    'other_value': 'in %1$d days'
+  },
+  'FormattedDate.InWeeks': {
+    'one_value': 'in %1$d week',
+    'other_value': 'in %1$d weeks'
+  },
+  'FormattedDate.InMonths': {
+    'one_value': 'in %1$d month',
+    'other_value': 'in %1$d months'
+  },
+  'FormattedDate.InYears': {
+    'one_value': 'in %1$d year',
+    'other_value': 'in %1$d years'
+  },
   'PaymentInvoice': 'INVOICE',
   'PaymentTestInvoice': 'TEST INVOICE',
   'PaymentReceipt': 'Receipt',
@@ -1989,7 +2094,7 @@ const lang = {
   'EditAdminPinMessages': 'Pin Messages',
   'EditAdminCantEdit': 'You can\'t edit the rights of this admin.',
   'EditCantEditPermissions': 'You cannot change this permission.',
-  'EditAdminRank': 'Custom title',
+  'EditAdminRank': 'Member tag',
   'EditAdminRankInfo': 'A title that members will see instead of \'%1$s\'.',
   'DeleteBanUser': 'Ban user',
   'DeleteReportSpam': 'Report spam',
@@ -2075,7 +2180,11 @@ const lang = {
   'DeleteThisChat': 'Delete this chat',
   'ShareFile': 'Share',
   'StoryPinnedToProfile': 'Story posted to your profile.',
+  'StoryPinnedToGroup': 'Story posted to the group profile.',
+  'StoryPinnedToChannel': 'Story posted to the channel profile.',
   'StoryArchivedFromProfile': 'This story is hidden from your profile.',
+  'StoryArchivedFromGroup': 'This story is hidden from the group profile.',
+  'StoryArchivedFromChannel': 'This story is hidden from the channel profile.',
   'StorySavedTitle': {
     'one_value': '%d story posted to your profile',
     'other_value': '%d stories posted to your profile'
@@ -2083,6 +2192,22 @@ const lang = {
   'StoryArchived': {
     'one_value': '%d story removed from your profile',
     'other_value': '%d stories removed from your profile'
+  },
+  'StorySavedGroupTitle': {
+    'one_value': '%d story posted to the group profile',
+    'other_value': '%d stories posted to the group profile'
+  },
+  'StoryGroupArchived': {
+    'one_value': '%d story removed from the group profile',
+    'other_value': '%d stories removed from the group profile'
+  },
+  'StorySavedChannelTitle': {
+    'one_value': '%d story posted to the channel profile',
+    'other_value': '%d stories posted to the channel profile'
+  },
+  'StoryChannelArchived': {
+    'one_value': '%d story removed from the channel profile',
+    'other_value': '%d stories removed from the channel profile'
   },
   'DeleteStoryTitle': 'Delete Story',
   'DeleteStoriesTitle': 'Delete Stories',
@@ -2092,6 +2217,8 @@ const lang = {
     'other_value': 'Are you sure you want to delete %d stories?'
   },
   'ProfileStoriesArchiveHint': 'Only you can see archived stories unless you choose to post them to your profile.',
+  'ProfileStoriesArchiveGroupHint': 'Only admins of the group can see archived stories unless they are posted to the group page.',
+  'ProfileStoriesArchiveChannelHint': 'Only admins can see archived stories unless you choose to post them to channel profile.',
   'StoryCloseFriendsHint': 'You are seeing this story because **%s** added you to their list of Close Friends.',
   'StorySelectedContactsHint': 'Only some users **%s** selected can view this story.',
   'StoryContactsHint': 'Only **%s’s** contacts can view this story.',
@@ -2807,6 +2934,7 @@ const lang = {
   'StarGiftHideFromMyPage': 'Hide from my Page',
   'StarGiftHiddenHint': 'This gift is hidden. Only you can see it.',
   'StarGiftVisibleHint': 'The gift is visible on your profile.',
+  'StarGiftHiddenSender': 'Only you can see the sender\'s name.',
   'StarGiftVisibleHintLink': 'View >',
   'StarGiftVisibleHideLink': 'Hide >',
   'StarGiftVisibleShowLink': 'Show >',
@@ -3003,6 +3131,8 @@ const lang = {
   'StarGiftCollectionsEmptyTitle': 'Organize Your Gifts',
   'StarGiftCollectionsEmptySubtitle': 'Add some gifts to this collection.',
   'StarGiftCollectionsAddGifts': 'Add Gifts',
+  'StarGiftCollectionsAddToCollection': 'Add to collection',
+  'StarGiftTransferToMyself': 'Transfer to myself',
   'StarGiftCollectionsEmptyOther': 'No matching gifts.',
   'StarGiftCollectionsRename': 'Edit Name',
   'StarGiftCollectionsDeleteTitle': 'Delete collection',
@@ -3163,10 +3293,10 @@ const lang = {
   'Chat.Service.NoForwardsToggle.You.Enabled': 'You disabled sharing in this chat',
   'Chat.Service.NoForwardsToggle.Disabled': '%s enabled sharing in this chat',
   'Chat.Service.NoForwardsToggle.You.Disabled': 'You enabled sharing in this chat',
-  'Chat.Service.NoForwardsRequest.You.Enable': 'You requested to disable sharing',
-  'Chat.Service.NoForwardsRequest.Enable': '%s requests to disable sharing',
-  'Chat.Service.NoForwardsRequest.You.Disable': 'You requested to enable sharing',
-  'Chat.Service.NoForwardsRequest.Disable': '%s requests to enable sharing',
+  'Chat.Service.NoForwardsRequest.You.Enable': 'You suggested to disable sharing',
+  'Chat.Service.NoForwardsRequest.Enable': '%s suggested to disable sharing',
+  'Chat.Service.NoForwardsRequest.You.Disable': 'You suggested to enable sharing',
+  'Chat.Service.NoForwardsRequest.Disable': '%s suggested to enable sharing',
   'Chat.Service.PaymentSent1': 'You have successfully transferred **%1$@** to **%2$@** for **%3$@**',
   'Chat.Service.PaymentSent1NoTitle': 'You have successfully transferred **%1$@** to **%2$@**',
   'Chat.Service.PaymentSentRecurringInit': 'You successfully transferred **%1$@** to **%2$@** for **%3$@** and allowed future recurring payments',
@@ -3227,6 +3357,7 @@ const lang = {
   'Chat.Send.WithoutSound': 'Send Without Sound',
   'Chat.Send.SetReminder': 'Set a Reminder',
   'Chat.Send.ScheduledMessage': 'Schedule Message',
+  'Chat.Send.WithCaption': 'Send GIF with caption',
   'Chat.SendAs.PersonalAccount': 'personal account',
   'Chat.UnpinAllMessagesConfirmation': {
     'one_value': 'Do you want to unpin %d message in this chat?',
@@ -3470,6 +3601,10 @@ const lang = {
     'one_value': 'Send Video',
     'other_value': 'Send %d Videos'
   },
+  'PreviewSender.SendGif': {
+    'one_value': 'Send GIF',
+    'other_value': 'Send %d GIFs'
+  },
   'PrivacyAndSecurity.Item.On': 'On',
   'PrivacyAndSecurity.Item.Off': 'Off',
   'PrivacyAndSecurity.SensitiveText': 'Disable filtering',
@@ -3527,6 +3662,21 @@ const lang = {
   'Schedule.SendToday': 'Send today at %@',
   'Schedule.SendDate': 'Send on %@ at %@',
   'Schedule.SendWhenOnline': 'Send When Online',
+  'Schedule.Repeat': 'Repeat',
+  'Schedule.Repeat.Daily': 'Daily',
+  'Schedule.Repeat.Weekly': 'Weekly',
+  'Schedule.Repeat.Biweekly': 'Biweekly',
+  'Schedule.Repeat.Monthly': 'Monthly',
+  'Schedule.Repeat.Every3Months': 'Every 3 Months',
+  'Schedule.Repeat.Every6Months': 'Every 6 Months',
+  'Schedule.Repeat.Yearly': 'Yearly',
+  'Schedule.Repeat.PremiumRequired': 'Subscribe to **[Telegram Premium]()** to schedule repeating messages.',
+  'Schedule.Repeated.Daily': 'daily',
+  'Schedule.Repeated.Weekly': 'weekly',
+  'Schedule.Repeated.Biweekly': 'biweekly',
+  'Schedule.Repeated.Monthly': 'monthly',
+  'Schedule.Repeated.EveryMonth': '%1$s-monthly',
+  'Schedule.Repeated.Yearly': 'yearly',
   'Story.Tooltip.MessageSent': 'Message Sent.',
   'Sticker.Premium.Click.Info': 'This set contains premium stickers like this one. [View Set]()',
   'Stickers.Recent': 'Recent',
@@ -4354,7 +4504,7 @@ const lang = {
   'Archive.MarkAllAsRead.ConfirmationDescription': 'Are you sure you want to mark all archived chats as read?',
   'ArchiveFeatureDetails.MenuOption': 'How does it work?',
   'ArchiveFeatureDetails.Title': 'This is your Archive',
-  'ArchiveFeatureDetails.Subtitle': 'Archived chats will remain in the Archive when you receive a new message. [Click to change.]()',
+  'ArchiveFeatureDetails.Subtitle': 'Archived chats will remain in the Archive when you receive a new message. [Click to change]()',
   'ArchiveFeatureDetails.HowTo.Title': 'Archiving Chats',
   'ArchiveFeatureDetails.HowTo.Subtitle': 'Right-click on a chat and choose **%s** or **%s**.',
   'ArchiveFeatureDetails.Hide.Title': 'Hiding the Archive',

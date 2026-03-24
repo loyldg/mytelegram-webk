@@ -54,7 +54,7 @@ import {Middleware, MiddlewareHelper, getMiddleware} from '@helpers/middleware';
 import setBadgeContent from '@helpers/setBadgeContent';
 import createBadge from '@helpers/createBadge';
 import AppStatisticsTab from '@components/sidebarRight/tabs/statistics';
-import {ChatType} from '@components/chat/chat';
+import {ChatType} from './chatType';
 import AppBoostsTab from '@components/sidebarRight/tabs/boosts';
 import ChatLive from '@components/chat/topbarLive/container';
 import {RtmpStartStreamPopup} from '@components/rtmp/adminPopup';
@@ -734,7 +734,7 @@ export default class ChatTopbar {
         return !!userFull?.pFlags?.blocked;
       }
     }, {
-      icon: 'restrict',
+      icon: 'sharingoff',
       text: 'DisableSharing',
       onClick: () => {
         if(!rootScope.premium) {
@@ -759,7 +759,7 @@ export default class ChatTopbar {
         return !userFull.pFlags.noforwards_my_enabled && !userFull.pFlags.noforwards_peer_enabled;
       }
     }, {
-      icon: 'restrict',
+      icon: 'sharingon',
       text: 'EnableSharing',
       onClick: async() => {
         const userFull = this.chat.fullPeer() as UserFull.userFull;
