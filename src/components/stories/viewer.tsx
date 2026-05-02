@@ -36,7 +36,8 @@ import {onMediaCaptionClick} from '@components/appMediaViewer';
 import InputFieldAnimated from '@components/inputFieldAnimated';
 import ChatInput from '@components/chat/input';
 import appImManager from '@lib/appImManager';
-import Chat, {ChatType} from '@components/chat/chat';
+import Chat from '@components/chat/chat';
+import {ChatType} from '@components/chat/chatType';
 import middlewarePromise from '@helpers/middlewarePromise';
 import emoticonsDropdown from '@components/emoticonsDropdown';
 import PopupPickUser from '@components/popups/pickUser';
@@ -107,6 +108,7 @@ import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '@components/chat/paidMe
 import showStoriesStealthModePopup from '@components/popups/storiesStealthMode';
 import {useAppConfig} from '@stores/appState';
 import {wrapFormattedDuration, wrapStoriesStealthModeDuration} from '@components/wrappers/wrapDuration';
+import {handleShareStory} from './share';
 
 export const STORY_DURATION = 5e3;
 const STORY_HEADER_AVATAR_SIZE = 32;
@@ -511,6 +513,7 @@ const StoryInput = (props: {
       });
 
       createEffect(async() => {
+        JSON.stringify(stories.stealthMode); // * track every key change
         chat.stealthMode = stories.stealthMode;
         input.updateMessageInputPlaceholder(await input.getPlaceholderParams());
       });
@@ -945,36 +948,19 @@ const Stories = (props: {
 
   const onShareClick = (wasPlaying = !stories.paused) => {
     actions.pause();
-    const popup = PopupPickUser.createSharingPicker({
-      onSelect: async(peerId, _, monoforumThreadId) => {
-        const storyPeerId = props.state.peerId;
-
-        const preparedPaymentResult = await PaidMessagesInterceptor.prepareStarsForPayment({messageCount: 1, peerId});
-        if(preparedPaymentResult === PAYMENT_REJECTED) throw new Error();
-
-        const inputPeer = await rootScope.managers.appPeersManager.getInputPeerById(storyPeerId);
-        rootScope.managers.appMessagesManager.sendOther({
-          peerId,
-          inputMedia: {
-            _: 'inputMediaStory',
-            id: currentStory().id,
-            peer: inputPeer
-          },
-          confirmedPaymentResult: preparedPaymentResult,
-          replyToMonoforumPeerId: monoforumThreadId
-        });
-
+    handleShareStory({
+      story: currentStory(),
+      peerId: props.state.peerId,
+      onSend: async(toPeerId: PeerId) => {
         showMessageSentTooltip(
           i18n(
-            peerId === rootScope.myId ? 'StorySharedToSavedMessages' : 'StorySharedTo',
-            [await wrapPeerTitle({peerId})]
+            toPeerId === rootScope.myId ? 'StorySharedToSavedMessages' : 'StorySharedTo',
+            [await wrapPeerTitle({peerId: toPeerId})]
           )
-        );
+        )
       },
-      chatRightsActions: ['send_media']
-    });
-
-    popup.addEventListener('closeAfterTimeout', bindOnAnyPopupClose(wasPlaying));
+      onClose: bindOnAnyPopupClose(wasPlaying)
+    })
   };
 
   const onShareButtonClick = (e: MouseEvent, listenTo: HTMLElement) => {
@@ -3440,6 +3426,24 @@ export default function StoriesViewer(props: {
   );
 }
 
+export const createStoriesViewerWithProvider = (
+  viewerProps: Parameters<typeof StoriesViewer>[0],
+  providerProps: Parameters<typeof StoriesProvider>[0]
+): JSX.Element => {
+  return createRoot((dispose) => {
+    const savedOnExit = viewerProps.onExit;
+    viewerProps.onExit = () => {
+      dispose();
+      savedOnExit?.();
+    };
+    return (
+      <StoriesProvider {...providerProps}>
+        {createStoriesViewer(viewerProps)}
+      </StoriesProvider>
+    );
+  });
+};
+
 export const createStoriesViewer = (
   props: Parameters<typeof StoriesViewer>[0] & Parameters<typeof StoriesProvider>[0]
 ): JSX.Element => {
@@ -3483,7 +3487,7 @@ export const createStoriesViewerWithStory = (
 export const createStoriesViewerWithPeer = async(
   props: Omit<Parameters<typeof createStoriesViewer>[0], 'peers' | 'index'> & {
     peerId: PeerId,
-    id?: number
+    id?: number,
   }
 ): Promise<void> => {
   const [, rest] = splitProps(props, ['peerId', 'id']);

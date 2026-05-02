@@ -5,11 +5,11 @@
  */
 
 import type {MyDocument} from '@appManagers/appDocsManager';
+import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
 import type {MyDraftMessage} from '@appManagers/appDraftsManager';
 import type {AppMessagesManager, MessageSendingParams, MyMessage, SuggestedPostPayload} from '@appManagers/appMessagesManager';
 import type Chat from '@components/chat/chat';
 import {AppImManager, APP_TABS} from '@lib/appImManager';
-import '../../../public/recorder.min';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import opusDecodeController from '@lib/opusDecodeController';
 import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
@@ -105,7 +105,7 @@ import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUserna
 import replaceContent from '@helpers/dom/replaceContent';
 import getTextWidth from '@helpers/canvas/getTextWidth';
 import {FontFull} from '@config/font';
-import {ChatType} from '@components/chat/chat';
+import {ChatType} from './chatType';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import idleController from '@helpers/idleController';
 import Icon from '@components/icon';
@@ -267,6 +267,7 @@ export default class ChatInput {
   public editMessage: Message.message;
   private noWebPage: true;
   public scheduleDate: number;
+  public scheduleRepeatPeriod: number;
   public sendSilent: true;
   public startParam: string;
   public invertMedia: boolean;
@@ -301,6 +302,7 @@ export default class ChatInput {
   private mentionsHelper: MentionsHelper;
   private inlineHelper: InlineHelper;
   private listenerSetter: ListenerSetter;
+  private middlewareHelper: MiddlewareHelper;
   private hoverListenerSetter: ListenerSetter;
 
   private pinnedControlBtn: HTMLButtonElement;
@@ -405,6 +407,7 @@ export default class ChatInput {
   ) {
     this.listenerSetter = new ListenerSetter();
     this.hoverListenerSetter = new ListenerSetter();
+    this.middlewareHelper = getMiddleware();
     this.excludeParts = {};
     this.isFocused = false;
     this.emoticonsDropdown = emoticonsDropdown;
@@ -830,7 +833,8 @@ export default class ChatInput {
       listenerSetter: this.listenerSetter,
       managers: this.managers,
       btnHover: this.btnToggleReplyMarkup,
-      chatInput: this
+      chatInput: this,
+      middleware: this.middlewareHelper.get()
     });
     this.listenerSetter.add(this.replyKeyboard)('open', () => this.btnToggleReplyMarkup.classList.add('active'));
     this.listenerSetter.add(this.replyKeyboard)('close', () => this.btnToggleReplyMarkup.classList.remove('active'));
@@ -961,7 +965,7 @@ export default class ChatInput {
       sendingParams.confirmedPaymentResult = preparedPaymentResult;
 
       const duration = (Date.now() - this.recordStartTime) / 1000 | 0;
-      const dataBlob = new Blob([typedArray], {type: 'audio/ogg'});
+      const dataBlob = new Blob([typedArray as BlobPart], {type: 'audio/ogg'});
       opusDecodeController.decode(typedArray, true).then((result) => {
         opusDecodeController.setKeepAlive(false);
 
@@ -1772,7 +1776,7 @@ export default class ChatInput {
     return user.status?._ !== 'userStatusOnline';
   };
 
-  public setScheduleTimestamp(timestamp: number, callback: () => void) {
+  public setScheduleTimestamp(timestamp: number, callback: () => void, repeatPeriod?: number) {
     const middleware = this.getMiddleware();
     const minTimestamp = (Date.now() / 1000 | 0) + 10;
     if(timestamp <= minTimestamp) {
@@ -1780,6 +1784,7 @@ export default class ChatInput {
     }
 
     this.scheduleDate = timestamp;
+    this.scheduleRepeatPeriod = repeatPeriod;
     callback();
 
     if(this.chat.type !== ChatType.Scheduled && this.chat.type !== ChatType.Stories && timestamp) {
@@ -1802,7 +1807,8 @@ export default class ChatInput {
 
   public scheduleSending = async(
     callback: () => void = this.sendMessage.bind(this, true),
-    initDate = new Date()
+    initDate?: Date,
+    initRepeatPeriod?: number
   ) => {
     const middleware = this.getMiddleware();
     const canSendWhenOnline = await this.canSendWhenOnline();
@@ -1811,15 +1817,18 @@ export default class ChatInput {
     }
 
     PopupElement.createPopup(PopupSchedule, {
-      initDate,
-      onPick: (timestamp) => {
+      initDate: initDate ?? new Date(),
+      addMinutes: initDate === undefined,
+      onPick: (timestamp, repeatPeriod) => {
         if(!middleware()) {
           return;
         }
 
-        this.setScheduleTimestamp(timestamp, callback);
+        this.setScheduleTimestamp(timestamp, callback, repeatPeriod);
       },
-      canSendWhenOnline
+      canSendWhenOnline,
+      canRepeat: true,
+      initRepeatPeriod
     }).show();
   };
 
@@ -1962,6 +1971,7 @@ export default class ChatInput {
     this.placeholderParamsMiddlewareHelper.destroy();
     appNavigationController.removeItem(this.inputHelperNavigationItem);
     this.listenerSetter.removeAll();
+    this.middlewareHelper.destroy();
     this.setCurrentHover();
   }
 
@@ -2134,7 +2144,7 @@ export default class ChatInput {
       this.chat?.canSend('send_plain') || true,
       this.getNeededFakeContainer(startParam),
       modifyAckedPromise(this.managers.acknowledged.appProfileManager.getProfileByPeerId(peerId)),
-      btnScheduled ? modifyAckedPromise(this.managers.acknowledged.appMessagesManager.getScheduledMessages(peerId)) : undefined,
+      btnScheduled && !this.chat.threadId ? modifyAckedPromise(this.managers.acknowledged.appMessagesManager.getScheduledMessages(peerId)) : undefined,
       sendAs ? (sendAs.setPeerId(peerId), sendAs.updateManual(true)) : undefined,
       wrapPeerTitle({peerId, onlyFirstName: true}),
       this.chat.isPremiumRequiredToContact(),
@@ -2269,6 +2279,8 @@ export default class ChatInput {
           this.btnAutoDeletePeriod.classList.toggle('hide', !(canManageAutoDelete && period));
         });
       }
+
+      haveSomethingInControl ||= this.chat.isBotforum && this.chat.canManageBotforumTopics;
 
       this.botStartBtn.classList.toggle('hide', haveSomethingInControl);
 
@@ -2410,6 +2422,8 @@ export default class ChatInput {
         this.chat.monoforumThreadId || this.directMessagesHandler.store.isReplying ?
           'Message' :
           'ChannelDirectMessages.ChooseMessage';
+    } else if(this.chat.isBotforum && !this.chat.canManageBotforumTopics && !this.chat.threadId) {
+      key = 'OffThreadMessage'
     } else if(
       (this.sendAsPeerId !== undefined && this.sendAsPeerId !== rootScope.myId) ||
       await this.managers.appMessagesManager.isAnonymousSending(peerId)
@@ -2778,7 +2792,7 @@ export default class ChatInput {
 
     this.checkAutocomplete(richValue, caretPos, entities);
 
-    processCurrentFormatting(this.messageInput);
+    processCurrentFormatting(this.messageInput, undefined, (e as InputEvent)?.inputType as any);
 
     this.updateSendBtn();
   };
@@ -3379,7 +3393,7 @@ export default class ChatInput {
       }).catch((e: Error) => {
         switch(e.name as string) {
           case 'NotAllowedError': {
-            toast('Please allow access to your microphone');
+            toastNew({langPackKey: 'NoMicrophoneAccess'});
             break;
           }
 
@@ -3835,6 +3849,7 @@ export default class ChatInput {
     }
 
     this.scheduleDate = undefined;
+    this.scheduleRepeatPeriod = undefined;
     this.sendSilent = undefined;
 
     const {totalEntities} = this.getValueAndEntities(this.messageInput);
@@ -3960,10 +3975,23 @@ export default class ChatInput {
       const forwarding = copy(this.forwarding);
       // setTimeout(() => {
       for(const fromPeerId in forwarding) {
+        const mids = forwarding[fromPeerId];
+        if(mids.length === 1) {
+          const msg = await this.managers.appMessagesManager.getMessageByPeer(fromPeerId.toPeerId(), mids[0]) as Message.message;
+          if(msg?.pFlags?.fakeForSavedMusic) {
+            const doc = (msg.media as MessageMedia.messageMediaDocument).document as MyDocument;
+            this.managers.appMessagesManager.sendOther({
+              ...sendingParams,
+              inputMedia: {_: 'inputMediaDocument', id: getDocumentInput(doc), pFlags: {}}
+            });
+            this.managers.appMessagesManager.deleteMessageFromHistoryStorage(fromPeerId.toPeerId(), mids[0]);
+            continue;
+          }
+        }
         this.managers.appMessagesManager.forwardMessages({
           ...sendingParams,
           fromPeerId: fromPeerId.toPeerId(),
-          mids: forwarding[fromPeerId],
+          mids,
           dropAuthor: this.forwardElements && this.forwardElements.hideSender.checkboxField.checked,
           dropCaptions: this.isDroppingCaptions()
         }).catch(async(err: ApiError) => {
@@ -4301,7 +4329,7 @@ export default class ChatInput {
       if(!message) { // load missing replying message
         title = i18n('Loading');
 
-        this.managers.appMessagesManager.reloadMessages(replyToPeerId, replyToMsgId).then((_message) => {
+        this.managers.appMessagesManager.reloadMessage(replyToPeerId, replyToMsgId).then((_message) => {
           if(!deepEqual(this.getReplyTo(), replyTo)) {
             return;
           }
@@ -4363,7 +4391,7 @@ export default class ChatInput {
     this.center(true);
   }
 
-  public clearHelper(type?: ChatInputHelperType) {
+  public clearHelper(type?: ChatInputHelperType, willHaveHelper?: boolean) {
     if(this.helperType === 'edit' && type !== 'edit') {
       this.clearInput();
     }
@@ -4400,7 +4428,11 @@ export default class ChatInput {
       this.restoreInputLock = undefined;
     }
 
-    if(this.chat.container && this.chat.container.classList.contains('is-helper-active')) {
+    if(
+      this.chat.container &&
+      this.chat.container.classList.contains('is-helper-active') &&
+      !willHaveHelper
+    ) {
       appNavigationController.removeByType('input-helper');
       this.chat.container.classList.remove('is-helper-active');
       this.t();
@@ -4463,7 +4495,7 @@ export default class ChatInput {
     }
 
     if(type !== 'webpage') {
-      this.clearHelper(type);
+      this.clearHelper(type, true);
       this.helperType = type;
       this.helperFunc = callerFunc;
     }
