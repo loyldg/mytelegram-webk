@@ -1,17 +1,11 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type AppMediaViewerBase from '@components/appMediaViewerBase';
 import PopupElement from '@components/popups';
 import PopupSharedFolderInvite from '@components/popups/sharedFolderInvite';
 import PopupJoinChatInvite from '@components/popups/joinChatInvite';
 import PopupPayment from '@components/popups/payment';
 import PopupPeer from '@components/popups/peer';
-import PopupPickUser from '@components/popups/pickUser';
-import PopupStickers from '@components/popups/stickers';
+import {showPickUser3Popup, showSharingPicker2Popup} from '@components/popups/pickUser';
+import showStickersPopup from '@components/popups/stickers';
 import {toastNew, hideToast} from '@components/toast';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import IS_GROUP_CALL_SUPPORTED from '@environment/groupCallSupport';
@@ -45,19 +39,19 @@ import {openInstantViewInAppBrowser} from '@components/browser';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import appSidebarLeft from '@components/sidebarLeft';
-import AppContactsTab from '@components/sidebarLeft/tabs/contacts';
-import AppNewChannelTab from '@components/sidebarLeft/tabs/newChannel';
-import PopupCreateContact from '@components/popups/createContact';
+import {AppContactsTab} from '@components/solidJsTabs/tabs';
+import {AppNewChannelTab} from '@components/solidJsTabs/tabs';
+import showCreateContactPopup from '@components/popups/createContact';
 import createNewGroupTab from '@components/sidebarLeft/tabs/createNewGroupTab';
-import AppSettingsTab from '@components/sidebarLeft/tabs/settings';
-import AppEditProfileTab from '@components/sidebarLeft/tabs/editProfile';
+import {AppEditProfileTab, AppSettingsTab, getEditProfileInitArgs} from '@components/solidJsTabs';
 import showBirthdayPopup, {saveMyBirthday} from '@components/popups/birthday';
 import showLogOutPopup from '@components/popups/logOut';
 import {getStickerSetInputByShortName} from '@lib/appManagers/utils/stickers/getStickerSetInput';
-import AppMyStoriesTab from '@components/sidebarLeft/tabs/myStories';
+import {AppMyStoriesTab} from '@components/solidJsTabs/tabs';
 
 export class InternalLinkProcessor {
   protected managers: AppManagers;
+  private processingAddAiStyleSlugs: Set<string> = new Set();
 
   public construct(managers: AppManagers) {
     this.managers = managers;
@@ -223,10 +217,38 @@ export class InternalLinkProcessor {
           return this.processInternalLink(link);
         }
       });
+
+      // t.me/call/<slug> — TdE2E conference invite link. tdesktop maps this
+      // to `tg://call?slug=<slug>` (local_url_handlers.cpp:1967) and then to
+      // `ResolveConferenceCall` (window_session_controller.cpp:977). Here we
+      // resolve the slug straight into `joinConference` since the controller
+      // already does the chain-head poll itself.
+      addAnchorListener<{pathnameParams: ['call', string]}>({
+        name: 'call',
+        callback: ({pathnameParams}) => {
+          if(!pathnameParams[1]) return;
+          const link: InternalLink = {
+            _: INTERNAL_LINK_TYPE.CONFERENCE_CALL,
+            slug: pathnameParams[1]
+          };
+          return this.processInternalLink(link);
+        }
+      });
+
+      // tg://call?slug=<slug>
+      addAnchorListener<{uriParams: {slug: string}}>({
+        name: 'call',
+        protocol: 'tg',
+        callback: ({uriParams}) => {
+          if(!uriParams.slug) return;
+          const link = this.makeLink(INTERNAL_LINK_TYPE.CONFERENCE_CALL, uriParams);
+          return this.processInternalLink(link);
+        }
+      });
     }
 
-    type K1 = {thread?: string, comment?: string, t?: string};
-    type K2 = {thread?: string, comment?: string, start?: string, t?: string, text?: string};
+    type K1 = {thread?: string, comment?: string, t?: string, option?: string};
+    type K2 = {thread?: string, comment?: string, start?: string, t?: string, text?: string, option?: string};
     type K3 = {startattach?: string, attach?: string, choose?: TelegramChoosePeerType};
     type K4 = {startapp?: string, mode?: 'compact' | 'fullscreen'};
     type K5 = {story?: string};
@@ -294,6 +316,7 @@ export class InternalLinkProcessor {
             post: pathnameParams[2] || pathnameParams[1],
             thread,
             comment: uriParams.comment,
+            option: 'option' in uriParams ? uriParams.option : undefined,
             stack: appImManager.getStackFromElement(element),
             t: uriParams.t
           };
@@ -317,6 +340,7 @@ export class InternalLinkProcessor {
             thread,
             comment: uriParams.comment,
             start: 'start' in uriParams ? uriParams.start : undefined,
+            option: 'option' in uriParams ? uriParams.option : undefined,
             stack: appImManager.getStackFromElement(element),
             t: uriParams.t,
             text: uriParams.text
@@ -668,7 +692,7 @@ export class InternalLinkProcessor {
         const [type] = pathnameParams;
         switch(type) {
           case 'contact':
-            return PopupElement.createPopup(PopupCreateContact);
+            return showCreateContactPopup();
           case 'channel':
             return appSidebarLeft.createTab(AppNewChannelTab).open();
           case 'group':
@@ -696,7 +720,7 @@ export class InternalLinkProcessor {
           case 'edit/bio':
           case 'edit/username':
             const tab = appSidebarLeft.createTab(AppEditProfileTab);
-            return tab.open().then(() => tab.focus(pathnameParams[1]));
+            return tab.open({...getEditProfileInitArgs(), focusOn: pathnameParams[1]});
           case 'edit/birthday':
             return this.managers.appProfileManager.getProfile(rootScope.myId).then((userFull) => {
               showBirthdayPopup({
@@ -733,15 +757,31 @@ export class InternalLinkProcessor {
         const [type] = pathnameParams;
         switch(type) {
           case 'new':
-            return PopupElement.createPopup(PopupCreateContact);
+            return showCreateContactPopup();
           case 'search':
           case '':
-            const tab = appSidebarLeft.createTab(AppContactsTab);
-            return tab.open().then(() => tab.focus());
+            return appSidebarLeft.createTab(AppContactsTab).open();
           // case 'invite':
           // case 'manage':
           // case 'sort':
         }
+      }
+    });
+
+    // t.me/addstyle/<slug>
+    addAnchorListener<{ pathnameParams: ['addstyle', string] }>({
+      name: 'addstyle',
+      callback: ({pathnameParams}) => {
+        if(!pathnameParams[1]) {
+          return;
+        }
+
+        const link: InternalLink = {
+          _: INTERNAL_LINK_TYPE.ADD_AI_STYLE,
+          slug: pathnameParams[1]
+        };
+
+        return this.processInternalLink(link);
       }
     });
   }
@@ -761,6 +801,7 @@ export class InternalLinkProcessor {
     return appImManager.openUsername({
       userName: link.domain,
       lastMsgId: postId,
+      pollOption: link.option,
       commentId,
       startParam: link.start,
       stack: link.stack,
@@ -796,22 +837,24 @@ export class InternalLinkProcessor {
       peer: chat || user,
       lastMsgId: postId,
       threadId,
+      pollOption: link.option,
       stack: link.stack,
       mediaTimestamp: link.t && +link.t
     });
   };
 
   public processStickerSetLink = (link: InternalLink.InternalLinkStickerSet | InternalLink.InternalLinkEmojiSet) => {
-    const popup = PopupElement.createPopup(PopupStickers, getStickerSetInputByShortName(link.set), link._ === INTERNAL_LINK_TYPE.EMOJI_SET);
-    popup.show();
-    return popup;
+    return showStickersPopup(getStickerSetInputByShortName(link.set), link._ === INTERNAL_LINK_TYPE.EMOJI_SET);
   };
 
   public processJoinChatLink = (link: InternalLink.InternalLinkJoinChat) => {
     return this.managers.appChatInvitesManager.checkChatInvite(link.invite).then(async(chatInvite) => {
       if(chatInvite._ === 'chatInviteAlready' ||
         chatInvite._ === 'chatInvitePeek'/*  && chatInvite.expires > tsNow(true) */) {
-        appImManager.setInnerPeer({
+        // `open` (not `setInnerPeer`) so a forum routes through `op` and opens the topics tab
+        // in the left sidebar instead of just dropping into the chat view (same as bug with
+        // PopupJoinChatInvite.openChat).
+        appImManager.open({
           peerId: chatInvite.chat.id.toPeerId(true)
         });
         return;
@@ -868,6 +911,45 @@ export class InternalLinkProcessor {
       const peerId = link.chat_id.toPeerId(true);
       await openPeerId(peerId);
       return appImManager.joinGroupCall(peerId, link.id);
+    }
+  };
+
+  // t.me/call/<slug> handler. Hand the slug to `appImManager.joinConference`,
+  // the single conference-join policy entry point — it owns the support gate,
+  // the "already in a call" guard and the dead-link error UX (so re-clicking
+  // the link while already in the call doesn't rejoin). tdesktop equivalent:
+  // SessionNavigation::resolveConferenceCall → startOrJoinConferenceCall.
+  public processConferenceCallLink = (link: InternalLink.InternalLinkConferenceCall) => {
+    return appImManager.joinConference({_: 'inputGroupCallSlug', slug: link.slug});
+  };
+
+  public processAddAiStyleLink = async(link: InternalLink.InternalLinkAddAiStyle) => {
+    if(this.processingAddAiStyleSlugs.has(link.slug)) return;
+    this.processingAddAiStyleSlugs.add(link.slug);
+
+    try {
+      const {module: {default: showViewTonePopup}, tone, tones} = await namedPromises({
+        module: import('@components/popups/aiEditorPopup/viewTonePopup'),
+        tone: this.managers.aiTonesManager.getToneBySlug(link.slug),
+        tones: this.managers.aiTonesManager.getTones()
+      });
+      if(!tone) throw new Error();
+
+      const savedTones = tones.filter((t) => t._ === 'aiComposeTone').length;
+      const isSaved = !tone.pFlags.creator && tones.some((t) => t._ === 'aiComposeTone' && t.id.toString() === tone.id.toString());
+
+      showViewTonePopup({
+        tone,
+        isSaved,
+        savedTones,
+        HotReloadGuard: SolidJSHotReloadGuardProvider
+      });
+    } catch{
+      toastNew({
+        langPackKey: 'AiEditor.StyleNotFound'
+      });
+    } finally {
+      this.processingAddAiStyleSlugs.delete(link.slug);
     }
   };
 
@@ -955,7 +1037,7 @@ export class InternalLinkProcessor {
         return attachMenuBot.peer_types.some((peerType) => peerType._ === peerTypePredicate);
       });
 
-      const chosenPeerId = await PopupPickUser.createPicker(filteredTypes);
+      const chosenPeerId = await showPickUser3Popup(filteredTypes);
       await appImManager.setInnerPeer({peerId: chosenPeerId});
     }
 
@@ -1153,7 +1235,7 @@ export class InternalLinkProcessor {
   };
 
   public processShareLink = async(link: InternalLink.InternalLinkShare) => {
-    const {peerId, threadId, monoforumThreadId} = await PopupPickUser.createSharingPicker2();
+    const {peerId, threadId, monoforumThreadId} = await showSharingPicker2Popup();
     appImManager.setInnerPeer({
       peerId,
       threadId,
@@ -1192,13 +1274,11 @@ export class InternalLinkProcessor {
     if(peerId === rootScope.myId) {
       const existing = appSidebarRight.getTab(AppMyStoriesTab);
       if(existing) {
-        existing.setAlbum(albumId);
+        (existing as any).setAlbum(albumId);
         return;
       }
 
-      const tab = appSidebarRight.createTab(AppMyStoriesTab);
-      tab.initialAlbumId = albumId;
-      await tab.open();
+      await appSidebarRight.createTab(AppMyStoriesTab).open({...AppMyStoriesTab.getInitArgs(), initialAlbumId: albumId});
       appSidebarRight.toggleSidebar(true, true);
     } else {
       if(appImManager.chat.peerId !== peerId) {
@@ -1243,7 +1323,9 @@ export class InternalLinkProcessor {
       [INTERNAL_LINK_TYPE.UNIQUE_STAR_GIFT]: this.processUniqueStarGiftLink,
       [INTERNAL_LINK_TYPE.STAR_GIFT_COLLECTION]: this.processStarGiftCollectionLink,
       [INTERNAL_LINK_TYPE.STORY_ALBUM]: this.processStoryAlbumLink,
-      [INTERNAL_LINK_TYPE.INSTANT_VIEW]: this.processInstantViewLink
+      [INTERNAL_LINK_TYPE.INSTANT_VIEW]: this.processInstantViewLink,
+      [INTERNAL_LINK_TYPE.CONFERENCE_CALL]: this.processConferenceCallLink,
+      [INTERNAL_LINK_TYPE.ADD_AI_STYLE]: this.processAddAiStyleLink
     };
 
     const processor = map[link._];

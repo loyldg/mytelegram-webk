@@ -1,11 +1,11 @@
 import SaveButton from '@components/saveButton';
 import Section from '@components/section';
-import {HeightTransition} from '@components/sidebarRight/tabs/adminRecentActions/heightTransition';
 import {usePromiseCollector} from '@components/solidJsTabs/promiseCollector';
 import {useSuperTab} from '@components/solidJsTabs/superTabProvider';
 import StaticSwitch from '@components/staticSwitch';
 import deepEqual from '@helpers/object/deepEqual';
 import setBooleanFlag from '@helpers/object/setBooleanFlag';
+import {HeightTransition} from '@helpers/solid/heightTransition';
 import {I18nTsx} from '@helpers/solid/i18n';
 import {wrapAsyncClickHandler} from '@helpers/wrapAsyncClickHandler';
 import useIsConfirmationNeededOnClose from '@hooks/useIsConfirmationNeededOnClose';
@@ -13,12 +13,11 @@ import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import {createComputed, createMemo, createResource, Show} from 'solid-js';
 import {createStore} from 'solid-js/store';
 import {Portal} from 'solid-js/web';
-import useIsPremium from './privacy/messages/useIsPremium';
 
 
 export default function ArchiveSettingsTab() {
   const [tab] = useSuperTab();
-  const {Row, rootScope} = useHotReloadGuard();
+  const {Row, rootScope, usePremium} = useHotReloadGuard();
 
   const promiseCollector = usePromiseCollector();
 
@@ -28,7 +27,7 @@ export default function ArchiveSettingsTab() {
     return promise;
   });
 
-  const isPremium = useIsPremium();
+  const isPremium = usePremium();
 
   const isReady = createMemo(() => globalPrivacy.state === 'ready');
 

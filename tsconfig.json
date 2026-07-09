@@ -5,7 +5,7 @@
     // "target": "es5",                       /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019' or 'ESNEXT'. */
     "target": "es2015",                       /* Specify ECMAScript target version: 'ES3' (default), 'ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019' or 'ESNEXT'. */
     "module": "es2020",                       /* Specify module code generation: 'none', 'commonjs', 'amd', 'system', 'umd', 'es2015', or 'ESNext'. */
-    "lib": ["es2015", "dom", "webworker", "ES2021.WeakRef", "DOM.Iterable"],    /* Specify library files to be included in the compilation. */
+    "lib": ["es2015", "dom", "webworker", "ES2021.WeakRef", "DOM.Iterable", "ES2022.Intl"],    /* Specify library files to be included in the compilation. */
     "allowJs": true,                          /* Allow javascript files to be compiled. */
     // "checkJs": true,                       /* Report errors in .js files. */
     "jsx": "preserve",                        /* Specify JSX code generation: 'preserve', 'react-native', or 'react'. */
@@ -92,8 +92,21 @@
     // "experimentalDecorators": true,        /* Enables experimental support for ES7 decorators. */
     // "emitDecoratorMetadata": true,         /* Enables experimental support for emitting type metadata for decorators. */
   },
+  /* tsc --watch (run by vite-plugin-checker in dev) must NOT recurse the .claude
+     git worktrees or node_modules. With no "include", tsc sets up a recursive
+     watcher on the project root; descending into .claude (40k+ dirs across ~18
+     worktrees, each with its own node_modules) opens enough fs.watch handles to
+     crash the dev server with "EMFILE: too many open files, watch" on macOS.
+     excludeDirectories prunes those subtrees from the watcher entirely. */
+  "watchOptions": {
+    "watchFile": "useFsEvents",
+    "watchDirectory": "useFsEvents",
+    "fallbackPolling": "dynamicPriority",
+    "excludeDirectories": ["**/node_modules", "**/.claude", "dist", "public", "coverage"]
+  },
   "exclude": [
     "node_modules",
+    ".claude",
     "public",
     "dist",
     "coverage",

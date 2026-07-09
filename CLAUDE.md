@@ -32,6 +32,12 @@ pnpm lint           # ESLint on src/**/*.ts
 
 Debug query params: `?test=1` (test DCs), `?debug=1` (verbose logging), `?noSharedWorker=1` (disable shared worker).
 
+### Preview
+
+Launch an authorized local preview with `bash scripts/start-preview.sh` (never
+plain `vite`) — it mints a fresh per-preview auth + picks a free port. Flags and
+details: see the script header. `.claude/launch.json` is wired to it.
+
 ## Directory Structure
 
 ```
@@ -83,23 +89,17 @@ solid-js/web    → src/vendor/solid/web
 solid-js/store  → src/vendor/solid/store
 ```
 
-## Code Style (enforced by ESLint)
+## Code Style (all ESLint-enforced)
 
-- **Indent**: 2 spaces (no tabs)
-- **Quotes**: single quotes; template literals allowed
-- **Line endings**: Unix (LF); file must end with newline
-- **No trailing spaces**
-- **Comma dangle**: never (`{a: 1, b: 2}` not `{a: 1, b: 2,}`)
-- **Object/array spacing**: no spaces inside braces/brackets
-  - `{a: 1}` not `{ a: 1 }`
-  - `[1, 2]` not `[ 1, 2 ]`
-- **Keyword spacing**: no space after `if`, `for`, `while`, `switch`, `catch`
-  - `if(condition)` not `if (condition)`
-  - `for(...)` not `for (...)`
-- **Function paren**: no space before paren — `function foo()` not `function foo ()`
-- **No `return await`**: use `return promise` directly
-- **Max 2 consecutive blank lines**
-- **`prefer-const`** with destructuring: `all`
+Non-obvious rules — these differ from common defaults:
+
+- **No space after keywords**: `if(cond)`, `for(...)`, `while(...)`, `switch`, `catch` — not `if (cond)`
+- **No space inside `{}` / `[]`**: `{a: 1}` and `[1, 2]` — not `{ a: 1 }`
+- **No trailing comma** anywhere
+- **No space before function paren**: `function foo()`
+- **No `return await`** — return the promise directly
+
+Standard defaults, also enforced: 2-space indent, single quotes, LF + final newline, no trailing whitespace, max 2 blank lines, `prefer-const`.
 
 ## TypeScript Notes
 
@@ -172,10 +172,19 @@ export class AppSomethingManager extends AppManager {
 }
 ```
 
-Normally most of the interaction with MTProto should be done through the app managers,
-wrapping the raw APIs with a nicer interface, caching layer, etc. Managers are the source of truth.
+All interaction with MTProto MUST go through the app managers. Managers wrap the raw APIs with a nicer interface, a caching layer, and the side-effect handling (saving peers, dispatching updates) the rest of the app expects. Managers are the source of truth.
 
-Invoking MTProto methods is done via:
+**Strict rule — never call `apiManager.invokeApi*` directly from UI / component code.** Even though `rootScope.managers.apiManager.invokeApi(...)` runs in the worker (it goes through the manager proxy), it bypasses every wrapper: no caching, no `saveApiPeers`, no `processUpdateMessage`, no dedup with the rest of the app. If a component needs MTProto data, add (or extend) a method on the relevant `app*Manager` and call THAT from the UI:
+
+```typescript
+// ❌ wrong — UI making a raw MTProto call
+const result = await rootScope.managers.apiManager.invokeApi('messages.getSearchResultsCalendar', {...});
+
+// ✅ right — manager method wraps the call, UI invokes by domain intent
+const result = await rootScope.managers.appMessagesManager.getSearchResultsCalendar({peerId, filter, offsetDate});
+```
+
+Invoking MTProto methods (inside a manager) is done via:
 
 ```typescript
 // invoke normally
@@ -188,7 +197,7 @@ return this.apiManager.invokeApiSingleProcess({
   params: {...},
   processResult: (result) => {
     // when the result type has {chats, users} fields, use this method to save them
-    this.appUsersManager.saveApiPeers(result);
+    this.appPeersManager.saveApiPeers(result);
     // when the result is `Updates`, use this method to handle them
     this.apiUpdatesManager.processUpdateMessage(result);
   }
@@ -206,7 +215,26 @@ rootScope.addEventListener('premium_toggle', handler);
 rootScope.managers.appChatsManager.getChat(chatId);
 ```
 
-IMPORTANT: `rootScope.managers.*` are asynchronous proxies to a whared worker. Every manager method returns a `Promise`, even if the manager's own methods seem synchronous.
+IMPORTANT: `rootScope.managers.*` are asynchronous proxies to a shared worker. Every manager method returns a `Promise`, even if the manager's own methods seem synchronous.
+
+### Media devices (camera / microphone)
+
+**Strict rule — never call `navigator.mediaDevices.getUserMedia` directly when you need a camera or microphone. Use `getStream` from `@lib/calls/helpers/getStream`.** It is the single chokepoint for every `getUserMedia` in the app (calls, voice notes, round-video notes), so two things happen for free:
+
+- It honours the device the user picked in **Settings → Speakers and Camera** (`appSettings.callDevices.cameraId` / `microphoneId`).
+- It self-heals a stale selection: if the saved device is gone it strips the `deviceId`, clears the now-dead `callDevices.*` entry, and retries on the OS default — incrementally, so a still-valid device survives when only the other one is stale.
+
+```typescript
+import getStream from '@lib/calls/helpers/getStream';
+
+// ❌ wrong — ignores the chosen device, no fallback
+const stream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+
+// ✅ right — selected device + self-healing fallback
+const stream = await getStream({video, audio});
+```
+
+For the standard call-tuned video/audio constraints (which already inject the selected device), build them with `getVideoConstraints()` / `getAudioConstraints()` from the same folder; otherwise pass your own constraints and `getStream` handles acquisition + device fallback.
 
 ### Imports from `@layer`
 
@@ -240,14 +268,19 @@ import {Message, Chat, User, InputPeer} from '@layer';
 
 ## What NOT to Do
 
+(Style rules are in "Code Style"; the import-alias, `invokeApi`-from-UI, and
+`getUserMedia`-via-`getStream` rules are in "Path Aliases", "App Managers", and
+"Key Patterns → Media devices" — not repeated here.)
+
+- **Never commit on your own initiative — only when explicitly asked.**
+  Iterating on a feature must not produce a trail of commits: keep the work in
+  the working tree, and when asked to commit, fold the whole feature into ONE
+  commit (directly on master, no feature branch) unless told otherwise.
 - Do not add `eslint-disable` without a reason
-- Do not use `return await` (rule enforced)
-- Do not use spaces inside `{}` for objects or `[]` for arrays
-- Do not use `if (` with a space — use `if(`
+- Never hand-edit or manually run `format-lang` to regenerate `src/scripts/out/langPack.strings` — it is auto-generated from `lang.ts`/`langSign.ts` by the Vite-wired lang watcher (`watch-lang.js`) on dev-server start, on every `lang.ts` change, and on build. Edit the lang `.ts` source only.
 - Do not import from `react` or use React patterns — this is Solid.js
-- Do not use relative `../../` imports when an alias exists
-- Do not use `var` — use `const`/`let`
-- Do not add trailing commas in arrays/objects
+- Do not use heavy CSS selectors (deep descendant chains, universal `*`, expensive attribute matchers, `:not()` with complex arguments) — prefer a dedicated class on the target element
+- **Never add a blocking MTProto request on the chat-open path.** `ChatInput.finishPeerChange` (and any sibling `finishPeerChange` in the chat stack) awaits a `Promise.all` before unfreezing the input — every entry there is paid in chat-open latency. Do NOT add `appPrivacyManager.getGlobalPrivacySettings`, `appProfileManager.getProfile` for unrelated peers, fresh `account.*` fetches, or any new uncached round-trip into that batch. If a feature needs server data, either: (a) read it from a manager-side cache that's already kept warm (e.g. `apiManagerProxy.getAppConfig`, `getPrivacy` after preload, cached userFull), (b) fetch it lazily AFTER the chat renders and reconcile via an event (`peer_full_update`, `privacy_update`, custom dispatched event) + a `update*` helper, or (c) preload at app startup and gate via `rootScope.premium`-style cached flags. The same rule holds for `appImManager.setPeer` listeners and `setChatListeners` — keep them event-driven, never `await managers.*` for a per-peer hot-path render.
 
 ## Running Tests
 
@@ -259,135 +292,9 @@ pnpm test src/tests/foo    # specific test file
 Vitest config: `threads: false`, `globals: true`, jsdom environment, setup in `src/tests/setup.ts`.
 
 <!-- rtk-instructions v2 -->
-# RTK (Rust Token Killer) - Token-Optimized Commands
+## RTK — token-optimized commands
 
-## Golden Rule
-
-**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
-
-**Important**: Even in command chains with `&&`, use `rtk`:
-```bash
-# ❌ Wrong
-git add . && git commit -m "msg" && git push
-
-# ✅ Correct
-rtk git add . && rtk git commit -m "msg" && rtk git push
-```
-
-## RTK Commands by Workflow
-
-### Build & Compile (80-90% savings)
-```bash
-rtk cargo build         # Cargo build output
-rtk cargo check         # Cargo check output
-rtk cargo clippy        # Clippy warnings grouped by file (80%)
-rtk tsc                 # TypeScript errors grouped by file/code (83%)
-rtk lint                # ESLint/Biome violations grouped (84%)
-rtk prettier --check    # Files needing format only (70%)
-rtk next build          # Next.js build with route metrics (87%)
-```
-
-### Test (90-99% savings)
-```bash
-rtk cargo test          # Cargo test failures only (90%)
-rtk vitest run          # Vitest failures only (99.5%)
-rtk playwright test     # Playwright failures only (94%)
-rtk test <cmd>          # Generic test wrapper - failures only
-```
-
-### Git (59-80% savings)
-```bash
-rtk git status          # Compact status
-rtk git log             # Compact log (works with all git flags)
-rtk git diff            # Compact diff (80%)
-rtk git show            # Compact show (80%)
-rtk git add             # Ultra-compact confirmations (59%)
-rtk git commit          # Ultra-compact confirmations (59%)
-rtk git push            # Ultra-compact confirmations
-rtk git pull            # Ultra-compact confirmations
-rtk git branch          # Compact branch list
-rtk git fetch           # Compact fetch
-rtk git stash           # Compact stash
-rtk git worktree        # Compact worktree
-```
-
-Note: Git passthrough works for ALL subcommands, even those not explicitly listed.
-
-### GitHub (26-87% savings)
-```bash
-rtk gh pr view <num>    # Compact PR view (87%)
-rtk gh pr checks        # Compact PR checks (79%)
-rtk gh run list         # Compact workflow runs (82%)
-rtk gh issue list       # Compact issue list (80%)
-rtk gh api              # Compact API responses (26%)
-```
-
-### JavaScript/TypeScript Tooling (70-90% savings)
-```bash
-rtk pnpm list           # Compact dependency tree (70%)
-rtk pnpm outdated       # Compact outdated packages (80%)
-rtk pnpm install        # Compact install output (90%)
-rtk npm run <script>    # Compact npm script output
-rtk npx <cmd>           # Compact npx command output
-rtk prisma              # Prisma without ASCII art (88%)
-```
-
-### Files & Search (60-75% savings)
-```bash
-rtk ls <path>           # Tree format, compact (65%)
-rtk read <file>         # Code reading with filtering (60%)
-rtk grep <pattern>      # Search grouped by file (75%)
-rtk find <pattern>      # Find grouped by directory (70%)
-```
-
-### Analysis & Debug (70-90% savings)
-```bash
-rtk err <cmd>           # Filter errors only from any command
-rtk log <file>          # Deduplicated logs with counts
-rtk json <file>         # JSON structure without values
-rtk deps                # Dependency overview
-rtk env                 # Environment variables compact
-rtk summary <cmd>       # Smart summary of command output
-rtk diff                # Ultra-compact diffs
-```
-
-### Infrastructure (85% savings)
-```bash
-rtk docker ps           # Compact container list
-rtk docker images       # Compact image list
-rtk docker logs <c>     # Deduplicated logs
-rtk kubectl get         # Compact resource list
-rtk kubectl logs        # Deduplicated pod logs
-```
-
-### Network (65-70% savings)
-```bash
-rtk curl <url>          # Compact HTTP responses (70%)
-rtk wget <url>          # Compact download output (65%)
-```
-
-### Meta Commands
-```bash
-rtk gain                # View token savings statistics
-rtk gain --history      # View command history with savings
-rtk discover            # Analyze Claude Code sessions for missed RTK usage
-rtk proxy <cmd>         # Run command without filtering (for debugging)
-rtk init                # Add RTK instructions to CLAUDE.md
-rtk init --global       # Add RTK to ~/.claude/CLAUDE.md
-```
-
-## Token Savings Overview
-
-| Category | Commands | Typical Savings |
-|----------|----------|-----------------|
-| Tests | vitest, playwright, cargo test | 90-99% |
-| Build | next, tsc, lint, prettier | 70-87% |
-| Git | status, log, diff, add, commit | 59-80% |
-| GitHub | gh pr, gh run, gh issue | 26-87% |
-| Package Managers | pnpm, npm, npx | 70-90% |
-| Files | ls, read, grep, find | 60-75% |
-| Infrastructure | docker, kubectl | 85% |
-| Network | curl, wget | 65-70% |
-
-Overall average: **60-90% token reduction** on common development operations.
+Prefix every shell command with `rtk`, including each command inside `&&`
+chains: `rtk git add . && rtk git commit -m "msg"`. RTK applies a filter when it
+has one, otherwise passes through unchanged — so it is always safe.
 <!-- /rtk-instructions -->

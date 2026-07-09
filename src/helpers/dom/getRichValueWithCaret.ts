@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -18,7 +14,7 @@ import getRichElementValue, {SELECTION_SEPARATOR} from '@helpers/dom/getRichElem
 import {SINGLE_ENTITIES} from '@lib/richTextProcessor';
 
 export function getCaretPos(field: Node) {
-  const sel = window.getSelection();
+  const sel = field.ownerDocument.defaultView.getSelection();
   let selNode: Node;
   let selOffset: number;
   if(sel?.rangeCount) {

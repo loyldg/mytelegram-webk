@@ -1,8 +1,6 @@
-import crypto from 'crypto';
+import {installNodeEnv} from './api/nodeEnv';
+import {ResizeObserverMock} from './mocks/resizeObserver';
 
-Object.defineProperty(global.self, 'crypto', {
-  value: {
-    subtle: crypto.webcrypto.subtle,
-    getRandomValues: crypto.webcrypto.getRandomValues.bind(crypto.webcrypto)
-  }
-});
+installNodeEnv();
+
+vi.stubGlobal('ResizeObserver', ResizeObserverMock);

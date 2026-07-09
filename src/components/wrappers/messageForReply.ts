@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import partition from '@helpers/array/partition';
 import assumeType from '@helpers/assumeType';
 import {formatDate} from '@helpers/date';
@@ -32,6 +26,7 @@ import TranslatableMessage from '@components/translatableMessage';
 import wrapMessageActionTextNew, {WrapMessageActionTextOptions} from '@components/wrappers/messageActionTextNew';
 import {wrapMessageGiveawayResults} from '@components/wrappers/messageActionTextNewUnsafe';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
+import {flattenRichMessageSummary} from '@lib/richMessage';
 
 export type WrapMessageForReplyOptions = Modify<WrapMessageActionTextOptions, {
   message: MyMessage | MyDraftMessage
@@ -91,6 +86,18 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
   };
 
   let entities = (message as Message.message).totalEntities ?? (message as DraftMessage.draftMessage).entities;
+  const applyRichMessageSummary = () => {
+    const richMessage = (message as Message.message).rich_message;
+    if(!richMessage) {
+      return false;
+    }
+
+    const summary = flattenRichMessageSummary(richMessage);
+    options.text = summary.text;
+    entities = summary.entities;
+    return true;
+  };
+
   if((message as Message.message).media && !isRestricted) {
     assumeType<Message.message>(message);
     let usingFullGrouped = true;
@@ -246,6 +253,10 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
         }
 
         case 'messageMediaUnsupported': {
+          if(applyRichMessageSummary()) {
+            break;
+          }
+
           addPart(UNSUPPORTED_LANG_PACK_KEY);
           break;
         }
@@ -321,6 +332,10 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
         }
 
         default:
+          if(applyRichMessageSummary()) {
+            break;
+          }
+
           addPart(UNSUPPORTED_LANG_PACK_KEY);
           options.text = '';
           // messageText += media._;

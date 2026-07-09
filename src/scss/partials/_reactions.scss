@@ -1,10 +1,6 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 .reactions {
+  user-select: none;
+
   &-like-block {
     --margin-vertical: .375rem;
     --margin-horizontal: .375rem;
@@ -56,28 +52,8 @@
   }
 }
 
-// todo: we should probably refactor this into a "tooltip at the top of the chat" component and also use it instead of setQuizHint
+// docking/animation comes from .chat-toast (_chatToast.scss)
 .paid-reaction-tooltip {
-  top: 0.25rem;
-  left: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: max-content;
-  max-width: calc(100% - 1rem);
-
-  .tooltip-notch { display: none; }
-
-  &.tooltip {
-    transform: translate(-50%, 0);
-    &.is-visible:not(.backwards) {
-      transform: translate(-50%, 0);
-    }
-    &.mounted {
-      transform: translate(-50%, -1rem);
-    }
-  }
-
   &--a-little-wider {
     min-width: 300px;
   }

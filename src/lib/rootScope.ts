@@ -1,10 +1,4 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag, InputSavedStarGift, LangPackDifference, StarsAmount, MessageEntity, HelpPromoData, StoriesStealthMode, StoryAlbum} from '@layer';
+import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag, InputSavedStarGift, LangPackDifference, StarsAmount, MessageEntity, HelpPromoData, StoriesStealthMode, StoryAlbum, GlobalPrivacySettings} from '@layer';
 import type {Dialog, ForumTopic, MessagesStorageKey, MyMessage} from '@appManagers/appMessagesManager';
 import type {MyDialogFilter} from '@lib/storages/filters';
 import type {AnyDialog, Folder} from '@lib/storages/dialogs';
@@ -68,9 +62,6 @@ export type BroadcastEvents = {
 
   'folder_unread': Omit<Folder, 'dialogs' | 'dispatchUnreadTimeout'>,
 
-  'changing_folder_from_chatlist': number,
-  'changing_folder_from_sidebar': {id: number, dontAnimate?: boolean},
-
   'dialog_draft': {peerId: PeerId, dialog: Dialog | ForumTopic, drop: boolean, draft: MyDraftMessage | undefined},
   'dialog_unread': {peerId: PeerId, dialog: Dialog | ForumTopic},
   'dialog_flush': {peerId: PeerId, dialog: Dialog},
@@ -130,10 +121,10 @@ export type BroadcastEvents = {
   'stickers_updated': {type: 'recent' | 'faved', stickers: MyDocument[]},
   'stickers_top': Long,
   'stickers_order': {type: 'masks' | 'emojis' | 'stickers', order: Long[]},
-  'sticker_updated': {type: 'recent' | 'faved', document: MyDocument, faved: boolean},
+  'sticker_updated': {type: 'recent' | 'faved', document: MyDocument, faved: boolean, limitReached?: boolean},
 
   'gifs_updated': MyDocument[],
-  'gif_updated': {document: MyDocument, saved: boolean},
+  'gif_updated': {document: MyDocument, saved: boolean, limitReached?: boolean},
 
   'state_cleared': void,
   'state_synchronized': void,
@@ -153,12 +144,13 @@ export type BroadcastEvents = {
   'background_change': void,
 
   'privacy_update': Update.updatePrivacy,
+  'global_privacy_update': GlobalPrivacySettings,
 
   'notify_settings': Update.updateNotifySettings,
   'notify_peer_type_settings': {key: Exclude<NotifyPeer['_'], 'notifyPeer'>, settings: PeerNotifySettings},
 
   'notification_reset': string,
-  'notification_cancel': `msg_${ActiveAccountNumber}_${PeerId}_${number}`,
+  'notification_cancel': `msg_${ActiveAccountNumber}_${PeerId}_${number}` | `story_${ActiveAccountNumber}_${PeerId}_${number}`,
 
   'notification_count_update': void,
 
@@ -186,6 +178,7 @@ export type BroadcastEvents = {
 
   'call_update': PhoneCall,
   'call_signaling': {callId: CallId, data: Uint8Array},
+  'group_call_chain_blocks': {callId: GroupCallId, subChainId: number, blocks: Uint8Array[], nextOffset: number},
 
   'rtmp_call_update': RtmpCallInstance,
 
@@ -256,7 +249,6 @@ export type BroadcastEventsListeners = {
 export class RootScope extends EventListenerBase<BroadcastEventsListeners> {
   public myId: PeerId;
   private connectionStatus: {[name: string]: ConnectionStatusChange};
-  public settings: StateSettings;
   public managers: AppManagers;
   public premium: boolean;
 

@@ -1,16 +1,9 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "sass:string";
 @use "../shared" as *;
 
 .inline-helper {
   $parent: ".inline-helper";
-  user-select: none;
-  
+
   &:not(.is-gallery) {
     min-width: string.unquote("min(20rem, 100%)");
   }

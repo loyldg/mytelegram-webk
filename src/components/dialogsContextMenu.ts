@@ -1,14 +1,9 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {Dialog} from '@appManagers/appMessagesManager';
 import type {ForumTopic} from '@layer';
 import type {AnyDialog} from '@lib/storages/dialogs';
 import appDialogsManager, {DIALOG_LIST_ELEMENT_TAG} from '@lib/appDialogsManager';
 import rootScope from '@lib/rootScope';
+import {useAppSettings} from '@stores/appSettings';
 import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
 import PopupDeleteDialog from '@components/popups/deleteDialog';
 import {i18n, LangPackKey, _i18n} from '@lib/langPack';
@@ -20,6 +15,7 @@ import {CAN_HIDE_TOPIC, FOLDER_ID_ARCHIVE, GENERAL_TOPIC_ID, REAL_FOLDER_ID, REA
 import showLimitPopup from '@components/popups/limit';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import PopupElement from '@components/popups';
+import showChatPreviewPopup, {chatPreviewAnchorFromDialogRow} from '@components/popups/chatPreview';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import IS_SHARED_WORKER_SUPPORTED from '@environment/sharedWorkerSupport';
 import appImManager from '@lib/appImManager';
@@ -99,6 +95,7 @@ export default class DialogsContextMenu {
   }
 
   private getButtons() {
+    const [appSettings] = useAppSettings();
     this.buttons ??= [{
       icon: 'newtab',
       text: 'OpenInNewTab',
@@ -107,6 +104,11 @@ export default class DialogsContextMenu {
         cancelEvent(e);
       },
       verify: () => IS_SHARED_WORKER_SUPPORTED && !this.monoforumParentPeerId
+    }, {
+      icon: 'eye',
+      text: 'ChatList.Context.Preview',
+      onClick: this.onPreviewClick,
+      verify: () => true
     }, {
       icon: 'topics',
       text: 'TopicViewAsTopics',
@@ -120,14 +122,14 @@ export default class DialogsContextMenu {
       onClick: () => {
         appImManager.toggleViewAsMessages(this.peerId, false);
       },
-      verify: () => this.peerId === rootScope.myId && !rootScope.settings.savedAsForum && !this.threadId
+      verify: () => this.peerId === rootScope.myId && !appSettings.savedAsForum && !this.threadId
     }, {
       icon: 'message',
       text: 'SavedViewAsMessages',
       onClick: () => {
         appImManager.toggleViewAsMessages(this.peerId, true);
       },
-      verify: () => this.peerId === rootScope.myId && rootScope.settings.savedAsForum && !this.threadId
+      verify: () => this.peerId === rootScope.myId && appSettings.savedAsForum && !this.threadId
     }, {
       icon: 'unread',
       text: 'MarkAsUnread',
@@ -359,6 +361,15 @@ export default class DialogsContextMenu {
 
   private onMuteClick = () => {
     PopupElement.createPopup(PopupMute, this.peerId, this.threadId);
+  };
+
+  private onPreviewClick = () => {
+    showChatPreviewPopup({
+      peerId: this.monoforumParentPeerId || this.peerId,
+      monoforumThreadId: this.monoforumParentPeerId ? this.peerId : undefined,
+      threadId: this.threadId,
+      anchor: chatPreviewAnchorFromDialogRow(this.li)
+    });
   };
 
   private onUnreadClick = async() => {

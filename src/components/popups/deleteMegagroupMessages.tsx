@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement, {addCancelButton} from '.';
 import filterUnique from '@helpers/array/filterUnique';
 import {Message} from '@layer';
@@ -19,7 +13,7 @@ import PeerTitle from '@components/peerTitle';
 import Row from '@components/rowTsx';
 import {IconTsx} from '@components/iconTsx';
 import classNames from '@helpers/string/classNames';
-import {ChatPermissions} from '@components/sidebarRight/tabs/groupPermissions';
+import {ChatPermissions} from '@components/sidebarRight/tabs/groupPermissions/sharedPermissions';
 import {animate} from '@helpers/animation';
 
 const className = 'popup-delete-megagroup-messages';

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../shared" as *;
 
 .tooltip {
@@ -40,7 +34,7 @@
 
   &-background,
   &-notch {
-    backdrop-filter: blur(25px);
+    backdrop-filter: var(--blur-off, blur(25px));
     background-color: rgba(29, 29, 29, .74);
   }
 
@@ -109,7 +103,7 @@
     //   transform: translateY(.375rem);
     // }
 
-    &:not(.backwards) {
+    &.forwards {
       transform: scale(1);
       // transform: translateY(0);
 

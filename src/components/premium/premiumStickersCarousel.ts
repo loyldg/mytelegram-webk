@@ -1,21 +1,11 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {AppManagers} from '@lib/managers';
 import LazyLoadQueue from '@components/lazyLoadQueue';
 import SuperStickerRenderer from '@components/emoticonsDropdown/tabs/SuperStickerRenderer';
-import {AnimationItemGroup} from '@components/animationIntersector';
 import {getMiddleware, MiddlewareHelper} from '@helpers/middleware';
 import wrapStickerAnimation from '@components/wrappers/stickerAnimation';
 import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
 import {STICKER_EFFECT_MULTIPLIER} from '@components/wrappers/sticker';
 import {Document} from '@layer';
-import {EMOTICONSSTICKERGROUP} from '@components/emoticonsDropdown';
-
-const ANIMATION_GROUP: AnimationItemGroup = EMOTICONSSTICKERGROUP;
 
 export default class PremiumStickersCarousel {
   private superStickerRenderer: SuperStickerRenderer;

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import renderMediaWithFadeIn from '@helpers/dom/renderMediaWithFadeIn';
 import mediaSizes from '@helpers/mediaSizes';
 import {InputWebFileLocation, Message, PhotoSize, VideoSize, WebDocument} from '@layer';
@@ -287,7 +281,9 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
     }
 
     if(blurAfter) {
-      const result = blur(url, 12);
+      // downscale to a tiny thumbnail before blurring so the upscaled side-fill looks like
+      // frosted glass (matches the official clients), instead of a weak blur on the full image
+      const result = blur(url, 10, 2, 48);
       return result.promise.then(() => {
         // image = result.canvas;
         return renderOnLoad(result.canvas.toDataURL());

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {MyDocument} from '@appManagers/appDocsManager';
 import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
 import LazyLoadQueue from '@components/lazyLoadQueue';
@@ -15,20 +9,25 @@ import replaceContent from '@helpers/dom/replaceContent';
 import framesCache from '@helpers/framesCache';
 import {MediaSize} from '@helpers/mediaSize';
 import mediaSizes from '@helpers/mediaSizes';
+import liteMode from '@helpers/liteMode';
+import apiManagerProxy from '@lib/apiManagerProxy';
 import {Middleware, MiddlewareHelper, getMiddleware} from '@helpers/middleware';
 import noop from '@helpers/noop';
 import {DocumentAttribute} from '@layer';
 import wrapRichText from '@lib/richTextProcessor/wrapRichText';
 import RLottiePlayer, {applyColorOnContext, getLottiePixelRatio} from '@lib/rlottie/rlottiePlayer';
+import SHOULD_RENDER_OFFSCREEN from '@lib/rlottie/shouldRenderOffscreen';
+import compositorMessagePort, {EmojiCompositorMethods} from '@lib/customEmoji/compositorMessagePort';
+import {ensureCompositor} from '@lib/customEmoji/compositorChannels';
 import rootScope from '@lib/rootScope';
 import CustomEmojiElement, {CustomEmojiElements} from '@lib/customEmoji/element';
 import assumeType from '@helpers/assumeType';
 import {IS_WEBM_SUPPORTED} from '@environment/videoSupport';
 import {observeResize, unobserveResize} from '@components/resizeObserver';
-import {PAID_REACTION_EMOJI_DOCID} from '@lib/customEmoji/constants';
+import {CUSTOM_EMOJI_FADE_IN_DURATION, CUSTOM_EMOJI_FRAME_INTERVAL, PAID_REACTION_EMOJI_DOCID} from '@lib/customEmoji/constants';
 import lottieLoader from '@lib/rlottie/lottieLoader';
 import StickerType from '@config/stickerType';
-import {Accessor, createMemo, createRoot, createSignal, Setter} from 'solid-js';
+import {Accessor, createEffect, createMemo, createRoot, createSignal, Setter} from 'solid-js';
 import readValue from '@helpers/solid/readValue';
 
 const globalLazyLoadQueue = new LazyLoadQueue();
@@ -37,7 +36,13 @@ export class CustomEmojiRendererElement extends HTMLElement {
   public static globalLazyLoadQueue: LazyLoadQueue = globalLazyLoadQueue;
 
   public canvas: HTMLCanvasElement;
-  public context: CanvasRenderingContext2D;
+  private _context: CanvasRenderingContext2D;
+
+  public offscreen: boolean;
+  public rendererId: number;
+  public lastSentOffsets: Map<DocId, number[]>;
+  private lastSentSize: {width: number, height: number};
+  private lastSentSuspended: boolean;
 
   public playersSynced: Map<CustomEmojiElements, RLottiePlayer | HTMLVideoElement>;
   public textColored: Set<CustomEmojiElements>;
@@ -75,9 +80,10 @@ export class CustomEmojiRendererElement extends HTMLElement {
     this.classList.add('custom-emoji-renderer');
     this.canvas = document.createElement('canvas');
     this.canvas.classList.add('custom-emoji-canvas');
-    this.context = this.canvas.getContext('2d');
     this.append(this.canvas);
 
+    this.lastSentOffsets = new Map();
+    this.lastSentSuspended = false;
     this.playersSynced = new Map();
     this.textColored = new Set();
     this.clearedElements = new WeakSet();
@@ -85,6 +91,20 @@ export class CustomEmojiRendererElement extends HTMLElement {
 
     this.animationGroup = 'EMOJI';
     this.isCanvasClean = false;
+  }
+
+  // Lazy: the custom-element ctor runs before create() can decide the offscreen mode -
+  // acquiring a context there would foreclose transferControlToOffscreen()
+  public get context() {
+    return this._context ??= this.canvas.getContext('2d');
+  }
+
+  public sendCompositor<T extends keyof EmojiCompositorMethods>(
+    method: T,
+    payload?: Omit<Parameters<EmojiCompositorMethods[T]>[0], 'rendererId'>,
+    transfer?: Transferable[]
+  ) {
+    compositorMessagePort.invokeCompositorVoid(method, {...payload, rendererId: this.rendererId} as any, transfer);
   }
 
   private onResizeEntry = (entry: ResizeObserverEntry) => {
@@ -124,7 +144,7 @@ export class CustomEmojiRendererElement extends HTMLElement {
 
     const observeElement = this.observeResizeElement ?? this.canvas;
     if(observeElement) {
-      unobserveResize(observeElement);
+      unobserveResize(observeElement, this.onResizeEntry);
     }
 
     this.customEmojis.forEach((elements) => {
@@ -132,6 +152,11 @@ export class CustomEmojiRendererElement extends HTMLElement {
         element.clear();
       });
     });
+
+    if(this.offscreen) {
+      this.sendCompositor('detachRenderer');
+      offscreenRenderers.delete(this.rendererId);
+    }
 
     emojiRenderers.delete(this);
     this.playersSynced.clear();
@@ -198,7 +223,99 @@ export class CustomEmojiRendererElement extends HTMLElement {
     return offsetsMap;
   }
 
+  // Change-driven offsets for the compositor: flatten to [top, left, width] triples (pre-dpr),
+  // include only groups whose offsets changed since the last send, and emit empty offsets
+  // (stop painting) for groups that left the viewport.
+  public diffOffsets(offsetsMap: ReturnType<CustomEmojiRendererElement['getOffsets']>) {
+    const groups: {groupId: DocId, offsets: number[]}[] = [];
+
+    for(const [groupId, elements] of this.customEmojis) {
+      const offsets = offsetsMap.get(elements);
+      if(!offsets) {
+        continue;
+      }
+
+      const last = this.lastSentOffsets.get(groupId);
+      let changed = !last || last.length !== offsets.length * 3;
+      if(!changed) {
+        for(let i = 0; i < offsets.length; ++i) {
+          const {top, left, width} = offsets[i];
+          if(last[i * 3] !== top || last[i * 3 + 1] !== left || last[i * 3 + 2] !== width) {
+            changed = true;
+            break;
+          }
+        }
+      }
+
+      if(changed) {
+        const flat: number[] = [];
+        for(const {top, left, width} of offsets) {
+          flat.push(top, left, width);
+        }
+
+        this.lastSentOffsets.set(groupId, flat);
+        groups.push({groupId, offsets: flat});
+      }
+    }
+
+    for(const groupId of this.lastSentOffsets.keys()) { // Map iterators tolerate delete-during-for-of
+      const elements = this.customEmojis.get(groupId);
+      if(elements && offsetsMap.has(elements)) {
+        continue;
+      }
+
+      // getOffsets also filters out merely-PAUSED elements (popup pause sweep while a shared
+      // synced player keeps playing for the popup's own copies) - legacy keeps such a group's
+      // pixels frozen, so only a real viewport exit may clear it; placeholders are restored
+      // under the same gate below, anything else would leave visibly empty cells
+      if(elements && isAnyElementVisible(elements)) {
+        continue;
+      }
+
+      this.lastSentOffsets.delete(groupId);
+      groups.push({groupId, offsets: []});
+    }
+
+    // mirror render()'s viewport-exit placeholder restoration, re-checked EVERY tick like
+    // legacy does - at the exit transition itself IntersectionObserver usually hasn't
+    // flagged the element invisible yet, so a one-shot check would skip the restore forever
+    this.restoreAllPlaceholders(offsetsMap);
+
+    return groups;
+  }
+
+  // legacy "paused but still on-screen" freeze (popup pause sweep, idle): the legacy tick
+  // simply stops repainting the UI canvas, but the compositor repaints on every frame a
+  // SHARED synced player keeps delivering (the emoji-set popup playing the panel's players) -
+  // mirror the freeze by suspending the renderer worker-side while every element is paused
+  public updateSuspended() {
+    let suspended = false;
+    for(const elements of this.playersSynced.keys()) {
+      for(const element of elements) {
+        if(!element.paused) {
+          this.setSuspended(false);
+          return;
+        }
+
+        suspended = true; // at least one (paused) element - not a vacuously-empty renderer
+      }
+    }
+
+    this.setSuspended(suspended);
+  }
+
+  private setSuspended(suspended: boolean) {
+    if(this.lastSentSuspended !== suspended) {
+      this.lastSentSuspended = suspended;
+      this.sendCompositor('suspendRenderer', {suspended});
+    }
+  }
+
   public clearCanvas() {
+    if(this.offscreen) { // belt - the tick never routes offscreen renderers here
+      return;
+    }
+
     if(this.isCanvasClean) {
       return;
     }
@@ -209,6 +326,10 @@ export class CustomEmojiRendererElement extends HTMLElement {
   }
 
   public render(offsetsMap: ReturnType<CustomEmojiRendererElement['getOffsets']>) {
+    if(this.offscreen) { // belt - the tick never routes offscreen renderers here
+      return;
+    }
+
     const {context, canvas, isDimensionsSet} = this;
     if(!isDimensionsSet) {
       this.setDimensionsFromRect(undefined, false);
@@ -217,6 +338,7 @@ export class CustomEmojiRendererElement extends HTMLElement {
     this.isCanvasClean = false;
 
     const {width, height, dpr} = canvas;
+    const animationsEnabled = liteMode.isAvailable('emoji_appear');
     let _color: string;
     for(const [elements, offsets] of offsetsMap) {
       const player = this.playersSynced.get(elements);
@@ -250,19 +372,40 @@ export class CustomEmojiRendererElement extends HTMLElement {
       const maxLeft = width - frameWidth;
       const color = this.textColored.has(elements) ? (_color ??= customProperties.getProperty(this.textColor())) : undefined;
 
-      if(!this.clearedElements.has(elements) && !this.isSelectable) {
+      let alpha = 1;
+      if(animationsEnabled) {
+        let startTime = elementsFadeInStartTimes.get(elements);
+        if(startTime === undefined) {
+          // Skip fade if a raster thumb <img> is already visible under the canvas —
+          // the canvas frame replacing it would otherwise read as a blink. Path-size
+          // <svg> placeholders are visually different enough that the fade still helps.
+          const skipFade = hasRasterThumbPlaceholder(elements);
+          startTime = skipFade ? 0 : performance.now();
+          elementsFadeInStartTimes.set(elements, startTime);
+        }
+        alpha = Math.min(1, (performance.now() - startTime) / CUSTOM_EMOJI_FADE_IN_DURATION);
+      }
+      // putImageData ignores globalAlpha, so fade only applies on the drawImage path
+      const applyFade = alpha < 1 && !isImageData;
+
+      // Keep the placeholder DOM children visible underneath until the fade completes,
+      // otherwise there's a visible gap between the thumb being removed and the canvas
+      // frame becoming opaque enough to see.
+      if(!applyFade && !this.clearedElements.has(elements) && !this.isSelectable) {
         if(this.isSelectable/*  && false */) {
           elements.forEach((element) => {
             element.lastChildWas ??= element.lastChild;
             replaceContent(element, element.firstChild);
           });
-        } else {
-          elements.forEach((element) => {
-            element.replaceChildren();
-          });
-        }
 
-        this.clearedElements.add(elements);
+          this.clearedElements.add(elements);
+        } else {
+          this.clearPlaceholders(elements);
+        }
+      }
+
+      if(applyFade) {
+        context.globalAlpha = alpha;
       }
 
       offsets.forEach(({top, left}) => {
@@ -282,10 +425,79 @@ export class CustomEmojiRendererElement extends HTMLElement {
           applyColorOnContext(context, color, left, top, frameWidth, frameHeight);
         }
       });
+
+      if(applyFade) {
+        context.globalAlpha = 1;
+      }
+    }
+
+    // Restore placeholders for groups that exited the viewport so they fade-in next time.
+    // We deliberately ignore groups that are merely paused (window blur, idle, animations
+    // disabled, etc.) but still on-screen — restoring there would re-trigger the fade
+    // on every unpause. animationIntersector already tracks per-element viewport visibility
+    // via IntersectionObserver, so reuse that instead of running a second viewport check.
+    for(const elements of this.customEmojis.values()) {
+      if(
+        !offsetsMap.has(elements) &&
+        this.clearedElements.has(elements) &&
+        !isAnyElementVisible(elements)
+      ) {
+        this.restorePlaceholders(elements);
+      }
+    }
+  }
+
+  public clearPlaceholders(elements: CustomEmojiElements) {
+    elements.forEach((element) => {
+      element.savedChildren ??= Array.from(element.childNodes);
+      element.replaceChildren();
+    });
+
+    this.clearedElements.add(elements);
+  }
+
+  public restorePlaceholders(elements: CustomEmojiElements) {
+    if(this.isSelectable) {
+      return;
+    }
+
+    if(this.offscreen) { // re-arm the compositor fade so the group fades again on viewport re-entry
+      const docId = elements.values().next().value?.docId;
+      if(docId !== undefined) {
+        this.sendCompositor('resetFade', {groupId: docId});
+      }
+    }
+
+    elements.forEach((element) => {
+      const saved = element.savedChildren;
+      if(saved?.length && !element.firstChild) {
+        element.replaceChildren(...saved);
+      }
+    });
+
+    this.clearedElements.delete(elements);
+    elementsFadeInStartTimes.delete(elements);
+  }
+
+  public restoreAllPlaceholders(except?: ReturnType<CustomEmojiRendererElement['getOffsets']>) {
+    for(const elements of this.customEmojis.values()) {
+      if(!except?.has(elements) && this.clearedElements.has(elements) && !isAnyElementVisible(elements)) {
+        this.restorePlaceholders(elements);
+      }
     }
   }
 
   public checkForAnyFrame() {
+    if(this.offscreen) { // frames never land UI-side - the player tracks its first ack
+      for(const player of this.playersSynced.values()) {
+        if(player instanceof RLottiePlayer && player.offscreen === 'emoji' && player.hasRenderedFirstFrame) {
+          return true;
+        }
+      }
+
+      return false;
+    }
+
     for(const player of this.playersSynced.values()) {
       if(syncedPlayersFrames.has(player) || player instanceof HTMLVideoElement) {
         return true;
@@ -330,12 +542,23 @@ export class CustomEmojiRendererElement extends HTMLElement {
 
     const newWidth = Math.floor(Math.round(width * dpr));
     const newHeight = Math.floor(Math.round(height * dpr));
-    if(canvas.width === newWidth && canvas.height === newHeight) {
-      return;
+    if(this.offscreen) { // a transferred placeholder's .width is unreliable and writing it throws
+      const {lastSentSize} = this;
+      if(lastSentSize && lastSentSize.width === newWidth && lastSentSize.height === newHeight) {
+        return;
+      }
+
+      this.lastSentSize = {width: newWidth, height: newHeight};
+      this.sendCompositor('resizeRenderer', {width: newWidth, height: newHeight});
+    } else {
+      if(canvas.width === newWidth && canvas.height === newHeight) {
+        return;
+      }
+
+      canvas.width = newWidth;
+      canvas.height = newHeight;
     }
 
-    canvas.width = newWidth;
-    canvas.height = newHeight;
     this.isDimensionsSet = true;
     this.isCanvasClean = true;
 
@@ -356,7 +579,11 @@ export class CustomEmojiRendererElement extends HTMLElement {
     }
 
     if(!renderEmojis(new Set([this]))) {
-      this.clearCanvas();
+      if(this.offscreen) {
+        this.sendCompositor('clearRenderer');
+      } else {
+        this.clearCanvas();
+      }
     }
   }
 
@@ -379,6 +606,10 @@ export class CustomEmojiRendererElement extends HTMLElement {
 
       syncedPlayersFrames.delete(syncedPlayer.player);
       if(syncedPlayer.player instanceof RLottiePlayer) {
+        if(this.offscreen) {
+          this.sendCompositor('detachGroup', {groupId: element.docId});
+        }
+
         syncedPlayer.player.overrideRender = noop;
         syncedPlayer.player.remove();
       } else if(syncedPlayer.player instanceof HTMLVideoElement) {
@@ -456,9 +687,25 @@ export class CustomEmojiRendererElement extends HTMLElement {
       renderer.textColored.add(customEmojis);
     }
 
+    // If the doc is already cached locally with a URL, the media will appear
+    // (almost) instantly — playing a fade-in over already-visible content reads
+    // as a blink, so we skip it in that case.
+    const cacheContext = apiManagerProxy.getCacheContext(doc);
+    const isAlreadyAvailable = !!(cacheContext.downloaded && cacheContext.url);
+
     const loadStickerMiddleware = willHaveSyncedPlayer ? middleware.create().get(() => {
       return !!syncedPlayer.middlewares.size;
     }) : undefined;
+
+    // When we'll do our own JS fade on a DOM path, tell wrapSticker to leave the
+    // thumb in the DOM so we can keep it visible underneath the media as it fades
+    // in (avoiding a perceptual "gap" between the thumb disappearing and the
+    // fade-in reaching a visible opacity).
+    const willDomFade =
+      !willHaveSyncedPlayer &&
+      !this.isSelectable &&
+      (stickerType === StickerType.Static || onlyThumb || isStatic || !isAlreadyAvailable) &&
+      liteMode.isAvailable('emoji_appear');
 
     const _loadPromises: Promise<any>[] = [];
     const promise = isPaidReactionEmoji ? this.wrapPaidReactionEmoji(newElementsArray[0]) : wrapSticker({
@@ -480,7 +727,9 @@ export class CustomEmojiRendererElement extends HTMLElement {
       onlyThumb,
       withThumb: withThumb ?? (renderer.clearedElements.has(customEmojis) ? false : undefined),
       syncedVideo: this.isSelectable,
-      textColor: renderer.textColor
+      textColor: renderer.textColor,
+      keepThumb: willDomFade,
+      compositorDelivery: this.offscreen || undefined
     });
 
     if(loadPromises) {
@@ -510,120 +759,169 @@ export class CustomEmojiRendererElement extends HTMLElement {
     }
 
     if(stickerType === StickerType.Static || onlyThumb || isStatic) {
-      if(this.isSelectable) {
-        addition.onRender = () => Promise.all(_loadPromises).then(() => {
+      addition.onRender = () => {
+        // Pre-hide the real media (not the container) synchronously, before the
+        // next browser paint. With keepThumb=true, wrapSticker leaves the thumb in
+        // DOM — we absolutely-position it so it overlays the media, and it stays
+        // at full opacity throughout. The media fades 0 -> 1 on top, so the user
+        // sees a crossfade from thumb to media with no perceptual gap.
+        if(willDomFade) {
+          newElementsArray.forEach(preHideMediaWithThumbOverlay);
+        }
+        return Promise.all(_loadPromises).then(() => {
           if(!middleware()) return;
-          newElementsArray.forEach((element) => {
-            const {placeholder} = element;
-            placeholder.src = (element.firstElementChild as HTMLImageElement).src;
-          });
+          if(this.isSelectable) {
+            newElementsArray.forEach((element) => {
+              const {placeholder} = element;
+              placeholder.src = (element.firstElementChild as HTMLImageElement).src;
+            });
+          } else {
+            newElementsArray.forEach(fadeInMediaAndCleanupThumbs);
+          }
         });
-      }
+      };
 
       return promise.then((res) => ({...res, ...addition}));
     }
 
-    addition.onRender = (_p) => Promise.all(_loadPromises).then(() => {
-      if(!middleware() || !doc.animated) {
-        return;
+    addition.onRender = (_p) => {
+      // Same approach as the static path — fade the <video> directly, keep the
+      // thumb overlaid underneath so any compositor timing on the video layer
+      // doesn't produce a visible gap (the thumb covers it until the fade completes).
+      if(willDomFade) {
+        newElementsArray.forEach(preHideMediaWithThumbOverlay);
       }
+      return Promise.all(_loadPromises).then(() => {
+        if(!middleware() || !doc.animated) {
+          return;
+        }
 
-      const players = Array.isArray(_p) ? _p as HTMLVideoElement[] : [_p as RLottiePlayer];
-      const player = Array.isArray(players) ? players[0] : players;
-      assumeType<RLottiePlayer | HTMLVideoElement>(player);
-      newElementsArray.forEach((element, idx) => {
-        const player = players[idx] || players[0];
-        element.player = player;
+        const players = Array.isArray(_p) ? _p as HTMLVideoElement[] : [_p as RLottiePlayer];
+        const player = Array.isArray(players) ? players[0] : players;
+        assumeType<RLottiePlayer | HTMLVideoElement>(player);
+        newElementsArray.forEach((element, idx) => {
+          const player = players[idx] || players[0];
+          element.player = player;
 
-        if(syncedPlayer) {
-          element.syncedPlayer = syncedPlayer;
-          if(element.paused) {
-            element.syncedPlayer.pausedElements.add(element);
-          } else if(player.paused) {
-            player.play();
+          if(syncedPlayer) {
+            element.syncedPlayer = syncedPlayer;
+            if(element.paused) {
+              element.syncedPlayer.pausedElements.add(element);
+            } else if(player.paused) {
+              player.play();
+            }
           }
+
+          if(element.isConnected || middleware()) {
+            animationIntersector.addAnimation({
+              animation: element,
+              group: element.renderer.animationGroup,
+              observeElement: element.placeholder ?? element,
+              controlled: true,
+              type: 'emoji'
+            });
+          }
+        });
+
+        if(player instanceof RLottiePlayer || (player instanceof HTMLVideoElement && this.isSelectable)) {
+          syncedPlayer.player = player;
+          renderer.playersSynced.set(customEmojis, player);
         }
 
-        if(element.isConnected || middleware()) {
-          animationIntersector.addAnimation({
-            animation: element,
-            group: element.renderer.animationGroup,
-            observeElement: element.placeholder ?? element,
-            controlled: true,
-            type: 'emoji'
-          });
-        }
-      });
+        if(player instanceof RLottiePlayer) {
+          player.group = renderer.animationGroup;
 
-      if(player instanceof RLottiePlayer || (player instanceof HTMLVideoElement && this.isSelectable)) {
-        syncedPlayer.player = player;
-        renderer.playersSynced.set(customEmojis, player);
-      }
+          if(renderer.offscreen && player.offscreen === 'emoji') {
+            // force an offsets resend on the next tick: a re-attach for an already-known docId
+            // (reactions re-render, instantView shared renderer) re-arms the compositor group,
+            // and stale identical triples in lastSentOffsets would otherwise suppress the send
+            renderer.lastSentOffsets.delete(docId);
 
-      if(player instanceof RLottiePlayer) {
-        player.group = renderer.animationGroup;
+            renderer.sendCompositor('attachGroup', {
+              groupId: docId,
+              playerReqId: player.reqId,
+              textColored: renderer.textColored.has(customEmojis),
+              skipFade: hasRasterThumbPlaceholder(customEmojis) // same DOM read the legacy fade does
+            });
+          } else {
+            if(renderer.offscreen) {
+              // defensive only - reachable just after the offscreen loadFromData legacy retry belt;
+              // the group degrades to its visible placeholder (no crash, no blank canvas)
+              console.warn('offscreen renderer received a legacy player', player, renderer);
+            }
 
-        player.overrideRender ??= (frame) => {
-          syncedPlayersFrames.set(player, frame);
-          // frames.set(containers, frame);
-        };
-      } else if(player instanceof HTMLVideoElement) {
+            player.overrideRender ??= (frame) => {
+              syncedPlayersFrames.set(player, frame);
+            // frames.set(containers, frame);
+            };
+          }
+        } else if(player instanceof HTMLVideoElement) {
         // player.play();
 
-        // const cache = framesCache.getCache(key);
-        // let {width, height} = renderer.size;
-        // width *= dpr;
-        // height *= dpr;
+          // const cache = framesCache.getCache(key);
+          // let {width, height} = renderer.size;
+          // width *= dpr;
+          // height *= dpr;
 
-        // const onFrame = (frame: ImageBitmap | HTMLCanvasElement) => {
-        //   topFrames.set(player, frame);
-        //   player.requestVideoFrameCallback(callback);
-        // };
+          // const onFrame = (frame: ImageBitmap | HTMLCanvasElement) => {
+          //   topFrames.set(player, frame);
+          //   player.requestVideoFrameCallback(callback);
+          // };
 
-        // let frameNo = -1, lastTime = 0;
-        // const callback: VideoFrameRequestCallback = (now, metadata) => {
-        //   const time = player.currentTime;
-        //   if(lastTime > time) {
-        //     frameNo = -1;
-        //   }
+          // let frameNo = -1, lastTime = 0;
+          // const callback: VideoFrameRequestCallback = (now, metadata) => {
+          //   const time = player.currentTime;
+          //   if(lastTime > time) {
+          //     frameNo = -1;
+          //   }
 
-        //   const _frameNo = ++frameNo;
-        //   lastTime = time;
-        //   // const frameNo = Math.floor(player.currentTime * 1000 / CUSTOM_EMOJI_FRAME_INTERVAL);
-        //   // const frameNo = metadata.presentedFrames;
-        //   const imageBitmap = cache.framesNew.get(_frameNo);
+          //   const _frameNo = ++frameNo;
+          //   lastTime = time;
+          //   // const frameNo = Math.floor(player.currentTime * 1000 / CUSTOM_EMOJI_FRAME_INTERVAL);
+          //   // const frameNo = metadata.presentedFrames;
+          //   const imageBitmap = cache.framesNew.get(_frameNo);
 
-        //   if(imageBitmap) {
-        //     onFrame(imageBitmap);
-        //   } else if(IS_IMAGE_BITMAP_SUPPORTED) {
-        //     createImageBitmap(player, {resizeWidth: width, resizeHeight: height}).then((imageBitmap) => {
-        //       cache.framesNew.set(_frameNo, imageBitmap);
-        //       if(frameNo === _frameNo) onFrame(imageBitmap);
-        //     });
-        //   } else {
-        //     const canvas = document.createElement('canvas');
-        //     const context = canvas.getContext('2d');
-        //     canvas.width = width;
-        //     canvas.height = height;
-        //     context.drawImage(player, 0, 0);
-        //     cache.framesNew.set(_frameNo, canvas);
-        //     onFrame(canvas);
-        //   }
-        // };
+          //   if(imageBitmap) {
+          //     onFrame(imageBitmap);
+          //   } else if(IS_IMAGE_BITMAP_SUPPORTED) {
+          //     createImageBitmap(player, {resizeWidth: width, resizeHeight: height}).then((imageBitmap) => {
+          //       cache.framesNew.set(_frameNo, imageBitmap);
+          //       if(frameNo === _frameNo) onFrame(imageBitmap);
+          //     });
+          //   } else {
+          //     const canvas = document.createElement('canvas');
+          //     const context = canvas.getContext('2d');
+          //     canvas.width = width;
+          //     canvas.height = height;
+          //     context.drawImage(player, 0, 0);
+          //     cache.framesNew.set(_frameNo, canvas);
+          //     onFrame(canvas);
+          //   }
+          // };
 
         // // player.requestVideoFrameCallback(callback);
         // // setInterval(callback, CUSTOM_EMOJI_FRAME_INTERVAL);
-      }
+        }
 
-      if(willHaveSyncedPlayer) {
-        const dpr = getLottiePixelRatio(this.size.width, this.size.height);
-        renderer.canvas.dpr = dpr;
-        setRenderInterval();
-      }
-    });
+        if(willHaveSyncedPlayer) {
+          if(!renderer.offscreen) { // offscreen renderers got their dpr at create()
+            renderer.canvas.dpr = getLottiePixelRatio(this.size.width, this.size.height);
+          }
+
+          setRenderInterval();
+        } else if(!isAlreadyAvailable) {
+          // DOM-rendered path (e.g. non-selectable WebM video) — fade-in via JS opacity
+          newElementsArray.forEach(fadeInMediaAndCleanupThumbs);
+        }
+      });
+    };
 
     let syncedPlayer: SyncedPlayer;
-    const key = [docId, size.width, size.height].join('-');
+    // the delivery mode is part of the key: a legacy (isSelectable) renderer and an offscreen one
+    // must NOT share a SyncedPlayer - the loader segregates them into two RLottiePlayers, and a
+    // shared entry would cross-couple the pause refcounts and leak whichever player onRender
+    // assigned first (sync players have no other removal path)
+    const key = [docId, size.width, size.height, +!!this.offscreen].join('-');
     if(willHaveSyncedPlayer) {
       syncedPlayer = syncedPlayers.get(key);
       if(!syncedPlayer) {
@@ -801,6 +1099,21 @@ export class CustomEmojiRendererElement extends HTMLElement {
     renderer.animationGroup = options.animationGroup;
     renderer.size = options.customEmojiSize || mediaSizes.active.customEmoji;
     renderer.isSelectable = options.isSelectable;
+    // isSelectable renderers stay whole-renderer legacy (live HTMLVideoElement compositing occurs only there)
+    renderer.offscreen = SHOULD_RENDER_OFFSCREEN && !options.isSelectable;
+    if(renderer.offscreen) {
+      renderer.rendererId = ++nextRendererId;
+      offscreenRenderers.set(renderer.rendererId, renderer);
+      const dpr = renderer.canvas.dpr = getLottiePixelRatio(renderer.size.width, renderer.size.height);
+      ensureCompositor();
+      renderer.canvas.dataset.offscreen = '1';
+      const offscreenCanvas = renderer.canvas.transferControlToOffscreen();
+      renderer.sendCompositor('attachRenderer', {
+        canvas: offscreenCanvas,
+        dpr,
+        fadeEnabled: liteMode.isAvailable('emoji_appear')
+      }, [offscreenCanvas]);
+    }
     [renderer._textColor, renderer._setTextColor] = createSignal();
     renderer.observeResizeElement = options.observeResizeElement;
     renderer.renderNonSticker = options.renderNonSticker;
@@ -823,6 +1136,17 @@ export class CustomEmojiRendererElement extends HTMLElement {
 
     createRoot((dispose) => {
       renderer.textColor = createMemo(() => renderer._textColor() || readValue(options.textColor));
+
+      if(renderer.offscreen) {
+        createEffect(() => {
+          const property = renderer.textColor();
+          renderer.sendCompositor('configRenderer', {
+            color: property ? customProperties.getProperty(property) : undefined,
+            fadeEnabled: liteMode.isAvailable('emoji_appear') // reads the reactive appSettings store - re-runs on lite-mode change
+          });
+        });
+      }
+
       renderer.middlewareHelper.get().onDestroy(dispose);
     });
 
@@ -851,10 +1175,57 @@ export type CustomEmojiRendererElementOptions = Partial<{
 }> & WrapSomethingOptions;
 
 const CUSTOM_EMOJI_INSTANT_PLAY = true; // do not wait for animationIntersector
+
+const isAnyElementVisible = (elements: CustomEmojiElements) => {
+  for(const element of elements) {
+    if(animationIntersector.isVisible(element)) return true;
+  }
+  return false;
+};
+
+const hasRasterThumbPlaceholder = (elements: CustomEmojiElements) => {
+  for(const element of elements) {
+    return !!element.querySelector?.('img');
+  }
+  return false;
+};
+
 let emojiRenderInterval: number;
 const emojiRenderers: Set<CustomEmojiRenderer> = new Set();
 const syncedPlayers: Map<string, SyncedPlayer> = new Map();
 const syncedPlayersFrames: Map<RLottiePlayer | HTMLVideoElement, CustomEmojiFrame> = new Map();
+const elementsFadeInStartTimes: WeakMap<CustomEmojiElements, number> = new WeakMap();
+
+let nextRendererId = 0;
+const offscreenRenderers: Map<number, CustomEmojiRendererElement> = new Map();
+
+// Placeholder-clear parity with the legacy render() path: clear the layout children once
+// the compositor reports the group is fully faded in (fired immediately when the fade was
+// skipped/disabled), so the thumb never lingers past the moment the canvas fully covers it.
+compositorMessagePort.addEventListener('groupPainted', ({rendererId, groupId}) => {
+  const renderer = offscreenRenderers.get(rendererId);
+  const elements = renderer?.customEmojis.get(groupId);
+  if(!elements || !renderer.isConnected || renderer.clearedElements.has(elements)) {
+    return;
+  }
+
+  renderer.clearPlaceholders(elements);
+});
+
+// CSS-var resolution is not reactive to theme swaps - re-resolve and re-ship the color.
+rootScope.addEventListener('theme_changed', () => {
+  for(const renderer of offscreenRenderers.values()) {
+    const property = renderer.textColor();
+    if(!property) {
+      continue;
+    }
+
+    renderer.sendCompositor('configRenderer', {
+      color: customProperties.getProperty(property)
+    });
+  }
+});
+
 export const renderEmojis = (renderers = emojiRenderers) => {
   const r = Array.from(renderers);
   const t = r.filter((r) => r.isConnected && r.checkForAnyFrame() && !r.ignoreSettingDimensions);
@@ -862,30 +1233,52 @@ export const renderEmojis = (renderers = emojiRenderers) => {
     return false;
   }
 
-  const o = t.map((renderer) => {
+  const legacy: [CustomEmojiRendererElement, ReturnType<CustomEmojiRendererElement['getOffsets']>][] = [];
+  const batch: {rendererId: number, groups: {groupId: DocId, offsets: number[]}[]}[] = [];
+  for(const renderer of t) {
+    if(renderer.offscreen) {
+      renderer.updateSuspended();
+    }
+
     const paused = [...renderer.playersSynced.values()].reduce((acc, v) => acc + +!!v.paused, 0);
     if(renderer.playersSynced.size === paused) {
-      return;
+      continue; // all paused: no offsets sent, no arrivals, pixels frozen - matches today
     }
 
-    const offsets = renderer.getOffsets();
-    if(offsets.size) {
-      return [renderer, offsets] as const;
+    const offsets = renderer.getOffsets(); // the layout reads stay UI-side
+    if(renderer.offscreen) {
+      const groups = renderer.diffOffsets(offsets); // also restores placeholders for non-visible groups
+      if(groups.length) {
+        batch.push({rendererId: renderer.rendererId, groups});
+      }
+    } else if(offsets.size) {
+      legacy.push([renderer, offsets]);
+    } else {
+      // No visible groups in this renderer — restore any cleared placeholders
+      // so they fade-in fresh when scrolled back into view.
+      renderer.restoreAllPlaceholders();
     }
-  }).filter(Boolean);
+  }
 
-  for(const [renderer] of o) {
+  if(batch.length) {
+    compositorMessagePort.invokeCompositorVoid('setOffsets', {batch}); // change-driven: steady non-scroll state => zero messages
+  }
+
+  for(const [renderer] of legacy) {
     renderer.clearCanvas();
   }
 
-  for(const [renderer, offsets] of o) {
+  for(const [renderer, offsets] of legacy) {
     renderer.render(offsets);
   }
 
+  // ! must stay `return true` whenever t.length > 0 - today's body returns true
+  // unconditionally past the t-filter, even when every renderer is paused or
+  // offset-less; returning `legacy.length > 0 || batch.length > 0` would make
+  // forceRender() clearCanvas() an all-paused LEGACY renderer that today keeps
+  // its pixels - a fallback-path behavior change.
   return true;
 };
-const CUSTOM_EMOJI_FPS = 60;
-const CUSTOM_EMOJI_FRAME_INTERVAL = 1000 / CUSTOM_EMOJI_FPS;
 const setRenderInterval = () => {
   if(emojiRenderInterval) {
     return;
@@ -901,6 +1294,71 @@ const clearRenderInterval = () => {
 
   clearInterval(emojiRenderInterval);
   emojiRenderInterval = undefined;
+};
+
+// JS-driven fade-in for DOM-rendered custom emojis (images and non-synced videos).
+// Uses inline `opacity` updated on a single shared rAF loop — avoids CSS `animation`
+// which can cause heavy repaints / extra compositor layers when many emojis appear.
+type DomFadeIn = {element: HTMLElement, startTime: number};
+const domFadeIns: Set<DomFadeIn> = new Set();
+let domFadeRaf: number;
+const stepDomFadeIns = () => {
+  const now = performance.now();
+  for(const fade of domFadeIns) {
+    const alpha = Math.min(1, (now - fade.startTime) / CUSTOM_EMOJI_FADE_IN_DURATION);
+    if(alpha >= 1) {
+      fade.element.style.removeProperty('opacity');
+      fade.element.style.removeProperty('will-change');
+      domFadeIns.delete(fade);
+    } else {
+      fade.element.style.setProperty('opacity', String(alpha));
+    }
+  }
+  domFadeRaf = domFadeIns.size ? requestAnimationFrame(stepDomFadeIns) : undefined;
+};
+const startDomFadeIn = (element: HTMLElement) => {
+  if(!liteMode.isAvailable('emoji_appear')) {
+    return;
+  }
+  element.style.setProperty('opacity', '0');
+  domFadeIns.add({element, startTime: performance.now()});
+  if(!domFadeRaf) {
+    domFadeRaf = requestAnimationFrame(stepDomFadeIns);
+  }
+};
+
+// Pre-hide the media element and overlay the thumb so the thumb stays visible
+// at full opacity underneath while the media fades in on top. Called synchronously
+// in onRender, as a microtask after wrapSticker's rAF appended the media — this
+// runs before the next paint so the media never composites at opacity 1.
+const preHideMediaWithThumbOverlay = (el: HTMLElement) => {
+  const media = el.querySelector('.media-sticker:not(.thumbnail)');
+  if(media instanceof HTMLElement) {
+    media.style.setProperty('opacity', '0');
+    media.style.setProperty('will-change', 'opacity');
+  }
+  const thumb = el.querySelector('.thumbnail');
+  if(thumb instanceof HTMLElement) {
+    // Take the thumb out of flow so it overlays the media at the same rect.
+    // DOM order (thumb before media) keeps media painted on top, so as media
+    // fades 0 -> 1 the thumb is gradually obscured — a crossfade.
+    thumb.style.setProperty('position', 'absolute');
+    thumb.style.setProperty('top', '0');
+    thumb.style.setProperty('left', '0');
+  }
+};
+
+// Kicks off the rAF fade on the media and schedules thumb removal when the
+// fade would have finished. If there's no separate media element (shouldn't
+// normally happen on the DOM fade paths), we leave the thumb in place rather
+// than tearing it out.
+const fadeInMediaAndCleanupThumbs = (el: HTMLElement) => {
+  const media = el.querySelector('.media-sticker:not(.thumbnail)');
+  if(!(media instanceof HTMLElement)) return;
+  startDomFadeIn(media);
+  setTimeout(() => {
+    el.querySelectorAll('.thumbnail').forEach((t) => t.remove());
+  }, CUSTOM_EMOJI_FADE_IN_DURATION);
 };
 
 (window as any).syncedPlayers = syncedPlayers;

@@ -1,11 +1,10 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
+export type CopyToClipboardOptions = {
+  /** Re-throw the underlying error instead of swallowing it (e.g. so a caller can show a toast) */
+  rethrow?: boolean;
+};
 
 // https://stackoverflow.com/a/30810322
-function fallbackCopyTextToClipboard(text: string, html?: string) {
+function fallbackCopyTextToClipboard(text: string, html?: string, options?: CopyToClipboardOptions) {
   const textArea = document.createElement(html ? 'div' : 'textarea');
   if(html) {
     textArea.tabIndex = 0;
@@ -38,14 +37,17 @@ function fallbackCopyTextToClipboard(text: string, html?: string) {
     window.getSelection().removeAllRanges();
   } catch(err) {
     console.error('unable to copy', err);
+    if(options?.rethrow) {
+      throw err;
+    }
+  } finally {
+    document.body.removeChild(textArea);
   }
-
-  document.body.removeChild(textArea);
 }
 
-export async function copyTextToClipboard(text: string, html?: string) {
+export async function copyTextToClipboard(text: string, html?: string, options?: CopyToClipboardOptions) {
   if(!navigator.clipboard) {
-    fallbackCopyTextToClipboard(text);
+    fallbackCopyTextToClipboard(text, undefined, options);
     return;
   }
 
@@ -63,6 +65,7 @@ export async function copyTextToClipboard(text: string, html?: string) {
     ]);
   } catch(err) {
     console.error('clipboard error', err);
-    fallbackCopyTextToClipboard(text, html);
+    // The fallback will rethrow if it also fails and the caller opted in
+    fallbackCopyTextToClipboard(text, html, options);
   }
 }

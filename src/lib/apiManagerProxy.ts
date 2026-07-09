@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {ModifyFunctionsToAsync} from '@types';
 import {type State} from '@config/state';
 import type {Chat, ChatPhoto, Message, MessagePeerReaction, PeerNotifySettings, User, UserProfilePhoto} from '@layer';
@@ -52,8 +46,7 @@ import getPeerTitle from '@components/wrappers/getPeerTitle';
 import I18n from '@lib/langPack';
 import {NOTIFICATION_BADGE_PATH} from '@config/notifications';
 import {createAppURLForAccount} from '@lib/accounts/createAppURLForAccount';
-import {appSettings, setAppSettingsSilent} from '@stores/appSettings';
-import {produce, unwrap} from 'solid-js/store';
+import {setAppSettingsSilent} from '@stores/appSettings';
 import {batch} from 'solid-js';
 import createNotificationImage from '@helpers/createNotificationImage';
 import PasscodeLockScreenController from '@components/passcodeLock/passcodeLockScreenController';
@@ -106,7 +99,7 @@ export type MirrorTaskPayload<
   accountNumber: ActiveAccountNumber
 };
 
-export type NotificationBuildTaskPayload = {
+export type NotificationBuildMessageTaskPayload = {
   message: Message.message | Message.messageService,
   fwdCount?: number,
   peerReaction?: MessagePeerReaction,
@@ -114,6 +107,15 @@ export type NotificationBuildTaskPayload = {
   accountNumber: ActiveAccountNumber,
   isOtherTabActive?: boolean
 };
+
+export type NotificationBuildStoryTaskPayload = {
+  story: {peerId: PeerId, storyId: number},
+  accountNumber: ActiveAccountNumber,
+  isOtherTabActive?: boolean
+};
+
+// * discriminated union: `'story' in payload` narrows to the story variant
+export type NotificationBuildTaskPayload = NotificationBuildMessageTaskPayload | NotificationBuildStoryTaskPayload;
 
 export type TabState = {
   chatPeerIds: PeerId[],
@@ -593,6 +595,10 @@ class ApiManagerProxy extends MTProtoMessagePort {
   public sendEnvironment() {
     this.log('Passing environment:', ENVIRONMENT);
     this.invoke('environment', ENVIRONMENT);
+    // The worker's own location.search has no ?debug=1, so DEBUG is false there
+    // in production. Mirror the page's debug state so the worker records logs
+    // too. Fire-and-forget; re-applied on every (re)connect.
+    this.invokeVoid('setLogBufferEnabled', DEBUG);
   }
 
   public pingServiceWorkerWithIframe() {
@@ -640,6 +646,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
     this.serviceMessagePort.attachSendPort(this.lastServiceWorker = serviceWorker);
     this.serviceMessagePort.invokeVoid('hello', undefined);
     this.serviceMessagePort.invokeVoid('environment', ENVIRONMENT);
+    this.serviceMessagePort.invokeVoid('setLogBufferEnabled', DEBUG);
 
     DeferredIsUsingPasscode.isUsingPasscode().then((value) => {
       this.serviceMessagePort.invokeVoid('toggleUsingPasscode', {type: 'init', isUsingPasscode: value});
@@ -856,6 +863,15 @@ class ApiManagerProxy extends MTProtoMessagePort {
   }
 
   private async registerCryptoWorker() {
+    if(Modes.noWorker) {
+      // Import the registry side; it adds an `invoke` listener on the shared
+      // cryptoMessagePort singleton. CryptoMessagePort.invokeCryptoNew detects
+      // a same-realm listener and short-circuits directly into it, so no port
+      // bridge is needed.
+      await import('./crypto/crypto.worker');
+      return;
+    }
+
     await this.registerThreadedWorker({
       type: 'crypto',
       createWorker: () => {
@@ -870,6 +886,19 @@ class ApiManagerProxy extends MTProtoMessagePort {
 
   private registerWorker() {
     if(import.meta.env.VITE_MTPROTO_SW) {
+      return;
+    }
+
+    if(Modes.noWorker) {
+      // Loop both ends of a MessageChannel back into the same realm so the
+      // worker module's listeners run in the main thread under the same call
+      // stack as the proxy. start-preview / dev only — multi-tab dedup is lost.
+      const channel = new MessageChannel();
+      this.attachPort(channel.port1);
+      this.closeMTProtoWorker = () => channel.port1.close();
+      import('./mainWorker/index.worker').then((mod) => {
+        mod.connectInProcessTab(channel.port2);
+      });
       return;
     }
 
@@ -921,18 +950,11 @@ class ApiManagerProxy extends MTProtoMessagePort {
     this.dispatchUserAuth();
 
     const stateForThisAccount = loadedStates[getCurrentAccount()];
-    rootScope.settings = stateForThisAccount.common.settings;
     this.newVersion = stateForThisAccount.newVersion;
     this.oldVersion = stateForThisAccount.oldVersion;
     this.mirrors['state'] = stateForThisAccount.state;
     setAppStateSilent(stateForThisAccount.state);
     setAppSettingsSilent(stateForThisAccount.common.settings);
-
-    Object.defineProperty(rootScope, 'settings', {
-      get: () => {
-        return unwrap(appSettings);
-      }
-    });
 
     return loadedStates;
   }
@@ -1113,6 +1135,11 @@ class ApiManagerProxy extends MTProtoMessagePort {
     return !!(peer as User.user)?.pFlags?.bot_forum_view;
   }
 
+  public isMonoforum(peerId: PeerId) {
+    const peer = this.getPeer(peerId);
+    return !!(peer as Chat.channel)?.pFlags?.monoforum;
+  }
+
   public canManageBotforumTopics(peerId: PeerId) {
     const peer = this.getPeer(peerId);
     return !!(peer as User.user)?.pFlags?.bot_forum_can_manage_topics;
@@ -1134,7 +1161,20 @@ class ApiManagerProxy extends MTProtoMessagePort {
     }
 
     const saved = this.mirrors.avatars[peerId] ??= {};
-    return saved[size] ??= rootScope.managers.appAvatarsManager.loadAvatar(peerId, photo, size);
+    if(saved[size]) {
+      return saved[size];
+    }
+
+    const promise = saved[size] = rootScope.managers.appAvatarsManager.loadAvatar(peerId, photo, size);
+    // Don't permanently cache a failed (undefined) video load — allow a retry.
+    // (Successful loads overwrite this entry with the URL via the 'mirror' message.)
+    if(size === 'photo_video' || size === 'photo_video_full') {
+      Promise.resolve(promise).then(
+        (url) => { if(!url && saved[size] === promise) delete saved[size]; },
+        () => { if(saved[size] === promise) delete saved[size]; }
+      );
+    }
+    return promise;
   }
 
   public getAppConfig(overwrite?: boolean) {

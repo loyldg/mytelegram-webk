@@ -1,9 +1,4 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
+import lottieLoader from '@lib/rlottie/lottieLoader';
 import {EmoticonsDropdown} from '..';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import mediaSizes from '@helpers/mediaSizes';
@@ -13,7 +8,7 @@ import {AppManagers} from '@lib/managers';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
 import rootScope from '@lib/rootScope';
 import {putPreloader} from '@components/putPreloader';
-import PopupStickers from '@components/popups/stickers';
+import showStickersPopup from '@components/popups/stickers';
 import findAndSplice from '@helpers/array/findAndSplice';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import noop from '@helpers/noop';
@@ -22,7 +17,6 @@ import confirmationPopup from '@components/confirmationPopup';
 import VisibilityIntersector, {OnVisibilityChangeItem} from '@components/visibilityIntersector';
 import findUpAsChild from '@helpers/dom/findUpAsChild';
 import forEachReverse from '@helpers/array/forEachReverse';
-import PopupElement from '@components/popups';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
 import StickersTabCategory, {EmoticonsTabStyles} from '@components/emoticonsDropdown/category';
@@ -105,6 +99,11 @@ export default class StickersTab extends EmoticonsTabC<StickersTabCategory<Stick
 
   public static _onCategoryVisibility = (category: StickersTabCategory<any>, visible: boolean) => {
     category.elements.items.replaceChildren(...(!visible ? [] : category.items.map(({element}) => element)));
+    if(visible) {
+      // remounting detaches+reattaches the cells - transferred placeholder
+      // canvases lose their displayed frame until the next worker commit
+      lottieLoader.nudgePresentWithin(category.elements.items);
+    }
   };
 
   private onCategoryVisibility = ({target, visible}: OnVisibilityChangeItem) => {
@@ -148,7 +147,7 @@ export default class StickersTab extends EmoticonsTabC<StickersTabCategory<Stick
           return;
         }
 
-        PopupElement.createPopup(PopupStickers, getStickerSetInputById(category.set), false, this.emoticonsDropdown.chatInput).show();
+        showStickersPopup(getStickerSetInputById(category.set), false, this.emoticonsDropdown.chatInput);
         return;
       }
 
@@ -363,6 +362,8 @@ export default class StickersTab extends EmoticonsTabC<StickersTabCategory<Stick
 
     category.items.unshift(item);
     category.elements.items.prepend(item.element);
+    // the DOM move blanks a transferred placeholder canvas - re-present
+    lottieLoader.nudgePresentWithin(item.element);
 
     if(!batch) {
       this.spliceExceed(category);

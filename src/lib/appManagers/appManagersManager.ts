@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import ServiceMessagePort from '@lib/serviceWorker/serviceMessagePort';
 import App from '@config/app';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -123,7 +117,9 @@ export class AppManagersManager {
     port.addEventListener('threadedPort', (type, source, event) => {
       const threadedWorker = this.threadedSharedWorkers[type];
       const port = event.ports[0];
-      if(threadedWorker.attached >= threadedWorker.urls.length) {
+      // A threaded worker can post its MessagePort before createProxyWorkerURLs
+      // has populated urls, so cap by the configured thread count instead.
+      if(threadedWorker.attached >= threadedWorker.threads) {
         port.close();
         return;
       }
@@ -171,7 +167,11 @@ export class AppManagersManager {
       await Promise.all([
         // new Promise(() => {}),
         appStoragesManager.loadStorages(),
-        this.threadedSharedWorkers.crypto.promise
+        // In Modes.noWorker the crypto worker is never spawned — the registry
+        // is imported into the main realm and cryptoMessagePort short-circuits
+        // same-realm callers via invokeCryptoNew's early-out. There's nothing
+        // to wait for and the threadedPort handshake never resolves, so skip.
+        Modes.noWorker ? Promise.resolve() : this.threadedSharedWorkers.crypto.promise
       ]);
 
       const managers = await createManagers(

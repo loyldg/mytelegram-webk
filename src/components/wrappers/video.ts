@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {IS_SAFARI} from '@environment/userAgent';
 import {IS_H265_SUPPORTED} from '@environment/videoSupport';
 import {animateSingle} from '@helpers/animation';
@@ -41,6 +35,7 @@ import appMediaPlaybackController, {AppMediaPlaybackController, MediaSearchConte
 import AudioElement, {findMediaTargets} from '@components/audio';
 import Button from '@components/button';
 import Icon from '@components/icon';
+import {createProgressRing, getProgressRingRadius} from '@components/progressRing';
 import LazyLoadQueue from '@components/lazyLoadQueue';
 import ProgressivePreloader from '@components/preloader';
 import wrapPhoto from '@components/wrappers/photo';
@@ -61,7 +56,7 @@ mediaSizes.addEventListener('changeScreen', (from, to) => {
     const elements = Array.from(document.querySelectorAll('.media-round .progress-ring')) as SVGSVGElement[];
     const width = mediaSizes.active.round.width;
     const halfSize = width / 2;
-    const radius = halfSize - 7;
+    const radius = getProgressRingRadius(width);
     roundVideoCircumference = 2 * Math.PI * radius;
     elements.forEach((element) => {
       element.setAttributeNS(null, 'width', '' + width);
@@ -130,6 +125,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
   const autoDownloadSize = autoDownload?.video;
   let noAutoDownload = autoDownloadSize === 0;
   const isGroupedItem = !(boxWidth && boxHeight);
+  uploadingFileName ??= message?.uploadingFileName?.[0];
   canAutoplay ??= /* doc.sticker ||  */(
     (
       doc.type !== 'video' || (
@@ -229,17 +225,20 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
     (divRound as any).message = message;
 
     const size = mediaSizes.active.round;
-    const halfSize = size.width / 2;
     const strokeWidth = 3.5;
-    const radius = halfSize - (strokeWidth * 2);
-    divRound.innerHTML = `<svg class="progress-ring" width="${size.width}" height="${size.width}" style="transform: rotate(-90deg);">
-      <circle class="progress-ring__circle" stroke="white" stroke-opacity="0.3" stroke-width="${strokeWidth}" cx="${halfSize}" cy="${halfSize}" r="${radius}" fill="transparent"/>
-    </svg>`;
-
-    const circle = divRound.firstElementChild.firstElementChild as SVGCircleElement;
+    const radius = getProgressRingRadius(size.width, strokeWidth);
     if(!roundVideoCircumference) {
       roundVideoCircumference = 2 * Math.PI * radius;
     }
+
+    // Shared round progress-ring component (also used by the video-note
+    // recorder). We drive it imperatively below (and the global changeScreen
+    // resize handler mutates it too), so progress stays a plain DOM write.
+    const ring = createProgressRing({size: size.width, strokeWidth, strokeOpacity: 0.3});
+    middleware.onClean(() => ring.destroy());
+    divRound.append(ring.element);
+
+    const circle = ring.circle;
     circle.style.strokeDasharray = roundVideoCircumference + ' ' + roundVideoCircumference;
     circle.style.strokeDashoffset = '' + roundVideoCircumference;
 
@@ -263,7 +262,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
 
     const onLoad = () => {
       const message: Message.message = (divRound as any).message;
-      const globalVideo = appMediaPlaybackController.addMedia(message, !noAutoDownload) as HTMLVideoElement;
+      const globalVideo = appMediaPlaybackController.addMedia({message, autoload: !noAutoDownload}) as HTMLVideoElement;
       onGlobalMedia?.(globalVideo);
       const clear = () => {
         (appImManager.chat.setPeerPromise || Promise.resolve()).finally(() => {
@@ -404,7 +403,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
     } else {
       onLoad();
     }
-  } else if(!noAutoplayAttribute) {
+  } else if(!noAutoplayAttribute && !uploadingFileName) {
     video.autoplay = true; // для safari
   }
 
@@ -433,13 +432,12 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
     res.thumb = photoRes;
 
     if((!canAutoplay && doc.type !== 'gif') || onlyPreview) {
-      const earlyUploadFileName = uploadingFileName ?? message?.uploadingFileName?.[0];
-      if(earlyUploadFileName && container && !onlyPreview) {
+      if(uploadingFileName && container && !onlyPreview) {
         preloader = new ProgressivePreloader({
           attachMethod: 'prepend',
           isUpload: true
         });
-        preloader.attachPromise(appDownloadManager.getUpload(earlyUploadFileName));
+        preloader.attachPromise(appDownloadManager.getUpload(uploadingFileName));
         preloader.attach(container, false);
       }
 
@@ -502,7 +500,6 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
 
   getCacheContext();
 
-  uploadingFileName ??= message?.uploadingFileName?.[0];
   if(uploadingFileName) { // means upload
     preloader = new ProgressivePreloader({
       attachMethod: 'prepend',
@@ -511,6 +508,15 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
     preloader.attachPromise(appDownloadManager.getUpload(uploadingFileName));
     preloader.attach(container, false);
     noAutoDownload = undefined;
+
+    // * autoplay is suppressed while the upload is in progress, and the bubble
+    // * isn't re-rendered on send — resume playback once the upload completes
+    if(!noAutoplayAttribute && doc.type !== 'round') {
+      appDownloadManager.getUpload(uploadingFileName).then(() => {
+        if(middleware && !middleware()) return;
+        video.play().catch(noop);
+      }, noop);
+    }
   } else if(!cacheContext.downloaded && !supportsStreaming && !withoutPreloader) {
     preloader = new ProgressivePreloader({
       attachMethod: 'prepend'
@@ -568,7 +574,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
   video.muted = true;
   video.loop = true;
   // video.play();
-  if(!noAutoplayAttribute) {
+  if(!noAutoplayAttribute && !uploadingFileName) {
     video.autoplay = true;
   }
 
@@ -702,7 +708,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
   if(doc.type === 'gif' && !canAutoplay) {
     attachClickEvent(container, (e) => {
       cancelEvent(e);
-      spanPlay.remove();
+      spanPlay?.remove();
       load();
     }, {capture: true, once: true});
   } else {
@@ -899,7 +905,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
       }
 
       video.muted = appMediaPlaybackController.muted;
-      video.volume = appMediaPlaybackController.volume;
+      video.volume = Math.min(appMediaPlaybackController.volume, 1);
     };
 
     const onSingleMedia = (media: HTMLMediaElement) => {
@@ -919,7 +925,7 @@ export default async function wrapVideo({doc, altDoc, container, message, boxWid
 
       video.muted = turnedObserverOn ? params.muted : true;
       video.playbackRate = params.playbackRate;
-      video.volume = params.volume;
+      video.volume = Math.min(params.volume, 1);
     };
 
     appMediaPlaybackController.addEventListener('toggleVideoAutoplaySound', onAutoplaySound);

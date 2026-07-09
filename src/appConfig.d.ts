@@ -151,7 +151,15 @@ export interface MTAppConfig {
   freeze_appeal_url?:                         string;
   settings_display_passkeys?:                 boolean;
   passkeys_account_passkeys_max?:             number;
+  poll_answer_delete_period?:                 number;
+  poll_answers_max?:                          number;
+  poll_close_period_max?:                     number;
   no_forwards_request_expire_period?:         number;
+  aicompose_tone_title_length_max?:           number;
+  aicompose_tone_prompt_length_max?:          number;
+  aicompose_tone_examples_num?:               number;
+  aicompose_tone_saved_limit_default?:        number;
+  aicompose_tone_saved_limit_premium?:        number;
 }
 
 export interface EmojiesSendDiceSuccess {

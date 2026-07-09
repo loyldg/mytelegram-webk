@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -33,7 +29,7 @@ import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
 import pause from '@helpers/schedulers/pause';
 
 export type User = MTUser.user;
-export type TopPeerType = 'correspondents' | 'bots_inline' | 'bots_app';
+export type TopPeerType = 'correspondents' | 'bots_inline' | 'bots_app' | 'bots_guestchat';
 export type MyTopPeer = {id: PeerId, rating: number};
 
 const SEARCH_OPTIONS: ProcessSearchTextOptions = {
@@ -380,6 +376,12 @@ export class AppUsersManager extends AppManager {
     return this.apiManager.invokeApi('contacts.resolvePhone', {phone}).then((resolvedPeer) => {
       return this.processResolvedPeer(resolvedPeer) as User;
     });
+  }
+
+  // One-time `t.me/contact/<token>` link to add the current user as a contact —
+  // used by the My QR popup when you have no username (mirrors iOS).
+  public exportContactToken() {
+    return this.apiManager.invokeApiSingle('contacts.exportContactToken', {});
   }
 
   private pushContact(id: UserId) {

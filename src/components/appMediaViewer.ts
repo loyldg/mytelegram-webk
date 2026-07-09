@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {MyDocument} from '@appManagers/appDocsManager';
 import MEDIA_MIME_TYPES_SUPPORTED from '@environment/mediaMimeTypesSupport';
 import cancelEvent from '@helpers/dom/cancelEvent';
@@ -14,6 +8,7 @@ import setInnerHTML from '@helpers/dom/setInnerHTML';
 import mediaSizes from '@helpers/mediaSizes';
 import SearchListLoader from '@helpers/searchListLoader';
 import {Message, MessageMedia, WebPage} from '@layer';
+import confirmationPopup from '@components/confirmationPopup';
 import appDownloadManager from '@lib/appDownloadManager';
 import appImManager from '@lib/appImManager';
 import {MyMessage} from '@appManagers/appMessagesManager';
@@ -23,12 +18,13 @@ import getMediaFromMessage from '@appManagers/utils/messages/getMediaFromMessage
 import wrapRichText from '@richTextProcessor/wrapRichText';
 import {MediaSearchContext} from '@components/appMediaPlaybackController';
 import AppMediaViewerBase, {MEDIA_VIEWER_CLASSNAME} from '@components/appMediaViewerBase';
+import overlayAvatarVideoOnMover from '@components/appMediaViewerAvatarVideo';
 import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
 import PopupDeleteMessages from '@components/popups/deleteMessages';
-import PopupForward from '@components/popups/forward';
+import showForwardPopup from '@components/popups/forward';
 import Scrollable from '@components/scrollable';
 import appSidebarRight from '@components/sidebarRight';
-import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMedia';
+import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMediaTab';
 import PopupElement from '@components/popups';
 import {ChatType} from './chat/chatType';
 import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
@@ -81,6 +77,8 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
   protected btnMenuForward: ButtonMenuItemOptionsVerifiable;
   protected btnMenuDownload: ButtonMenuItemOptionsVerifiable;
   protected btnMenuDelete: ButtonMenuItemOptionsVerifiable;
+  private deleteAsChatPhoto = false;
+  private videoAvatarCleanup?: () => void;
 
   get searchContext() {
     return this.listLoader.searchContext;
@@ -221,8 +219,28 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     });
   };
 
-  onDeleteClick = () => {
+  onDeleteClick = async() => {
     const target = this.target;
+    if(this.deleteAsChatPhoto) {
+      try {
+        await confirmationPopup({
+          titleLangKey: 'Delete',
+          descriptionLangKey: 'AreYouSureDeletePhoto',
+          button: {
+            langKey: 'Delete',
+            isDanger: true
+          }
+        });
+      } catch{
+        return;
+      }
+
+      await this.managers.appChatsManager.editPhoto(target.peerId.toChatId());
+      this.target = {element: this.content.media} as any;
+      this.close();
+      return;
+    }
+
     PopupElement.createPopup(
       PopupDeleteMessages,
       target.peerId,
@@ -239,7 +257,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     const target = this.target;
     if(target.mid) {
       // appSidebarRight.forwardTab.open([target.mid]);
-      PopupElement.createPopup(PopupForward, {
+      showForwardPopup({
         [target.peerId]: [target.mid]
       }, () => {
         return this.close();
@@ -407,10 +425,18 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     const isServiceMessage = message._ === 'messageService';
     const cantForwardMessage = isServiceMessage || noAuthor || !(await this.managers.appMessagesManager.canForward(message));
     const cantDownloadMessage = (isServiceMessage ? noForwards : cantForwardMessage && !isSponsored) || !canSaveMessageMedia(message, noForwards);
+    const action = isServiceMessage ? (message as Message.messageService).action : undefined;
+    const isChatPhotoEdit = !!action &&
+      (action._ === 'messageActionChannelEditPhoto' || action._ === 'messageActionChatEditPhoto') &&
+      message.peerId.isAnyChat();
+    const cantDeleteMessage = isChatPhotoEdit ?
+      !(await this.managers.appChatsManager.hasRights(message.peerId.toChatId(), 'change_info')) :
+      !(await this.managers.appMessagesManager.canDeleteMessage(message));
+    this.deleteAsChatPhoto = isChatPhotoEdit && !cantDeleteMessage;
     const a: [(HTMLElement | ButtonMenuItemOptionsVerifiable)[], boolean][] = [
       [[this.buttons.forward, this.btnMenuForward], cantForwardMessage],
       [[this.buttons.download, this.btnMenuDownload], cantDownloadMessage],
-      [[this.buttons.delete, this.btnMenuDelete], !(await this.managers.appMessagesManager.canDeleteMessage(message))]
+      [[this.buttons.delete, this.btnMenuDelete], cantDeleteMessage]
     ];
 
     a.forEach(([buttons, hide]) => {
@@ -447,7 +473,26 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     this.target.message = message;
     this.target.index = index;
 
+    // Animated avatar (a profile/chat photo with video_sizes — e.g. a group /
+    // channel avatar-change service message): overlay the looping video on the
+    // still image once the open/move animation settles, like the avatar viewer.
+    this.videoAvatarCleanup?.();
+    this.videoAvatarCleanup = undefined;
+    if((media as MyPhoto)?._ === 'photo' && (media as MyPhoto).video_sizes?.length) {
+      const photo = media as MyPhoto;
+      Promise.resolve(promise).then(() => {
+        if(this.target?.message !== message || !this.content.mover) return;
+        this.videoAvatarCleanup = overlayAvatarVideoOnMover(this.content.mover, photo);
+      });
+    }
+
     return promise;
+  }
+
+  public close(e?: MouseEvent) {
+    this.videoAvatarCleanup?.();
+    this.videoAvatarCleanup = undefined;
+    return super.close(e);
   }
 
   public static isMediaCompatibleForDocumentViewer(media: MyPhoto | MyDocument) {

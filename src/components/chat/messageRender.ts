@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type LazyLoadQueue from '@components/lazyLoadQueue';
 import {formatFullSentTimeRaw, formatTime} from '@helpers/date';
 import {getFullDate} from '@helpers/date/getFullDate';
@@ -12,7 +6,7 @@ import {Middleware} from '@helpers/middleware';
 import formatNumber from '@helpers/number/formatNumber';
 import {AvailableEffect, Message, MessageReplyHeader} from '@layer';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
-import {i18n, _i18n, LangPackKey} from '@lib/langPack';
+import I18n, {i18n, _i18n, LangPackKey} from '@lib/langPack';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
 import rootScope from '@lib/rootScope';
@@ -32,7 +26,7 @@ import wrapStickerAnimation from '@components/wrappers/stickerAnimation';
 import Scrollable from '@components/scrollable';
 import appDownloadManager from '@lib/appDownloadManager';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
-import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
+import numberThousandSplitter, {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import {makeTime} from '@components/chat/utils';
 import {formatNanoton} from '@helpers/paymentsWrapCurrencyAmount';
 
@@ -226,7 +220,12 @@ export namespace MessageRender {
 
     const fwdFrom = isMessage && message.fwd_from;
     const time: HTMLElement = /* isSponsored ? undefined :  */makeTime(date, includeDate);
+
+    let title = /* isSponsored ? undefined :  */getFullDate(new Date(message.date * 1000));
     if(isMessage) {
+      title += (message.edit_date && !message.pFlags.edit_hide ? `\nEdited: ${getFullDate(new Date(message.edit_date * 1000))}` : '') +
+        (fwdFrom ? `\nOriginal: ${getFullDate(new Date(fwdFrom.saved_date || fwdFrom.date * 1000))}` : '');
+
       const messageMedia = message.media;
       if(messageMedia?._ === 'messageMediaDice' && messageMedia.game_outcome) {
         const span = document.createElement('span');
@@ -245,6 +244,11 @@ export namespace MessageRender {
 
         const channelViews = Icon('channelviews', 'time-icon', 'time-part', 'time-icon-views');
 
+        title += '\n' + I18n.format('ViewsTooltip', true, [numberThousandSplitter(message.views)]);
+        if(message.forwards) {
+          title += '\n' + I18n.format('SharesTooltip', true, [numberThousandSplitter(message.forwards)]);
+        }
+
         args.push(postViewsSpan, channelViews);
       }
 
@@ -262,7 +266,7 @@ export namespace MessageRender {
       }
 
       if(chatType !== ChatType.Pinned && message.pFlags.pinned) {
-        const i = Icon('pinnedchat', 'time-icon', 'time-pinned', 'time-part');
+        const i = Icon('pinnedchat_filled', 'time-icon', 'time-pinned', 'time-part');
         args.unshift(i);
       }
 
@@ -276,7 +280,7 @@ export namespace MessageRender {
         inlineStars.classList.add('inline-stars', 'bubble-meta-inline-stars');
         inlineStars.append(
           numberThousandSplitterForStars(+message.paid_message_stars * Math.max(groupedMessagesCount || 0, 1)),
-          Icon('star')
+          Icon('star', 'inline-stars-icon')
         );
         args.push(inlineStars)
       }
@@ -302,12 +306,6 @@ export namespace MessageRender {
 
     if(time) {
       args.push(time);
-    }
-
-    let title = /* isSponsored ? undefined :  */getFullDate(new Date(message.date * 1000));
-    if(isMessage) {
-      title += (message.edit_date && !message.pFlags.edit_hide ? `\nEdited: ${getFullDate(new Date(message.edit_date * 1000))}` : '') +
-        (fwdFrom ? `\nOriginal: ${getFullDate(new Date(fwdFrom.saved_date || fwdFrom.date * 1000))}` : '');
     }
 
     const timeSpan = document.createElement('span');

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {MessagesStorageKey} from '@appManagers/appMessagesManager';
 import type ChatBubbles from '@components/chat/bubbles';
 import type ChatInput from '@components/chat/input';
@@ -13,7 +7,7 @@ import Button from '@components/button';
 import ButtonIcon from '@components/buttonIcon';
 import CheckboxField from '@components/checkboxField';
 import PopupDeleteMessages from '@components/popups/deleteMessages';
-import PopupForward from '@components/popups/forward';
+import showForwardPopup from '@components/popups/forward';
 import SetTransition from '@components/singleTransition';
 import ListenerSetter from '@helpers/listenerSetter';
 import PopupSendNow from '@components/popups/sendNow';
@@ -23,10 +17,11 @@ import {i18n, _i18n} from '@lib/langPack';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import blurActiveElement from '@helpers/dom/blurActiveElement';
 import cancelEvent from '@helpers/dom/cancelEvent';
+import {getAppWindow} from '@helpers/appWindow';
 import cancelSelection from '@helpers/dom/cancelSelection';
 import getSelectedText from '@helpers/dom/getSelectedText';
 import replaceContent from '@helpers/dom/replaceContent';
-import AppSearchSuper from '@components/appSearchSuper';
+import type AppSearchSuper from '@components/appSearchSuper';
 import isInDOM from '@helpers/dom/isInDOM';
 import {randomLong} from '@helpers/random';
 import {attachClickEvent, AttachClickOptions} from '@helpers/dom/clickEvent';
@@ -44,6 +39,7 @@ import {toastNew} from '@components/toast';
 import confirmationPopup from '@components/confirmationPopup';
 import {makeFullMid} from '@components/chat/bubbles';
 import {ChatType} from './chatType';
+import ChatInputPlate from '@components/chat/controlPlate';
 
 const accumulateMapSet = (map: Map<any, Set<number>>) => {
   return [...map.values()].reduce((acc, v) => acc + v.size, 0);
@@ -170,6 +166,12 @@ export class AppSelection extends EventListenerBase<{
       return;
     }
 
+    // The drag-end `mouseup` and the post-drag click-swallow must land on whichever window the app is
+    // in (the tab, or the Document PiP window) — otherwise a drag-select started in the PiP never ends
+    // (mouseup fires on the PiP window, not the main document) and the selection sticks.
+    const activeWindow = getAppWindow();
+    const activeDocument = activeWindow.document;
+
     const seen: AppSelection['selectedMids'] = new Map();
     let selecting: boolean;
 
@@ -272,7 +274,7 @@ export class AppSelection extends EventListenerBase<{
 
       if(this.verifyMouseMoveTarget && !this.verifyMouseMoveTarget(e, element, selecting)) {
         this.listenerSetter.removeManual(this.listenElement, 'mousemove', onMouseMove);
-        this.listenerSetter.removeManual(document, 'mouseup', onMouseUp, documentListenerOptions);
+        this.listenerSetter.removeManual(activeDocument, 'mouseup', onMouseUp, documentListenerOptions);
         return;
       }
 
@@ -283,7 +285,7 @@ export class AppSelection extends EventListenerBase<{
       document.body.classList.remove('no-select');
 
       if(seen.size) {
-        attachClickEvent(window, cancelEvent, {capture: true, once: true, passive: false});
+        attachClickEvent(activeWindow, cancelEvent, {capture: true, once: true, passive: false});
       }
 
       this.listenerSetter.removeManual(this.listenElement, 'mousemove', onMouseMove);
@@ -295,7 +297,7 @@ export class AppSelection extends EventListenerBase<{
 
     const documentListenerOptions = {once: true};
     this.listenerSetter.add(this.listenElement)('mousemove', onMouseMove);
-    this.listenerSetter.add(document)('mouseup', onMouseUp, documentListenerOptions);
+    this.listenerSetter.add(activeDocument)('mouseup', onMouseUp, documentListenerOptions);
   };
 
   private getElementsBetween = (first: HTMLElement, last: HTMLElement) => {
@@ -386,8 +388,8 @@ export class AppSelection extends EventListenerBase<{
     for(const [peerId, mids] of this.selectedMids) {
       const storageKey = this.getStorageKey(peerId);
       const r = await this.managers.appMessagesManager.cantForwardDeleteMids(storageKey, Array.from(mids));
-      cantForward = r.cantForward;
-      cantDelete = r.cantDelete;
+      cantForward ||= r.cantForward;
+      cantDelete ||= r.cantDelete;
 
       if(cantForward && cantDelete) break;
     }
@@ -421,16 +423,6 @@ export class AppSelection extends EventListenerBase<{
     if(wasSelecting === this.isSelecting) return false;
 
     this.dispatchEvent('toggle', this.isSelecting);
-
-    // const bubblesContainer = this.bubbles.bubblesContainer;
-    // bubblesContainer.classList.toggle('is-selecting', !!size);
-
-    /* if(bubblesContainer.classList.contains('is-chat-input-hidden')) {
-      const scrollable = this.appImManager.scrollable;
-      if(scrollable.isScrolledDown) {
-        scrollable.scrollTo(scrollable.scrollHeight, 'top', true, true, 200);
-      }
-    } */
 
     if(!IS_TOUCH_SUPPORTED) {
       this.listenElement.classList.toggle('no-select', this.isSelecting);
@@ -716,7 +708,7 @@ export class SearchSelection extends AppSelection {
             obj[fromPeerId] = Array.from(mids).sort((a, b) => a - b);
           }
 
-          PopupElement.createPopup(PopupForward, obj, () => {
+          showForwardPopup(obj, () => {
             this.cancelSelection();
           });
         }, attachClickOptions);
@@ -763,8 +755,6 @@ export default class ChatSelection extends AppSelection {
   public selectionSendNowBtn: HTMLElement;
   public selectionForwardBtn: HTMLElement;
   public selectionDeleteBtn: HTMLElement;
-  private selectionLeft: HTMLDivElement;
-  private selectionRight: HTMLDivElement;
 
   constructor(
     private chat: Chat,
@@ -954,7 +944,15 @@ export default class ChatSelection extends AppSelection {
   }
 
   protected onToggleSelection = async(forwards: boolean, animate: boolean) => {
-    const {needTranslateX, widthFrom, widthTo} = await this.chat.input.center(animate);
+    // Every plate is the same width now, so this just cross-fades.
+    await this.chat.input.center(animate);
+
+    SetTransition({
+      element: this.input.chatInput,
+      className: 'is-selecting',
+      forwards,
+      duration: animate ? 200 : 0
+    });
 
     SetTransition({
       element: this.listenElement,
@@ -969,114 +967,76 @@ export default class ChatSelection extends AppSelection {
             this.selectionSendNowBtn =
             this.selectionForwardBtn =
             this.selectionDeleteBtn =
-            this.selectionLeft =
-            this.selectionRight =
             null;
           this.selectedText = undefined;
         }
-
-        /* fastRaf(() => {
-          this.bubbles.onScroll();
-        }); */
       }
     });
 
-    // const chatInput = this.appImManager.chatInput;
+    if(this.isSelecting && !this.selectionContainer) {
+      this.selectionInputWrapper = document.createElement('div');
+      this.selectionInputWrapper.classList.add('chat-input-wrapper', 'selection-wrapper');
 
-    const translateButtonsX = widthFrom < widthTo ? undefined : needTranslateX * 2;
-    if(this.isSelecting) {
-      if(!this.selectionContainer) {
-        this.selectionInputWrapper = document.createElement('div');
-        this.selectionInputWrapper.classList.add('chat-input-wrapper', 'selection-wrapper');
+      const attachClickOptions: AttachClickOptions = {listenerSetter: this.listenerSetter};
 
-        // const background = document.createElement('div');
-        // background.classList.add('chat-input-wrapper-background');
+      // Centre slot — the "N selected" count, styled as a transparent button;
+      // tapping it clears the selection.
+      this.selectionCountEl = document.createElement('div');
+      this.selectionCountEl.classList.add('selection-container-count');
+      const countButton = Button('btn-primary btn-transparent text-bold chat-input-plate-button');
+      countButton.append(this.selectionCountEl);
+      attachClickEvent(countButton, () => this.cancelSelection(), attachClickOptions);
 
-        this.selectionContainer = document.createElement('div');
-        this.selectionContainer.classList.add('selection-container');
+      // Left slot — delete.
+      this.selectionDeleteBtn = ButtonIcon('delete danger selection-container-delete');
+      attachClickEvent(this.selectionDeleteBtn, () => {
+        PopupElement.createPopup(
+          PopupDeleteMessages,
+          this.chat.peerId,
+          this.getSelectedMids(),
+          this.chat.type,
+          () => {
+            this.cancelSelection();
+          }
+        );
+      }, attachClickOptions);
 
-        const attachClickOptions: AttachClickOptions = {listenerSetter: this.listenerSetter};
-        const btnCancel = ButtonIcon('close', {noRipple: true});
-        attachClickEvent(btnCancel, () => this.cancelSelection(), {once: true, listenerSetter: this.listenerSetter});
-
-        this.selectionCountEl = document.createElement('div');
-        this.selectionCountEl.classList.add('selection-container-count');
-
-        if(this.chat.type === ChatType.Scheduled) {
-          this.selectionSendNowBtn = Button('btn-primary btn-transparent btn-short text-bold selection-container-send', {icon: 'send2'});
-          this.selectionSendNowBtn.append(i18n('MessageScheduleSend'));
-          attachClickEvent(this.selectionSendNowBtn, () => {
-            PopupElement.createPopup(PopupSendNow, this.chat.peerId, [...this.selectedMids.get(this.chat.peerId)], () => {
-              this.cancelSelection();
-            });
-          }, attachClickOptions);
-        } else {
-          this.selectionForwardBtn = Button('btn-primary btn-transparent text-bold selection-container-forward', {icon: 'forward'});
-          this.selectionForwardBtn.append(i18n('Forward'));
-          attachClickEvent(this.selectionForwardBtn, () => {
-            const obj: {[fromPeerId: PeerId]: number[]} = {};
-            for(const [fromPeerId, mids] of this.selectedMids) {
-              obj[fromPeerId] = Array.from(mids).sort((a, b) => a - b);
-            }
-
-            PopupElement.createPopup(PopupForward, obj, () => {
-              this.cancelSelection();
-            });
-          }, attachClickOptions);
-        }
-
-        this.selectionDeleteBtn = Button('btn-primary btn-transparent danger text-bold selection-container-delete', {icon: 'delete'});
-        this.selectionDeleteBtn.append(i18n('Delete'));
-        attachClickEvent(this.selectionDeleteBtn, () => {
-          // if(TEST_BUBBLES_DELETION) {
-          //   return this.chat.bubbles.deleteMessagesByIds(this.getSelectedMids(), true);
-          // }
-
-          PopupElement.createPopup(
-            PopupDeleteMessages,
-            this.chat.peerId,
-            this.getSelectedMids(),
-            this.chat.type,
-            () => {
-              this.cancelSelection();
-            }
-          );
+      // Right slot — forward (or "send now" for scheduled messages).
+      let rightButton: HTMLElement;
+      if(this.chat.type === ChatType.Scheduled) {
+        rightButton = this.selectionSendNowBtn = ButtonIcon('send2 selection-container-send');
+        attachClickEvent(this.selectionSendNowBtn, () => {
+          PopupElement.createPopup(PopupSendNow, this.chat.peerId, [...this.selectedMids.get(this.chat.peerId)], () => {
+            this.cancelSelection();
+          });
         }, attachClickOptions);
+      } else {
+        rightButton = this.selectionForwardBtn = ButtonIcon('forward selection-container-forward');
+        attachClickEvent(this.selectionForwardBtn, () => {
+          const obj: {[fromPeerId: PeerId]: number[]} = {};
+          for(const [fromPeerId, mids] of this.selectedMids) {
+            obj[fromPeerId] = Array.from(mids).sort((a, b) => a - b);
+          }
 
-        const left = this.selectionLeft = document.createElement('div');
-        left.classList.add('selection-container-left');
-        left.append(btnCancel, this.selectionCountEl);
-
-        const right = this.selectionRight = document.createElement('div');
-        right.classList.add('selection-container-right');
-        right.append(...[
-          this.selectionSendNowBtn,
-          this.selectionForwardBtn,
-          this.selectionDeleteBtn
-        ].filter(Boolean))
-
-        if(translateButtonsX !== undefined) {
-          left.style.transform = `translateX(${-translateButtonsX}px)`;
-          right.style.transform = `translateX(${translateButtonsX}px)`;
-        }
-
-        this.selectionContainer.append(left, right);
-
-        // background.style.opacity = '0';
-        this.selectionInputWrapper.style.opacity = '0';
-        this.selectionInputWrapper.append(/* background,  */this.selectionContainer);
-        this.input.inputContainer.append(this.selectionInputWrapper);
-
-        void this.selectionInputWrapper.offsetLeft; // reflow
-        // background.style.opacity = '';
-        this.selectionInputWrapper.style.opacity = '';
+          showForwardPopup(obj, () => {
+            this.cancelSelection();
+          });
+        }, attachClickOptions);
       }
 
-      this.selectionLeft.style.transform = '';
-      this.selectionRight.style.transform = '';
-    } else if(this.selectionLeft && translateButtonsX !== undefined) {
-      this.selectionLeft.style.transform = `translateX(-${translateButtonsX}px)`;
-      this.selectionRight.style.transform = `translateX(${translateButtonsX}px)`;
+      this.selectionContainer = ChatInputPlate({
+        class: 'selection-container',
+        left: this.selectionDeleteBtn,
+        center: countButton,
+        right: rightButton
+      }) as HTMLElement;
+
+      this.selectionInputWrapper.style.opacity = '0';
+      this.selectionInputWrapper.append(this.selectionContainer);
+      this.input.inputContainer.append(this.selectionInputWrapper);
+
+      void this.selectionInputWrapper.offsetLeft; // reflow
+      this.selectionInputWrapper.style.opacity = '';
     }
   };
 

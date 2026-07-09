@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import contextMenuController from '@helpers/contextMenuController';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {AttachClickOptions, CLICK_EVENT_NAME, hasMouseMovedSinceDown} from '@helpers/dom/clickEvent';
@@ -14,6 +8,9 @@ import filterAsync from '@helpers/array/filterAsync';
 import {doubleRaf} from '@helpers/schedulers';
 import callbackify from '@helpers/callbackify';
 import findUpClassName from '@helpers/dom/findUpClassName';
+import {MenuPositionPadding, positionMenuTrigger} from '@helpers/positionMenu';
+import {getOverlayRoot} from '@helpers/appWindow';
+import {getFullScreenElement} from '@helpers/dom/fullScreen';
 
 // TODO: refactor for attachClickEvent, because if move finger after touchstart, it will start anyway
 export function ButtonMenuToggleHandler({
@@ -48,7 +45,7 @@ export function ButtonMenuToggleHandler({
           return;
         }
 
-        contextMenuController.openBtnMenu(openedMenu, onClose);
+        contextMenuController.openBtnMenu(openedMenu, onClose, el);
       };
 
       callbackify(result, open);
@@ -74,7 +71,8 @@ export default function ButtonMenuToggle({
   onCloseAfter,
   noIcon,
   icon = 'more',
-  appendTo
+  appendTo,
+  positionPadding
 }: {
   buttonOptions?: Parameters<typeof ButtonIcon>[1],
   listenerSetter?: ListenerSetter,
@@ -87,14 +85,15 @@ export default function ButtonMenuToggle({
   onClose?: () => void,
   onCloseAfter?: () => void,
   noIcon?: boolean,
-  icon?: (string & {}) | Icon
+  icon?: (string & {}) | Icon,
+  positionPadding?: MenuPositionPadding
 }) {
   if(buttonOptions) {
     buttonOptions.asDiv = true;
   }
 
   const button = container ?? ButtonIcon(noIcon ? undefined : icon, buttonOptions);
-  appendTo ??= button
+  const autoPosition = !appendTo;
   button.classList.add('btn-menu-toggle');
 
   const listenerSetter = new ListenerSetter();
@@ -117,7 +116,9 @@ export default function ButtonMenuToggle({
       if(_tempId !== tempId) return;
       if(closeTimeout) {
         clearCloseTimeout();
-        return;
+        if(element?.isConnected) {
+          return element;
+        }
       }
 
       const filteredButtons = await filterButtonMenuItems(buttons);
@@ -137,13 +138,24 @@ export default function ButtonMenuToggle({
       if(_tempId !== tempId) return;
       _element.classList.add(direction);
       if(direction === 'bottom-center') {
-        _element.style.setProperty('--parent-half-width', (container.clientWidth / 2) + 'px');
+        _element.style.setProperty('--parent-half-width', ((container ?? button).clientWidth / 2) + 'px');
       }
 
       await onOpen?.(e, _element);
       if(_tempId !== tempId) return;
 
-      appendTo.append(_element);
+      // Resolve the mount lazily so a menu opened while the client is popped out lands in the active
+      // window's body (the Document PiP window), not the background tab. While an element is fullscreen
+      // the browser paints ONLY the fullscreen subtree (its top layer), so a menu mounted on document.body
+      // would be invisible — mount it inside the fullscreen element when the trigger lives there (e.g. the
+      // video player's playback-rate / quality / live menus).
+      const fullScreenElement = getFullScreenElement();
+      const mountTarget = appendTo ??
+        (fullScreenElement?.contains(button) ? fullScreenElement : getOverlayRoot());
+      mountTarget.append(_element);
+      if(autoPosition) {
+        positionMenuTrigger(button, _element, direction, positionPadding ?? {top: 8, bottom: 8});
+      }
       await doubleRaf();
       if(_tempId !== tempId) {
         _element.remove();

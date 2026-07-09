@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {StoriesListPosition, StoriesListType} from '@appManagers/appStoriesManager';
 import {untrack, createEffect, on, createMemo, batch, onCleanup, createContext, ParentComponent, splitProps, useContext, getOwner, runWithOwner} from 'solid-js';
 import {createStore, reconcile} from 'solid-js/store';
@@ -14,7 +8,8 @@ import {StoryItem, PeerStories, StoryAlbum, StoriesStealthMode} from '@layer';
 import StoriesCacheType from '@appManagers/utils/stories/cacheType';
 import insertStory from '@appManagers/utils/stories/insertStory';
 import rootScope, {BroadcastEvents} from '@lib/rootScope';
-import {STORY_DURATION, createListenerSetter} from '@components/stories/viewer';
+import {STORY_DURATION} from '@components/stories/viewer';
+import createListenerSetter from '../../helpers/solid/createListenerSetter';
 import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
 import {AnyFunction} from '@types';
 import findAndSplice from '@helpers/array/findAndSplice';

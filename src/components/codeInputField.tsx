@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import styles from '@components/codeInputField.module.scss';
 import classNames from '@helpers/string/classNames';
 import {children, createRoot, createSignal, Index, Ref, Show, Signal} from 'solid-js';
@@ -21,7 +15,8 @@ export default class CodeInputFieldCompat {
   constructor(public options: {
     length: number
     onChange?: (code: string) => void
-    onFill?: (code: string) => void
+    onFill?: (code: string) => void,
+    class?: string
   }) {
     this.errorSignal = createSignal(false);
     this.disabledSignal = createSignal(false);
@@ -110,7 +105,7 @@ export function CodeInputField(props: {
   const onSelectionChange = (inputType?: string) => {
     if(
       !isFocused ||
-      document.activeElement !== inputRef ||
+      inputRef.ownerDocument.activeElement !== inputRef ||
       inputRef.selectionStart === null ||
       inputRef.selectionEnd === null
     ) {

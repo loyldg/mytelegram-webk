@@ -1,13 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import makeError from '@helpers/makeError';
 import pause from '@helpers/schedulers/pause';
-import {TextWithEntities, MessagesTranslatedText, MessagesTranslateText} from '@layer';
+import {TextWithEntities, MessagesTranslatedText, MessagesTranslateText, MessageEntity} from '@layer';
 import {AppManager} from '@appManagers/manager';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 
@@ -175,7 +169,11 @@ export default class AppTranslationsManager extends AppManager {
 
       return promise;
     } else {
-      const key = JSON.stringify(options.text);
+      const key = JSON.stringify({
+        _: 'textWithEntities',
+        text: options.text.text,
+        entities: this.getInputEntities(options.text.entities)
+      });
       let promise = batch.text.get(key);
       if(promise || options.onlyCache) {
         return promise;
@@ -240,5 +238,9 @@ export default class AppTranslationsManager extends AppManager {
     } else {
       delete this.summaries[peerId];
     }
+  }
+
+  private getInputEntities(entities: MessageEntity[]): MessageEntity[] {
+    return entities ? this.appMessagesManager.getInputEntities(entities)?.filter((entity) => entity._ !== 'messageEntityEmoji') || [] : [];
   }
 }

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import mediaSizes from '@helpers/mediaSizes';
@@ -20,6 +14,7 @@ type AdditionalMenuItem = {
 
 class ContextMenuController extends OverlayClickHandler {
   protected additionalMenus: AdditionalMenuItem[] = [];
+  protected menuOpenTarget: HTMLElement;
 
   constructor() {
     super('menu', true);
@@ -100,9 +95,9 @@ class ContextMenuController extends OverlayClickHandler {
     }
 
     if(this.element) {
-      const {parentElement} = this.element;
       this.element.classList.remove('active');
-      parentElement && parentElement.classList.remove('menu-open');
+      this.menuOpenTarget?.classList.remove('menu-open');
+      this.menuOpenTarget = undefined;
 
       if(this.element.classList.contains('night')) {
         const element = this.element;
@@ -125,27 +120,33 @@ class ContextMenuController extends OverlayClickHandler {
     super.close();
 
     if(!IS_TOUCH_SUPPORTED) {
-      window.removeEventListener('mousemove', this.onMouseMove);
+      this.realmWindow.removeEventListener('mousemove', this.onMouseMove);
     }
   }
 
-  public openBtnMenu(element: HTMLElement, onClose?: () => void) {
-    if(overlayCounter.isDarkOverlayActive) {
+  protected shouldApplyNight(triggerElement?: HTMLElement) {
+    if(overlayCounter.isDarkOverlayActive) return true;
+    const nightAncestor = triggerElement && findUpClassName(triggerElement, 'night');
+    return !!nightAncestor && nightAncestor !== document.documentElement;
+  }
+
+  public openBtnMenu(element: HTMLElement, onClose?: () => void, triggerElement?: HTMLElement) {
+    if(this.shouldApplyNight(triggerElement)) {
       element.classList.add('night');
     }
 
     super.open(element);
 
-    const {parentElement} = this.element;
     this.element.classList.add('active', 'was-open');
-    parentElement.classList.add('menu-open');
+    this.menuOpenTarget = triggerElement ?? this.element.parentElement;
+    this.menuOpenTarget?.classList.add('menu-open');
 
     if(onClose) {
       this.addEventListener('toggle', onClose, {once: true});
     }
 
     if(!IS_TOUCH_SUPPORTED) {
-      window.addEventListener('mousemove', this.onMouseMove);
+      this.realmWindow.addEventListener('mousemove', this.onMouseMove);
     }
   }
 
@@ -164,6 +165,9 @@ class ContextMenuController extends OverlayClickHandler {
         onClose();
       }
     });
+    if(this.shouldApplyNight(triggerElement)) {
+      element.classList.add('night');
+    }
     element.classList.add('active', 'was-open');
 
     if(onClose) {

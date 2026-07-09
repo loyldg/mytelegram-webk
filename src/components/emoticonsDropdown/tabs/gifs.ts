@@ -1,11 +1,4 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type AppGifsManager from '@appManagers/appGifsManager';
-import {EMOTICONSSTICKERGROUP} from '..';
 import GifsMasonry from '@components/gifsMasonry';
 import {putPreloader} from '@components/putPreloader';
 import {AppManagers} from '@lib/managers';
@@ -93,7 +86,7 @@ export default class GifsTab extends EmoticonsTabC<any, Awaited<ReturnType<AppGi
     const gifsContainer = document.createElement('div');
     gifsContainer.classList.add('gifs-masonry');
     const detachClickEvent = attachClickEvent(gifsContainer, this.emoticonsDropdown.onMediaClick);
-    const masonry = new GifsMasonry(gifsContainer, EMOTICONSSTICKERGROUP, this.scrollable);
+    const masonry = new GifsMasonry(gifsContainer, this.animationGroup, this.scrollable);
 
     middleware.onDestroy(() => {
       masonry.clear();

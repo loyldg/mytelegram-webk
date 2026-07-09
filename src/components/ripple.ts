@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import findUpClassName from '@helpers/dom/findUpClassName';
 import sequentialDom from '@helpers/sequentialDom';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
@@ -48,7 +42,7 @@ function _ripple(
     elem[prepend ? 'prepend' : 'append'](r);
   }
 
-  let handler: () => void;
+  let handler: () => void, lastHandler: typeof handler;
   // let animationEndPromise: Promise<number>;
   const drawRipple = (clientX: number, clientY: number) => {
     const startTime = Date.now();
@@ -60,10 +54,10 @@ function _ripple(
 
     // const auto = elem.classList.contains('row-sortable') && !elem.classList.contains('cant-sort');
     const auto = false;
-    const duration = (auto ? .3 : +window.getComputedStyle(r).getPropertyValue('--ripple-duration').replace('s', '')) * 1000;
+    const duration = (auto ? .3 : +(r.ownerDocument.defaultView || window).getComputedStyle(r).getPropertyValue('--ripple-duration').replace('s', '')) * 1000;
     // console.log('ripple duration', duration);
 
-    const _handler = handler = () => {
+    const _handler = handler = lastHandler = () => {
     // handler = () => animationEndPromise.then((duration) => {
       // console.log('ripple animation was:', duration);
 
@@ -89,8 +83,11 @@ function _ripple(
       }
 
       if(!IS_TOUCH_SUPPORTED) {
-        window.removeEventListener('contextmenu', handler);
-        window.removeEventListener('mousemove', handler);
+        // Same window the listeners were attached to (the element's own — the Document PiP window
+        // when the client is popped out), not the main `window`.
+        const win = r.ownerDocument.defaultView || window;
+        win.removeEventListener('contextmenu', handler);
+        win.removeEventListener('mousemove', handler);
       }
 
       handler = null;
@@ -114,7 +111,7 @@ function _ripple(
       } */
 
     fastRaf(() => {
-      if(_handler !== handler) {
+      if(lastHandler !== _handler) {
         return;
       }
 
@@ -159,7 +156,7 @@ function _ripple(
 
       if(auto) {
         // window.addEventListener('mousemove', handler, {once: true, passive: true});
-        handler();
+        _handler();
       }
 
       // r.classList.add('active');
@@ -212,7 +209,10 @@ function _ripple(
 
     attachListenerTo.addEventListener('touchstart', onTouchStart, {passive: true});
     return {
-      dispose: () => attachListenerTo.removeEventListener('touchstart', onTouchStart),
+      dispose: () => {
+        attachListenerTo.removeEventListener('touchstart', onTouchStart);
+        r.remove();
+      },
       element: r
     };
   } else {
@@ -235,13 +235,19 @@ function _ripple(
 
       const {clientX, clientY} = e;
       drawRipple(clientX, clientY);
-      window.addEventListener('mouseup', handler, {once: true, passive: true});
-      window.addEventListener('contextmenu', handler, {once: true, passive: true});
+      // Attach the ripple-end listeners to the element's OWN window — in a Document PiP window the
+      // mouseup fires there, not on the main `window`, so binding to main left the ripple stuck.
+      const win = attachListenerTo.ownerDocument.defaultView || window;
+      win.addEventListener('mouseup', handler, {once: true, passive: true});
+      win.addEventListener('contextmenu', handler, {once: true, passive: true});
     };
 
     attachListenerTo.addEventListener('mousedown', onMouseDown, {passive: true});
     return {
-      dispose: () => attachListenerTo.removeEventListener('mousedown', onMouseDown),
+      dispose: () => {
+        attachListenerTo.removeEventListener('mousedown', onMouseDown);
+        r.remove();
+      },
       element: r
     };
   }
@@ -254,7 +260,7 @@ export default function ripple(elem: HTMLElement, accessor?: Accessor<boolean>, 
       if(value === undefined || value) {
         const ret = _ripple(elem, prepend);
         onCleanup(() => {
-          ret.dispose();
+          ret?.dispose();
         });
       }
     });

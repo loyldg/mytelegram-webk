@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import {ChannelParticipant, Chat, ChatParticipant} from '@layer';
@@ -11,7 +5,7 @@ import SidebarSlider from '@components/slider';
 import rootScope from '@lib/rootScope';
 import appImManager from '@lib/appImManager';
 import canEditAdmin from '@appManagers/utils/chats/canEditAdmin';
-import AppUserPermissionsTab from '@components/sidebarRight/tabs/userPermissions';
+import {openUserPermissionsTab} from '@components/solidJsTabs/tabs';
 import {Middleware} from '@helpers/middleware';
 import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
 import {handleMissingInvitees} from '@components/addChatUsers';
@@ -40,7 +34,7 @@ export default function createParticipantContextMenu(options: {
     canManageAdmins: boolean;
 
   const openPermissions = (isAdmin?: boolean) => {
-    AppUserPermissionsTab.openTab(slider, chatId, participant, isAdmin);
+    openUserPermissionsTab(slider, chatId, participant, isAdmin);
   };
 
   function getButtons(): ButtonMenuItemOptionsVerifiable[] {

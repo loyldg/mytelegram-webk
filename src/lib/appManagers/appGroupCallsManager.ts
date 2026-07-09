@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/evgeny-nadymov/telegram-react
  * Copyright (C) 2018 Evgeny Nadymov
@@ -68,9 +64,9 @@ export class AppGroupCallsManager extends AppManager {
   protected after() {
     this.name = 'GROUP-CALLS';
 
-    this.groupCalls = new Map();
-    this.participants = new Map();
-    this.nextOffsets = new Map();
+    this.groupCalls = new Map<GroupCallId, MyGroupCall>();
+    this.participants = new Map<GroupCallId, Map<PeerId, GroupCallParticipant>>();
+    this.nextOffsets = new Map<GroupCallId, string>();
 
     this.cachedStreamChannels = new Map();
 
@@ -333,6 +329,89 @@ export class AppGroupCallsManager extends AppManager {
     };
   }
 
+  /**
+   * Re-fetch the full SFU participant list and reconcile it against our cache.
+   *
+   * Conferences (TdE2E) don't get reliable `updateGroupCallParticipants` pushes
+   * the way legacy voice chats do — the official clients drive conference
+   * membership off the e2e blockchain and poll the SFU for the matching
+   * participant objects (tdesktop `trackParticipantsWithAccess`, Android
+   * `ConferenceCall.checkParticipants`). Without an equivalent here the count +
+   * roster freeze at their connect-time snapshot. `GroupCallInstance` calls this
+   * on a timer and whenever the e2e group_state changes.
+   *
+   * Unlike `getGroupCallParticipants`, this always does a fresh fetch (it
+   * ignores the pagination cursor) and additionally marks cached participants
+   * that are no longer present as `left`, so leaves propagate too.
+   */
+  public refreshConferenceParticipants(id: GroupCallId): Promise<boolean> {
+    const groupCall = this.getGroupCall(id);
+    if(!groupCall || groupCall._ !== 'groupCall') {
+      // No cached call → can't build the input (getGroupCallInput throws), so
+      // there's nothing to fetch. Report `false` so the instance's watchdog
+      // sees the roster sync isn't actually running and can re-hydrate.
+      return Promise.resolve(false);
+    }
+
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'phone.getGroupParticipants',
+      params: {
+        call: this.getGroupCallInput(id),
+        ids: [],
+        sources: [],
+        offset: '',
+        limit: GET_PARTICIPANTS_LIMIT
+      },
+      processResult: (result) => {
+        this.appChatsManager.saveApiChats(result.chats);
+        this.appUsersManager.saveApiUsers(result.users);
+
+        const cached = this.getCachedParticipants(id);
+        const freshPeerIds = new Set(result.participants.map((p) => getPeerId(p.peer)));
+
+        // Reconcile leaves: a cached participant absent from the fresh list has
+        // left. Only safe when we fetched the WHOLE list in one page — with a
+        // truncated page we'd wrongly evict everyone past the first 100.
+        const gotFullList = result.participants.length >= result.count ||
+          result.participants.length < GET_PARTICIPANTS_LIMIT;
+        if(gotFullList) {
+          // Snapshot the entries first — saveApiParticipant mutates the map.
+          for(const [peerId, participant] of [...cached]) {
+            if(participant.pFlags.self || freshPeerIds.has(peerId)) {
+              continue;
+            }
+
+            // Mirror the shape a server `left` update would carry. This drives
+            // group_call_participant (roster removal) + the count decrement.
+            this.saveApiParticipant(id, {
+              ...participant,
+              pFlags: {...participant.pFlags, left: true}
+            });
+          }
+        }
+
+        // Apply the fresh list — adds late joiners (and their SSRCs, so the
+        // conference recv transceivers get created) and refreshes muted/video
+        // state. A fresh array isn't flagged `saved`, so it isn't skipped.
+        //
+        // Skip our own participant: re-dispatching it would run the controller's
+        // onParticipantUpdate(self) on every poll, whose `source !== participant.source`
+        // guard tears the whole call down (hangUp) if the server's snapshot of our
+        // source ever lags the live connection — surfacing as "I get dropped when
+        // someone joins". Self is added once on connect and managed locally; the
+        // count below still comes from the server total (which includes self).
+        this.saveApiParticipants(id, result.participants.filter((p) => !p.pFlags.self));
+
+        // Server count is authoritative — the per-participant +/- bookkeeping in
+        // saveApiParticipant can't see joins (no `just_joined` on a poll).
+        if(groupCall.participants_count !== result.count) {
+          groupCall.participants_count = result.count;
+          this.rootScope.dispatchEvent('group_call_update', groupCall);
+        }
+      }
+    }).then(() => true);
+  }
+
   public hangUp(id: GroupCallId, discard?: boolean | number) {
     const groupCallInput = this.getGroupCallInput(id);
     let promise: Promise<Updates>;
@@ -360,11 +439,30 @@ export class AppGroupCallsManager extends AppManager {
 
     return promise.then((updates) => {
       this.apiUpdatesManager.processUpdateMessage(updates);
+
+      // Re-join hygiene: forget this call's participant-fetch state on leave.
+      // `nextOffsets[id]` is set to '' once we've paginated participants to the
+      // end; if it survives, a later re-join's getGroupCallParticipants sees
+      // nextOffset==='' and SKIPS the fetch entirely — so neither our fresh
+      // self source nor the peers' sources are re-dispatched. The call popup
+      // then renders empty (updateInstance bails while `participant` is unset →
+      // no header, no mic button) and no recvonly transceivers get created for
+      // peers (no inbound video). Clearing the cursor + the cached map forces a
+      // full re-fetch + re-dispatch on the next join. (A full discard already
+      // clears `participants` via the groupCallDiscarded update handler.)
+      this.nextOffsets.delete(id);
+      this.participants.delete(id);
     });
   }
 
   public async joinGroupCall(groupCallId: GroupCallId, params: DataJSON, options: GroupCallConnectionInstance['options']) {
-    const groupCallInput = this.getGroupCallInput(groupCallId);
+    // Conference invitees may not have a cached id+access_hash yet — they pass
+    // `inputGroupCallSlug` or `inputGroupCallInviteMessage` instead. Honour
+    // the override when set; the join response carries the real
+    // updateGroupCall(id, access_hash) which the rest of the app picks up.
+    const groupCallInput = (options.type === 'main' && options.e2eCallInput) ?
+      options.e2eCallInput :
+      this.getGroupCallInput(groupCallId);
     let promise: Promise<Updates>;
     if(options.type === 'main') {
       const request: PhoneJoinGroupCall = {
@@ -374,6 +472,12 @@ export class AppGroupCallsManager extends AppManager {
         muted: options.isMuted,
         video_stopped: !options.joinVideo
       };
+
+      // Conference (TdE2E) extras — only set when the caller drove the join
+      // through the e2e path. Server distinguishes a conference join by the
+      // presence of both fields.
+      if(options.e2ePublicKey) request.public_key = options.e2ePublicKey;
+      if(options.e2eBlock) request.block = options.e2eBlock;
 
       promise = this.apiManager.invokeApi('phone.joinGroupCall', request);
       this.log(`[api] joinGroupCall id=${groupCallId}`, request);
@@ -391,6 +495,33 @@ export class AppGroupCallsManager extends AppManager {
     this.apiUpdatesManager.processUpdateMessage(updates);
 
     const update = (updates as Updates.updates).updates.find((update) => update._ === 'updateGroupCallConnection') as Update.updateGroupCallConnection;
+    // Attach the resolved call ref so invitee paths (slug / inviteMessage)
+    // can rewrite their placeholder instance.id without a separate lookup.
+    // For id-form joins this is the same call we already knew about.
+    const groupCallUpdate = (updates as Updates.updates).updates.find((u) => u._ === 'updateGroupCall') as Update.updateGroupCall | undefined;
+    if(groupCallUpdate && groupCallUpdate.call._ !== 'groupCallDiscarded') {
+      // Keep the id in its native (fetchLong) form — number for small ids,
+      // string for large — so it stays === the manager's cache key.
+      const extended = update as Update.updateGroupCallConnection & {resolvedCallId?: GroupCallId};
+      extended.resolvedCallId = groupCallUpdate.call.id;
+    }
+
+    // Re-join hygiene — covers reloads, not just clean leaves. hangUp() resets
+    // the participant-pagination cursor on a deliberate leave, but a page
+    // reload keeps the SharedWorker (and this manager's nextOffsets) alive
+    // while destroying the connection, so hangUp never runs. Reset the cursor
+    // for the resolved call id on every main (re)join so the post-join
+    // getGroupCallParticipants always does a full fetch + re-dispatch — without
+    // it, rejoining after a reload sees nextOffset==='' and skips the fetch,
+    // leaving an empty call popup and no inbound video. Only the cursor is
+    // cleared here (not the cached participant map) so we don't wipe a
+    // participant the join updates may have just added.
+    if(options.type === 'main') {
+      const resolvedId = (groupCallUpdate && groupCallUpdate.call._ !== 'groupCallDiscarded') ?
+        groupCallUpdate.call.id :
+        groupCallId;
+      this.nextOffsets.delete(resolvedId);
+    }
     return update;
   }
 
@@ -498,5 +629,36 @@ export class AppGroupCallsManager extends AppManager {
     });
 
     this.apiUpdatesManager.processUpdateMessage(updates);
+  }
+
+  // Wraps phone.toggleGroupCallSettings — used by the in-call settings popup
+  // to flip "Mute new participants" mid-call. Server returns an Updates set
+  // that contains an updateGroupCall with the new join_muted flag; pushing it
+  // through apiUpdatesManager lets every open UI (this popup, sidebars, etc.)
+  // see the change via the existing group_call_update event.
+  public async toggleGroupCallSettings(id: GroupCallId, options: {
+    joinMuted?: boolean,
+    resetInviteHash?: boolean
+  }) {
+    const updates = await this.apiManager.invokeApi('phone.toggleGroupCallSettings', {
+      call: this.getGroupCallInput(id),
+      join_muted: options.joinMuted,
+      reset_invite_hash: options.resetInviteHash
+    });
+
+    this.apiUpdatesManager.processUpdateMessage(updates);
+  }
+
+  // Wraps phone.exportGroupCallInvite. `can_self_unmute` mirrors the listener
+  // / speaker distinction tdesktop draws in lng_group_call_share — for now we
+  // expose only the speaker variant (canSelfUnmute = true) since the in-call
+  // settings popup has no separate listener-link affordance.
+  public async exportGroupCallInvite(id: GroupCallId, canSelfUnmute?: boolean) {
+    const result = await this.apiManager.invokeApiSingle('phone.exportGroupCallInvite', {
+      call: this.getGroupCallInput(id),
+      can_self_unmute: canSelfUnmute
+    });
+
+    return result.link;
   }
 }

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Accessor, createSignal, Show} from 'solid-js';
 import {hexToRgb, calculateLuminance, getTextColor, calculateOpacity, rgbaToRgb, rgbIntToHex, mixColors, rgbaToHexa} from '@helpers/color';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
@@ -11,13 +5,13 @@ import safeWindowOpen from '@helpers/dom/safeWindowOpen';
 import ListenerSetter from '@helpers/listenerSetter';
 import safeAssign from '@helpers/object/safeAssign';
 import themeController from '@helpers/themeController';
-import {AttachMenuBot, DataJSON, WebViewResult, Document, MessagesPreparedInlineMessage} from '@layer';
+import {AttachMenuBot, BotInfo, DataJSON, WebViewResult, Document, MessagesPreparedInlineMessage} from '@layer';
 import appImManager from '@lib/appImManager';
 import {InternalLink, INTERNAL_LINK_TYPE} from '@lib/internalLink';
 import internalLinkProcessor from '@lib/internalLinkProcessor';
 import {AppManagers} from '@lib/managers';
 import getAttachMenuBotIcon from '@appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
-import {LangPackKey} from '@lib/langPack';
+import I18n, {LangPackKey} from '@lib/langPack';
 import wrapEmojiText, {EmojiTextTsx} from '@lib/richTextProcessor/wrapEmojiText';
 import rootScope from '@lib/rootScope';
 import {TelegramWebViewEventMap, AnyFunction, TelegramWebViewSendEventMap} from '@types';
@@ -26,7 +20,8 @@ import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
 import confirmationPopup from '@components/confirmationPopup';
 import PopupElement from '@components/popups';
 import PopupPeer, {PopupPeerOptions} from '@components/popups/peer';
-import PopupPickUser from '@components/popups/pickUser';
+import {showPickUser3Popup} from '@components/popups/pickUser';
+import selectRequestPeers from '@components/popups/requestPeer';
 import TelegramWebView from '@components/telegramWebView';
 import wrapAttachBotIcon from '@components/wrappers/attachBotIcon';
 import getPeerTitle from '@components/wrappers/getPeerTitle';
@@ -48,11 +43,13 @@ import ButtonIcon from '@components/buttonIcon';
 import ButtonMenuToggle from '@components/buttonMenuToggle';
 import type {RequestWebViewOptions} from '@appManagers/appAttachMenuBotsManager';
 import {createSvgFromBytes} from '@helpers/bytes/getPathFromBytes';
+import clamp from '@helpers/number/clamp';
 import PopupWebAppPreparedMessage from '@components/popups/webAppPreparedMessage';
 import appDownloadManager from '@lib/appDownloadManager';
 import IS_WEB_APP_BROWSER_SUPPORTED from '@environment/webAppBrowserSupport';
 import {wrapAdaptiveCustomEmoji} from '@components/wrappers/customEmojiSimple';
 import createMiddleware from '@helpers/solid/createMiddleware';
+import {openBotPrivacyPolicy} from '@helpers/getBotPrivacyPolicy';
 
 const SANDBOX_ATTRIBUTES = [
   'allow-scripts',
@@ -78,6 +75,7 @@ export default class WebApp {
   private webViewResultUrl: WebViewResult.webViewResultUrl;
   private webViewOptions: RequestWebViewOptions;
   private attachMenuBot: AttachMenuBot;
+  private botInfo: BotInfo.botInfo;
   private isCloseConfirmationNeeded: boolean;
   private lastHeaderColor: TelegramWebViewEventMap['web_app_set_header_color'];
   private showSettingsButton: boolean;
@@ -342,6 +340,22 @@ export default class WebApp {
         this.telegramWebView.dispatchWebViewEvent('reload_iframe', undefined);
       },
       verify: () => true
+    }, {
+      icon: 'info',
+      text: 'TermsOfUse',
+      onClick: () => {
+        safeWindowOpen(I18n.format('WebAppDisclaimerUrl', true));
+      },
+      verify: () => true
+    }, {
+      icon: 'privacypolicy',
+      text: 'BotPrivacyPolicy',
+      onClick: () => openBotPrivacyPolicy(this.botInfo, () => {
+        this.forceHide();
+        appImManager.setInnerPeer({peerId: botPeerId});
+        this.managers.appMessagesManager.sendText({peerId: botPeerId, text: '/privacy'});
+      }),
+      verify: async() => !!(await this.getBotInfo())
     }, /* {
       icon: 'plusround',
       text: 'WebApp.InstallBot',
@@ -364,6 +378,15 @@ export default class WebApp {
       verify: () => this.attachMenuBot && !this.attachMenuBot.pFlags.inactive,
       separator: true
     }];
+  }
+
+  private async getBotInfo() {
+    if(!this.botInfo) {
+      const {bot_info} = await this.managers.appProfileManager.getProfile(this.webViewOptions.botId);
+      this.botInfo = bot_info;
+    }
+
+    return this.botInfo;
   }
 
   protected getThemeParams() {
@@ -423,7 +446,7 @@ export default class WebApp {
     const chat = appImManager.chat;
     let peerId = chat.peerId, threadId = chat.threadId;
     if(chat_types?.length) {
-      const chosenPeerId = await PopupPickUser.createPicker(chat_types, ['send_inline']);
+      const chosenPeerId = await showPickUser3Popup(chat_types, ['send_inline']);
       if(peerId !== chosenPeerId) {
         peerId = chosenPeerId;
         threadId = undefined;
@@ -840,6 +863,7 @@ export default class WebApp {
     const shouldEmit = this._deviceOrientationFreqMs !== -1 && performance.now() - this._deviceOrientationLastEvent > this._deviceOrientationFreqMs;
     if(!shouldEmit) return;
 
+    this._deviceOrientationLastEvent = performance.now();
     this.telegramWebView.dispatchWebViewEvent('device_orientation_changed', {
       absolute: event.absolute,
       alpha: event.alpha,
@@ -1063,6 +1087,29 @@ export default class WebApp {
 
         telegramWebView.dispatchWebViewEvent('phone_requested', status);
       }, 'phone_requested', {status: 'cancelled'}),
+      web_app_request_chat: this.debouncePopupMethod(async({req_id}: TelegramWebViewEventMap['web_app_request_chat']) => {
+        const botId = this.webViewOptions.botId;
+        let sent = false;
+        try {
+          const button = await this.managers.appAttachMenuBotsManager.getRequestedWebViewButton(botId, req_id);
+          if(button?._ !== 'keyboardButtonRequestPeer' || button.peer_type._ === 'requestPeerTypeCreateBot') {
+            throw new Error('REQUEST_CHAT_UNSUPPORTED');
+          }
+
+          const requestingPeerId = botId.toPeerId(false);
+          const requestedPeerIds = await selectRequestPeers({button, requestingPeerId});
+          await this.managers.appMessagesManager.sendBotRequestedPeer(
+            requestingPeerId,
+            button.button_id,
+            requestedPeerIds,
+            {webappReqId: req_id}
+          );
+
+          sent = true;
+        } catch{}
+
+        telegramWebView.dispatchWebViewEvent(sent ? 'requested_chat_sent' : 'requested_chat_failed', {req_id});
+      }, 'requested_chat_failed', {req_id: ''}),
       web_app_invoke_custom_method: async({req_id, method, params}) => {
         let result: DataJSON.dataJSON, error: ApiError;
         try {
@@ -1097,7 +1144,7 @@ export default class WebApp {
       },
       // we can't use w3c sensors reliably with iframes unfortunately: https://w3c.github.io/sensors/#focused-area :c
       web_app_start_accelerometer: (data) => {
-        this._accelerometerFreqMs = 1000 / data.refresh_rate;
+        this._accelerometerFreqMs = clamp(data.refresh_rate, 20, 1000);
         this.setupDeviceMotion();
       },
       web_app_stop_accelerometer: () => {
@@ -1106,7 +1153,7 @@ export default class WebApp {
         this.telegramWebView.dispatchWebViewEvent('accelerometer_stopped', undefined);
       },
       web_app_start_gyroscope: (data) => {
-        this._gyroscopeFreqMs = 1000 / data.refresh_rate;
+        this._gyroscopeFreqMs = clamp(data.refresh_rate, 20, 1000);
         this.setupDeviceMotion();
       },
       web_app_stop_gyroscope: () => {
@@ -1115,7 +1162,7 @@ export default class WebApp {
         this.telegramWebView.dispatchWebViewEvent('gyroscope_stopped', undefined);
       },
       web_app_start_device_orientation: (data) => {
-        this._deviceOrientationFreqMs = 1000 / data.refresh_rate;
+        this._deviceOrientationFreqMs = clamp(data.refresh_rate, 20, 1000);
         this._deviceOrientationAbsolute = data.need_absolute && !IS_SAFARI;
         const eventName = this._deviceOrientationAbsolute ? 'deviceorientationabsolute' : 'deviceorientation';
         window.addEventListener(eventName, this.handleDeviceOrientation, true);
@@ -1217,8 +1264,16 @@ export default class WebApp {
       web_app_verify_age: async({passed, age}) => {
         if(!passed) return;
         const config = await this.managers.apiManager.getAppConfig();
-        const minAge = config.verify_age_min ?? 18;
 
+        // * only the configured age-verification bot may attest age — otherwise any
+        // * third-party Mini App could self-enable sensitive content
+        const verifyAgeBotUsername = (config.verify_age_bot_username ?? 'TelegramAge').toLowerCase();
+        const usernames = await this.managers.appPeersManager.getPeerActiveUsernames(this.getPeerId());
+        if(!usernames.some((username) => username.toLowerCase() === verifyAgeBotUsername)) {
+          return;
+        }
+
+        const minAge = config.verify_age_min ?? 18;
         if(age < minAge) {
           toastNew({langPackKey: 'AgeVerification.Failed'});
           return;
@@ -1283,7 +1338,7 @@ export default class WebApp {
     } catch(err) {}
 
 
-    const {bot_info: botInfo} = await this.managers.appProfileManager.getProfile(this.webViewOptions.botId);
+    const botInfo = await this.getBotInfo();
 
 
     const bodyColorFromSettings = themeController.isNight() ? botInfo.app_settings?.background_dark_color : botInfo.app_settings?.background_color;

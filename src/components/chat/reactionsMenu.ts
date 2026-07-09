@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {PeerAvailableReactions} from '@appManagers/appReactionsManager';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import {IS_MOBILE, IS_SAFARI} from '@environment/userAgent';
@@ -14,6 +8,7 @@ import deferredPromise from '@helpers/cancellablePromise';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import findUpClassName from '@helpers/dom/findUpClassName';
+import {getOverlayRoot} from '@helpers/appWindow';
 import ListenerSetter from '@helpers/listenerSetter';
 import liteMode from '@helpers/liteMode';
 import {Middleware, getMiddleware} from '@helpers/middleware';
@@ -244,7 +239,10 @@ export class ChatReactionsMenu {
       }
 
       this.reactions = peerAvailableReactions.reactions;
-      this.noPacks = this.noSearch = peerAvailableReactions.type !== 'chatReactionsAll';
+      // At reactions_uniq_max the message can take no new distinct reaction, so hide the
+      // custom-emoji search/packs (like tdesktop/iOS/Android) — the grid is already narrowed
+      // to the present kinds; only piling onto those stays possible.
+      this.noPacks = this.noSearch = peerAvailableReactions.type !== 'chatReactionsAll' || !!peerAvailableReactions.atUniqCap;
       return this.renderReactions(peerAvailableReactions, availableReactions);
     });
 
@@ -453,7 +451,10 @@ export class ChatReactionsMenu {
 
     const emoticonsDropdown = new EmoticonsDropdown({
       tabsToRender: [emojiTab],
-      customParentElement: document.body,
+      // Mount into the active app window's body (a function so it resolves lazily at open time):
+      // while the client is popped into a Document PiP window the reactions menu lives there, so a
+      // hardcoded main-`document.body` would render this emoji picker into the now-background tab.
+      customParentElement: getOverlayRoot,
       getOpenPosition: () => this.getOpenPosition(!this.noPacks)
     });
 

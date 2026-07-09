@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {DataJSON} from '@layer';
 import {JoinGroupCallJsonPayload} from '@appManagers/appGroupCallsManager';
 import SDP from '@lib/calls/sdp';
@@ -20,8 +14,22 @@ export default function processMediaSection(sdp: SDP, media: SDP['media'][0]) {
     type: mediaType
   };
 
-  // do not change this value, otherwise onconnectionstatechange won't fire
-  sectionInfo.fingerprint.setup = 'active';
+  // DTLS role advertised to the SFU in the phone.joinGroupCall params: we are
+  // `passive` (the DTLS *server*), so the Telegram SFU is the DTLS *client*
+  // (active) and sends the ClientHello. The server echoes this by answering
+  // with setup:active, which makes Chrome (offering actpass) take the passive
+  // role. This matches tdesktop/libtgcalls and Telegram Web A, and holds for
+  // BOTH legacy voice chats and e2e conferences.
+  //
+  // This used to be `active` for legacy calls (client drives DTLS). That
+  // worked on older Chrome, but a Chrome DTLS-stack change (~M124) broke the
+  // "Chrome is the DTLS client against this SFU" direction: ICE still reaches
+  // `connected` and a candidate pair is nominated, but the DTLS handshake then
+  // hangs at `connecting` forever — no SRTP keys are derived, so not a single
+  // RTP packet flows and audio + video are both silently dead. Letting the SFU
+  // drive the handshake (it is `active`) makes DTLS complete again. Verified
+  // live: dtlsState connecting→connected, inbound-rtp packets start arriving.
+  sectionInfo.fingerprint.setup = 'passive';
   const payload: JoinGroupCallJsonPayload = {
     'fingerprints': [sectionInfo.fingerprint],
     'pwd': sectionInfo.pwd,

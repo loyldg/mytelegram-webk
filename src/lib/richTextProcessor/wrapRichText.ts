@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {EMOJI_VERSION} from '@environment/emojiVersionsSupport';
 import {SITE_HASHTAGS} from '.';
 import {EmojiVersions} from '@config/emoji';
@@ -690,7 +684,8 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
 
           if(!IS_FIREFOX) { // Firefox has very poor performance when drawing on canvas
             element = document.createElement('span');
-            element.append(...partText.split('').map((encodedLetter, i) => createElementFromMarkup(`<span class="bluff-spoiler" style="--index:${i}">${encodedLetter}</span>`)))
+            element.className = 'bluff-spoiler';
+            element.append(...partText.split('').map((encodedLetter) => createElementFromMarkup(`<span class="bluff-spoiler-letter">${encodedLetter}</span>`)))
             fragment.append(element);
 
             DotRenderer.attachBluffTextSpoilerTarget(element);
@@ -823,6 +818,32 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
         setDirection(element);
 
         processingBlockElement = true;
+        break;
+      }
+
+      case 'messageEntityDiffInsert':
+        element = document.createElement('span');
+        element.classList.add('markup-diff-insert');
+        break;
+
+      case 'messageEntityDiffDelete':
+        element = document.createElement('span');
+        element.classList.add('markup-diff-delete');
+        break;
+
+      case 'messageEntityDiffReplace': {
+        const container = document.createElement('span');
+        fragment.appendChild(container);
+
+        const deleted = document.createElement('span');
+        deleted.classList.add('markup-diff-delete');
+        deleted.textContent = entity.old_text;
+
+        const inserted = document.createElement('span');
+        inserted.classList.add('markup-diff-insert');
+
+        container.append(deleted, inserted);
+        element = inserted;
         break;
       }
     }

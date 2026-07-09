@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import rootScope from '@lib/rootScope';
 import {i18n} from '@lib/langPack';
 import replaceContent from '@helpers/dom/replaceContent';
@@ -124,7 +118,7 @@ export default class PeerTitle {
     this.options.peerId ??= NULL_PEER_ID;
 
     let hasInner: boolean;
-    const {peerId, threadId} = this.options;
+    let {peerId, threadId} = this.options;
     if(this.options.asAllChats === 'topics') {
       const title = i18n('AllMessages');
 
@@ -156,13 +150,18 @@ export default class PeerTitle {
       replaceContent(this.element, i18n(this.options.onlyFirstName ? 'AuthorHiddenShort' : 'AuthorHidden'));
     } else {
       if(threadId) {
-        const [topic, isForum, isBotforum] = await Promise.all([
+        const [topic, isForum, isBotforum, isMonoforum] = await Promise.all([
           rootScope.managers.dialogsStorage.getForumTopic(peerId, threadId),
           rootScope.managers.appPeersManager.isForum(peerId),
-          rootScope.managers.appPeersManager.isBotforum(peerId)
+          rootScope.managers.appPeersManager.isBotforum(peerId),
+          rootScope.managers.appPeersManager.isMonoforum(peerId)
         ]);
 
-        if(!topic && (isForum || isBotforum)) {
+        // * fix monoforum
+        if(isMonoforum) {
+          peerId = threadId;
+          threadId = undefined;
+        } else if(!topic && (isForum || isBotforum)) {
           rootScope.managers.dialogsStorage.getForumTopicById(peerId, threadId).then((forumTopic) => {
             if(!forumTopic && this.options.threadId === threadId) {
               this.options.threadId = undefined;
@@ -189,7 +188,11 @@ export default class PeerTitle {
         undefined;
 
       const [title, icons, topicIcon] = await Promise.all([
-        getPeerTitle(this.options as Required<PeerTitleOptions>),
+        getPeerTitle({
+          ...this.options as Required<PeerTitleOptions>,
+          peerId,
+          threadId
+        }),
         (this.options.withIcons && generateTitleIcons({peerId, clickableEmojiStatus: this.options.clickableEmojiStatus, wrapOptions: {...this.options.wrapOptions, textColor: this.options.iconsColor || this.options.wrapOptions?.textColor}})) ||
           (this.options.withPremiumIcon && generateTitleIcons({peerId, wrapOptions: {...this.options.wrapOptions, textColor: this.options.iconsColor || this.options.wrapOptions?.textColor}, noVerifiedIcon: true, noFakeIcon: true})),
         getTopicIconPromise

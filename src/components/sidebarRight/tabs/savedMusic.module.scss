@@ -1,6 +1,7 @@
 .container {
+  background: var(--surface-color);
+
   :global(.sidebar-content) {
-    background: var(--surface-color);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -25,5 +26,4 @@
   justify-content: center;
   height: 100%;
   color: var(--secondary-text-color);
-  user-select: none;
 }

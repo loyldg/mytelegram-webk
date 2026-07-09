@@ -1,17 +1,31 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {AccountDatabase, getDatabaseState} from '@config/databases/state';
 import {TelegramWebViewSendEventMap} from '@types';
 import AppStorage from '@lib/storage';
 import {AppManager} from '@appManagers/manager';
+import {User} from '@layer';
+import {getFloodWaitTime} from './utils/getFloodWaitTime';
 
 type InternalWebAppStorageKey = 'locationPermission' | 'deviceStorageUsed' | 'deviceStorageUsedKeys';
 const DEVICE_STORAGE_QUOTA_SIZE = 5 * 1024 * 1024; // 5 MB
 const DEVICE_STORAGE_QUOTA_KEYS = 10;
+
+type CreateManagedBotArgs = {
+  managerId: PeerId;
+  botName: string;
+  username: string;
+};
+
+type CheckUsernameResult = 'available' | 'taken' | 'invalid' | 'error';
+
+type CreateManagedBotResult = {
+  status: 'created';
+  user: User.user;
+} | {
+  status: 'wait';
+  waitTime: number;
+} | {
+  status: 'error';
+};
 
 export default class AppBotsManager extends AppManager {
   private webAppStorage: AppStorage<Record<string, string>, AccountDatabase>;
@@ -85,12 +99,15 @@ export default class AppBotsManager extends AppManager {
     const oldValue = await this.readBotDeviceStorage(botId, key);
     if(oldValue === value) return null;
 
+    const existed = !!oldValue;
+    if(!existed && !value) return null;
+
     const prevQuota = Number((await this.readBotInternalStorage(botId, 'deviceStorageUsed')) ?? '0');
     const oldItemQuota = oldValue ? key.length + oldValue.length : 0;
     const newQuota = prevQuota - oldItemQuota + (value ? key.length + value.length : 0);
 
     const prevQuotaKeys = Number((await this.readBotInternalStorage(botId, 'deviceStorageUsedKeys')) ?? '0');
-    const newQuotaKeys = prevQuotaKeys + (value ? 1 : -1);
+    const newQuotaKeys = prevQuotaKeys + (value ? 1 : 0) - (existed ? 1 : 0);
 
     if(newQuota > DEVICE_STORAGE_QUOTA_SIZE || newQuotaKeys > DEVICE_STORAGE_QUOTA_KEYS) {
       return 'QUOTA_EXCEEDED';
@@ -117,6 +134,7 @@ export default class AppBotsManager extends AppManager {
     const keysToDelete = keys.filter(key => typeof key === 'string' && key.startsWith(prefix)) as string[];
     await Promise.all(keysToDelete.map(key => this.webAppStorage.delete(key)));
     await this.writeBotInternalStorage(botId, 'deviceStorageUsed', '0');
+    await this.writeBotInternalStorage(botId, 'deviceStorageUsedKeys', '0');
   }
 
   public async getPreparedMessage(botId: BotId, messageId: string) {
@@ -141,5 +159,44 @@ export default class AppBotsManager extends AppManager {
     }
 
     return res;
+  }
+
+  public async createManagedBot({managerId, botName, username}: CreateManagedBotArgs): Promise<CreateManagedBotResult> {
+    try {
+      const user = await this.apiManager.invokeApi('bots.createBot', {
+        manager_id: this.appUsersManager.getUserInput(managerId.toUserId()),
+        name: botName,
+        username: username
+      });
+
+      if(user._ === 'userEmpty') return {status: 'error'};
+
+      this.appUsersManager.saveApiUser(user);
+
+      return {status: 'created', user};
+    } catch(e) {
+      const error = e as ApiError;
+
+      const waitTimeResult = getFloodWaitTime(error);
+
+      if(waitTimeResult.hasWaitTime) {
+        return {status: 'wait', waitTime: waitTimeResult.waitTime};
+      }
+
+      return {status: 'error'};
+    }
+  }
+
+  public async checkUsername(username: string): Promise<CheckUsernameResult> {
+    try {
+      const isAvailable = await this.apiManager.invokeApi('bots.checkUsername', {username});
+      return isAvailable ? 'available' : 'taken';
+    } catch(e) {
+      const error = e as ApiError;
+      if(error.type === 'USERNAME_OCCUPIED') return 'taken';
+      if(error.type === 'USERNAME_INVALID') return 'invalid';
+
+      return 'error';
+    }
   }
 }

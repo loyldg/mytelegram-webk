@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../../shared" as *;
 
 .popup-group-call {
@@ -550,7 +544,7 @@
         right: 0;
         bottom: 0;
         left: 0;
-        backdrop-filter: blur(100px);
+        backdrop-filter: var(--blur-off, blur(100px));
         background: rgba(0, 0, 0, .5);
         border-radius: 1.25rem;
       }

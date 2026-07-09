@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -96,6 +92,14 @@ export class AppWebPagesManager extends AppManager {
           case 'webPageAttributeStory': {
             const cache = this.appStoriesManager.getPeerStoriesCache(this.appPeersManager.getPeerId(attribute.peer));
             attribute.story = this.appStoriesManager.saveStoryItem(attribute.story, cache);
+            break;
+          }
+          case 'webPageAttributeStickerSet': {
+            attribute.stickers = attribute.stickers.map((doc) => this.appDocsManager.saveDoc(doc, mediaContext)).filter(Boolean);
+            break;
+          }
+          case 'webPageAttributeStarGiftCollection': {
+            attribute.icons = attribute.icons.map((doc) => this.appDocsManager.saveDoc(doc, mediaContext)).filter(Boolean);
             break;
           }
         }

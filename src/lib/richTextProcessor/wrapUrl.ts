@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type addAnchorListener from '@helpers/addAnchorListener';
 import {PHONE_NUMBER_REG_EXP} from '.';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -45,11 +39,13 @@ export default function wrapUrl(url: string, safe?: boolean) {
       case 'addstickers':
       case 'addemoji':
       case 'voicechat':
+      case 'call':
       case 'invoice':
       case 'boost':
       case 'giftcode':
       case 'share':
       case 'nft':
+      case 'addstyle':
         if(path.length !== 1 && !prefix) {
           onclick = path[0];
           break;

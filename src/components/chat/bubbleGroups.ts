@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import rootScope from '@lib/rootScope';
 // import { generatePathData } from '@helpers/dom';
 import {MyMessage} from '@appManagers/appMessagesManager';
@@ -21,7 +15,7 @@ import {avatarNew} from '@components/avatarNew';
 import {MiddlewareHelper} from '@helpers/middleware';
 import {ChatType} from './chatType';
 import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
-import {getMid, isMessage, isMessageForVerificationBot} from '@components/chat/utils';
+import {getGuestChatViaFromId, getMid, isMessage, isMessageForVerificationBot} from '@components/chat/utils';
 import {canHaveSuggestedPostReplyMarkup} from '@components/chat/bubbleParts/suggestedPostReplyMarkup';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import {BubbleElementAddons} from '@components/chat/types';
@@ -588,6 +582,8 @@ export default class BubbleGroups {
 
     const isOut1 = this.chat.isOutMessage(item1.message);
     return item2.fromId === item1.fromId &&
+      // * keep guest-chat messages from different visitors in separate groups (own avatar + "for <visitor>")
+      getGuestChatViaFromId(item1.message) === getGuestChatViaFromId(item2.message) &&
       item1.dateTimestamp === item2.dateTimestamp &&
       Math.abs(item2.timestamp - item1.timestamp) <= this.newGroupDiff &&
       !item1.single &&

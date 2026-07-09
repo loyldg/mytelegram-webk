@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import rootScope from '@lib/rootScope';
 import PopupElement, {addCancelButton} from '.';
 import PopupPeer, {PopupPeerButtonCallbackCheckboxes, PopupPeerOptions} from '@components/popups/peer';
@@ -39,7 +33,11 @@ export default class PopupDeleteMessages {
     const {peerTitleElement, isBot, messages} = await namedPromises({
       peerTitleElement: wrapPeerTitle({peerId, threadId, onlyFirstName: true}),
       isBot: managers.appPeersManager.isBot(peerId),
-      messages: Promise.all(mids.map((mid) => managers.appMessagesManager.getMessageByPeer(peerId, mid)))
+      // scheduled mids belong to a separate storage; getMessageByPeer would read history and
+      // return undefined / another chat's message (breaking the megagroup-admin & giveaway checks)
+      messages: Promise.all(mids.map((mid) => type === ChatType.Scheduled ?
+        managers.appMessagesManager.getScheduledMessageByPeer(peerId, mid) :
+        managers.appMessagesManager.getMessageByPeer(peerId, mid)))
     });
 
     const isMegagroup = await managers.appPeersManager.isMegagroup(peerId);

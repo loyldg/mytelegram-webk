@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement from '.';
 import {copyTextToClipboard} from '@helpers/clipboard';
 import {formatFullSentTime} from '@helpers/date';
@@ -79,7 +73,8 @@ export default class PopupStarsPay extends PopupElement<{
       scrollable: true,
       footer: true,
       withConfirm: true,
-      title: true
+      title: true,
+      old: true
     });
 
     safeAssign(this, options);

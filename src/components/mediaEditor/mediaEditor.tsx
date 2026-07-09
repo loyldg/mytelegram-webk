@@ -1,4 +1,5 @@
 import appNavigationController, {NavigationItem} from '@components/appNavigationController';
+import {getOverlayRoot} from '@helpers/appWindow';
 import confirmationPopup from '@components/confirmationPopup';
 import MainCanvas from '@components/mediaEditor/canvas/mainCanvas';
 import MediaEditorContext, {createContextValue, EditingMediaState} from '@components/mediaEditor/context';
@@ -7,9 +8,10 @@ import FinishButton from '@components/mediaEditor/finishButton';
 import '@components/mediaEditor/mediaEditor.scss';
 import Toolbar from '@components/mediaEditor/toolbar';
 import {MediaType} from '@components/mediaEditor/types';
-import {delay, withCurrentOwner} from '@components/mediaEditor/utils';
+import {delay} from '@components/mediaEditor/utils';
 import overlayCounter from '@helpers/overlayCounter';
 import {doubleRaf} from '@helpers/schedulers';
+import {withCurrentOwner} from '@helpers/solid/withCurrentOwner';
 import {i18n} from '@lib/langPack';
 import {AppManagers} from '@lib/managers';
 import type SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
@@ -29,9 +31,16 @@ export type MediaEditorProps = {
   editingMediaState?: EditingMediaState;
   isEditingForAvatar?: boolean;
   isEditingForumAvatar?: boolean;
+  canFinishWithoutChanges?: boolean;
+  isVideoAvatarMode?: boolean;
   canImageResultInGIF?: boolean;
   dontCreatePreview?: boolean;
   initialTab?: string;
+  // Output encoding for a still-image result. Caller-controlled so the editor
+  // isn't locked to one format/quality (e.g. newMedia compresses heavy photos,
+  // avatars stay near-lossless). Defaults to JPEG at the browser's default quality.
+  imageType?: 'image/jpeg' | 'image/png';
+  imageQuality?: number;
 };
 
 export function MediaEditor(props: MediaEditorProps) {
@@ -144,7 +153,7 @@ export function MediaEditor(props: MediaEditorProps) {
 
 export function openMediaEditor(props: MediaEditorProps, HotReloadGuardProvider: typeof SolidJSHotReloadGuardProvider) {
   const element = document.createElement('div');
-  document.body.append(element);
+  getOverlayRoot().append(element);
 
   const dispose = render(() => (
     <HotReloadGuardProvider>

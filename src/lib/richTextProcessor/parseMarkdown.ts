@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -63,10 +59,19 @@ export default function parseMarkdown(raw: string, currentEntities: MessageEntit
     let entity: MessageEntity;
     pushedEntity = false;
     if(text.match(/^`*$/)) {
-      newTextParts.push(matchValueAfterWhitespace);
+      // * the matched "content" is only backticks (e.g. a lone ``` that isn't a real fence): it's
+      // * not inline code, so skip entity creation and fall through to the `!pushedEntity` push
+      // * below, which emits the run verbatim ONCE. pushing here too duplicated it (` ``` ` on send).
     } else if(match[3]) { // pre
       const languageMatch = match[3].match(/(.*?)\n/);
-      const language = languageMatch?.[1] || '';
+      // * the first line of a ``` block is treated as a language tag only when it's a single
+      // * identifier token (e.g. ```json). otherwise it's code and must NOT be swallowed — this
+      // * keeps a leading `{` / `<` / etc. when the opening fence sits on the same line as the
+      // * content (```{ ... }), which previously ate the first character(s) of the code.
+      let language = languageMatch?.[1] || '';
+      if(language && !/^[\w+#.-]{1,32}$/.test(language)) {
+        language = '';
+      }
 
       let code = language ? match[3].slice(language.length) : match[3];
       const startIndex = code[0] === '\n' ? 1 : 0;

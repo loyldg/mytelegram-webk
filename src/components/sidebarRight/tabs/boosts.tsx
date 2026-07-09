@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Boost, PremiumBoostsStatus, PrepaidGiveaway} from '@layer';
 import {LangPackKey, i18n, joinElementsWith} from '@lib/langPack';
 import Section from '@components/section';
@@ -18,7 +12,7 @@ import PopupBoostsViaGifts, {BoostsBadge} from '@components/popups/boostsViaGift
 import Button from '@components/button';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import PopupElement from '@components/popups';
-import {InviteLink} from '@components/sidebarLeft/tabs/sharedFolder';
+import {InviteLink} from '@components/sidebarLeft/tabs/inviteLink';
 import {horizontalMenu} from '@components/horizontalMenu';
 import classNames from '@helpers/string/classNames';
 import {formatFullSentTime} from '@helpers/date';
@@ -35,6 +29,7 @@ import appImManager from '@lib/appImManager';
 import PopupPayment from '@components/popups/payment';
 import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
 import PopupBoost from '@components/popups/boost';
+import Tabs from '@components/tabs';
 
 const getColorByMonths = (months: number) => {
   return months === 12 ? 'red' : (months === 3 ? 'green' : 'blue');
@@ -75,82 +70,6 @@ export const CPrepaidGiveaway = (props: {
 
   return row.container;
 };
-
-export function Tabs(props: {
-  tab: Accessor<number>,
-  onChange: (index: number) => void,
-  menu: JSX.Element[],
-  content: JSX.Element[],
-  class: string
-}) {
-  const className = props.class;
-
-  const MenuTab = (props: {
-    children: JSX.Element
-  }) => {
-    return (
-      <div class={classNames('menu-horizontal-div-item', `${className}-tab`)}>
-        <div class="menu-horizontal-div-item-span">
-          {props.children}
-          <i />
-        </div>
-      </div>
-    );
-  };
-
-  const ContentTab = (props: {
-    children: JSX.Element,
-    hide: boolean
-  }) => {
-    return (
-      <div
-        class={classNames(`${className}-content`, props.hide && 'hide')}
-      >
-        {props.children}
-      </div>
-    );
-  };
-
-  let tabs: HTMLDivElement, content: HTMLDivElement;
-  const ret = (
-    <>
-      <div ref={tabs} class={classNames('menu-horizontal-div', `${className}-tabs`)}>
-        <For each={props.menu}>{(item) => {
-          return (
-            <MenuTab>{item}</MenuTab>
-          );
-        }}</For>
-      </div>
-      <div ref={content} class={classNames(`${className}-contents`)}>
-        <For each={props.content}>{(item, index) => {
-          return (
-            <ContentTab hide={index() !== props.tab()}>{item}</ContentTab>
-          );
-        }}</For>
-      </div>
-    </>
-  );
-
-  const listenerSetter = new ListenerSetter();
-  onCleanup(() => {
-    listenerSetter.removeAll();
-  });
-
-  const selectTab = horizontalMenu(
-    tabs,
-    content,
-    (tab) => {
-      props.onChange(tab);
-    },
-    undefined,
-    undefined,
-    undefined,
-    listenerSetter
-  );
-  selectTab(props.tab());
-
-  return ret;
-}
 
 export default class AppBoostsTab extends SliderSuperTabEventable {
   private peerId: PeerId;
@@ -202,7 +121,7 @@ export default class AppBoostsTab extends SliderSuperTabEventable {
       PopupElement.createPopup(PopupBoostsViaGifts, this.peerId);
     }, {listenerSetter: this.listenerSetter});
 
-    const boostButton = Button('btn-primary btn-transparent primary', {icon: 'boost', text: this.isBroadcast ? 'BoostChannel' : 'BoostGroup'});
+    const boostButton = Button('btn-primary btn-transparent primary', {icon: 'addboost', text: this.isBroadcast ? 'BoostChannel' : 'BoostGroup'});
     attachClickEvent(boostButton, () => {
       PopupElement.createPopup(PopupBoost, this.peerId);
     }, {listenerSetter: this.listenerSetter});
@@ -217,12 +136,7 @@ export default class AppBoostsTab extends SliderSuperTabEventable {
       count: number
     }) => {
       return (
-        <div class="menu-horizontal-div-item boosts-users-tab">
-          <div class="menu-horizontal-div-item-span">
-            {i18n(props.key, [props.count])}
-            <i />
-          </div>
-        </div>
+        <Tabs.MenuTab class="boosts-users-tab">{i18n(props.key, [props.count])}</Tabs.MenuTab>
       );
     };
 
@@ -232,8 +146,9 @@ export default class AppBoostsTab extends SliderSuperTabEventable {
       moreKey: LangPackKey
     }) => {
       return (
-        <div
-          class={classNames('boosts-users-content', !props.list.count && 'is-empty', props.hide && 'hide')}
+        <Tabs.ContentTab
+          class={classNames('boosts-users-content', !props.list.count && 'is-empty')}
+          hide={props.hide}
         >
           <Show when={props.list.count} fallback={noBoostersHint}>
             {props.list.rendered}
@@ -245,7 +160,7 @@ export default class AppBoostsTab extends SliderSuperTabEventable {
               />
             </Show>
           </Show>
-        </div>
+        </Tabs.ContentTab>
       );
     };
 
@@ -303,11 +218,11 @@ export default class AppBoostsTab extends SliderSuperTabEventable {
           </Section>
         )}
         <Section class="boosts-users-container">
-          <div ref={tabs} class="menu-horizontal-div boosts-users-tabs">
+          <Tabs.Menu ref={tabs} class="boosts-users-tabs">
             <MenuTab key="BoostingBoostsCount" count={boostsList().count} />
             {showGifts() && <MenuTab key="BoostingGiftsCount" count={giftsBoostsList().count} />}
-          </div>
-          <div ref={content} class="boosts-users-contents" onClick={async(e) => {
+          </Tabs.Menu>
+          <Tabs.Content ref={content} class="boosts-users-contents" onClick={async(e) => {
             const target = findUpClassName(e.target, 'row');
             const boost = this.targets.get(target);
             if(!boost) {
@@ -368,7 +283,7 @@ export default class AppBoostsTab extends SliderSuperTabEventable {
           }}>
             <ContentTab list={boostsList()} hide={tab() !== 0} moreKey="BoostingShowMoreBoosts" />
             {showGifts() && <ContentTab list={giftsBoostsList()} hide={tab() !== 1} moreKey="BoostingShowMoreGifts" />}
-          </div>
+          </Tabs.Content>
         </Section>
         <Section name="LinkForBoosting" caption="BoostingShareThisLink">
           {inviteLink.container}

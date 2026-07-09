@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Chat, ChatAdminRights, ChatBannedRights} from '@layer';
 import {ChatRights} from '@appManagers/appChatsManager';
 
@@ -85,7 +79,7 @@ export default function hasRights(
       }
 
       if(chat._ === 'channel') {
-        if(!chat.pFlags.megagroup && !myFlags.post_messages) {
+        if((!chat.pFlags.megagroup || chat.pFlags.gigagroup) && !myFlags.post_messages) {
           return false;
         }
       }

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {EmoticonsTab, EmoticonsDropdown, EMOTICONSSTICKERGROUP, EMOJI_TEXT_COLOR} from '.';
 import createStickersContextMenu from '@helpers/dom/createStickersContextMenu';
 import customProperties from '@helpers/dom/customProperties';
@@ -16,6 +10,7 @@ import Animated from '@helpers/solid/animations';
 import windowSize from '@helpers/windowSize';
 import {EmojiGroup, StickerSet} from '@layer';
 import {AppManagers} from '@lib/managers';
+import lottieLoader from '@lib/rlottie/lottieLoader';
 import {LangPackKey, i18n} from '@lib/langPack';
 import {AnyFunction} from '@types';
 import {createSignal, createMemo, createResource, createEffect, untrack} from 'solid-js';
@@ -193,7 +188,8 @@ export default class EmoticonsTabC<Category extends StickersTabCategory<any, any
         onValue: setQuery,
         onFocusChange: setFocused,
         onGroup: this.groupFetcher ? setGroup : undefined,
-        categoryColor: this.textColor
+        // categoryColor: this.textColor
+        categoryColor: 'primary-text-color'
       });
     }, searchContainer);
   }
@@ -285,6 +281,8 @@ export default class EmoticonsTabC<Category extends StickersTabCategory<any, any
     }).length : 0xFFFF;
     positionElementByIndex(container, this.categoriesContainer, posItems);
     positionElementByIndex(menuTab, this.menu, posMenu);
+    // the DOM move blanks transferred placeholder canvases inside - re-present
+    lottieLoader.nudgePresentWithin(container);
   }
 
   public isCategoryVisible(category: Category) {
@@ -465,6 +463,10 @@ export default class EmoticonsTabC<Category extends StickersTabCategory<any, any
     });
   }
 
+  protected get animationGroup() {
+    return this.emoticonsDropdown?.animationGroup || EMOTICONSSTICKERGROUP;
+  }
+
   // * common methods for tabs
 
   public renderStickerSetThumb({set, menuTabPadding, middleware, textColor}: {
@@ -476,7 +478,7 @@ export default class EmoticonsTabC<Category extends StickersTabCategory<any, any
     wrapStickerSetThumb({
       set,
       container: menuTabPadding,
-      group: EMOTICONSSTICKERGROUP,
+      group: this.animationGroup,
       lazyLoadQueue: this.emoticonsDropdown?.lazyLoadQueue,
       width: 32,
       height: 32,
@@ -489,7 +491,7 @@ export default class EmoticonsTabC<Category extends StickersTabCategory<any, any
   public createStickerRenderer() {
     const superStickerRenderer = new SuperStickerRenderer({
       regularLazyLoadQueue: this.emoticonsDropdown.lazyLoadQueue,
-      group: EMOTICONSSTICKERGROUP,
+      group: this.animationGroup,
       managers: this.managers,
       intersectionObserverInit: this.emoticonsDropdown.intersectionOptions
     });

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {MOUNT_CLASS_TO} from '@config/debug';
 import type {getEnvironment} from '@environment/utils';
 import type {LocalStorageEncryptedProxyTaskPayload, LocalStorageProxyTask} from '@lib/localStorage';
@@ -13,6 +7,7 @@ import type {ActiveAccountNumber} from '@lib/accounts/types';
 import type {LoadStateResult} from '@appManagers/utils/state/loadState';
 import type {PasscodeStorageValue} from '@lib/commonStateStorage';
 import type {ThreadedWorkerType} from '@lib/appManagers/appManagersManager';
+import type {LogEntry} from '@lib/debug/logsBuffer';
 import SuperMessagePort from '@lib/superMessagePort';
 import {CacheStorageDbName} from '@lib/files/cacheStorage';
 
@@ -66,7 +61,12 @@ export default class MTProtoMessagePort<Master extends boolean = true> extends S
   toggleUninteruptableActivity: (payload: { activity: string, active: boolean }, source: MessageEventSource) => void,
   disableCacheStoragesByNames: (names: CacheStorageDbName[]) => void,
   enableCacheStoragesByNames: (names: CacheStorageDbName[]) => void,
-  resetOpenCacheStoragesByNames: (names: CacheStorageDbName[]) => void
+  resetOpenCacheStoragesByNames: (names: CacheStorageDbName[]) => void,
+  // Debug log buffer (see @lib/debug/logsBuffer): the master pulls the worker's
+  // ring buffer on export, and propagates the enabled flag (prod ?debug=1 isn't
+  // visible to the worker's own location.search).
+  getLogs: (payload: void) => LogEntry[],
+  setLogBufferEnabled: (enabled: boolean) => void
 } & MTProtoBroadcastEvent, {
   convertWebp: (payload: {fileName: string, bytes: Uint8Array}) => Promise<Uint8Array>,
   convertOpus: (payload: {fileName: string, bytes: Uint8Array}) => Promise<Uint8Array>,
@@ -84,16 +84,32 @@ export default class MTProtoMessagePort<Master extends boolean = true> extends S
   toggleUsingPasscode: (payload: ToggleUsingPasscodePayload, source: MessageEventSource) => void,
 } & MTProtoBroadcastEvent, Master> {
   private static INSTANCE: MTProtoMessagePort;
+  // In Modes.noWorker, both the proxy (master) and the worker-side port live
+  // in the same realm; the legacy INSTANCE field would only hold the last one
+  // constructed. These two track both so getMasterInstance/getNonMasterInstance
+  // resolve to the right end of the in-process channel.
+  private static MASTER_INSTANCE: MTProtoMessagePort<true>;
+  private static NON_MASTER_INSTANCE: MTProtoMessagePort<false>;
 
-  constructor() {
+  constructor(isMaster: boolean = true) {
     super('MTPROTO');
 
     MTProtoMessagePort.INSTANCE = this;
+    if(isMaster) MTProtoMessagePort.MASTER_INSTANCE = this as any;
+    else MTProtoMessagePort.NON_MASTER_INSTANCE = this as any;
 
     MOUNT_CLASS_TO && (MOUNT_CLASS_TO.mtprotoMessagePort = this);
   }
 
   public static getInstance<Master extends boolean>() {
     return this.INSTANCE as MTProtoMessagePort<Master>;
+  }
+
+  public static getMasterInstance() {
+    return this.MASTER_INSTANCE;
+  }
+
+  public static getNonMasterInstance() {
+    return this.NON_MASTER_INSTANCE;
   }
 }

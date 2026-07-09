@@ -32,10 +32,7 @@ import {wrapStarsRatingLevel} from '@components/wrappers/starsRating';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {HIDDEN_PEER_ID} from '@appManagers/constants';
 import {rgbIntToHex} from '@helpers/color';
-import {makeMediaSize} from '@helpers/mediaSize';
 import type {MyStarGift} from '@appManagers/appGiftsManager';
-import IS_PARALLAX_SUPPORTED from '@environment/parallaxSupport';
-import {generateDelimiter} from '@components/generateDelimiter';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import ListenerSetter from '@helpers/listenerSetter';
 import {resolveFirst} from '@solid-primitives/refs';
@@ -55,6 +52,8 @@ import {keepMe} from '@helpers/keepMe';
 import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
 import wrapPhoto from './wrappers/photo';
 import {unwrap} from 'solid-js/store';
+import Button from '@components/buttonTsx';
+import {openBotPrivacyPolicy} from '@helpers/getBotPrivacyPolicy';
 
 keepMe(ripple);
 
@@ -65,6 +64,7 @@ type PeerProfileContextValue = {
   setCollapsedOn: HTMLElement,
   isDialog: boolean,
   onPinnedGiftsChange: (gifts: MyStarGift[]) => void,
+  onAvatarReady: (promise: Promise<void>) => void,
   needWhite: boolean,
   setNeedWhite: (needWhite: boolean) => void,
 
@@ -74,7 +74,6 @@ type PeerProfileContextValue = {
   isSavedDialog: boolean,
   isTopic: boolean,
   isBotforum: boolean,
-  needSimpleAvatar: boolean,
   hasSavedMusic: boolean,
   getDetailsForUse: () => {peerId: PeerId, threadId?: number},
   verifyContext: (peerId: PeerId, threadId?: number) => boolean,
@@ -119,7 +118,7 @@ const PeerProfile = (props: {
   setCollapsedOn: HTMLElement,
   searchSuperContainer?: HTMLElement,
   onPinnedGiftsChange?: (gifts: MyStarGift[]) => void,
-  changeAvatarBtn?: HTMLElement
+  onAvatarReady?: (promise: Promise<void>) => void
 }) => {
   const {rootScope} = useHotReloadGuard();
   const fullPeer = useFullPeer(props.peerId);
@@ -131,6 +130,7 @@ const PeerProfile = (props: {
     setCollapsedOn: props.setCollapsedOn,
     isDialog: props.isDialog,
     onPinnedGiftsChange: props.onPinnedGiftsChange,
+    onAvatarReady: props.onAvatarReady,
     get needWhite() { return needWhite() },
     setNeedWhite,
 
@@ -144,9 +144,6 @@ const PeerProfile = (props: {
     },
     get isBotforum() {
       return !!(value.peer as User.user).pFlags.bot_forum_view;
-    },
-    get needSimpleAvatar() {
-      return value.isTopic;
     },
     get hasSavedMusic() {
       return !!(value.fullPeer as UserFull)?.saved_music;
@@ -178,10 +175,6 @@ const PeerProfile = (props: {
 
   props.setCollapsedOn.classList.add('profile-container');
 
-  if(!IS_PARALLAX_SUPPORTED) {
-    props.scrollable.container.classList.add('no-parallax');
-  }
-
   if(value.peerId.isUser() && value.peerId !== rootScope.myId) {
     const refreshCurrentUser = () => {
       rootScope.managers.appUsersManager.getApiUsers([value.peerId.toUserId()]);
@@ -205,19 +198,14 @@ const PeerProfile = (props: {
           value.peerId === rootScope.myId && 'is-me'
         )}
       >
-        <Show when={!value.needSimpleAvatar}>
-          <PeerProfile.AutoAvatar />
-        </Show>
-        <Show when={props.changeAvatarBtn}>
-          <div class="profile-change-avatar-container">
-            {props.changeAvatarBtn}
-          </div>
-        </Show>
+        <PeerProfile.AutoAvatar />
+        <div class="profile-content-delimiter"></div>
+        <PeerProfile.UnofficialWarning />
         <PeerProfile.PersonalChannel />
         <PeerProfile.MainSection />
+        <PeerProfile.BotMainApp />
         <PeerProfile.BotVerification />
         <PeerProfile.BotPermissions />
-        {IS_PARALLAX_SUPPORTED && generateDelimiter()}
         {props.searchSuperContainer}
       </div>
     </PeerProfileContext.Provider>
@@ -226,67 +214,43 @@ const PeerProfile = (props: {
 
 PeerProfile.Avatar = () => {
   const context = useContext(PeerProfileContext);
-  const {rootScope, PeerProfileAvatars, avatarNew} = useHotReloadGuard();
-  const {peerId, threadId} = context.getDetailsForUse();
+  const {rootScope, PeerProfileAvatars} = useHotReloadGuard();
 
   const name = (<PeerProfile.Name />) as HTMLElement;
   const subtitle = (<PeerProfile.Subtitle />) as HTMLElement;
 
-  if(!context.needSimpleAvatar) {
-    const middleware = createMiddleware()
-    const avatars = new PeerProfileAvatars(
-      context.scrollable,
-      rootScope.managers,
-      context.setCollapsedOn
-    );
-    avatars.onNeedWhiteChanged = context.setNeedWhite;
-
-    avatars.setPeer(context.peerId);
-    avatars.info.append(name, subtitle);
-    avatars.container.append(
-      wrapSolidComponent(PeerProfile.PinnedGifts, middleware.get()),
-      wrapSolidComponent(PeerProfile.PinnedMusic, middleware.get()),
-      wrapSolidComponent(() => PeerProfile.StoryPreviews({
-        info: avatars.info
-      }), middleware.get()),
-    );
-
-    onCleanup(() => {
-      avatars.cleanup();
-    });
-
-    if(IS_PARALLAX_SUPPORTED) {
-      context.scrollable.container.classList.add('parallax');
-    }
-
-    return avatars.container;
-  }
-
-  const middleware = createMiddleware().get();
-  const avatar = avatarNew({
-    middleware,
-    size: 120,
-    isDialog: context.isDialog,
-    peerId,
-    threadId: context.isTopic ? threadId : undefined,
-    wrapOptions: {
-      customEmojiSize: makeMediaSize(120, 120),
-      middleware
-    },
-    withStories: true,
-    meAsNotes: !!(peerId === rootScope.myId && threadId)
-  });
-  avatar.node.classList.add('profile-avatar', 'avatar-120');
-  if(IS_PARALLAX_SUPPORTED) {
-    context.scrollable.container.classList.remove('parallax');
-  }
-  return (
-    <>
-      {avatar.node}
-      {name}
-      {subtitle}
-    </>
+  const middleware = createMiddleware()
+  const avatars = new PeerProfileAvatars(
+    context.scrollable,
+    rootScope.managers,
+    context.setCollapsedOn
   );
+  avatars.onNeedWhiteChanged = context.setNeedWhite;
+
+  // Expose the readiness promise so the host (e.g. settings tab's
+  // promiseCollector) can wait for the avatar before showing the tab —
+  // otherwise the gradient header renders empty for the duration of the
+  // setPeer pipeline (peer photo IPC + appearance + thumb load) and the
+  // avatar pops in mid-transition. NOTE: optional-call short-circuits arg
+  // evaluation, so we MUST call setPeer first and pass the result through.
+  // Topics render through the same carousel header (as a single topic-icon
+  // avatar) — just like a chat with no avatar photo — so pass the topic id.
+  const setPeerPromise = avatars.setPeer(context.peerId, context.isTopic ? context.threadId : undefined);
+  context.onAvatarReady?.(setPeerPromise);
+  avatars.info.append(name, subtitle);
+  avatars.container.append(
+    wrapSolidComponent(PeerProfile.PinnedGifts, middleware.get()),
+    wrapSolidComponent(PeerProfile.PinnedMusic, middleware.get()),
+    wrapSolidComponent(() => PeerProfile.StoryPreviews({
+      info: avatars.info
+    }), middleware.get()),
+  );
+
+  onCleanup(() => {
+    avatars.cleanup();
+  });
+
+  return avatars.container;
 };
 
 PeerProfile.AutoAvatar = () => {
@@ -726,7 +690,7 @@ PeerProfile.Phone = () => {
 
 PeerProfile.Username = () => {
   const context = useContext(PeerProfileContext);
-  const {I18n, i18n, toast} = useHotReloadGuard();
+  const {I18n, i18n, toast, showMyQrCodePopup, rootScope} = useHotReloadGuard();
   const usernames = createMemo(() => {
     if(!context.peerId.isUser() || !context.canBeDetailed()) {
       return;
@@ -759,7 +723,23 @@ PeerProfile.Username = () => {
         <Row.Subtitle>{
           getUsernamesAlso(usernames()) || i18n('Username')
         }</Row.Subtitle>
+        <PeerProfile.QrButton />
       </Row>
+    </Show>
+  );
+};
+
+PeerProfile.QrButton = () => {
+  const context = useContext(PeerProfileContext);
+  const {showMyQrCodePopup, rootScope} = useHotReloadGuard();
+  return (
+    <Show when={context.peerId !== rootScope.myId}>
+      <Row.RightContent>
+        <Button.Icon icon="qr" onClick={(e) => {
+          cancelEvent(e);
+          showMyQrCodePopup(context.peerId);
+        }} />
+      </Row.RightContent>
     </Show>
   );
 };
@@ -909,7 +889,7 @@ PeerProfile.Location = () => {
 
 PeerProfile.Bio = () => {
   const context = useContext(PeerProfileContext);
-  const {i18n, PopupPremium, PopupElement, PopupTranslate, I18n, wrapRichText, toast} = useHotReloadGuard();
+  const {i18n, PopupPremium, HotReloadGuard, I18n, wrapRichText, toast} = useHotReloadGuard();
   const appConfig = useAppConfig();
   const peerTranslation = usePeerTranslation(context.peerId);
 
@@ -957,7 +937,8 @@ PeerProfile.Bio = () => {
               if(!peerTranslation.canTranslate(true)) {
                 PopupPremium.show({feature: 'translations'});
               } else {
-                PopupElement.createPopup(PopupTranslate, {
+                const {openTranslatePopup} = await import('@components/popups/translate');
+                openTranslatePopup({
                   peerId: context.peerId,
                   textWithEntities: {
                     _: 'textWithEntities',
@@ -965,7 +946,7 @@ PeerProfile.Bio = () => {
                     entities: []
                   },
                   detectedLanguage: await bioLanguagePromise()
-                });
+                }, HotReloadGuard);
               }
             },
             verify: async() => !!(await bioLanguagePromise())
@@ -982,7 +963,7 @@ PeerProfile.Bio = () => {
 
 PeerProfile.Link = () => {
   const context = useContext(PeerProfileContext);
-  const {i18n, I18n, toast} = useHotReloadGuard();
+  const {i18n, I18n, toast, showMyQrCodePopup} = useHotReloadGuard();
 
   const toFill = createMemo<Partial<{url: string, also: JSX.Element}>>(() => {
     if(context.peerId.isUser()) {
@@ -1043,6 +1024,28 @@ PeerProfile.Link = () => {
         <Row.Icon icon="link" />
         <Row.Title>{toFill().url}</Row.Title>
         <Row.Subtitle>{toFill().also || i18n('SetUrlPlaceholder')}</Row.Subtitle>
+        <PeerProfile.QrButton />
+      </Row>
+    </Show>
+  );
+};
+
+PeerProfile.BotPrivacyPolicy = () => {
+  const context = useContext(PeerProfileContext);
+  const {i18n, rootScope, appImManager} = useHotReloadGuard();
+  const botInfo = createMemo(() => (context.fullPeer as UserFull)?.bot_info);
+  const isBot = createMemo(() => !!(context.peer as User.user)?.pFlags?.bot && !!botInfo());
+
+  const onClick = () => openBotPrivacyPolicy(botInfo(), () => {
+    appImManager.setPeer({peerId: context.peerId});
+    rootScope.managers.appMessagesManager.sendText({peerId: context.peerId, text: '/privacy'});
+  });
+
+  return (
+    <Show when={isBot()}>
+      <Row clickable={onClick}>
+        <Row.Icon icon="privacypolicy" />
+        <Row.Title>{i18n('BotPrivacyPolicy')}</Row.Title>
       </Row>
     </Show>
   );
@@ -1218,10 +1221,34 @@ PeerProfile.BotVerification = () => {
     <Show when={content()}>
       <div class="profile-bot-verification">
         {content().icon}
-        <div class="profile-bot-verification-content">
+        <div class="profile-bot-verification-content text-overflow-wrap">
           {content().text}
         </div>
       </div>
+    </Show>
+  );
+};
+
+PeerProfile.UnofficialWarning = () => {
+  const context = useContext(PeerProfileContext);
+  const {i18n, wrapEmojiText} = useHotReloadGuard();
+
+  const show = createMemo(() => {
+    const user = context.peer as User.user;
+    const fullPeer = context.fullPeer as UserFull;
+    return !!(context.peerId.isUser() && user && !user.pFlags.bot && fullPeer?.pFlags?.unofficial_security_risk);
+  });
+
+  return (
+    <Show when={show()}>
+      <Section>
+        <Row class="profile-unofficial-warning">
+          <Row.Title class="pre-wrap">
+            <IconTsx icon="sendingerror" class="inline-icon inline-icon-left profile-unofficial-warning-icon" />
+            {i18n('ProfileUnofficialSecurityRisk', [wrapEmojiText((context.peer as User.user).first_name)])}
+          </Row.Title>
+        </Row>
+      </Section>
     </Show>
   );
 };
@@ -1418,17 +1445,47 @@ PeerProfile.StoryPreviews = (props: {
   );
 };
 
+// "Open App" main mini-app button + ToS caption, like the other clients
+// (tdesktop info_profile_actions makeMainApp / Android ProfileBotOpenApp /
+// iOS PeerInfo_OpenAppButton). Shown when the bot has a main mini app; the
+// caption is iOS PeerInfo_AppFooter(Admin).
+PeerProfile.BotMainApp = () => {
+  const context = useContext(PeerProfileContext);
+  const {appImManager} = useHotReloadGuard();
+
+  const user = createMemo(() => context.peer as User.user);
+  const hasMainApp = createMemo(() => !!user()?.pFlags?.bot && !!user()?.pFlags?.bot_has_main_app);
+  const footerKey = createMemo(() => user()?.pFlags?.bot_can_edit ? 'PeerInfo.AppFooterAdmin' as const : 'PeerInfo.AppFooter' as const);
+
+  const onClick = () => {
+    appImManager.openWebApp({
+      botId: context.peerId.toUserId(),
+      main: true,
+      peerId: context.peerId
+    });
+  };
+
+  return (
+    <Show when={hasMainApp()}>
+      <Section caption={footerKey()}>
+        <Button
+          class="peer-profile-open-app-button"
+          primaryFilled
+          text="BotProfileOpenApp"
+          onClick={onClick}
+        />
+      </Section>
+    </Show>
+  );
+};
+
 PeerProfile.MainSection = () => {
   const context = useContext(PeerProfileContext);
 
   return (
     <Section
       noDelimiter
-      contentProps={{class: classNames(context.needSimpleAvatar && 'has-simple-avatar')}}
     >
-      <Show when={context.needSimpleAvatar}>
-        <PeerProfile.AutoAvatar />
-      </Show>
       <Show when={!(context.isBotforum && context.threadId)}>
         <PeerProfile.Phone />
         <PeerProfile.Username />
@@ -1440,6 +1497,7 @@ PeerProfile.MainSection = () => {
         <PeerProfile.BusinessHours />
         <PeerProfile.BusinessLocation />
         <PeerProfile.Notifications />
+        <PeerProfile.BotPrivacyPolicy />
       </Show>
     </Section>
   );

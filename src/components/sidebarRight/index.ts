@@ -1,23 +1,19 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import appImManager, {APP_TABS} from '@lib/appImManager';
 import SidebarSlider from '@components/slider';
 import mediaSizes, {ScreenSize} from '@helpers/mediaSizes';
-import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMedia';
+import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMediaTab';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import {AppManagers} from '@lib/managers';
 import appNavigationController from '@components/appNavigationController';
 import rootScope from '@lib/rootScope';
+import {installColumnWidthsUpdater} from '@helpers/updateColumnWidths';
+import installColumnResize from '@helpers/installColumnResize';
+import animationIntersector from '@components/animationIntersector';
 
 
 export const RIGHT_COLUMN_ACTIVE_CLASSNAME = 'is-right-column-shown';
 
 export class AppSidebarRight extends SidebarSlider {
-  private isColumnProportionSet = false;
   public sharedMediaTab: AppSharedMediaTab;
   // public rect: DOMRect;
 
@@ -38,28 +34,8 @@ export class AppSidebarRight extends SidebarSlider {
       }
     });
 
-    let removeTransitionTimeoutId: number;
-    const toggleBgScalableTransition = (value: boolean) => {
-      document.querySelectorAll('.chat-background-item-scalable').forEach((_el) => {
-        const el = _el as HTMLElement;
-        if(!value) {
-          el.style.setProperty('transition', 'none', 'important');
-        } else {
-          el.style.removeProperty('transition');
-        }
-      });
-    }
-    rootScope.addEventListener('resizing_left_sidebar', () => {
-      window.clearTimeout(removeTransitionTimeoutId);
-      toggleBgScalableTransition(false);
-      this.setColumnProportion();
-      removeTransitionTimeoutId = window.setTimeout(() => {
-        toggleBgScalableTransition(true);
-      }, 100);
-    });
-    mediaSizes.addEventListener('resize', () => {
-      this.setColumnProportion();
-    });
+    installColumnWidthsUpdater();
+    installColumnResize({columnEl: this.sidebarEl, side: 'right'});
   }
 
   public createSharedMediaTab() {
@@ -111,20 +87,12 @@ export class AppSidebarRight extends SidebarSlider {
     super.onCloseTab(id, animate, isNavigation);
   }
 
-  private setColumnProportion() {
-    const middleWidth = this.sidebarEl.previousElementSibling.scrollWidth;
-    const proportion = this.sidebarEl.scrollWidth / middleWidth;
-    document.documentElement.style.setProperty('--right-column-proportion', '' + proportion);
-    document.documentElement.style.setProperty('--middle-column-width', middleWidth + 'px');
-    document.documentElement.style.setProperty('--middle-column-width-value', '' + middleWidth);
-    // this.rect = this.sidebarEl.getBoundingClientRect();
-
-    return proportion;
-  }
-
   public hide() {
     document.body.classList.remove(RIGHT_COLUMN_ACTIVE_CLASSNAME);
     appNavigationController.removeByType('right');
+    // The column is hidden with a transform (stays mounted), so pause any video
+    // avatars playing inside it — the IntersectionObserver won't catch the move.
+    animationIntersector.toggleVideosUnder(this.sidebarEl, true);
     rootScope.dispatchEventSingle('right_sidebar_toggle', false);
   }
 
@@ -149,11 +117,6 @@ export class AppSidebarRight extends SidebarSlider {
       this.sharedMediaTab.open();
     }
 
-    if(!this.isColumnProportionSet) {
-      this.setColumnProportion();
-      this.isColumnProportionSet = true;
-    }
-
     const animationPromise = appImManager.selectTab(active ? APP_TABS.CHAT : APP_TABS.PROFILE, animate);
     if(!enable) this.hide();
     else {
@@ -161,6 +124,8 @@ export class AppSidebarRight extends SidebarSlider {
       if(!appNavigationController.findItemByType('right')) {
         this.pushNavigationItem(this.sharedMediaTab);
       }
+      // Resume video avatars paused by a previous hide() (see toggleVideosUnder).
+      animationIntersector.toggleVideosUnder(this.sidebarEl, false);
       rootScope.dispatchEventSingle('right_sidebar_toggle', true);
     }
     return animationPromise;

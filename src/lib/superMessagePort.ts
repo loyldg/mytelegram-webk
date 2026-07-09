@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import DEBUG from '@config/debug';
 import tabId from '@config/tabId';
 import ctx from '@environment/ctx';
@@ -97,6 +91,11 @@ type Listeners = Record<string, ListenerCallback>;
 const USE_LOCKS = true;
 const USE_BATCHING = true;
 
+// Stuck-invoke watchdog (DEBUG only).
+const STUCK_WATCHDOG_INTERVAL_MS = 2000;
+const STUCK_WARN_FIRST_MS = 5000;
+const STUCK_WARN_PERSIST_MS = 30000;
+
 // const PING_INTERVAL = DEBUG && false ? 0x7FFFFFFF : 5000;
 // const PING_TIMEOUT = DEBUG && false ? 0x7FFFFFFF : 10000;
 
@@ -118,9 +117,12 @@ class SuperMessagePort<
       resolve: any,
       reject: any,
       taskType: string,
-      port?: SendPort
+      port?: SendPort,
+      createdAt: number,
+      warned?: boolean
     }
   };
+  protected stuckWatchdogInterval?: ReturnType<typeof setInterval>;
   protected pending: Map<SendPort, Task[]>;
 
   protected log: ReturnType<typeof logger>;
@@ -145,7 +147,7 @@ class SuperMessagePort<
     this.awaiting = {};
     this.pending = new Map();
     this.log = logger('MP' + (logSuffix ? '-' + logSuffix : ''));
-    this.debug = DEBUG;
+    this.debug = DEBUG && false;
     this.heldLocks = new Map();
     this.requestedLocks = new Map();
 
@@ -160,7 +162,31 @@ class SuperMessagePort<
       lock: this.processLockTask,
       batch: this.processBatchTask
     };
+
+    // Watchdog: when a port-bridged invoke hangs (handler unregistered, port
+    // never started, peer crashed), the proxy quietly accumulates entries in
+    // `awaiting` forever and the UI just doesn't progress. Periodically log
+    // anything older than the threshold so the symptom surfaces immediately
+    // — particularly important in Modes.noWorker where there's no cross-thread
+    // boundary to blame.
+    if(DEBUG) {
+      this.stuckWatchdogInterval = ctx.setInterval(this.scanStuckAwaiting, STUCK_WATCHDOG_INTERVAL_MS) as any;
+    }
   }
+
+  protected scanStuckAwaiting = () => {
+    const now = Date.now();
+    for(const id in this.awaiting) {
+      const entry = this.awaiting[id];
+      const age = now - entry.createdAt;
+      if(!entry.warned && age >= STUCK_WARN_FIRST_MS) {
+        entry.warned = true;
+        this.log.warn(`[STUCK] ${entry.taskType} pending ${age}ms (id=${id})`);
+      } else if(entry.warned && age >= STUCK_WARN_PERSIST_MS && age % STUCK_WARN_PERSIST_MS < STUCK_WATCHDOG_INTERVAL_MS) {
+        this.log.error(`[STUCK] ${entry.taskType} still pending after ${age}ms (id=${id}) — likely no listener on peer or port not started`);
+      }
+    }
+  };
 
   public setOnPortDisconnect(callback: (source: MessageEventSource) => void) {
     this.onPortDisconnect = callback;
@@ -599,6 +625,16 @@ class SuperMessagePort<
     this.pushTask(task, port);
   }
 
+  // typed cross-invoke: subclasses whose UI->worker methods aren't part of Send (both bundles
+  // share one <false> instance) route through these instead of per-class @ts-ignore wrappers
+  protected invokeVoidAs<M extends Listeners, T extends keyof M>(type: T, payload: Parameters<M[T]>[0], port?: SendPort, transfer?: Transferable[]) {
+    this.invokeVoid(type as any, payload as any, port, transfer);
+  }
+
+  protected invokeAs<M extends Listeners, T extends keyof M>(type: T, payload: Parameters<M[T]>[0], port?: SendPort, transfer?: Transferable[]): Promise<Awaited<ReturnType<M[T]>>> {
+    return this.invoke(type as any, payload as any, false, port, transfer) as any;
+  }
+
   public invoke<T extends keyof Send>(type: T, payload: Parameters<Send[T]>[0], withAck?: false, port?: SendPort, transfer?: Transferable[], timeout?: number): Promise<Awaited<ReturnType<Send[T]>>>;
   public invoke<T extends keyof Send>(type: T, payload: Parameters<Send[T]>[0], withAck?: true, port?: SendPort, transfer?: Transferable[], timeout?: number): Promise<AckedResult<Awaited<ReturnType<Send[T]>>>>;
   public invoke<T extends keyof Send>(type: T, payload: Parameters<Send[T]>[0], withAck?: boolean, port?: SendPort, transfer?: Transferable[], timeout?: number) {
@@ -607,7 +643,7 @@ class SuperMessagePort<
     let task: InvokeTask;
     const promise = new Promise<Awaited<ReturnType<Send[T]>>>((resolve, reject) => {
       task = this.createInvokeTask(type as string, payload, withAck, undefined, transfer);
-      this.awaiting[task.id] = {resolve, reject, taskType: type as string, port};
+      this.awaiting[task.id] = {resolve, reject, taskType: type as string, port, createdAt: Date.now()};
       this.pushTask(task, port);
     });
 

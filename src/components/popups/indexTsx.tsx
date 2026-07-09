@@ -1,28 +1,27 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import {createContext, useContext, createSignal, onCleanup, JSX, Show, children, createRoot, Accessor, createEffect, untrack, on} from 'solid-js';
+import {createContext, useContext, createSignal, onCleanup, JSX, Show, createRoot, Accessor, createEffect, untrack, on, Ref, Setter, onMount} from 'solid-js';
 import {createStore} from 'solid-js/store';
 import {Portal} from 'solid-js/web';
 import classNames from '@helpers/string/classNames';
 import {IconTsx} from '@components/iconTsx';
-import RippleElement from '@components/rippleElement';
 import {FormatterArguments, i18n, LangPackKey} from '@lib/langPack';
 import {AppManagers} from '@lib/managers';
 import overlayCounter from '@helpers/overlayCounter';
 import {getMiddleware, MiddlewareHelper} from '@helpers/middleware';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import blurActiveElement from '@helpers/dom/blurActiveElement';
-import animationIntersector from '@components/animationIntersector';
+import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
 import appNavigationController, {NavigationItem} from '@components/appNavigationController';
 import {addFullScreenListener, getFullScreenElement} from '@helpers/dom/fullScreen';
+import {getOverlayRoot} from '@helpers/appWindow';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import MarkupTooltip from '@components/chat/markupTooltip';
 import Button from '@components/buttonTsx';
 import {doubleRaf} from '@helpers/schedulers';
+import Scrollable, {ScrollableContextValue} from '@components/scrollable2';
+import cancelEvent from '@helpers/dom/cancelEvent';
+import {simulateClickEvent} from '@helpers/dom/clickEvent';
+import isSendShortcutPressed from '@helpers/dom/isSendShortcutPressed';
+import noop from '@helpers/noop';
 
 export type PopupButton = {
   text?: HTMLElement | DocumentFragment | Text,
@@ -44,27 +43,24 @@ export type PopupOptions = Partial<{
   onCloseAfterTimeout: () => void,
   isConfirmationNeededOnClose: () => void | boolean | Promise<any>,
   // overlayClosable: boolean,
-  withConfirm: LangPackKey | boolean,
-  body: boolean,
-  footer: boolean,
   confirmShortcutIsSendShortcut: boolean,
   withoutOverlay: boolean,
-  scrollable: boolean,
-  buttons: Array<PopupButton>,
-  title: boolean | LangPackKey | DocumentFragment | HTMLElement,
-  floatingHeader: boolean,
-  withFooterConfirm: boolean
+  btnConfirmOnEnter?: Accessor<HTMLElement>,
+  old: boolean
 }>;
 
 type PopupKind = 'header' | 'title' | 'body' | 'footer' | 'buttons' | 'closeButton' | 'confirmButton';
 
-type PopupContextValue = {
+export type PopupContextValue = {
   register: (kind: PopupKind, element: JSX.Element) => JSX.Element,
   registerButton: (props: PopupButton, element: JSX.Element) => JSX.Element,
   store: {[key in PopupKind]?: JSX.Element},
   buttons: PopupButton[],
   shown: () => boolean,
   show: () => void,
+  /**
+   * Note: Will trigger isConfirmationNeededOnClose if was set
+   */
   hide: () => void,
   destroy: () => void,
   destroyed: boolean,
@@ -72,42 +68,59 @@ type PopupContextValue = {
   middlewareHelper: MiddlewareHelper,
   lateMiddlewareHelper: MiddlewareHelper,
   navigationItem: NavigationItem | undefined,
-  // scrollable: Scrollable | undefined,
+  scrollableRef?: ScrollableContextValue,
   withoutOverlay: boolean,
   night: boolean,
   confirmShortcutIsSendShortcut: boolean,
-  // btnConfirmOnEnter: HTMLElement | undefined,
+  btnConfirmOnEnter: HTMLElement | undefined,
+  setBtnConfirmOnEnter: Setter<HTMLElement>,
   isConfirmationNeededOnClose: PopupOptions['isConfirmationNeededOnClose'],
   closable: boolean,
-  withConfirm: LangPackKey | boolean,
-  body: boolean,
-  footer: boolean,
-  title: boolean | LangPackKey | DocumentFragment | HTMLElement,
-  element: HTMLElement | undefined
+  element: HTMLElement | undefined,
+  kind: symbol | undefined,
+  old?: boolean
 };
 
 type PopupControllerContextValue = {
   dispose: () => void
 };
 
-const PopupContext = createContext<PopupContextValue>();
+export const PopupContext = createContext<PopupContextValue>();
+export const usePopupContext = () => useContext(PopupContext);
 const PopupControllerContext = createContext<PopupControllerContextValue>();
 
 const DEFAULT_APPEND_TO = document.body;
-const [appendPopupTo, setAppendPopupTo] = createSignal(DEFAULT_APPEND_TO);
+// A fullscreen element always wins; otherwise each popup uses the realm it captured at creation
+// (see the Portal mount below). Only the fullscreen state is reactive here.
+const [fullScreenElement, setFullScreenElement] = createSignal<HTMLElement>(null);
 
 const onFullScreenChange = () => {
-  setAppendPopupTo(getFullScreenElement() || DEFAULT_APPEND_TO);
+  setFullScreenElement((getFullScreenElement() as HTMLElement) || null);
 };
 
 addFullScreenListener(DEFAULT_APPEND_TO, onFullScreenChange);
 
+export const useSnitchedPopupContext = () => {
+  let context: PopupContextValue;
+
+  return {
+    SnitchPopupContext: () => {
+      context = useContext(PopupContext);
+      return <></>;
+    },
+    popupContext: () => context
+  }
+};
+
 const PopupElement = (props: {
   class?: string,
   containerClass?: string,
+  containerProps?: JSX.HTMLAttributes<HTMLDivElement>,
   managers?: AppManagers,
   children: JSX.Element,
-  show?: boolean
+  show?: boolean,
+  kind?: symbol,
+  animationGroup?: AnimationItemGroup // the popup's OWN content group - excluded from the on-show pause sweep
 } & PopupOptions) => {
   const [shown, setShown] = createSignal(false);
   const [store, setStore] = createStore<PopupContextValue['store']>({});
@@ -116,6 +129,10 @@ const PopupElement = (props: {
   const controllerContext = useContext(PopupControllerContext);
 
   const managers = props.managers || PopupElement.MANAGERS;
+  // Capture the active overlay root once. A popup opened while the client is popped out must stay in
+  // the Document PiP window for its whole life; reading the live root in the Portal mount would yank
+  // it to the tab the instant the app moves back.
+  const capturedRoot = getOverlayRoot();
   const middlewareHelper = getMiddleware();
   const lateMiddlewareHelper = getMiddleware();
   const withoutOverlay = props.withoutOverlay || false;
@@ -161,31 +178,34 @@ const PopupElement = (props: {
 
     if(!withoutOverlay) {
       overlayCounter.isOverlayActive = true;
-      animationIntersector.checkAnimations2(true);
+      // except the popup's own content: with the offscreen worker frame cache its
+      // stickers can load and start playing BEFORE this sweep runs - pausing them
+      // here would freeze them forever (nothing re-plays until popup close)
+      animationIntersector.checkAnimations2(true, props.animationGroup);
     }
 
     // Add keyboard event listener
-    // setTimeout(() => {
-    //   const element = popupElement();
-    //   if(!element || !element.classList.contains('active')) return;
+    setTimeout(() => {
+      const element = popupElement();
+      if(!element || !element.classList.contains('active')) return;
 
-    //   const handleKeydown = (e: KeyboardEvent) => {
-    //     const btnConfirm = btnConfirmOnEnter();
-    //     if(!btnConfirm ||
-    //        (btnConfirm as HTMLButtonElement).disabled ||
-    //        PopupElementTsx.POPUPS[PopupElementTsx.POPUPS.length - 1] !== value) {
-    //       return;
-    //     }
+      const handleKeydown = (e: KeyboardEvent) => {
+        const btnConfirm = value.btnConfirmOnEnter;
+        if(!btnConfirm ||
+           (btnConfirm as HTMLButtonElement).disabled ||
+           PopupElement.POPUPS[PopupElement.POPUPS.length - 1] !== value) {
+          return;
+        }
 
-    //     if(confirmShortcutIsSendShortcut ? isSendShortcutPressed(e) : e.key === 'Enter') {
-    //       simulateClickEvent(btnConfirm);
-    //       cancelEvent(e);
-    //     }
-    //   };
+        if(confirmShortcutIsSendShortcut ? isSendShortcutPressed(e) : e.key === 'Enter') {
+          simulateClickEvent(btnConfirm);
+          cancelEvent(e);
+        }
+      };
 
-    //   document.body.addEventListener('keydown', handleKeydown);
-    //   onCleanup(() => document.body.removeEventListener('keydown', handleKeydown));
-    // }, 0);
+      document.body.addEventListener('keydown', handleKeydown);
+      middlewareHelper.get().onClean(() => document.body.removeEventListener('keydown', handleKeydown));
+    }, 0);
   };
 
   const hide = () => {
@@ -212,6 +232,7 @@ const PopupElement = (props: {
     setTimeout(() => {
       setHiding(false);
       middlewareHelper.destroy();
+      controllerContext.dispose(); // * call it here for the content
       MarkupTooltip.getInstance().hide();
 
       if(!withoutOverlay) {
@@ -234,7 +255,6 @@ const PopupElement = (props: {
         animationIntersector.checkAnimations2(false);
       }
 
-      controllerContext.dispose();
       props.onCloseAfterTimeout?.();
     }, 250);
   };
@@ -242,6 +262,13 @@ const PopupElement = (props: {
   const [destroyed, setDestroyed] = createSignal(false);
   const [hiding, setHiding] = createSignal(false);
   const [popupElement, setPopupElement] = createSignal<HTMLElement>();
+  const [btnConfirmOnEnter, setBtnConfirmOnEnter] = createSignal<HTMLElement>();
+
+  if(props.btnConfirmOnEnter) {
+    createEffect(() => {
+      setBtnConfirmOnEnter(props.btnConfirmOnEnter());
+    });
+  }
 
   const value: PopupContextValue = {
     register,
@@ -261,14 +288,13 @@ const PopupElement = (props: {
     withoutOverlay,
     night,
     confirmShortcutIsSendShortcut,
-    // get btnConfirmOnEnter() { return btnConfirmOnEnter(); },
+    get btnConfirmOnEnter() { return btnConfirmOnEnter(); },
+    setBtnConfirmOnEnter: props.btnConfirmOnEnter ? noop as typeof setBtnConfirmOnEnter : setBtnConfirmOnEnter,
     isConfirmationNeededOnClose,
     closable: props.closable || false,
-    withConfirm: props.withConfirm || false,
-    body: props.body || false,
-    footer: props.footer || false,
-    title: props.title || false,
-    get element() { return popupElement(); }
+    get element() { return popupElement(); },
+    kind: props.kind,
+    old: props.old
   };
 
   // Add to popups array
@@ -296,9 +322,11 @@ const PopupElement = (props: {
     }, 0);
   }
 
+  let mouseDownTarget: Element;
+
   return (
     <PopupContext.Provider value={value}>
-      <Portal mount={appendPopupTo()}>
+      <Portal mount={fullScreenElement() || capturedRoot}>
         <div
           ref={setPopupElement}
           class={classNames(
@@ -307,19 +335,39 @@ const PopupElement = (props: {
             night && 'night',
             withoutOverlay && 'no-overlay',
             shown() && 'active',
-            hiding() && 'hiding'
+            hiding() && 'hiding',
+            props.old && 'old'
           )}
+          onMouseDown={(e) => {
+            mouseDownTarget = e.target;
+          }}
           onClick={/* store.closeButton &&  */((e) => {
-            if(findUpClassName(e.target, 'popup-container') || !(e.target as HTMLElement).isConnected) {
+            if(
+              findUpClassName(e.target, 'popup-container') ||
+              !(e.target as HTMLElement).isConnected
+            ) {
               return;
             }
 
-            if(props.closable === false) return;
+            if(props.closable === false) {
+              return;
+            }
+
+            // Prevent hiding the popup when the click started inside the popup and ended outside
+            if(mouseDownTarget && mouseDownTarget !== e.target) return;
+            mouseDownTarget = undefined;
 
             hide();
           })}
         >
-          <div class={classNames('popup-container z-depth-1', props.containerClass)}>
+          <div
+            {...(props.containerProps || {})}
+            class={classNames(
+              'popup-container z-depth-1',
+              props.containerClass,
+              props.containerProps?.class
+            )}
+          >
             {props.children}
           </div>
         </div>
@@ -329,7 +377,7 @@ const PopupElement = (props: {
 };
 
 // Static properties
-PopupElement.POPUPS = [] as any[];
+PopupElement.POPUPS = [] as PopupContextValue[];
 PopupElement.MANAGERS = undefined as any;
 
 PopupElement.Header = (props: {
@@ -345,7 +393,8 @@ PopupElement.Header = (props: {
 
 PopupElement.Title = (props: {
   children?: JSX.Element,
-  title?: boolean | LangPackKey | DocumentFragment | HTMLElement
+  title?: boolean | LangPackKey | DocumentFragment | HTMLElement,
+  class?: string
 }) => {
   const context = useContext(PopupContext);
   const titleContent = () => {
@@ -361,7 +410,7 @@ PopupElement.Title = (props: {
 
   return context.register('title', (
     <Show when={titleContent()}>
-      <div class="popup-title">
+      <div class={classNames('popup-title', props.class)} dir="auto">
         {titleContent()}
       </div>
     </Show>
@@ -395,27 +444,9 @@ PopupElement.CloseButton = (props: {
   ));
 };
 
-PopupElement.ConfirmButton = (props: {
-  withConfirm?: LangPackKey | boolean
-}) => {
-  const context = useContext(PopupContext);
-
-  if(!context.withConfirm) return null;
-
-  return context.register('confirmButton', (
-    <button class="btn-primary btn-color-primary">
-      <Show when={context.withConfirm !== true}>
-        {i18n(context.withConfirm as LangPackKey)}
-      </Show>
-    </button>
-  ));
-};
-
 PopupElement.Body = (props: {
   children: JSX.Element,
-  class?: string,
-  scrollable?: boolean,
-  floatingHeader?: boolean
+  class?: string
 }) => {
   return useContext(PopupContext).register('body', (
     <div class={classNames('popup-body', props.class)}>
@@ -424,18 +455,55 @@ PopupElement.Body = (props: {
   ));
 };
 
+PopupElement.Scrollable = (props: Parameters<typeof Scrollable>[0]) => {
+  const context = useContext(PopupContext);
+  return context.register('body', (
+    <Scrollable
+      contextRef={(ref) => {
+        context.scrollableRef = ref;
+        props.contextRef?.(ref);
+      }}
+      {...props}
+      class={classNames(
+        'popup-scrollable',
+        props.class
+      )}
+    />
+  ));
+};
+
 PopupElement.Footer = (props: {
   children: JSX.Element,
-  class?: string
+  class?: string,
+  floating?: boolean,
+  sticky?: boolean
 }) => {
   return useContext(PopupContext).register('footer', (
-    <div class={classNames('popup-footer popup-footer-abitlarger', props.class)}>
+    <div
+      class={classNames(
+        'popup-footer popup-footer-abitlarger',
+        (props.floating || props.sticky) && 'popup-footer-floating',
+        props.sticky && 'popup-footer-sticky',
+        props.class
+      )}
+    >
+      {/* {props.floating && <Tabs.MenuGradient className="popup-footer-gradient" color="background" />} */}
       {props.children}
     </div>
   ));
 };
 
-PopupElement.FooterButton = (props: Parameters<typeof PopupElement.Button>[0] & {secondary?: boolean}) => {
+PopupElement.FooterPlaceholder = () => {
+  return (
+    <div class="popup-footer-placeholder" />
+  );
+};
+
+PopupElement.FooterButton = (
+  props: Omit<Parameters<typeof PopupElement.Button>[0], 'danger'> & {
+    color?: 'primary' | 'secondary' | 'danger'/*  | 'transparent' */
+  }
+) => {
   return (
     <PopupElement.Button
       {...props}
@@ -443,7 +511,10 @@ PopupElement.FooterButton = (props: Parameters<typeof PopupElement.Button>[0] & 
       class={classNames(
         'popup-footer-button',
         'btn-primary',
-        props.secondary ? 'btn-transparent primary text-bold' : 'btn-color-primary',
+        props.color === 'danger' && 'btn-primary-transparent danger',
+        props.color === 'secondary' && 'btn-transparent primary text-bold',
+        // props.color === 'transparent' && 'btn-primary-transparent',
+        (!props.color || props.color === 'primary') && 'btn-color-primary',
         props.class
       )}
     />
@@ -462,7 +533,9 @@ PopupElement.Button = (props: {
   iconRight?: Icon,
   class?: string,
   noDefaultClass?: boolean,
-  disabled?: boolean
+  disabled?: boolean,
+  ref?: Ref<HTMLButtonElement>,
+  confirm?: boolean
 }) => {
   const context = useContext(PopupContext);
 
@@ -492,6 +565,19 @@ PopupElement.Button = (props: {
     context.hide();
   };
 
+  onMount(() => {
+    createEffect(() => {
+      if(props.confirm) {
+        context.setBtnConfirmOnEnter(ref);
+
+        onCleanup(() => {
+          context.setBtnConfirmOnEnter();
+        });
+      }
+    });
+  });
+
+  let ref: HTMLButtonElement;
   return context.registerButton(props, (
     <Button
       class={classNames(
@@ -507,6 +593,10 @@ PopupElement.Button = (props: {
       iconClass={classNames('popup-button-icon', props.iconLeft ? 'left' : 'right')}
       text={props.langKey}
       textArgs={props.langArgs}
+      ref={(_ref) => {
+        ref = _ref as HTMLButtonElement;
+        (props.ref as any)?.(ref);
+      }}
     >{props.children}</Button>
   ));
 };
@@ -523,8 +613,10 @@ PopupElement.Buttons = (props: {
   ));
 };
 
-PopupElement.getPopups = <T extends any>(popupConstructor: any) => {
-  return PopupElement.POPUPS.filter((element) => element instanceof popupConstructor) as T[];
+PopupElement.getPopups = (popupKind: symbol) => {
+  return PopupElement.POPUPS.filter((element) => {
+    return element.kind === popupKind;
+  });
 };
 
 export const addCancelButton = (buttons: PopupButton[]) => {

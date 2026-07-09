@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {EnterCodeStep, EnterEmailStep} from '@components/popups/emailSetup';
 import {SliderSuperTab} from '@components/slider';
 import {render} from 'solid-js/web';
@@ -11,7 +5,7 @@ import {render} from 'solid-js/web';
 import styles from '@components/sidebarLeft/tabs/changeLoginEmail.module.scss';
 import {AccountSentEmailCode} from '@layer';
 import {toastNew} from '@components/toast';
-import AppSettingsTab from '@components/sidebarLeft/tabs/settings';
+import {AppSettingsTab} from '@components/solidJsTabs';
 
 class ChangeLoginEmailCodeTab extends SliderSuperTab {
   private dispose: VoidFunction

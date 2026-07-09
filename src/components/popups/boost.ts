@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement, {addCancelButton} from '.';
 import createBadge from '@helpers/createBadge';
 import cancelEvent from '@helpers/dom/cancelEvent';
@@ -34,7 +28,8 @@ export default class PopupBoost extends PopupPeer {
     super(className, {
       closable: true,
       overlayClosable: true,
-      description: true
+      description: true,
+      old: true
     });
 
     this.btnClose.remove();

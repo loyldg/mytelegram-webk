@@ -1,10 +1,5 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import safePlay from '@helpers/dom/safePlay';
+import {getOverlayRoot} from '@helpers/appWindow';
 import deepEqual from '@helpers/object/deepEqual';
 import tsNow from '@helpers/tsNow';
 
@@ -30,7 +25,7 @@ export default class AudioAssetPlayer<AssetMap extends Record<string, string>> {
     if(!AudioAssetPlayer.container) {
       AudioAssetPlayer.container = document.createElement('div');
       AudioAssetPlayer.container.id = 'audio-asset-player';
-      document.body.append(AudioAssetPlayer.container);
+      getOverlayRoot().append(AudioAssetPlayer.container);
     }
   }
 

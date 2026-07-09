@@ -171,11 +171,44 @@
   transition: opacity 0.2s ease-out;
 }
 
+.fade-4-enter-active,
+.fade-4-exit-active {
+  transition: opacity 0.4s ease-out;
+}
+
 .fade-enter,
 .fade-exit-to,
 .fade-2-enter,
-.fade-2-exit-to {
+.fade-2-exit-to,
+.fade-4-enter,
+.fade-4-exit-to {
   opacity: 0;
+}
+
+.t-move {
+  transition: transform 0.2s ease-out;
+}
+
+.t-move-std {
+  // Do not change easing function here, some places need synced easings for animations to not be jerky
+  transition: transform 0.2s;
+}
+
+.t-zoom-enter-active,
+.t-zoom-exit-active,
+.t-var-zoom-enter-active,
+.t-var-zoom-exit-active {
+  transition: transform 0.12s ease-out;
+}
+
+.t-zoom-enter,
+.t-zoom-exit-to {
+  transform: scale(0);
+}
+
+.t-var-zoom-enter,
+.t-var-zoom-exit-to {
+  --t-zoom-scale: 0;
 }
 
 /*

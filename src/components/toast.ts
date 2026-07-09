@@ -1,11 +1,6 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import replaceContent from '@helpers/dom/replaceContent';
 import OverlayClickHandler from '@helpers/overlayClickHandler';
+import {getOverlayRoot} from '@helpers/appWindow';
 import {FormatterArguments, i18n, LangPackKey} from '@lib/langPack';
 
 const toastsContainer = document.createElement('div');
@@ -41,7 +36,7 @@ export function toast(content: string | Node, onClose?: () => void) {
 
   if(!toastEl.parentElement) {
     if(!toastsContainer.parentNode) {
-      document.body.append(toastsContainer);
+      getOverlayRoot().append(toastsContainer);
     }
 
     toastsContainer.append(toastEl);

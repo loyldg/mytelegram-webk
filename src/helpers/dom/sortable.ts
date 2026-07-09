@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {ScrollableBase} from '@components/scrollable';
 import SwipeHandler from '@components/swipeHandler';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
@@ -15,6 +9,7 @@ import safeAssign from '@helpers/object/safeAssign';
 import pause from '@helpers/schedulers/pause';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
+import {getOverlayRoot} from '@helpers/appWindow';
 import findUpAsChild from '@helpers/dom/findUpAsChild';
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import whichChild from '@helpers/dom/whichChild';
@@ -50,7 +45,7 @@ export default class Sortable {
       verifyTouchTarget: this.verifyTouchTarget,
       onStart: this.onStart,
       onReset: this.onReset,
-      setCursorTo: document.body,
+      setCursorTo: getOverlayRoot(),
       middleware: this.middleware,
       withDelay: true
     });
@@ -154,7 +149,9 @@ export default class Sortable {
     }
 
     if(!IS_TOUCH_SUPPORTED) {
-      attachClickEvent(document.body, cancelEvent, {capture: true, once: true});
+      // Swallow the click that ends the reorder on the active window's body (the PiP doc when popped
+      // out), else the post-drag click isn't suppressed there. (The drag itself runs via SwipeHandler.)
+      attachClickEvent(getOverlayRoot(), cancelEvent, {capture: true, once: true});
     }
 
     if(liteMode.isAvailable('animations')) {
