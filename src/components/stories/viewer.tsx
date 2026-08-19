@@ -1,12 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 /* @refresh reload */
 
 import {animateSingle, cancelAnimationByKey} from '@helpers/animation';
+import {bindActiveWindowListener, getAppWindow, getOverlayRoot} from '@helpers/appWindow';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import overlayCounter from '@helpers/overlayCounter';
 import throttle from '@helpers/schedulers/throttle';
@@ -22,7 +17,6 @@ import {createSignal, createEffect, JSX, For, Accessor, onCleanup, createMemo, m
 import {unwrap} from 'solid-js/store';
 import {assign, Portal} from 'solid-js/web';
 import rootScope from '@lib/rootScope';
-import ListenerSetter from '@helpers/listenerSetter';
 import {Middleware} from '@helpers/middleware';
 import wrapRichText, {WrapRichTextOptions} from '@lib/richTextProcessor/wrapRichText';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
@@ -32,7 +26,7 @@ import formatDuration, {DurationType} from '@helpers/formatDuration';
 import {easeOutCubicApply} from '@helpers/easing/easeOutCubic';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import findUpAsChild from '@helpers/dom/findUpAsChild';
-import {onMediaCaptionClick} from '@components/appMediaViewer';
+import {onMediaCaptionClick} from '@components/mediaViewer';
 import InputFieldAnimated from '@components/inputFieldAnimated';
 import ChatInput from '@components/chat/input';
 import appImManager from '@lib/appImManager';
@@ -40,7 +34,7 @@ import Chat from '@components/chat/chat';
 import {ChatType} from '@components/chat/chatType';
 import middlewarePromise from '@helpers/middlewarePromise';
 import emoticonsDropdown from '@components/emoticonsDropdown';
-import PopupPickUser from '@components/popups/pickUser';
+import showPickUserPopup from '@components/popups/pickUser';
 import ButtonMenuToggle from '@components/buttonMenuToggle';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
 import {copyTextToClipboard} from '@helpers/clipboard';
@@ -79,7 +73,7 @@ import reactionsEqual from '@appManagers/utils/reactions/reactionsEqual';
 import wrapSticker from '@components/wrappers/sticker';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import isTargetAnInput from '@helpers/dom/isTargetAnInput';
-import {setQuizHint} from '@components/poll';
+import {setQuizHint} from '@components/quizHint';
 import {doubleRaf} from '@helpers/schedulers';
 import {resolveFirst} from '@solid-primitives/refs';
 import {IS_MOBILE} from '@environment/userAgent';
@@ -102,13 +96,13 @@ import createMiddleware from '@helpers/solid/createMiddleware';
 import showTooltip from '@components/tooltip';
 import safeWindowOpen from '@helpers/dom/safeWindowOpen';
 import wrapUrl from '@lib/richTextProcessor/wrapUrl';
-import PopupReportAd from '@components/popups/reportAd';
+import {showStoryReport} from '@components/popups/reportAd';
 import {useAppSettings} from '@stores/appSettings';
-import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '@components/chat/paidMessagesInterceptor';
 import showStoriesStealthModePopup from '@components/popups/storiesStealthMode';
 import {useAppConfig} from '@stores/appState';
-import {wrapFormattedDuration, wrapStoriesStealthModeDuration} from '@components/wrappers/wrapDuration';
+import {wrapStoriesStealthModeDuration} from '@components/wrappers/wrapDuration';
 import {handleShareStory} from './share';
+import createListenerSetter from '@helpers/solid/createListenerSetter';
 
 export const STORY_DURATION = 5e3;
 const STORY_HEADER_AVATAR_SIZE = 32;
@@ -124,30 +118,6 @@ rootScope.addEventListener('app_config', (appConfig) => {
 });
 
 const x = new OverlayClickHandler(undefined, true);
-
-const MessageInputField = (props: {}) => {
-  const inputField = new InputFieldAnimated({
-    placeholder: 'PreviewSender.CaptionPlaceholder',
-    name: 'message',
-    withLinebreaks: true
-  });
-
-  inputField.input.classList.replace('input-field-input', 'input-message-input');
-  inputField.inputFake.classList.replace('input-field-input', 'input-message-input');
-
-  return (
-    <div class="input-message-container">
-      {inputField.input}
-      {inputField.inputFake}
-    </div>
-  );
-};
-
-export function createListenerSetter() {
-  const listenerSetter = new ListenerSetter();
-  onCleanup(() => listenerSetter.removeAll());
-  return listenerSetter;
-}
 
 const StorySlides = (props: {
   state: StoriesContextPeerState,
@@ -397,7 +367,7 @@ const StoryInput = (props: {
         if(focused) {
           playAfterFocus = untrack(() => !stories.paused);
           // document.addEventListener('mousedown', onMouseDown, {capture: true, once: true});
-          document.addEventListener('click', onClick, {capture: true});
+          getAppWindow().document.addEventListener('click', onClick, {capture: true});
           appNavigationController.pushItem(navigationItem = {
             type: 'stories-focus',
             onPop: () => {
@@ -406,7 +376,7 @@ const StoryInput = (props: {
           });
         } else {
           // document.removeEventListener('mousedown', onMouseDown, {capture: true});
-          document.removeEventListener('click', onClick, {capture: true});
+          getAppWindow().document.removeEventListener('click', onClick, {capture: true});
           appNavigationController.removeItem(navigationItem);
           navigationItem = undefined;
         }
@@ -939,14 +909,21 @@ const Stories = (props: {
 
   peerTitleElement.classList.add(styles.ViewerStoryHeaderName);
 
-  const bindOnAnyPopupClose = (wasPlaying = !stories.paused) => () => onAnyPopupClose(wasPlaying);
+  // * `wasPlaying` is resolved in the body, not as a parameter default: the production
+  // * minifier binds a closure variable read from a parameter default to the wrong symbol
+  const wasPlayingOr = (wasPlaying?: boolean) => wasPlaying ?? !stories.paused;
+  const bindOnAnyPopupClose = (wasPlaying?: boolean) => {
+    const _wasPlaying = wasPlayingOr(wasPlaying);
+    return () => onAnyPopupClose(_wasPlaying);
+  };
   const onAnyPopupClose = (wasPlaying: boolean) => {
     if(wasPlaying) {
       actions.play();
     }
   };
 
-  const onShareClick = (wasPlaying = !stories.paused) => {
+  const onShareClick = (_wasPlaying?: boolean) => {
+    const wasPlaying = wasPlayingOr(_wasPlaying);
     actions.pause();
     handleShareStory({
       story: currentStory(),
@@ -2270,7 +2247,7 @@ const Stories = (props: {
       onClick: () => {
         ignoreOnClose = true;
         const onAnyPopupClose = bindOnAnyPopupClose(wasPlaying);
-        PopupReportAd.createStoryReport(props.state.peerId, [currentStory().id], onAnyPopupClose);
+        showStoryReport(props.state.peerId, [currentStory().id], onAnyPopupClose);
       },
       verify: () => !(story as StoryItem.storyItem).pFlags?.out && props.state.peerId !== CHANGELOG_PEER_ID
       // separator: true
@@ -2369,51 +2346,49 @@ const Stories = (props: {
   const openViewsList = isMe && (() => {
     let nextOffset: string;
     const viewsMap: Map<PeerId, StoryView.storyView> = new Map();
-    const popup: PopupPickUser = PopupElement.createPopup(
-      PopupPickUser,
-      {
-        peerType: ['custom'],
-        getMoreCustom: (q) => {
-          const loadCount = 50;
-          return rootScope.managers.appStoriesManager.getStoryViewsList(
-            props.state.peerId,
-            currentStory().id,
-            loadCount,
-            nextOffset,
-            q
-          ).then(({nextOffset: _nextOffset, views}) => {
-            nextOffset = _nextOffset;
-            return {
-              result: views.map((storyView) => {
-                const peerId = storyView.user_id.toPeerId(false);
-                viewsMap.set(peerId, storyView);
-                return peerId;
-              }),
-              isEnd: !nextOffset
-            };
-          });
-        },
-        processElementAfter: (peerId, dialogElement) => {
-          const view = viewsMap.get(peerId);
-          return processDialogElementForReaction({
-            dialogElement,
-            peerId,
-            date: view.date,
-            isMine: true,
-            middleware: popup.selector.middlewareHelperLoader.get(),
-            reaction: view.reaction
-          });
-        },
-        onSelect: (peerId) => {
-          props.close(() => {
-            appImManager.setInnerPeer({peerId});
-          });
-        },
-        placeholder: 'SearchPlaceholder',
-        exceptSelf: true,
-        meAsSaved: false
-      }
-    );
+    const popup = showPickUserPopup({
+      titleLangKey: 'StoryViewers',
+      peerType: ['custom'],
+      getMoreCustom: (q) => {
+        const loadCount = 50;
+        return rootScope.managers.appStoriesManager.getStoryViewsList(
+          props.state.peerId,
+          currentStory().id,
+          loadCount,
+          nextOffset,
+          q
+        ).then(({nextOffset: _nextOffset, views}) => {
+          nextOffset = _nextOffset;
+          return {
+            result: views.map((storyView) => {
+              const peerId = storyView.user_id.toPeerId(false);
+              viewsMap.set(peerId, storyView);
+              return peerId;
+            }),
+            isEnd: !nextOffset
+          };
+        });
+      },
+      processElementAfter: (peerId, dialogElement) => {
+        const view = viewsMap.get(peerId);
+        return processDialogElementForReaction({
+          dialogElement,
+          peerId,
+          date: view.date,
+          isMine: true,
+          middleware: popup.selector.middlewareHelperLoader.get(),
+          reaction: view.reaction
+        });
+      },
+      onSelect: ([obj]) => {
+        props.close(() => {
+          appImManager.setInnerPeer(obj);
+        });
+      },
+      placeholder: 'SearchPlaceholder',
+      exceptSelf: true,
+      meAsSaved: false
+    });
   });
 
   const onDeleteClick = isMe && (async() => {
@@ -2810,7 +2785,7 @@ export default function StoriesViewer(props: {
   ]);
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if(isTargetAnInput(document.activeElement as HTMLElement)) {
+    if(isTargetAnInput(getAppWindow().document.activeElement as HTMLElement)) {
       throttledKeyDown.clear();
       return;
     }
@@ -2855,11 +2830,15 @@ export default function StoriesViewer(props: {
     }
   }, 200, true);
 
+  // Follow the active window so the stories keyboard handler keeps firing when the overlay
+  // moves into a Document PiP window.
+  let disposeKeyDownListener: () => void;
+
   emoticonsDropdown.getElement().classList.add('night');
   emoticonsDropdown.setTextColor('white');
 
   onCleanup(() => {
-    document.body.removeEventListener('keydown', onKeyDown);
+    disposeKeyDownListener?.();
     toggleOverlay(false);
     swipeHandler.removeListeners();
     appNavigationController.removeItem(navigationItem);
@@ -3083,7 +3062,7 @@ export default function StoriesViewer(props: {
       }
 
       if(story && stories.hideInterface) {
-        document.addEventListener('click', cancelEvent, {capture: true, once: true});
+        getAppWindow().document.addEventListener('click', cancelEvent, {capture: true, once: true});
       }
 
       const playStories = stories.playAfterGesture || !stories.hideInterface;
@@ -3109,7 +3088,7 @@ export default function StoriesViewer(props: {
     });
 
     avatarFrom.node.style.cssText = `position: absolute; visibility: hidden; z-index: 1000; transform-origin: top left;`;
-    document.body.append(avatarFrom.node);
+    getOverlayRoot().append(avatarFrom.node);
 
     if(!untrack(() => show())) {
       createEffect(() => {
@@ -3242,7 +3221,7 @@ export default function StoriesViewer(props: {
       avatarFrom.node.style.left = `${rectFrom.left}px`;
       avatarFrom.node.style.visibility = '';
       if(!avatarFrom.node.parentElement) {
-        document.body.append(avatarFrom.node);
+        getOverlayRoot().append(avatarFrom.node);
       }
       const translateX = rectTo.left - rectFrom.left;
       const translateY = rectTo.top - rectFrom.top;
@@ -3397,7 +3376,7 @@ export default function StoriesViewer(props: {
       <Transition
         onEnter={(el, done) => {
           dispatchHeavyAnimationEvent(deferred, 1000);
-          document.body.addEventListener('keydown', onKeyDown);
+          disposeKeyDownListener = bindActiveWindowListener((w) => w.document.body, 'keydown', onKeyDown);
           toggleOverlay(true);
           animate(el, true, done);
         }}

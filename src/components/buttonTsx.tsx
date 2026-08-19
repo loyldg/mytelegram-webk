@@ -4,6 +4,12 @@ import {IconTsx} from '@components/iconTsx';
 import classNames from '@helpers/string/classNames';
 import RippleElement from '@components/rippleElement';
 
+type ButtonAccessibilityProps = Pick<JSX.ButtonHTMLAttributes<HTMLButtonElement>,
+  | 'aria-label'
+  | 'aria-pressed'
+  | 'on:keydown'
+>;
+
 const Button = (props: Partial<{
   ref: Ref<HTMLElement>,
   as: 'a' | 'div' | 'button',
@@ -22,9 +28,9 @@ const Button = (props: Partial<{
   textArgs: FormatterArguments,
   noRipple: boolean,
   rippleSquare: boolean,
-  onlyMobile: boolean
+  onlyMobile: boolean,
   tabIndex: number,
-}> = {}): JSX.Element => {
+}> & ButtonAccessibilityProps = {}): JSX.Element => {
   let disabled: Accessor<boolean>, setDisabled: Setter<boolean>;
   if(props.disabled !== undefined) {
     disabled = createMemo(() => props.disabled);
@@ -61,6 +67,9 @@ const Button = (props: Partial<{
       noRipple={props.noRipple}
       rippleSquare={props.rippleSquare}
       tabIndex={props.tabIndex}
+      aria-label={props['aria-label']}
+      aria-pressed={props['aria-pressed']}
+      on:keydown={props['on:keydown']}
     >
       {props.icon && <IconTsx icon={props.icon} class={classNames('button-icon', props.iconClass)} />}
       {props.text ? i18n(props.text, props.textArgs) : props.children}
@@ -73,10 +82,17 @@ Button.Corner = (props: Partial<{
   ref: Ref<HTMLElement>,
   children: JSX.Element,
   onClick: (e: MouseEvent) => void,
-  class: string
-}>) => {
+  class: string,
+  icon: Icon,
+  disabled: boolean,
+  tabIndex: number
+}> & ButtonAccessibilityProps) => {
   return (
-    <Button {...props} class={classNames('btn-circle', 'btn-corner', 'z-depth-1', props.class)} tabIndex={-1} />
+    <Button
+      {...props}
+      class={classNames('btn-circle', 'btn-corner', 'z-depth-1', props.class)}
+      tabIndex={props.tabIndex ?? -1}
+    />
   );
 };
 
@@ -84,10 +100,16 @@ Button.Icon = (props: {icon: Icon} & Partial<{
   ref: Ref<HTMLElement>,
   children: JSX.Element,
   onClick: (e: MouseEvent) => void,
-  class: string
-}>) => {
+  class: string,
+  noRipple: boolean,
+  tabIndex: number
+}> & ButtonAccessibilityProps) => {
   return (
-    <Button {...props} class={classNames('btn-icon', props.icon, props.class)} tabIndex={-1} />
+    <Button
+      {...props}
+      class={classNames('btn-icon', props.icon, props.class)}
+      tabIndex={props.tabIndex ?? -1}
+    />
   )
 };
 

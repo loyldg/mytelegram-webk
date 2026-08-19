@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement from '.';
 import I18n, {i18n} from '@lib/langPack';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
@@ -46,7 +40,8 @@ export default class PopupStarReaction extends PopupElement {
       body: true,
       scrollable: true,
       footer: true,
-      withConfirm: true
+      withConfirm: true,
+      old: true
       // title: true
     });
 

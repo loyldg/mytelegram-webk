@@ -1,13 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../shared" as *;
 
 .invite-link {
-  border-radius: $border-radius-medium;
+  border-radius: $button-border-radius;
   background-color: var(--background-color);
   position: relative;
   color: var(--primary-text-color);
@@ -43,7 +37,7 @@
   }
 
   &-button {
-    margin-top: .5rem;
+    margin-block: .5rem;
     height: 3rem;
     text-transform: uppercase;
   }

@@ -1,28 +1,7 @@
 // @import "../scss/mixins";
 @use "../../scss/variables" as *;
 
-.container {
-  order: 0;
-  // padding: 0 .5rem;
-  // margin: .5rem 0;
-
-  // interpolate-size: allow-keywords;
-  // height: 0;
-  // overflow: hidden;
-  // transition: height 200ms ease-in-out;
-
-  // &.shown {
-  //   height: max-content;
-  // }
-}
-
 .suggestion {
-  margin: .5rem;
-
-  :global(.has-vertical-folders) & {
-    margin-bottom: 0;
-  }
-
   &Subtitle {
     font-size: var(--font-size-16);
     line-height: var(--line-height-16);
@@ -30,10 +9,15 @@
 
   &Container {
     overflow: hidden;
+    margin: .5rem;
+
+    :global(.has-vertical-folders) & {
+      margin-bottom: 0;
+    }
   }
 
   &.danger {
-    background-color: rgba(var(--danger-color-rgb), $hover-alpha);
+    background-color: var(--light-filled-danger-color) !important;
 
     .suggestionTitle {
       color: var(--danger-color);
@@ -41,16 +25,20 @@
   }
 
   &.secondary {
-    background-color: rgba(var(--secondary-text-color-rgb), $hover-alpha);
+    background-color: var(--light-filled-secondary-text-color) !important;
   }
 }
 
 .collapsed {
   width: 100%;
   height: 3.75rem;
+  padding: 0;
+  border: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: inherit;
+  background: transparent;
   font-size: 1.5rem;
   cursor: pointer;
 
@@ -67,6 +55,44 @@
   inset-inline-end: .25rem;
   top: .25rem;
   z-index: 1;
+}
+
+.connectionReview {
+  border-radius: var(--border-radius);
+  background-color: var(--light-filled-danger-color);
+  padding: .75rem 1rem .5rem;
+  text-align: center;
+
+  &Title {
+    color: var(--danger-color);
+    font-size: var(--font-size-16);
+    font-weight: var(--font-weight-bold);
+    line-height: var(--line-height-16);
+  }
+
+  &Text {
+    color: var(--secondary-text-color);
+    font-size: var(--font-size-14);
+    line-height: var(--line-height-14);
+    margin-top: .25rem;
+  }
+
+  &Actions {
+    display: flex;
+    gap: .25rem;
+    margin-top: .25rem;
+  }
+
+  &Button {
+    min-width: 0;
+    flex: 1 1 0;
+    height: 2.25rem;
+    font-size: var(--font-size-14);
+  }
+
+  &Reject {
+    color: var(--danger-color);
+  }
 }
 
 // .container {

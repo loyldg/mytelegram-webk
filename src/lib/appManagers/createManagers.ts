@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {PasswordManager} from '@appManagers/passwordManager';
 import {ReferencesStorage} from '@lib/storages/references';
 import DialogsStorage from '@lib/storages/dialogs';
@@ -12,6 +6,7 @@ import {ApiUpdatesManager} from '@appManagers/apiUpdatesManager';
 import {AppAvatarsManager} from '@appManagers/appAvatarsManager';
 import {AppCallsManager} from '@appManagers/appCallsManager';
 import {AppChatsManager} from '@appManagers/appChatsManager';
+import {AppCommunitiesManager} from '@appManagers/appCommunitiesManager';
 import {AppDocsManager} from '@appManagers/appDocsManager';
 import {AppDraftsManager} from '@appManagers/appDraftsManager';
 import {AppEmojiManager} from '@appManagers/appEmojiManager';
@@ -61,9 +56,11 @@ import AppGifsManager from '@appManagers/appGifsManager';
 import {ActiveAccountNumber} from '@lib/accounts/types';
 import {AppManager} from '@appManagers/manager';
 import AppGiftsManager from '@appManagers/appGiftsManager';
+import AppGamesManager from '@appManagers/appGamesManager';
 import MonoforumDialogsStorage from '@lib/storages/monoforumDialogs';
 import AppPromoManager from '@appManagers/appPromoManager';
 import AppAccountManager from '@appManagers/appAccountManager';
+import {AiTonesManager} from '@lib/appManagers/aiTonesManager';
 
 export default function createManagers(
   appStoragesManager: AppStoragesManager,
@@ -74,6 +71,7 @@ export default function createManagers(
   const managers = {
     appPeersManager: new AppPeersManager,
     appChatsManager: new AppChatsManager,
+    appCommunitiesManager: new AppCommunitiesManager,
     appDocsManager: new AppDocsManager,
     appPhotosManager: new AppPhotosManager,
     appPollsManager: new AppPollsManager,
@@ -125,9 +123,11 @@ export default function createManagers(
     appTranslationsManager: new AppTranslationsManager,
     appGifsManager: new AppGifsManager,
     appGiftsManager: new AppGiftsManager,
+    appGamesManager: new AppGamesManager,
     monoforumDialogsStorage: new MonoforumDialogsStorage,
     appPromoManager: new AppPromoManager,
-    appAccountManager: new AppAccountManager
+    appAccountManager: new AppAccountManager,
+    aiTonesManager: new AiTonesManager
   };
 
   managers.authorizer = new Authorizer({
@@ -157,6 +157,7 @@ export default function createManagers(
   const promises: Array<Promise<(() => void) | void> | void>[] = [];
   let names = Object.keys(managers) as (keyof T)[];
   names.unshift(
+    'appCommunitiesManager',
     'appUsersManager',
     'appChatsManager',
     'appNotificationsManager',

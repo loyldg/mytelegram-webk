@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import readBlobAsUint8Array from '@helpers/blob/readBlobAsUint8Array';
 import bufferConcats from '@helpers/bytes/bufferConcats';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
@@ -46,6 +40,17 @@ setInterval(() => {
 type StreamRange = [number, number];
 type StreamId = `${ActiveAccountNumber}-${DocId}`;
 
+// The mime type is read out of the request URL, so it is fully attacker-controlled:
+// echoing it back would let file bytes be served as markup from the app origin, where
+// script can read the auth keys. This endpoint only ever serves streamable media
+// (getDocumentURL picks it for doc.supportsStreaming), so anything else is handed to
+// the browser as an opaque download instead.
+const STREAMABLE_MIME_TYPE = /^(?:video|audio|image)\/[\w.+-]+$/;
+
+function safeContentType(mimeType: string) {
+  return STREAMABLE_MIME_TYPE.test(mimeType) ? mimeType : 'application/octet-stream';
+}
+
 const streams: Map<StreamId, Stream> = new Map();
 (ctx as any).streams = streams;
 class Stream {
@@ -67,6 +72,11 @@ class Stream {
   }
 
   private destroy = () => {
+    if(this.inUse > 0) { // still attached to a <video>; re-arm and re-check later instead of killing a live stream
+      this.destroyDebounced();
+      return;
+    }
+
     this.destroyDebounced.clearTimeout();
     streams.delete(this.id);
     serviceMessagePort.invokeVoid('cancelFilePartRequests', {
@@ -76,7 +86,7 @@ class Stream {
   };
 
   public toggleInUse = (inUse: boolean) => {
-    this.inUse += inUse ? 1 : -1;
+    this.inUse = Math.max(0, this.inUse + (inUse ? 1 : -1));
     if(!this.inUse) {
       this.destroy();
     }
@@ -138,7 +148,9 @@ class Stream {
     return cacheStorage.getFile(key).then((blob: Blob) => {
       return fromPreload ? new Uint8Array() : readBlobAsUint8Array(blob);
     }, (error: ApiError) => {
-      if(error.type === 'NO_ENTRY_FOUND') {
+      // cache miss (NO_ENTRY_FOUND) or any other failure — including a bare cache
+      // timeout that rejects with `undefined` — must fall back to the worker, never throw
+      if(error?.type === 'NO_ENTRY_FOUND') {
         return;
       }
     });
@@ -168,7 +180,7 @@ class Stream {
       const response = new Response(bytes as BodyInit);
 
       return cacheStorage.save({entryName: key, response, size: bytes.length, contentType: 'application/octet-stream'});
-    });
+    }).catch(() => {}); // best-effort cache write; a failed/cancelled chunk must not surface as an unhandled rejection
   }
 
   private preloadChunk(offset: number) {
@@ -177,20 +189,27 @@ class Stream {
     }
 
     this.loadedOffsets.add(offset);
-    this.requestFilePart(offset, this.limitPart, true);
+    this.requestFilePart(offset, this.limitPart, true).catch(() => {}); // fire-and-forget read-ahead
   }
 
-  private preloadChunks(offset: number, end: number) {
+  private preloadChunks(from: number, size: number) {
+    if(!from) { // at the very start prime the file's last chunk (mp4 `moov`/duration usually lives there)
+      if(this.info.size) {
+        this.preloadChunk(alignOffset(this.info.size - 1, this.limitPart));
+      }
+      return;
+    }
+
+    // read ahead a window of `size` bytes from the current position; align the start to
+    // the chunk grid so every preloaded offset is a valid (chunk-aligned) MTProto offset
+    let offset = alignOffset(from, this.limitPart);
+    let end = offset + size;
     if(end > this.info.size) {
       end = this.info.size;
     }
 
-    if(!offset) { // load last chunk for bounds
-      this.preloadChunk(alignOffset(offset, this.limitPart));
-    } else { // don't preload next chunks before the start
-      for(; offset < end; offset += this.limitPart) {
-        this.preloadChunk(offset);
-      }
+    for(; offset < end; offset += this.limitPart) {
+      this.preloadChunk(offset);
     }
   }
 
@@ -210,7 +229,9 @@ class Stream {
       offset = info.size - (info.size % limitPart);
     } */
 
-    const limit = end && end < this.limitPart ? alignLimit(end - offset + 1) : this.limitPart;
+    const limit = end && end < this.limitPart ?
+      Math.max(SMALLEST_CHUNK_LIMIT, alignLimit(end - offset + 1)) :
+      this.limitPart;
     const alignedOffset = alignOffset(offset, limit);
 
     if(!end) {
@@ -224,7 +245,7 @@ class Stream {
 
     const parts = Promise.all([
       this.requestFilePart(alignedOffset, limit),
-      overflow && this.requestFilePart(alignedOffset + limit, limit)
+      overflow > 0 && this.requestFilePart(alignedOffset + limit, limit)
     ]);
 
     return parts.then((parts) => {
@@ -250,12 +271,12 @@ class Stream {
       const headers: Record<string, string> = {
         'Accept-Ranges': 'bytes',
         'Content-Range': `bytes ${offset}-${offset + ab.byteLength - 1}/${this.info.size || '*'}`,
-        'Content-Length': `${ab.byteLength}`,
-        'Response-Time': '' + Date.now()
+        'Content-Length': `${ab.byteLength}`
       };
 
       if(this.info.mimeType) {
-        headers['Content-Type'] = this.info.mimeType;
+        headers['Content-Type'] = safeContentType(this.info.mimeType);
+        headers['X-Content-Type-Options'] = 'nosniff';
       }
 
       // simulate slow connection
@@ -281,6 +302,10 @@ class Stream {
     return streams.get(this.getId(info)) ?? new Stream(info);
   }
 
+  public static getExisting(info: DownloadOptions) {
+    return streams.get(this.getId(info));
+  }
+
   private static getId(info: DownloadOptions): StreamId {
     return `${info.accountNumber}-${this.getDocId(info)}`;
   }
@@ -295,6 +320,14 @@ function parseInfo(params: string) {
 }
 
 export default function onStreamFetch(event: FetchEvent, params: string, search: string) {
+  // Media elements fetch with mode 'cors'/'no-cors'; a navigation or an iframe from
+  // another origin is never a legitimate way into this endpoint, and it is the only
+  // way its response could be rendered as a document.
+  if(event.request.mode === 'navigate') {
+    event.respondWith(new Response('', {status: 403, statusText: 'Forbidden'}));
+    return;
+  }
+
   async function performRequest() {
     const range = parseRange(event.request.headers.get('Range'));
     const info = parseInfo(params);
@@ -326,8 +359,10 @@ export function toggleStreamInUse({url, inUse, accountNumber}: {url: string, inU
   const index = url.indexOf(needle);
   const info = parseInfo(url.slice(index + needle.length));
   info.accountNumber = accountNumber;
-  const stream = Stream.get(info);
-  stream.toggleInUse(inUse);
+  // only create a stream when marking it in use; releasing one that was already
+  // destroyed (e.g. by the idle debounce) must not resurrect a zombie stream
+  const stream = inUse ? Stream.get(info) : Stream.getExisting(info);
+  stream?.toggleInUse(inUse);
 }
 
 function responseForSafariFirstRange(range: StreamRange, mimeType: string, size: number): Response {
@@ -353,7 +388,8 @@ const SMALLEST_CHUNK_LIMIT = 256 * 4; */
 const SMALLEST_CHUNK_LIMIT = 1024 * 4; */
 const STREAM_CHUNK_MIDDLE_LIMIT = 512 * 1024;
 const STREAM_CHUNK_UPPER_LIMIT = 1024 * 1024;
-const SMALLEST_CHUNK_LIMIT = 512 * 4;
+// MTProto's upload.getFile requires `limit` to be a multiple of 4 KB and to divide 1 MB
+const SMALLEST_CHUNK_LIMIT = 4 * 1024;
 
 export function parseRange(header: string): StreamRange {
   if(!header) return [0, 0];
@@ -369,5 +405,6 @@ function alignOffset(offset: number, base = SMALLEST_CHUNK_LIMIT) {
 }
 
 function alignLimit(limit: number) {
-  return 2 ** Math.ceil(Math.log(limit) / Math.log(2));
+  // smallest power of two >= limit, without the floating-point error of Math.log
+  return limit <= 1 ? 1 : 2 ** (32 - Math.clz32(limit - 1));
 }

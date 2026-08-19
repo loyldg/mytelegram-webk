@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import findUpAsChild from '@helpers/dom/findUpAsChild';
@@ -26,6 +20,7 @@ export type CheckboxFieldsField = {
   nestedTo?: CheckboxFieldsField,
   nestedCounter?: HTMLElement,
   setNestedCounter?: (count: number) => void,
+  nestedRightButtonIcon?: Icon | false,
   toggleWith?: {checked?: CheckboxFieldsField[], unchecked?: CheckboxFieldsField[]},
   name?: string,
   row?: Row
@@ -145,7 +140,11 @@ export default class CheckboxFields<K extends CheckboxFieldsField = CheckboxFiel
 
       row.container.classList.add('accordion-toggler');
       if(this.round) {
-        rightContent.append(Icon(this.rightButtonIcon), ' ', nestedCounter, ' ', accordionIcon);
+        if(info.nestedRightButtonIcon !== false) {
+          rightContent.append(Icon(info.nestedRightButtonIcon ?? this.rightButtonIcon), ' ');
+        }
+
+        rightContent.append(nestedCounter, ' ', accordionIcon);
         row.container.classList.add('accordion-toggler-round');
       } else {
         row.title.append(' ', nestedCounter, ' ', accordionIcon);
@@ -216,6 +215,11 @@ export default class CheckboxFields<K extends CheckboxFieldsField = CheckboxFiel
   }
 
   public setNestedCounter(info: CheckboxFieldsField, count = this.getNestedCheckedLength(info)) {
+    if(info.setNestedCounter) {
+      info.setNestedCounter(count);
+      return;
+    }
+
     info.nestedCounter.textContent = this.round ? '' + info.nested.length : `${count}/${info.nested.length}`;
   }
 }

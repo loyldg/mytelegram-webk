@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {PeerAvailableReactions} from '@appManagers/appReactionsManager';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import {IS_MOBILE, IS_SAFARI} from '@environment/userAgent';
@@ -14,6 +8,7 @@ import deferredPromise from '@helpers/cancellablePromise';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import findUpClassName from '@helpers/dom/findUpClassName';
+import {getOverlayRoot} from '@helpers/appWindow';
 import ListenerSetter from '@helpers/listenerSetter';
 import liteMode from '@helpers/liteMode';
 import {Middleware, getMiddleware} from '@helpers/middleware';
@@ -22,9 +17,10 @@ import {fastRaf} from '@helpers/schedulers';
 import {Message, AvailableReaction, Reaction, AvailableEffect, EmojiGroup} from '@layer';
 import {AppManagers} from '@lib/managers';
 import apiManagerProxy from '@lib/apiManagerProxy';
-import lottieLoader from '@lib/rlottie/lottieLoader';
-import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
+import lottieLoader from '@lib/lottie/lottieLoader';
+import LottiePlayer from '@lib/lottie/lottiePlayer';
 import rootScope from '@lib/rootScope';
+import {stashFlightSource, warmUpGenericEffectAssets, warmUpReactionEffect} from '@components/chat/reaction';
 import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
 import ButtonIcon from '@components/buttonIcon';
 import {EmoticonsDropdown} from '@components/emoticonsDropdown';
@@ -52,8 +48,8 @@ const CAN_USE_TRANSFORM = !IS_SAFARI;
 const SCALE_ON_HOVER = CAN_USE_TRANSFORM && false;
 
 type ChatReactionsMenuPlayers = {
-  select?: RLottiePlayer,
-  appear?: RLottiePlayer,
+  select?: LottiePlayer,
+  appear?: LottiePlayer,
   selectWrapper: HTMLElement,
   appearWrapper: HTMLElement,
   reaction: Reaction
@@ -167,6 +163,11 @@ export class ChatReactionsMenu {
       const players = this.reactionsMap.get(reactionDiv);
       if(!players) return;
 
+      // * snapshot the clicked element (instant flight source) + kick off the
+      // * clean first-frame render that upgrades it
+      if(!this.isEffects) {
+        stashFlightSource(players.reaction, reactionDiv);
+      }
       this.onFinish(players.reaction);
     }, {listenerSetter: this.listenerSetter});
 
@@ -227,6 +228,10 @@ export class ChatReactionsMenu {
   }
 
   private async prepareReactions(message?: Message.message | Message.messageService) {
+    // * most reactions resolve to the generic effect - have its assets ready
+    // * by the time the user picks one
+    warmUpGenericEffectAssets(this.managers);
+
     const middleware = this.middlewareHelper.get();
     const availableReactionsResult = apiManagerProxy.getAvailableReactions();
     const peerAvailableReactionsResult = await this.managers.acknowledged.appReactionsManager.getAvailableReactionsByMessage(message);
@@ -244,7 +249,10 @@ export class ChatReactionsMenu {
       }
 
       this.reactions = peerAvailableReactions.reactions;
-      this.noPacks = this.noSearch = peerAvailableReactions.type !== 'chatReactionsAll';
+      // At reactions_uniq_max the message can take no new distinct reaction, so hide the
+      // custom-emoji search/packs (like tdesktop/iOS/Android) — the grid is already narrowed
+      // to the present kinds; only piling onto those stays possible.
+      this.noPacks = this.noSearch = peerAvailableReactions.type !== 'chatReactionsAll' || !!peerAvailableReactions.atUniqCap;
       return this.renderReactions(peerAvailableReactions, availableReactions);
     });
 
@@ -413,6 +421,12 @@ export class ChatReactionsMenu {
           };
         }
 
+        // * snapshot the clicked element (instant flight source) + kick off the
+        // * clean first-frame render that upgrades it
+        if(!this.isEffects) {
+          stashFlightSource(reaction, emoji.element);
+        }
+
         deferred.resolve(reaction);
         emoticonsDropdown.hideAndDestroy();
       },
@@ -453,7 +467,10 @@ export class ChatReactionsMenu {
 
     const emoticonsDropdown = new EmoticonsDropdown({
       tabsToRender: [emojiTab],
-      customParentElement: document.body,
+      // Mount into the active app window's body (a function so it resolves lazily at open time):
+      // while the client is popped into a Document PiP window the reactions menu lives there, so a
+      // hardcoded main-`document.body` would render this emoji picker into the now-background tab.
+      customParentElement: getOverlayRoot,
       getOpenPosition: () => this.getOpenPosition(!this.noPacks)
     });
 
@@ -475,7 +492,9 @@ export class ChatReactionsMenu {
     emoticonsDropdown.onButtonClick();
   };
 
-  private async splitAvailableEffects(availableEffects: AvailableEffect[]): ReturnType<EmojiTab['searchFetcher']> {
+  private async splitAvailableEffects(
+    availableEffects: AvailableEffect[]
+  ): Promise<Awaited<ReturnType<EmojiTab['searchFetcher']>>> {
     const [stickers, customEmojis] = partition(availableEffects, (availableEffect) => !availableEffect.effect_animation_id);
     const docIds = stickers.map((availableEffect) => availableEffect.effect_sticker_id);
     const docs = await Promise.all(docIds.map((docId) => this.managers.appDocsManager.getDoc(docId)));
@@ -498,6 +517,10 @@ export class ChatReactionsMenu {
   }
 
   private async renderReaction(reaction: Reaction, availableReaction?: AvailableReaction) {
+    if(availableReaction) {
+      warmUpReactionEffect(availableReaction);
+    }
+
     const reactionDiv = document.createElement('div');
     reactionDiv.classList.add(REACTION_CLASS_NAME);
 
@@ -566,7 +589,7 @@ export class ChatReactionsMenu {
         player.addEventListener('enterFrame', (frameNo) => {
           if(player.maxFrame === frameNo) {
             selectLoadPromise.then((selectPlayer) => {
-              assumeType<RLottiePlayer>(selectPlayer);
+              assumeType<LottiePlayer>(selectPlayer);
               appearWrapper.classList.add('hide');
               selectWrapper.classList.remove('hide');
 
@@ -594,6 +617,16 @@ export class ChatReactionsMenu {
       let doc = availableReaction?.static_icon, delay = false;
       if(!doc) {
         const result = await this.managers.acknowledged.appEmojiManager.getCustomEmojiDocument((reaction as Reaction.reactionCustomEmoji).document_id);
+        // * a custom emoji reaction fires the effect of its base emoji - warm
+        // * it up so the click plays it instead of the generic fallback
+        if(!this.isEffects && reaction._ === 'reactionCustomEmoji') {
+          Promise.resolve(result.result).then((doc) => {
+            return doc?.stickerEmojiRaw && Promise.resolve(apiManagerProxy.getReaction(doc.stickerEmojiRaw)).then((availableReaction) => {
+              availableReaction && warmUpReactionEffect(availableReaction);
+            });
+          }).catch(noop);
+        }
+
         if(result.cached) {
           doc = await result.result;
         } else {
@@ -615,14 +648,14 @@ export class ChatReactionsMenu {
         liteModeKey: false,
         ...options
       }).then(({render}) => render).then((player) => {
-        assumeType<RLottiePlayer>(player);
+        assumeType<LottiePlayer>(player);
 
         players.appear = player;
 
         player.addEventListener('enterFrame', (frameNo) => {
           if(player.maxFrame === frameNo) {
             selectLoadPromise.then((selectPlayer) => {
-              assumeType<RLottiePlayer>(selectPlayer);
+              assumeType<LottiePlayer>(selectPlayer);
               appearWrapper.classList.add('hide');
               selectWrapper.classList.remove('hide');
 
@@ -641,7 +674,7 @@ export class ChatReactionsMenu {
         liteModeKey: false,
         ...options
       }).then(({render}) => render).then((player) => {
-        assumeType<RLottiePlayer>(player);
+        assumeType<LottiePlayer>(player);
 
         return lottieLoader.waitForFirstFrame(player);
       }).catch(noop);

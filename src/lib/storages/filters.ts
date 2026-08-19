@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {DialogFilter, InputChatlist, Update, Updates} from '@layer';
 import type {Dialog} from '@appManagers/appMessagesManager';
 import type {AnyDialog} from '@lib/storages/dialogs';
@@ -547,13 +541,21 @@ export default class FiltersStorage extends AppManager {
     }
   }
 
-  public async isFilterIdAvailable(filterId: number) {
+  public async isFilterIdAvailable(filterId: number): Promise<boolean | undefined> {
     if(REAL_FOLDERS.has(filterId)) {
       return true;
     }
 
+    await this.getDialogFilters();
+    if(!this.filtersArr.some((filter) => filter.id === filterId)) {
+      return;
+    }
+
     const limit = await this.apiManager.getLimit('folders');
-    const isFolderAvailable = this.filtersArr.filter((filter) => !REAL_FOLDERS.has(filter.id)).slice(0, limit).some((filter) => filter.id === filterId);
+    const isFolderAvailable = this.filtersArr
+    .filter((filter) => !REAL_FOLDERS.has(filter.id))
+    .slice(0, limit)
+    .some((filter) => filter.id === filterId);
 
     return isFolderAvailable;
   }

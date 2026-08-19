@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "sass:string";
 @use "sass:math";
 @use "../shared" as *;
@@ -54,10 +48,11 @@
   &-avatar {
     position: sticky !important;
     top: 0;
-    bottom: $bubble-overflow-big;
+    bottom: calc(var(--chat-padding-bottom) + #{$bubble-overflow-big} + .25rem);
     cursor: pointer;
     pointer-events: all;
     overflow: hidden;
+    transition: bottom var(--transition-standard-out);
 
     .bubbles.is-selecting & {
       transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
@@ -68,7 +63,11 @@
       transform: translateX(0);
 
       &.animating.backwards {
-        transition: transform var(--transition-standard-out);
+        // keep animating `bottom` too: releasing the swipe on the LAST group fires
+        // `initMessageReply`, which grows the input and shifts `--chat-padding-bottom` (this
+        // avatar is pinned to it) — overriding the transition to `transform` only made that
+        // coincident `bottom` change snap instead of animate, so the avatar jumped vertically.
+        transition: transform var(--transition-standard-out), bottom var(--transition-standard-out);
       }
     }
 
@@ -84,6 +83,15 @@
       // make avatar clickable
       z-index: 2;
       pointer-events: none;
+
+      &.avatar-for-reply-markup::before {
+        content: '';
+        display: grid;
+        flex: 0 0 auto;
+        grid-template-rows:
+          $reply-markup-margin-top
+          repeat(var(--reply-markup-row-count), $reply-markup-row-height);
+      }
     }
   }
 }
@@ -104,6 +112,69 @@
   flex-wrap: wrap;
   box-sizing: border-box;
   //flex-direction: column; // fix 'Unread messages', still need to refactor it
+
+  // * guest-chat messages force the guest bot's avatar even in a 1-on-1 chat (which otherwise
+  // * has no avatar column), so reserve room for it; group chats already indent via .is-chat
+  &.is-guest-chat .bubble-content-wrapper {
+    margin-inline-start: 2.875rem;
+  }
+
+  .is-guest-chat-for {
+    font-weight: var(--font-weight-normal);
+  }
+
+  .bubble-name-chip-container {
+    display: flex !important;
+    align-items: flex-start;
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+
+  .ephemeral-badge-container {
+    margin: $message-padding-top $message-padding-horizontal 0;
+  }
+
+  .ephemeral-badge {
+    display: flex;
+    align-items: center;
+    gap: .25rem;
+    width: fit-content;
+    max-width: 100%;
+    padding: .125rem .375rem;
+    border-radius: .5rem;
+    color: var(--message-primary-color);
+    background-color: rgba(var(--message-primary-color-rgb), .12);
+    font-weight: var(--font-weight-normal);
+    font-size: var(--messages-secondary-text-size);
+    line-height: var(--messages-secondary-line-height);
+    overflow: hidden;
+    user-select: none;
+
+    &-icon {
+      flex: 0 0 auto;
+      font-size: .875rem;
+    }
+
+    &-peer {
+      display: inline;
+      color: inherit;
+      font-weight: var(--font-weight-bold);
+      cursor: pointer;
+    }
+  }
+
+  &.is-ephemeral.just-media {
+    .ephemeral-badge-container.ephemeral-badge-standalone {
+      margin: 0;
+      background-color: transparent;
+    }
+
+    .ephemeral-badge {
+      color: #fff;
+      background-color: var(--message-highlighting-color);
+      max-width: 15rem;
+    }
+  }
 
   &.is-sponsored {
     --max-width: calc(80% - var(--message-beside-button-margin) * -1) !important;
@@ -167,6 +238,16 @@
         visibility: visible;
         // opacity: 1;
         transform: translateY(-50%) scale(1);
+      }
+
+      // fade the icon out on release instead of dropping it in a single frame (it fades IN via the
+      // inline opacity ramp during the swipe, so match that on the way out)
+      &.is-hiding {
+        opacity: 0 !important;
+
+        @include animation-level(2) {
+          transition: opacity var(--transition-standard-out);
+        }
       }
     }
   }
@@ -417,7 +498,7 @@
     }
 
     &.is-visible {
-      &:not(.backwards) {
+      &.forwards {
         transform: scale(1);
         opacity: 1;
       }
@@ -448,7 +529,7 @@
   } */
 
   &.service {
-    max-width: var(--messages-container-width);
+    max-width: var(--chat-width);
 
     .bubble-content {
       margin: 0 auto;
@@ -459,7 +540,7 @@
 
   &.is-date {
     position: sticky;
-    top: $bubble-overflow-big;
+    top: calc(var(--chat-padding-top) + #{$bubble-overflow-big});
     padding-bottom: #{$bubble-overflow-big + $bubble-margin};
     z-index: 2;
     transition: opacity .3s ease;
@@ -603,7 +684,9 @@
 
   .summarize {
     position: sticky;
-    top: .5rem;
+    // --chat-padding-top clears the topbar + floating plates so the sticky button
+    // isn't hidden behind them (same baseline as sticky .is-date labels).
+    top: calc(var(--chat-padding-top) + .5rem);
     // bottom: calc(var(--message-beside-button-size) + var(--message-beside-button-margin));
     // inset-inline-end: var(--message-beside-button-margin);
 
@@ -873,7 +956,7 @@
     }
   }
 
-  img:not(.emoji),
+  img:not(.emoji):not(.custom-emoji-placeholder),
   video {
     object-fit: cover;
     width: 100%;
@@ -937,7 +1020,7 @@
         }
       }
 
-      &:not(.backwards) {
+      &.forwards {
         transition: border-radius var(--transition-standard-in);
 
         .album-item-media {
@@ -1051,7 +1134,7 @@
       max-width: 15rem;
 
       @include respond-to(handhelds) {
-        max-width: calc(100vw - #{$chat-padding-handhelds * 2} - 10px - 100%);
+        max-width: calc(100vw - var(--chat-bubbles-padding) * 2 - 10px - 100%);
       }
     }
 
@@ -1326,10 +1409,6 @@
     }
   }
 
-  &.poll-message {
-    --max-content-width: 400px;
-  }
-
   &.document-message {
     --max-content-width: 325px;
   }
@@ -1592,6 +1671,16 @@
     // }
   }
 
+  &.poll-message {
+    .message {
+      margin: 0 !important;
+    }
+
+    .reactions-block {
+      margin: -1rem 0.5rem 0.375rem 0.25rem;
+    }
+  }
+
   .document {
     height: 54px !important;
 
@@ -1607,6 +1696,13 @@
       position: absolute;
       right: 0;
       bottom: 0;
+    }
+  }
+
+  &.poll-message {
+    .time {
+      right: 8px;
+      bottom: 5px;
     }
   }
 
@@ -1991,6 +2087,13 @@
     // align-items: center;
     max-width: inherit;
     overflow: inherit;
+
+    &-topic {
+      > .bubble-name-rank,
+      > .bubble-name-first + .bubble-name-boosts {
+        margin-inline-start: auto;
+      }
+    }
   }
 
   &-name {
@@ -2027,8 +2130,12 @@
         margin-bottom: $message-padding-top;
       }
 
-      .topic-name-button-container {
+      .bubble-name-chip-container {
         margin-bottom: 0;
+      }
+
+      &.is-reply .bubble-name-chip-container {
+        margin-bottom: .25rem;
       }
     }
   }
@@ -2039,7 +2146,7 @@
 
   &:not(.sticker):not(.emoji-big):not(.forwarded) {
     &.hide-name,
-    &:not(.is-group-first) {
+    &:not(.is-group-first):not(.must-have-name) {
       .reply {
         margin-top: $reply-padding-top;
       }
@@ -2265,6 +2372,10 @@
           font-weight: var(--font-weight-bold) !important;
         }
       }
+
+      .bubble-name-chip-container:last-child {
+        margin-bottom: 0;
+      }
     }
 
     .is-via {
@@ -2304,11 +2415,11 @@
     }
   }
 
-  .name .topic-name-button-container {
+  .name .bubble-name-chip-container {
     margin: .25rem 0;
   }
 
-  &.is-message-empty:not(.is-reply) .name .topic-name-button-container {
+  &.is-message-empty:not(.is-reply) .name .bubble-name-chip-container {
     margin-bottom: 0;
   }
 
@@ -2416,6 +2527,37 @@
 
     &-text {
       margin-top: .75rem;
+    }
+  }
+
+  // Generic "media + caption + button" service bubble (e.g. suggested profile
+  // photo). Centered round media, modeled on the story-mention bubble above.
+  &-service-media {
+    &-wrapper {
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      width: 184px;
+      padding: 1.125rem 1rem .625rem !important;
+    }
+
+    &-avatar-container {
+      position: relative;
+      width: 100px;
+      height: 100px;
+      display: flex;
+
+      &.is-clickable {
+        cursor: pointer;
+      }
+    }
+
+    &-text {
+      margin-top: .75rem;
+    }
+
+    &-button {
+      margin-top: .625rem;
     }
   }
 
@@ -2594,7 +2736,7 @@
   &:has(.reaction.is-paid.effect-active) {
     z-index: 3;
   }
-  
+
   .reply-markup-button-bg {
     background-color: rgba(var(--background-color-rgb), .8) !important;
 
@@ -2648,6 +2790,13 @@
     float: unset;
   }
 
+  &-background-canvas {
+    position: absolute;
+    top: 0;
+    inset-inline-end: 0;
+    pointer-events: none;
+  }
+
   .audio-transcribed-text {
     margin-bottom: 0;
     order: 4;
@@ -2681,6 +2830,42 @@
           float: inline-end;
           margin-inline-start: .625rem;
         }
+
+        // sticker-set / custom-emoji preview grid: box is sized inline (boxSize px),
+        // so let the square resizer size to the grid instead of the fixed 3rem.
+        &.webpage-stickerset-grid {
+          max-width: none;
+          max-height: none;
+        }
+
+        &-resizer:has(.webpage-stickerset-grid) {
+          width: auto;
+          height: auto;
+        }
+      }
+    }
+  }
+
+  &-stickerset {
+    // square NxN grid of the set's preview stickers (side from ceil(sqrt(count)))
+    &-grid {
+      display: grid;
+      grid-template-columns: repeat(var(--sticker-grid-side), 1fr);
+      gap: 1px;
+      pointer-events: none;
+    }
+
+    &-cell {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+
+      img,
+      canvas,
+      video {
+        max-width: 100%;
+        max-height: 100%;
       }
     }
   }
@@ -2833,6 +3018,7 @@
       height: #{$height + $margin + $border};
       padding: #{math.div($margin, 2)} .5rem 0;
       pointer-events: none;
+      width: 100%;
       @include text-overflow(true);
     }
   }
@@ -3087,11 +3273,7 @@
 // * fix scroll with only 1 bubble
 .bubbles-group-last {
   .bubble.is-group-last {
-    // margin-bottom: $bubble-overflow;
-    margin-bottom: 0;
-    /* &:after, .document-container:last-of-type .document-selection {
-      bottom: 0 !important;
-    } */
+    // margin-bottom: 0;
 
     &:after,
     .document-container.is-last .document-selection {
@@ -3372,32 +3554,6 @@
       &.can-zoom-fade {
         transform-origin: var(--transform-origin-right-center);
       }
-
-      @include respond-to(medium-screens) {
-        transform: translateX(calc((var(--chat-input-size) + #{$btn-send-margin}) * var(--reflect) * -1)) scale(1);
-
-        &.zoom-fade {
-          transform: translateX(calc((var(--chat-input-size) + #{$btn-send-margin}) * var(--reflect) * -1)) scale3d(.8, .8, 1);
-        }
-
-        @include animation-level(2) {
-          transition: var(--bubble-transition-out);
-        }
-
-        //@include respond-to(no-floating-left-sidebar) {
-          body.is-right-column-shown & {
-            transform: translateX(0) scale(1);
-
-            @include animation-level(2) {
-              transition: var(--bubble-transition-in);
-            }
-
-            &.zoom-fade {
-              transform: translateX(0) scale3d(.8, .8, 1);
-            }
-          }
-        //}
-      }
     }
   }
 
@@ -3595,7 +3751,7 @@
 
 .reply-markup {
   width: 100%;
-  margin-top: .0625rem;
+  margin-top: $reply-markup-margin-top;
 
   .bubble:not(.is-group-last) & {
     margin-bottom: $bubble-margin;
@@ -3604,7 +3760,7 @@
   &-row {
     margin-top: $bubble-margin;
     overflow: hidden;
-    min-height: 2.5rem;
+    min-height: $reply-markup-row-min-height;
     display: flex;
     gap: $bubble-margin;
   }
@@ -3641,7 +3797,6 @@
     &-text {
       position: relative;
       pointer-events: none;
-      display: block;
     }
 
     &.anchor-url {
@@ -3676,7 +3831,8 @@
     }
 
     .custom-emoji {
-      vertical-align: bottom;
+      line-height: 1;
+      vertical-align: middle;
     }
   }
 
@@ -3724,50 +3880,12 @@
   font-weight: var(--font-weight-bold);
 }
 
-.transcribe-button-spinner-svg {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-
-  circle {
-    transform-origin: 50% 50%; /* Center rotation */
-    animation: transcribe-button-spinner-animation 1s linear infinite, transcribe-button-spinner-length-animation 1.2s linear infinite alternate;
-  }
-}
-
-
-@keyframes transcribe-button-spinner-animation {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes transcribe-button-spinner-length-animation {
-  0% {
-    stroke-dasharray: 0 65.97;
-  }
-  100% {
-    // stroke-dasharray: calc(var(--PI) * var(--radius)) calc(var(--PI) * var(--radius));
-    stroke-dasharray: 32.98 32.98;
-  }
-}
-
 .inline-stars {
   display: inline-flex;
   align-items: center;
 
-  .tgico {
+  &-icon {
     line-height: unset;
-  }
-
-  &--reversed {
-    vertical-align: -0.175em;
-    flex-direction: row-reverse;
   }
 }
 
@@ -3883,7 +4001,10 @@
       margin-inline-end: .25rem;
       font-size: 1.25rem;
       vertical-align: bottom;
-      margin-left: -.1875rem;
+      // logical, not `margin-left`: the build lowers `margin-inline-end` into a
+      // higher-specificity `:lang()` rule that sets `margin-left` in RTL, which
+      // would swallow this optical nudge instead of mirroring it
+      margin-inline-start: -.1875rem;
     }
 
     &-bullet {

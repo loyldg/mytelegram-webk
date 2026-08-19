@@ -1,11 +1,5 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {MyDocument} from '@appManagers/appDocsManager';
-import {EMOJI_TEXT_COLOR, EmoticonsDropdown, EMOTICONSSTICKERGROUP} from '..';
+import {EmoticonsDropdown} from '..';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import {fastRaf} from '@helpers/schedulers';
@@ -23,19 +17,19 @@ import Emoji from '@config/emoji';
 import fixEmoji from '@lib/richTextProcessor/fixEmoji';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
 import wrapSingleEmoji from '@lib/richTextProcessor/wrapSingleEmoji';
-import {attachClickEvent} from '@helpers/dom/clickEvent';
+import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
 import {makeMediaSize} from '@helpers/mediaSize';
 import {AppManagers} from '@lib/managers';
 import VisibilityIntersector, {OnVisibilityChangeItem} from '@components/visibilityIntersector';
 import mediaSizes from '@helpers/mediaSizes';
 import {StickerSet} from '@layer';
 import findAndSplice from '@helpers/array/findAndSplice';
+import findAndSpliceAll from '@helpers/array/findAndSpliceAll';
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
-import PopupStickers from '@components/popups/stickers';
+import showStickersPopup from '@components/popups/stickers';
 import {hideToast, toastNew} from '@components/toast';
 import safeAssign from '@helpers/object/safeAssign';
 import liteMode from '@helpers/liteMode';
-import PopupElement from '@components/popups';
 import CustomEmojiElement from '@lib/customEmoji/element';
 import {CustomEmojiRendererElement} from '@lib/customEmoji/renderer';
 import Icon from '@components/icon';
@@ -49,8 +43,22 @@ import EmoticonsTabC from '@components/emoticonsDropdown/tab';
 import flatten from '@helpers/array/flatten';
 import SuperStickerRenderer from '@components/emoticonsDropdown/tabs/SuperStickerRenderer';
 import StickersTab from '@components/emoticonsDropdown/tabs/stickers';
+import GroupSetController, {GROUP_SET_CATEGORY_ID, GroupSetState} from '@components/emoticonsDropdown/groupSet';
+import {
+  createGroupSetHeaderButton,
+  getGroupSetTitle,
+  isGroupSetHidden,
+  openGroupSetTab,
+  setGroupSetHidden
+} from '@components/emoticonsDropdown/groupSetSection';
 import {PAID_REACTION_EMOJI_DOCID} from '@lib/customEmoji/constants';
 import {getStickerSetInputById} from '@lib/appManagers/utils/stickers/getStickerSetInput';
+import {
+  EmojiSkinTone,
+  getEmojiSkinTone,
+  getEmojiSkinToneVariants
+} from '@helpers/emojiSkinTone';
+import showEmojiTonePicker from '@components/emoticonsDropdown/emojiTonePicker';
 
 
 const loadedURLs: Set<string> = new Set();
@@ -194,7 +202,10 @@ function prepare() {
 export const EMOJI_ELEMENT_SIZE = makeMediaSize(42, 42);
 const RECENT_MAX_LENGTH = 32;
 
-type EmojiTabItem = {element: HTMLElement} & ReturnType<typeof getEmojiFromElement>;
+type EmojiTabItem = {
+  element: HTMLElement,
+  baseEmoji?: string
+} & ReturnType<typeof getEmojiFromElement>;
 export type EmojiTabCategory = StickersTabCategory<EmojiTabItem, {renderer: CustomEmojiRendererElement}>;
 export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: AppEmoji[], localStickerSet?: {title: LangPackKey, stickers: MyDocument[]}}> {
   private closeScrollTop: number;
@@ -216,6 +227,11 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
   private onReady: () => void;
   private stickerRenderer: SuperStickerRenderer;
   private showLocks: boolean;
+  private nativeEmojiFadeReady: boolean;
+  private canUsePremiumEmojiAlways?: boolean;
+  private emojiVariants: {[emoji: string]: EmojiSkinTone};
+  private groupSetController: GroupSetController;
+  private groupSetHidden: boolean;
   public initPromise: Promise<void>;
 
   constructor(options: {
@@ -236,6 +252,7 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
     onReady?: EmojiTab['onReady'],
     searchFetcher?: EmojiTab['searchFetcher'],
     groupFetcher?: EmojiTab['groupFetcher'],
+    canUsePremiumEmojiAlways?: boolean,
     showLocks?: boolean
   }) {
     super({
@@ -320,6 +337,7 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
     this.content.id = 'content-emoji';
     this.activeElements = [];
     this.freeCustomEmoji ??= new Set();
+    this.emojiVariants = {};
   }
 
   public _onCategoryVisibility(category: EmojiTabCategory, visible: boolean) {
@@ -364,6 +382,10 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
 
     // if(visible)
     category.elements.items.replaceChildren(...newChildren);
+
+    if(visible && this.nativeEmojiFadeReady) {
+      this.fadeInNativeEmojis(newChildren);
+    }
 
     if(renderer && !visible) {
       const customEmojis: Parameters<CustomEmojiRendererElement['add']>[0]['addCustomEmojis'] = new Map();
@@ -414,8 +436,28 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
   }
 
   private onCategoryVisibility = ({target, visible}: Pick<OnVisibilityChangeItem, 'target' | 'visible'>) => {
-    this._onCategoryVisibility(this.categoriesMap.get(target), visible);
+    const category = this.categoriesMap.get(target);
+    // the set's documents resolve asynchronously, so this can fire for a category that was
+    // already deleted — leaving a chat drops the group's pack that way
+    if(!category) {
+      return;
+    }
+
+    this._onCategoryVisibility(category, visible);
   };
+
+  private fadeInNativeEmojis(parents: HTMLElement[]) {
+    const natives: HTMLElement[] = [];
+    for(const parent of parents) {
+      const child = parent.firstElementChild as HTMLElement | null;
+      if(child?.classList.contains('emoji-native')) {
+        natives.push(child);
+      }
+    }
+    if(!natives.length) return;
+    natives.forEach((el) => { el.style.opacity = '0'; });
+    fastRaf(() => natives.forEach((el) => { el.style.opacity = ''; }));
+  }
 
   public destroy() {
     super.destroy();
@@ -523,9 +565,26 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
       }),
       mainSetsResult && Promise.all(Array.isArray(mainSetsResult) ? mainSetsResult : [mainSetsResult]),
       this.additionalSets?.(),
-      this.additionalLocalStickerSet?.()
-    ]).then(([_, recent, recentCustom, sets, mainSets, additionalSets, additionalLocalStickerSet]) => {
+      this.additionalLocalStickerSet?.(),
+      !this.noRegularEmoji && this.managers.appEmojiManager.getEmojiVariants()
+    ]).then(([_, recent, recentCustom, sets, mainSets, additionalSets, additionalLocalStickerSet, emojiVariants]) => {
+      this.emojiVariants = emojiVariants || {};
+      this.applySavedEmojiVariants();
       preloader.remove();
+
+      // Native emojis (IS_EMOJI_SUPPORTED === true) have no load event, so without
+      // staging they pop in the moment IntersectionObserver inserts them into the
+      // DOM. Flip the gate now so that `_onCategoryVisibility` starts applying a
+      // JS-driven opacity transition for subsequent insertions, and retroactively
+      // fade any category that's already been mounted and populated.
+      if(IS_EMOJI_SUPPORTED && liteMode.isAvailable('animations')) {
+        this.nativeEmojiFadeReady = true;
+        for(const category of this.categoriesMap.values()) {
+          if(this.isCategoryVisible(category)) {
+            this.fadeInNativeEmojis(Array.from(category.elements.items.children) as HTMLElement[]);
+          }
+        }
+      }
 
       const docIdsToCustomEmoji = (docIds: DocId[]): ReturnType<typeof getEmojiFromElement>[] => {
         return docIds.map((docId) => {
@@ -627,7 +686,8 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
     this.attachHelpers({
       getTextColor: this.textColor,
       verifyRecent: (target) => !!(findUpAsChild(target, recentCustomCategory.elements.items) || findUpAsChild(target, recentCategory.elements.items)),
-      canHaveEmojiTimer: this.canHaveEmojiTimer
+      canHaveEmojiTimer: this.canHaveEmojiTimer,
+      onContextMenu: this.onContextMenu
     });
 
     return this.initPromise = promise;
@@ -694,9 +754,15 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
       toggleRenderers(true);
     });
 
+    this.initGroupSet();
+
     this.listenerSetter.add(rootScope)('stickers_installed', (set) => {
       if(!this.categories[set.id] && set.pFlags.emojis) {
         this.renderEmojiSet(set, true);
+        this.repositionGroupSet();
+        // installing the group's own pack gives it a category of its own — the group one
+        // beside it would be a duplicate
+        this.groupSetController?.update();
       }
     });
 
@@ -708,6 +774,13 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
           renderer.middlewareHelper.clean();
         }
       }
+
+      // uninstalling may turn a deduped group pack into one worth showing on its own
+      this.groupSetController?.update();
+    });
+
+    this.listenerSetter.add(rootScope)('emoji_variant', ({baseEmoji, tone}) => {
+      this.applyEmojiVariant(baseEmoji, tone);
     });
 
     const onEmojiRecent = ({emoji, deleted}: BroadcastEvents['emoji_recent']) => {
@@ -716,13 +789,25 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
         return;
       }
 
+      const toneVariants = !emoji.docId && getEmojiSkinToneVariants(emoji.emoji);
       const verify: (item: EmojiTabItem) => boolean = emoji.docId ?
         (item) => item.docId === emoji.docId :
-        (item) => item.emoji === emoji.emoji;
+        toneVariants ?
+          (item) => item.baseEmoji === toneVariants.baseEmoji :
+          (item) => item.emoji === emoji.emoji;
       const found = findAndSplice(category.items, verify);
       if(deleted) {
-        // * prevent second invocation
-        findAndSplice(this.postponedEvents, (event) => event.cb === onEmojiRecent && (event.args[0] as BroadcastEvents['emoji_recent']).deleted);
+        // a use of this emoji may be waiting in the queue for the panel to hide — deleting it
+        // now must not let that put it back
+        findAndSpliceAll(this.postponedEvents, (event) => {
+          if(event.cb !== onEmojiRecent) {
+            return false;
+          }
+
+          const other = (event.args[0] as BroadcastEvents['emoji_recent']).emoji;
+          return emoji.docId ? other.docId === emoji.docId : other.emoji === emoji.emoji;
+        });
+
         if(!found) {
           return;
         }
@@ -752,8 +837,13 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
       }
     };
 
-    !this.noRegularEmoji && this.listenerSetter.add(rootScope)('emoji_recent', this.postponedEvent(onEmojiRecent));
-    !this.noRegularEmoji && this.listenerSetter.add(rootScope)('emoji_recent', onEmojiRecent);
+    const onEmojiRecentPostponed = this.postponedEvent(onEmojiRecent);
+    !this.noRegularEmoji && this.listenerSetter.add(rootScope)('emoji_recent', (data) => {
+      // using an emoji reshuffles the recent row, so it waits for the panel to hide — the panel
+      // stays open while typing; deleting one is the user's own doing right there in it and
+      // lands at once
+      (data.deleted ? onEmojiRecent : onEmojiRecentPostponed)(data);
+    });
 
     this.toggleCustomCategory();
 
@@ -790,17 +880,121 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
     super.toggleLocalCategory(category, visible);
   }
 
-  protected renderEmojiSet(set: StickerSet.stickerSet, prepend?: boolean) {
+  private initGroupSet() {
+    this.groupSetController = new GroupSetController({
+      managers: this.managers,
+      listenerSetter: this.listenerSetter,
+      isEmoji: true,
+      getPeerId: () => this.emoticonsDropdown ? this.emoticonsDropdown.chatInput?.chat?.peerId : undefined,
+      isHidden: (chatId, set) => isGroupSetHidden(chatId, set, true),
+      isInstalled: (set) => !!this.categories[set.id],
+      render: (state) => this.renderGroupSet(state),
+      remove: () => {
+        const category = this.categories[GROUP_SET_CATEGORY_ID];
+        if(this.deleteCategory(category)) {
+          category.elements.renderer?.middlewareHelper.clean();
+        }
+      }
+    });
+
+    if(!this.isStandalone) {
+      this.listenerSetter.add(this.emoticonsDropdown)('opened', () => this.groupSetController.update());
+      // the tab is built on the first open, after that open's event already fired
+      this.groupSetController.update();
+    }
+  }
+
+  public onPeerChanged() {
+    if(!this.groupSetController) {
+      return;
+    }
+
+    this.groupSetController.clear();
+    // an open dropdown has to swap the pack right away; a closed one resolves on its next open
+    if(this.emoticonsDropdown?.isActive()) {
+      this.groupSetController.update();
+    }
+  }
+
+  /**
+   * Reuses the menu tab's own click: it already handles making the category active and
+   * scrolling the panel to it, including the bookkeeping that keeps the scroll spy quiet.
+   */
+  private scrollToGroupSet() {
+    const menuTab = this.categories[GROUP_SET_CATEGORY_ID]?.elements.menuTab;
+    if(menuTab) {
+      simulateClickEvent(menuTab);
+    }
+  }
+
+  /**
+   * A collapsed section belongs below every other pack, but packs keep arriving — the initial
+   * load and later installs both append — so its place has to be reclaimed afterwards.
+   */
+  private repositionGroupSet() {
+    const category = this.categories[GROUP_SET_CATEGORY_ID];
+    if(category && this.groupSetHidden) {
+      this.positionCategory(category, false);
+    }
+  }
+
+  private renderGroupSet(state: GroupSetState) {
+    const {set, canEdit, hidden} = state;
+    this.groupSetHidden = hidden;
+    const chatId = this.groupSetController.getCurrentChatId();
+    const category = set ?
+      this.renderEmojiSet(set, !hidden, true) :
+      this.createCategory({
+        id: GROUP_SET_CATEGORY_ID,
+        title: getGroupSetTitle(undefined, true),
+        styles: EmoticonsTabStyles.Emoji
+      });
+
+    if(!set) {
+      // nothing configured yet: an empty section whose only job is to lead an admin to setup
+      this.positionCategory(category, true);
+      category.elements.container.classList.remove('hide');
+      category.elements.menuTab.append(Icon('smile'));
+    }
+
+    category.elements.title.append(createGroupSetHeaderButton({
+      canEdit,
+      hidden,
+      isEmoji: true,
+      onClick: () => {
+        if(canEdit) {
+          openGroupSetTab(chatId, true);
+          return;
+        }
+
+        setGroupSetHidden(chatId, set, true, !hidden);
+        this.groupSetController.update().then(() => {
+          // bringing it back should show it, not just move it up the list
+          if(hidden) this.scrollToGroupSet();
+        });
+      }
+    }));
+  }
+
+  /**
+   * `isGroupSet` marks the pack the open group offers to its members: everyone there may
+   * use it, Premium or not, so it carries neither the lock badge nor the click gate, and it
+   * is filed under a synthetic id so it never fights the user's own copy for the slot.
+   */
+  protected renderEmojiSet(set: StickerSet.stickerSet, prepend?: boolean, isGroupSet?: boolean) {
     const category = this.createCategory({
       stickerSet: set,
+      id: isGroupSet ? GROUP_SET_CATEGORY_ID : undefined,
       title: wrapEmojiText(set.title),
       styles: EmoticonsTabStyles.Emoji
     });
     this.positionCategory(category, prepend);
     const {container, menuTabPadding} = category.elements;
     category.elements.items.classList.add('not-local');
-    category.elements.container.classList.add('is-premium-set');
-    category.elements.title.prepend(Icon('premium_lock', 'category-title-lock'));
+    if(!isGroupSet) {
+      category.elements.container.classList.add('is-premium-set');
+      category.elements.title.prepend(Icon('premium_lock', 'category-title-lock'));
+    }
 
     this.createEmojiRendererForCategory(category);
 
@@ -809,6 +1003,11 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
 
     const promise = this.managers.appStickersManager.getStickerSet(getStickerSetInputById(set));
     promise.then(({documents}) => {
+      if(isGroupSet) {
+        // must be marked free before the items render, or they'd come out locked
+        documents.forEach((document) => this.freeCustomEmoji.add(document.id));
+      }
+
       documents.forEach((document) => {
         this.addEmojiToCategory({
           category,
@@ -830,12 +1029,14 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
       middleware: category.middlewareHelper.get(),
       textColor: this.textColor
     });
+
+    return category;
   }
 
   private createEmojiRendererForCategory(category: EmojiTabCategory) {
     const middleware = category.middlewareHelper.get();
     const renderer = CustomEmojiRendererElement.create({
-      animationGroup: EMOTICONSSTICKERGROUP,
+      animationGroup: this.animationGroup,
       customEmojiSize: mediaSizes.active.esgCustomEmoji,
       textColor: this.textColor,
       middleware
@@ -845,6 +1046,77 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
     category.elements.items.append(renderer);
   }
 
+  private updateEmojiItemTone(item: EmojiTabItem, tone: EmojiSkinTone) {
+    const toneVariants = item.baseEmoji && getEmojiSkinToneVariants(item.baseEmoji);
+    if(!toneVariants) {
+      return;
+    }
+
+    const emoji = toneVariants.variants[tone];
+    if(item.emoji === emoji) {
+      return;
+    }
+
+    item.emoji = emoji;
+    const renderedEmoji = appendEmoji({emoji});
+    item.element.replaceChildren(...Array.from(renderedEmoji.childNodes));
+  }
+
+  private applySavedEmojiVariants() {
+    this.categoriesMap.forEach((category) => {
+      category.items.forEach((item) => {
+        const tone = item.baseEmoji && this.emojiVariants[item.baseEmoji];
+        if(tone !== undefined) {
+          this.updateEmojiItemTone(item, tone);
+        }
+      });
+    });
+  }
+
+  private applyEmojiVariant(baseEmoji: string, tone: EmojiSkinTone) {
+    this.emojiVariants[baseEmoji] = tone;
+    this.categoriesMap.forEach((category) => {
+      category.items.forEach((item) => {
+        if(item.baseEmoji === baseEmoji) {
+          this.updateEmojiItemTone(item, tone);
+        }
+      });
+    });
+  }
+
+  private onContextMenu = (event: MouseEvent | TouchEvent) => {
+    const target = findUpClassName(event.target, 'super-emoji');
+    const emoji = target && getEmojiFromElement(target.firstElementChild as HTMLElement);
+    if(!emoji || emoji.docId) {
+      return;
+    }
+
+    const toneVariants = getEmojiSkinToneVariants(emoji.emoji);
+    if(!toneVariants) {
+      return;
+    }
+
+    const {baseEmoji, variants} = toneVariants;
+    const picker = showEmojiTonePicker({
+      event,
+      variants,
+      selectedTone: this.emojiVariants[baseEmoji] ?? getEmojiSkinTone(emoji.emoji),
+      renderEmoji: (emoji) => appendEmoji({emoji}),
+      onSelect: (tone) => {
+        this.applyEmojiVariant(baseEmoji, tone);
+        this.managers.appEmojiManager.saveEmojiVariant(baseEmoji, tone);
+      }
+    });
+    this.emoticonsDropdown?.setIgnoreMouseOut('tooltip', true);
+    return {
+      cleanup: () => {
+        picker.cleanup();
+        this.emoticonsDropdown?.setIgnoreMouseOut('tooltip', false);
+      },
+      onMenuOpen: picker.show
+    };
+  };
+
   public addEmojiToCategory(options: {
     category: EmojiTabCategory,
     emoji?: ReturnType<typeof getEmojiFromElement>,
@@ -853,8 +1125,22 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
     prepend?: boolean,
     active?: boolean
   }) {
-    const {category, emoji, batch, prepend} = options;
+    const {category, batch, prepend} = options;
+    let {emoji} = options;
     let element = options.element;
+    let baseEmoji: string;
+    if(emoji && !emoji.docId) {
+      const toneVariants = getEmojiSkinToneVariants(emoji.emoji);
+      if(toneVariants) {
+        baseEmoji = toneVariants.baseEmoji;
+        const tone = this.emojiVariants[baseEmoji] ?? getEmojiSkinTone(emoji.emoji);
+        emoji = {
+          ...emoji,
+          emoji: toneVariants.variants[tone]
+        };
+      }
+    }
+
     if(element) {
       const spanEmoji = document.createElement('span');
       spanEmoji.classList.add('super-emoji');
@@ -870,6 +1156,7 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
 
     const item: typeof category['items'][0] = {
       ...(emoji || {emoji: undefined}),
+      baseEmoji,
       element
     };
 
@@ -907,7 +1194,8 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
       emoji.docId &&
       !rootScope.premium && (
         this.isStandalone && category ? category.id !== CUSTOM_EMOJI_RECENT_ID : this.peerId !== rootScope.myId
-      ) && !this.freeCustomEmoji.has(emoji.docId)
+      ) && !this.freeCustomEmoji.has(emoji.docId) &&
+      !this.canUsePremiumEmojiAlways
     ) {
       if(showToast) {
         const a = anchorCallback(() => {
@@ -938,7 +1226,7 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
     if(!category) { // possibly sticker
       const sticker = findUpClassName(target, 'super-sticker');
       if(sticker) {
-        this.onClick({
+        this.onClick?.({
           emoji: '',
           docId: sticker.dataset.docId,
           element: sticker
@@ -952,12 +1240,11 @@ export default class EmojiTab extends EmoticonsTabC<EmojiTabCategory, {emojis: A
         return;
       }
 
-      PopupElement.createPopup(
-        PopupStickers,
+      showStickersPopup(
         getStickerSetInputById(category.set),
         true,
         this.emoticonsDropdown.chatInput
-      ).show();
+      );
       return;
     }
 

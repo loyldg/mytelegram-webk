@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import liteMode from '@helpers/liteMode';
 
 const $TRANSITION_RAF = Symbol('RAF'),
@@ -69,6 +63,7 @@ const SetTransition = (options: SetTransitionOptions) => {
   };
 
   onTransitionStart?.();
+  element.classList.toggle('forwards', forwards);
   if(!liteMode.isAvailable('animations') || !duration) {
     element.classList.remove('animating', 'backwards');
     afterTimeout();

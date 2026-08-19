@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -14,6 +10,7 @@ import tsNow from '@helpers/tsNow';
 import assumeType from '@helpers/assumeType';
 import {AppManager} from '@appManagers/manager';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import isEphemeralMessageId from '@appManagers/utils/messageId/isEphemeralMessageId';
 import draftsAreEqual from '@appManagers/utils/drafts/draftsAreEqual';
 import isObject from '@helpers/object/isObject';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
@@ -36,7 +33,7 @@ type ClearDraftArgs = {
 };
 
 export class AppDraftsManager extends AppManager {
-  private drafts: { [peerIdAndThreadId: string]: MyDraftMessage };
+  private drafts: {[peerIdAndThreadId: string]: MyDraftMessage};
   private getAllDraftPromise: Promise<void>;
   private getAllDraftsResolved = false;
 
@@ -249,10 +246,18 @@ export class AppDraftsManager extends AppManager {
       const entities: MessageEntity[] = localDraft.entities;
 
       const replyTo = localDraft.reply_to as InputReplyTo.inputReplyToMessage;
-      if(replyTo) {
+      const isEphemeralReply = replyTo && (
+        !Number.isInteger(replyTo.reply_to_msg_id) ||
+        isEphemeralMessageId(replyTo.reply_to_msg_id) ||
+        this.appMessagesManager.isEphemeralMessage(
+          this.appMessagesManager.getMessageByPeer(peerId, replyTo.reply_to_msg_id)
+        )
+      );
+      if(replyTo && !isEphemeralReply) {
         params.reply_to = {
           _: 'inputReplyToMessage',
-          reply_to_msg_id: getServerMessageId(replyTo.reply_to_msg_id)
+          reply_to_msg_id: getServerMessageId(replyTo.reply_to_msg_id),
+          poll_option: replyTo.poll_option
         };
 
         if(replyTo.reply_to_peer_id && !isObject(replyTo.reply_to_peer_id)) {

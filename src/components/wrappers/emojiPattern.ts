@@ -1,15 +1,9 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import customProperties from '@helpers/dom/customProperties';
 import {Middleware} from '@helpers/middleware';
 import noop from '@helpers/noop';
 import pause from '@helpers/schedulers/pause';
 import {MyDocument} from '@appManagers/appDocsManager';
-import {applyColorOnContext} from '@lib/rlottie/rlottiePlayer';
+import {applyColorOnContext} from '@lib/lottie/lottiePlayer';
 import rootScope from '@lib/rootScope';
 import wrapSticker from '@components/wrappers/sticker';
 

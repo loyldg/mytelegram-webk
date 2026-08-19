@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -24,7 +20,7 @@ import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId'
 import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
 import callbackify from '@helpers/callbackify';
 
-export type PeerType = 'channel' | 'chat' | 'megagroup' | 'group' | 'saved' | 'savedDialog' | 'monoforum' | 'monoforum_thread' | 'botforum_thread';
+export type PeerType = 'channel' | 'community' | 'chat' | 'megagroup' | 'group' | 'saved' | 'savedDialog' | 'monoforum' | 'monoforum_thread' | 'botforum_thread';
 export class AppPeersManager extends AppManager {
   public get peerId() {
     return this.appUsersManager.userId.toPeerId();
@@ -44,7 +40,7 @@ export class AppPeersManager extends AppManager {
   }
 
   public getPeerPhoto(peerId: PeerId) {
-    const peer = this.getPeer(peerId) as User.user | Chat.channel;
+    const peer = this.getPeer(peerId) as User.user | Chat;
     return getPeerPhoto(peer);
   }
 
@@ -66,7 +62,7 @@ export class AppPeersManager extends AppManager {
     }
 
     const chatId = peerId.toChatId();
-    if(this.appChatsManager.isChannel(chatId)) {
+    if(this.appChatsManager.isChannel(chatId) || this.isCommunity(peerId)) {
       return {_: 'peerChannel', channel_id: chatId};
     }
 
@@ -77,7 +73,10 @@ export class AppPeersManager extends AppManager {
     if(peerId.isUser()) {
       return this.appUsersManager.getUserString(peerId.toUserId());
     }
-    return this.appChatsManager.getChatString(peerId.toChatId());
+    return this.appChatsManager.getChatString(
+      peerId.toChatId(),
+      this.isCommunity(peerId)
+    );
   }
 
   public getPeerUsername(peerId: PeerId) {
@@ -100,6 +99,13 @@ export class AppPeersManager extends AppManager {
   }
 
   public getDialogPeer(peerId: PeerId): DialogPeer {
+    if(this.isCommunity(peerId)) {
+      return {
+        _: 'dialogPeerCommunity',
+        community_id: peerId.toChatId()
+      };
+    }
+
     return {
       _: 'dialogPeer',
       peer: this.getOutputPeer(peerId)
@@ -108,6 +114,10 @@ export class AppPeersManager extends AppManager {
 
   public isChannel(peerId: PeerId): boolean {
     return !peerId.isUser() && this.appChatsManager.isChannel(peerId.toChatId());
+  }
+
+  public isCommunity(peerId: PeerId): boolean {
+    return !peerId.isUser() && this.appCommunitiesManager.isCommunity(peerId.toChatId());
   }
 
   public isMegagroup(peerId: PeerId) {
@@ -119,7 +129,9 @@ export class AppPeersManager extends AppManager {
   }
 
   public isAnyGroup(peerId: PeerId): boolean {
-    return !peerId.isUser() && !this.appChatsManager.isBroadcast(peerId.toChatId());
+    return !peerId.isUser() &&
+      !this.isCommunity(peerId) &&
+      !this.appChatsManager.isBroadcast(peerId.toChatId());
   }
 
   public isLikeGroup(peerId: PeerId) {
@@ -137,6 +149,10 @@ export class AppPeersManager extends AppManager {
 
   public isBroadcast(peerId: PeerId): boolean {
     return this.isChannel(peerId) && !this.isMegagroup(peerId);
+  }
+
+  public isBroadcastGroup(peerId: PeerId): boolean {
+    return !peerId.isUser() && this.appChatsManager.isBroadcastGroup(peerId.toChatId());
   }
 
   public isBot(peerId: PeerId): boolean {
@@ -246,7 +262,11 @@ export class AppPeersManager extends AppManager {
     peerId,
     ignorePeerId,
     threadId
-  }: T): T['ignorePeerId'] extends true ? Exclude<InputNotifyPeer, InputNotifyPeer.inputNotifyPeer | InputNotifyPeer.inputNotifyForumTopic> : (T['threadId'] extends number ? InputNotifyPeer.inputNotifyForumTopic : InputNotifyPeer.inputNotifyPeer) {
+  }: T): T['ignorePeerId'] extends true ?
+    InputNotifyPeer.inputNotifyUsers | InputNotifyPeer.inputNotifyChats | InputNotifyPeer.inputNotifyBroadcasts :
+    (T['threadId'] extends number ?
+      InputNotifyPeer.inputNotifyForumTopic :
+      InputNotifyPeer.inputNotifyPeer | InputNotifyPeer.inputNotifyCommunity) {
     if(ignorePeerId) {
       if(peerId.isUser()) {
         return {_: 'inputNotifyUsers'} as any;
@@ -257,6 +277,11 @@ export class AppPeersManager extends AppManager {
           return {_: 'inputNotifyChats'} as any;
         }
       }
+    } else if(this.isCommunity(peerId)) {
+      return {
+        _: 'inputNotifyCommunity',
+        community: this.appChatsManager.getChannelInput(peerId.toChatId())
+      } as any;
     } else if(threadId) {
       return {
         _: 'inputNotifyForumTopic',
@@ -278,6 +303,9 @@ export class AppPeersManager extends AppManager {
 
     if(!peerId.isUser()) {
       const chatId = peerId.toChatId();
+      if(this.isCommunity(peerId)) {
+        return this.appChatsManager.getChannelInputPeer(chatId);
+      }
       return this.appChatsManager.getInputPeer(chatId);
     }
 
@@ -293,6 +321,13 @@ export class AppPeersManager extends AppManager {
   }
 
   public getInputDialogPeerById(peerId: PeerId | InputPeer): InputDialogPeer {
+    if(!isObject<InputPeer>(peerId) && this.isCommunity(peerId)) {
+      return {
+        _: 'inputDialogPeerCommunity',
+        community: this.appChatsManager.getChannelInput(peerId.toChatId())
+      };
+    }
+
     return {
       _: 'inputDialogPeer',
       peer: isObject<InputPeer>(peerId) ? peerId : this.getInputPeerById(peerId)
@@ -313,6 +348,8 @@ export class AppPeersManager extends AppManager {
   public getDialogType(peerId: PeerId, threadId?: number): PeerType {
     if(this.peerId === peerId && threadId) {
       return 'savedDialog';
+    } else if(this.isCommunity(peerId)) {
+      return 'community';
     } else if(this.isMonoforum(peerId)) {
       return threadId ? 'monoforum_thread' : 'monoforum';
     } else if(this.isBotforum(peerId) && threadId) {
@@ -368,6 +405,24 @@ export class AppPeersManager extends AppManager {
     MTProtoMessagePort.getInstance<false>().invokeVoid('mirror', {
       name: 'peers',
       value: peers,
+      accountNumber: this.getAccountNumber()
+    }, port);
+
+    MTProtoMessagePort.getInstance<false>().invokeVoid('mirror', {
+      name: 'communityFull',
+      value: this.appProfileManager.getCommunityFullMirror(),
+      accountNumber: this.getAccountNumber()
+    }, port);
+
+    MTProtoMessagePort.getInstance<false>().invokeVoid('mirror', {
+      name: 'communityDialogs',
+      value: this.appCommunitiesManager.getCommunityDialogsMirror(),
+      accountNumber: this.getAccountNumber()
+    }, port);
+
+    MTProtoMessagePort.getInstance<false>().invokeVoid('mirror', {
+      name: 'communityPeerLinkRequests',
+      value: this.appCommunitiesManager.getCommunityPeerLinkRequestsMirror(),
       accountNumber: this.getAccountNumber()
     }, port);
   }

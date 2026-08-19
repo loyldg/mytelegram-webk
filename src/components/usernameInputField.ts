@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import ListenerSetter from '@helpers/listenerSetter';
 import debounce from '@helpers/schedulers/debounce';
 import {LangPackKey} from '@lib/langPack';
@@ -41,7 +35,7 @@ export class UsernameInputField extends InputField {
         this.setState(InputState.Neutral);
         this.options.onChange?.();
         return;
-      } else if(!isUsernameValid(value)) { // does not check the last underscore
+      } else if(!isUsernameValid(value)) {
         this.setError(this.options.invalidText);
       } else {
         this.setState(InputState.Neutral);

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {logger, LogTypes} from '@lib/logger';
 import {CACHE_ASSETS_NAME, requestCache} from '@lib/serviceWorker/cache';
 import onStreamFetch, {toggleStreamInUse} from '@lib/serviceWorker/stream';
@@ -11,6 +5,7 @@ import {closeAllNotifications, fillPushObject, onPing, onShownNotification, rese
 import CacheStorageController from '@lib/files/cacheStorage';
 import {IS_SAFARI} from '@environment/userAgent';
 import ServiceMessagePort from '@lib/serviceWorker/serviceMessagePort';
+import {getLogEntries, setLogBufferEnabled} from '@lib/debug/logsBuffer';
 import listenMessagePort from '@helpers/listenMessagePort';
 import {getWindowClients} from '@helpers/context';
 import {MessageSendPort} from '@lib/superMessagePort';
@@ -121,6 +116,10 @@ serviceMessagePort.addMultipleEventsListeners({
   environment: (environment) => {
     setEnvironment(environment);
   },
+
+  getLogs: () => getLogEntries(),
+
+  setLogBufferEnabled: (enabled) => setLogBufferEnabled(enabled),
 
   notificationsClear: closeAllNotifications,
 
@@ -268,11 +267,12 @@ watchCacheStoragesLifetime({
 watchMtprotoOnDev({connectedWindows, onWindowConnected});
 
 const onFetch = (event: FetchEvent): void => {
+  // Web manifests must reach the network so installed PWA metadata can update.
   if(
     import.meta.env.PROD &&
     !IS_SAFARI &&
     event.request.url.indexOf(location.origin + '/') === 0 &&
-    event.request.url.match(/\.(js|css|jpe?g|json|wasm|png|mp3|svg|tgs|ico|woff2?|ttf|webmanifest?)(?:\?.*)?$/)
+    event.request.url.match(/\.(js|css|jpe?g|json|wasm|png|mp3|svg|tgs|ico|woff2?|ttf)(?:\?.*)?$/)
   ) {
     return event.respondWith(requestCache(event));
   }

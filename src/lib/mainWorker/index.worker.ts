@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 // just to include
 import '@lib/polyfill';
 import '@helpers/peerIdPolyfill';
@@ -15,10 +9,12 @@ import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
 import appManagersManager from '@appManagers/appManagersManager';
 import listenMessagePort from '@helpers/listenMessagePort';
 import {logger} from '@lib/logger';
+import {getLogEntries, setLogBufferEnabled} from '@lib/debug/logsBuffer';
 import toggleStorages from '@helpers/toggleStorages';
 import appTabsManager from '@appManagers/appTabsManager';
 import callbackify from '@helpers/callbackify';
 import Modes from '@config/modes';
+import {IS_WORKER} from '@helpers/context';
 import {ActiveAccountNumber} from '@lib/accounts/types';
 import commonStateStorage from '@lib/commonStateStorage';
 import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
@@ -31,13 +27,26 @@ import {useAutoLock} from '@lib/mainWorker/useAutoLock';
 import pushSingleManager from '@appManagers/pushSingleManager';
 import {createBroadcastChannelWrapper} from '@lib/broadcastChannelWrapper';
 import {MainBroadcastChannelEvents, unversionedMainBroadcastChannelName} from '@config/broadcastChannel';
+import objectUrlRegistry from '@lib/mainWorker/objectUrlRegistry';
+import SharedObjectUrlCache, {resetSharedObjectURLCaches} from '@lib/mainWorker/sharedObjectUrlCache';
 
 
 const log = logger('MTPROTO');
 // let haveState = false;
 
-const port = new MTProtoMessagePort<false>();
+// pass isMaster=false so the non-master singleton lookup is correct when this
+// module is imported into the main thread under Modes.noWorker (otherwise
+// MTProtoMessagePort.MASTER_INSTANCE would be overwritten).
+const port = new MTProtoMessagePort<false>(false);
 
+const backgroundObjectURLCache = new SharedObjectUrlCache<string>({
+  getOwner: (owner) => owner,
+  maxBytes: 32 * 1024 * 1024,
+  maxURLs: 16,
+  onEvict: (owner, url) => {
+    port.invokeExceptSource('sharedObjectURLUpdated', {owner, previousUrl: url});
+  }
+});
 const mainBroadcastChannel = createBroadcastChannelWrapper<MainBroadcastChannelEvents>(unversionedMainBroadcastChannelName);
 
 let isLocked = true;
@@ -58,6 +67,10 @@ port.addMultipleEventsListeners({
   crypto: ({method, args}) => {
     return cryptoWorker.invokeCrypto(method as any, ...args as any);
   },
+
+  getLogs: () => getLogEntries(),
+
+  setLogBufferEnabled: (enabled) => setLogBufferEnabled(enabled),
 
   state: ({state, resetStorages, pushedKeys, newVersion, oldVersion, userId, accountNumber, common, refetchStorages}) => {
     // if(haveState) {
@@ -124,8 +137,24 @@ port.addMultipleEventsListeners({
     port.invokeVoid('receivedServiceMessagePort', undefined, source);
   },
 
-  createObjectURL: (blob) => {
-    return URL.createObjectURL(blob);
+  updateObjectURLPins: (updates, source) => {
+    objectUrlRegistry.updateObjectURLPins(updates, source);
+  },
+
+  createSharedObjectURL: ({blob, owner}) => {
+    return backgroundObjectURLCache.getOrCreate(owner, blob);
+  },
+
+  // * Only worker-minted URLs (or non-blob strings) may be adopted here: a
+  // * blob URL minted by a tab dies with that tab while the registry would
+  // * keep serving it to the others.
+  setSharedObjectURL: ({url, owner}, source) => {
+    const {previousUrl} = backgroundObjectURLCache.adopt(owner, url);
+    port.invokeExceptSource('sharedObjectURLUpdated', {owner, previousUrl, url}, source);
+  },
+
+  releaseSharedObjectURL: ({url, owner}) => {
+    backgroundObjectURLCache.delete(owner, url);
   },
 
   setInterval: (timeout) => {
@@ -262,7 +291,7 @@ let isFirst = true;
 
 function resetNotificationsCount() {
   commonStateStorage.set({
-    notificationsCount: {}
+    pendingNotifications: {}
   });
 }
 
@@ -285,12 +314,12 @@ appTabsManager.onTabStateChange = () => {
   }
 };
 
-listenMessagePort(port, (source) => {
+const onTabConnect = (source: MessageEventSource) => {
+  objectUrlRegistry.registerSource(source);
   appTabsManager.addTab(source);
   if(isFirst) {
     isFirst = false;
     resetNotificationsCount();
-    // port.invoke('log', 'Shared worker first connection')
   } else {
     callbackify(appManagersManager.getManagersByAccount(), (managers) => {
       for(const key in managers) {
@@ -301,19 +330,36 @@ listenMessagePort(port, (source) => {
       }
     });
   }
+};
 
-  // port.invokeVoid('hello', undefined, source);
-  // if(!sentHello) {
-  //   port.invokeVoid('hello', undefined, source);
-  //   sentHello = true;
-  // }
-}, (source) => {
+const onTabDisconnect = (source: MessageEventSource) => {
+  objectUrlRegistry.releaseSource(source);
   appTabsManager.deleteTab(source);
   autoLockControls.removeTab(source);
-});
+};
+
+// Auto-listen only when actually running inside a Worker context.
+// In Modes.noWorker the proxy imports this module and drives connectInProcessTab
+// manually; falling through to listenMessagePort's else-branch would attach
+// `self` (the window) as a port and intercept unrelated window.postMessage.
+if(IS_WORKER) {
+  listenMessagePort(port, onTabConnect, onTabDisconnect);
+}
+
+// Used by apiManagerProxy in Modes.noWorker: feed it one end of a MessageChannel
+// whose other end is attached to the proxy. Mirrors the SharedWorker `connect`
+// flow but for an in-realm port pair.
+export function connectInProcessTab(p: MessagePort) {
+  port.attachListenPort(p);
+  port.attachSendPort(p);
+  p.start?.();
+  onTabConnect(p as any);
+}
 
 
 function selfTerminate() {
+  resetSharedObjectURLCaches();
+  objectUrlRegistry.dispose();
   if(typeof(SharedWorkerGlobalScope) !== 'undefined') {
     self.close();
   }

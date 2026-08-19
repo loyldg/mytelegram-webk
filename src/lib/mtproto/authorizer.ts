@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -232,6 +228,20 @@ export class Authorizer {
     auth.serverNonce = response.server_nonce; // need
     auth.pq = response.pq;
     auth.fingerprints = response.server_public_key_fingerprints;
+
+    // pq is an unauthenticated TL `bytes` field of the plaintext resPQ, and fetchBytes
+    // caps nothing. It goes straight into unbounded Brent-Pollard factorization, so an
+    // oversized or degenerate value wedges the crypto worker — which also carries all
+    // transport obfuscation — for the lifetime of the shared worker. tdlib's
+    // handle_res_pq applies the same 8-byte limit.
+    if(!auth.pq?.length || auth.pq.length > 8) {
+      throw new Error('[MT] resPQ pq has invalid length: ' + auth.pq?.length);
+    }
+
+    // 0 and 1 have no factorization and spin the rho loop forever
+    if(auth.pq.every((byte, i) => i === auth.pq.length - 1 ? byte <= 1 : byte === 0)) {
+      throw new Error('[MT] resPQ pq is degenerate');
+    }
 
     if(DEBUG) {
       this.log('Got ResPQ', bytesToHex(auth.serverNonce), bytesToHex(auth.pq), auth.fingerprints);

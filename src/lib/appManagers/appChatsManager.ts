@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -12,7 +8,7 @@
 import deepEqual from '@helpers/object/deepEqual';
 import isObject from '@helpers/object/isObject';
 import safeReplaceObject from '@helpers/object/safeReplaceObject';
-import {ChannelAdminLogEvent, ChannelParticipant, ChannelsCreateChannel, ChannelsGetAdminLog, ChannelsSendAsPeers, Chat, ChatAdminRights, ChatBannedRights, ChatFull, ChatInvite, ChatParticipant, ChatPhoto, ChatReactions, EmojiStatus, InputChannel, InputChatPhoto, InputFile, InputPeer, MessagesChats, MessagesSponsoredMessages, MissingInvitee, Peer, SponsoredMessage, SponsoredPeer, Update, Updates} from '@layer';
+import {ChannelAdminLogEvent, ChannelParticipant, ChannelsCreateChannel, ChannelsGetAdminLog, ChannelsGetAdminedPublicChannels, ChannelsSendAsPeers, Chat, ChatAdminRights, ChatBannedRights, ChatFull, ChatInvite, ChatParticipant, ChatPhoto, ChatReactions, EmojiStatus, InputChannel, InputChatPhoto, InputFile, InputPeer, InputUser, MessagesChats, MessagesChatInviteJoinResult, MessagesSponsoredMessages, MissingInvitee, Peer, SponsoredMessage, SponsoredPeer, StickerSet, Update, Updates} from '@layer';
 import {AppManager} from '@appManagers/manager';
 import hasRights from '@appManagers/utils/chats/hasRights';
 import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
@@ -26,8 +22,20 @@ import getPeerId from '@appManagers/utils/peers/getPeerId';
 import callbackify from '@helpers/callbackify';
 import {SlicedCachedFetcher} from '@appManagers/utils/chats/slicedCachedFetcher';
 import {CHAT_LEGACY_ADMIN_RIGHTS} from '@lib/appManagers/utils/chats/constants';
+import {getStickerSetInputById} from '@lib/appManagers/utils/stickers/getStickerSetInput';
 
 export type Channel = Chat.channel;
+export type ChatPhotoUpload = {
+  file: InputFile,
+  video?: InputFile,
+  videoStartTs?: number
+};
+export type ChatInviteJoinWebView = {
+  _: 'chatInviteJoinWebView',
+  botId: BotId,
+  queryId: Long,
+  peerId?: PeerId
+};
 export type ChatRights = keyof ChatBannedRights['pFlags'] | keyof ChatAdminRights['pFlags'] |
   'change_type' | 'change_permissions' | 'delete_chat' | 'view_participants' |
   'invite_links' | 'create_giveaway' | 'just_admin' | 'toggle_forum'/*  | 'view_statistics' */;
@@ -112,10 +120,13 @@ export class AppChatsManager extends AppManager {
         if(!chatId) continue;
         if(!this.peersStorage.isPeerNeeded(chatId.toPeerId(true))) {
           const chat = this.chats[chatId];
-          this.appUsersManager.modifyUsernamesCache(chat, false);
+          if(chat._ !== 'community' && chat._ !== 'communityForbidden') {
+            this.appUsersManager.modifyUsernamesCache(chat, false);
+          }
 
           this.storage.delete(chatId);
           delete this.chats[chatId];
+          this.mirrorChat(chatId.toChatId());
         }
       }
     } else {
@@ -132,7 +143,71 @@ export class AppChatsManager extends AppManager {
   }
 
   public saveApiChat(chat: Chat, override?: boolean) {
-    if(!chat || chat._ === 'chatEmpty') return;
+    if(
+      !chat ||
+      chat._ === 'chatEmpty'
+    ) {
+      return;
+    }
+
+    if(chat._ === 'community' || chat._ === 'communityForbidden') {
+      const id = chat.id = chat.id.toChatId();
+      const oldCommunity = this.chats[id];
+      const oldPhotoId = oldCommunity?._ === 'community' &&
+        oldCommunity.photo?._ === 'chatPhoto' ?
+        oldCommunity.photo.photo_id :
+        undefined;
+      const oldTitle = oldCommunity?.title;
+      let communityToSave = chat;
+
+      if(chat._ === 'community') {
+        chat.pFlags ??= {};
+        if(chat.pFlags.min && oldCommunity?._ === 'community') {
+          communityToSave = {
+            ...oldCommunity,
+            ...chat,
+            access_hash: chat.access_hash ?? oldCommunity.access_hash,
+            admin_rights: chat.admin_rights ?? oldCommunity.admin_rights,
+            default_banned_rights: chat.default_banned_rights ?? oldCommunity.default_banned_rights,
+            pFlags: {
+              ...oldCommunity.pFlags,
+              ...chat.pFlags
+            }
+          };
+        }
+      }
+
+      if(oldCommunity) {
+        safeReplaceObject(oldCommunity, communityToSave);
+        communityToSave = oldCommunity as typeof communityToSave;
+      } else {
+        this.chats[id] = communityToSave;
+      }
+
+      this.mirrorChat(communityToSave);
+      this.appCommunitiesManager.handleCommunityUpdate(id);
+      const newPhotoId = communityToSave._ === 'community' &&
+        communityToSave.photo?._ === 'chatPhoto' ?
+        communityToSave.photo.photo_id :
+        undefined;
+      if(oldCommunity && String(oldPhotoId || '') !== String(newPhotoId || '')) {
+        this.rootScope.dispatchEvent('avatar_update', {
+          peerId: id.toPeerId(true)
+        });
+      }
+      if(oldCommunity && oldTitle !== communityToSave.title) {
+        this.rootScope.dispatchEvent('peer_title_edit', {
+          peerId: id.toPeerId(true)
+        });
+      }
+
+      if(this.peersStorage.isPeerNeeded(id.toPeerId(true))) {
+        this.storage.set({
+          [id]: communityToSave
+        });
+      }
+      return;
+    }
     /* if(chat._ !== 'chat' && chat._ !== 'channel') {
       return;
     } */
@@ -141,6 +216,9 @@ export class AppChatsManager extends AppManager {
     // defineNotNumerableProperties(chat, ['rTitle', 'initials']);
 
     const oldChat = this.chats[chat.id];
+    const previousCommunityId = oldChat?._ === 'channel' ?
+      oldChat.linked_community_id?.toChatId() :
+      undefined;
 
     /* if(oldChat && !override) {
       return;
@@ -150,6 +228,12 @@ export class AppChatsManager extends AppManager {
 
     if((chat as Chat.channel).pFlags.min && oldChat !== undefined) {
       return;
+    }
+
+    if(chat._ === 'channel') {
+      if(chat.linked_community_id) {
+        chat.linked_community_id = chat.linked_community_id.toChatId();
+      }
     }
 
     if(chat._ === 'channel' &&
@@ -234,13 +318,24 @@ export class AppChatsManager extends AppManager {
         [chat.id]: chat
       });
     }
+
+    const communityId = chat._ === 'channel' ? chat.linked_community_id?.toChatId() : undefined;
+    if(String(previousCommunityId || '') !== String(communityId || '')) {
+      this.appCommunitiesManager.handlePeerLinkedCommunityUpdate({
+        peerId,
+        previousCommunityId,
+        communityId
+      });
+    }
   }
 
-  private mirrorChat(chat: Chat) {
+  private mirrorChat(chat: Exclude<Chat, Chat.chatEmpty> | ChatId) {
+    const isChat = typeof(chat) === 'object';
+    const chatId = isChat ? chat.id : chat;
     MTProtoMessagePort.getInstance<false>().invokeVoid('mirror', {
       name: 'peers',
-      key: '' + chat.id.toPeerId(true),
-      value: chat,
+      key: '' + chatId.toPeerId(true),
+      value: isChat ? chat : undefined,
       accountNumber: this.getAccountNumber()
     });
   }
@@ -251,6 +346,35 @@ export class AppChatsManager extends AppManager {
 
   public getChats() {
     return this.chats;
+  }
+
+  public setLinkedCommunityId(chatId: ChatId, communityId?: ChatId) {
+    const chat = this.chats[chatId];
+    communityId = communityId?.toChatId();
+    if(chat?._ !== 'channel' || String(chat.linked_community_id || '') === String(communityId || '')) {
+      return false;
+    }
+
+    const previousCommunityId = chat.linked_community_id?.toChatId();
+    if(communityId) {
+      chat.linked_community_id = communityId;
+    } else {
+      delete chat.linked_community_id;
+    }
+
+    this.mirrorChat(chat);
+    this.rootScope.dispatchEvent('chat_update', chatId);
+    this.appCommunitiesManager.handlePeerLinkedCommunityUpdate({
+      peerId: chatId.toPeerId(true),
+      previousCommunityId,
+      communityId
+    });
+    if(this.peersStorage.isPeerNeeded(chatId.toPeerId(true))) {
+      this.storage.set({
+        [chatId]: chat
+      });
+    }
+    return true;
   }
 
   /**
@@ -304,6 +428,11 @@ export class AppChatsManager extends AppManager {
     return !!(chat && (chat._ === 'channel' || chat._ === 'channelForbidden')/*  || this.channelAccess[id] */);
   }
 
+  public isCommunity(id: ChatId) {
+    const chat = this.getChat(id);
+    return chat?._ === 'community' || chat?._ === 'communityForbidden';
+  }
+
   public isMegagroup(id: ChatId) {
     /* if(this.megagroups[id]) {
       return true;
@@ -322,6 +451,11 @@ export class AppChatsManager extends AppManager {
     return this.isChannel(id) && !this.isMegagroup(id);
   }
 
+  public isBroadcastGroup(id: ChatId) {
+    const chat: Chat = this.chats[id];
+    return !!(chat as Chat.channel)?.pFlags?.gigagroup;
+  }
+
   public isMonoforum(id: ChatId) {
     const chat: Chat = this.chats[id];
     return !!(chat?._ === 'channel' && chat?.pFlags?.monoforum);
@@ -333,6 +467,7 @@ export class AppChatsManager extends AppManager {
     if(!chat ||
       chat._ === 'channelForbidden' ||
       chat._ === 'chatForbidden' ||
+      chat._ === 'communityForbidden' ||
       (chat as any as Chat.chatEmpty)._ === 'chatEmpty' ||
       (chat as Chat.chat).pFlags.left ||
       // || (chat as any).pFlags.kicked
@@ -369,8 +504,8 @@ export class AppChatsManager extends AppManager {
   }
 
   public getChannelInput(id: ChatId): InputChannel {
-    const chat: Chat = this.getChat(id);
-    if(!chat || !(chat as Chat.channel).access_hash) {
+    const chat = this.getChat(id);
+    if(!chat || !('access_hash' in chat) || !chat.access_hash) {
       return {
         _: 'inputChannelEmpty'
       };
@@ -378,13 +513,15 @@ export class AppChatsManager extends AppManager {
       return {
         _: 'inputChannel',
         channel_id: id,
-        access_hash: (chat as Chat.channel).access_hash/*  || this.channelAccess[id] */ || '0'
+        access_hash: chat.access_hash/*  || this.channelAccess[id] */ || '0'
       };
     }
   }
 
   public getInputPeer(id: ChatId) {
-    return this.isChannel(id) ? this.getChannelInputPeer(id) : this.getChatInputPeer(id);
+    return this.isChannel(id) || this.isCommunity(id) ?
+      this.getChannelInputPeer(id) :
+      this.getChatInputPeer(id);
   }
 
   public getChatInputPeer(id: ChatId): InputPeer.inputPeerChat {
@@ -395,22 +532,29 @@ export class AppChatsManager extends AppManager {
   }
 
   public getChannelInputPeer(id: ChatId): InputPeer.inputPeerChannel {
+    const channel = this.getChannelInput(id);
     return {
       _: 'inputPeerChannel',
       channel_id: id,
-      access_hash: (this.getChat(id) as Chat.channel).access_hash/*  || this.channelAccess[id] */ || 0
+      access_hash: channel._ === 'inputChannel' ? channel.access_hash : 0
     };
   }
 
   public hasChat(id: ChatId, allowMin?: true) {
     const chat = this.chats[id];
-    return isObject(chat) && (allowMin || !(chat as Chat.channel).pFlags.min);
+    return isObject(chat) && (
+      allowMin ||
+      !('pFlags' in chat) ||
+      !('min' in chat.pFlags) ||
+      !chat.pFlags.min
+    );
   }
 
-  public getChatString(id: ChatId) {
+  public getChatString(id: ChatId, forceChannel = false) {
     const chat = this.getChat(id);
-    if(this.isChannel(id)) {
-      return (this.isMegagroup(id) ? 's' : 'c') + id + '_' + (chat as Chat.channel).access_hash;
+    if(forceChannel || this.isChannel(id) || this.isCommunity(id)) {
+      return (this.isMegagroup(id) ? 's' : 'c') + id + '_' +
+        (chat && 'access_hash' in chat ? chat.access_hash : 0);
     }
     return 'g' + id;
   }
@@ -427,6 +571,17 @@ export class AppChatsManager extends AppManager {
     ];
 
     return arr.filter(Boolean).join(' ');
+  }
+
+  public getAdminedPublicChannels(params: ChannelsGetAdminedPublicChannels) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'channels.getAdminedPublicChannels',
+      params,
+      processResult: (result) => {
+        this.saveApiChats(result.chats);
+        return result.chats;
+      }
+    });
   }
 
   public createChannel(options: ChannelsCreateChannel): Promise<ChatId> {
@@ -486,7 +641,10 @@ export class AppChatsManager extends AppManager {
 
     this.apiUpdatesManager.processUpdateMessage(updates);
     // * can have no updates on editAdmin
-    if((forceInvalidation || (updates as Updates.updates)?.updates?.length) && this.isChannel(chatId)) {
+    if(
+      (forceInvalidation || (updates as Updates.updates)?.updates?.length) &&
+      (this.isChannel(chatId) || this.isCommunity(chatId))
+    ) {
       this.rootScope.dispatchEvent('invalidate_participants', chatId);
     }
   };
@@ -501,10 +659,37 @@ export class AppChatsManager extends AppManager {
     }).then(this.onChatUpdated.bind(this, id));
   }
 
+  // Layer 228 splits guard-bot joins into an initial query and a separate WebView request.
+  // Cache the bot before the UI asks for confirmation, matching the official clients.
+  public processChatInviteJoinResult(
+    result: MessagesChatInviteJoinResult,
+    peerId?: PeerId
+  ): Updates | ChatInviteJoinWebView {
+    if(result._ === 'messages.chatInviteJoinResultWebView') {
+      this.appUsersManager.saveApiUsers(result.users);
+      return {
+        _: 'chatInviteJoinWebView',
+        botId: result.bot_id,
+        queryId: result.query_id,
+        peerId
+      };
+    }
+
+    return result.updates;
+  }
+
   public joinChannel(id: ChatId) {
     return this.apiManager.invokeApi('channels.joinChannel', {
       channel: this.getChannelInput(id)
-    }).then(this.onChatUpdated.bind(this, id));
+    }).then((result) => {
+      const processed = this.processChatInviteJoinResult(result, id.toPeerId(true));
+      // A guard-bot join has no updates until its WebView reaches a decision.
+      if(processed._ === 'chatInviteJoinWebView') {
+        return processed;
+      }
+
+      this.onChatUpdated(id, processed);
+    });
   }
 
   public addToChat(id: ChatId, userId: UserId | UserId[]) {
@@ -552,11 +737,15 @@ export class AppChatsManager extends AppManager {
   }
 
   public leave(id: ChatId) {
-    return this.isChannel(id) ? this.leaveChannel(id) : this.leaveChat(id);
+    return this.isChannel(id) || this.isCommunity(id) ?
+      this.leaveChannel(id) :
+      this.leaveChat(id);
   }
 
   public delete(id: ChatId) {
-    return this.isChannel(id) ? this.deleteChannel(id) : this.deleteChat(id);
+    return this.isChannel(id) || this.isCommunity(id) ?
+      this.deleteChannel(id) :
+      this.deleteChat(id);
   }
 
   public deleteChannel(id: ChatId) {
@@ -573,9 +762,15 @@ export class AppChatsManager extends AppManager {
     // });
   }
 
+  public convertToGigagroup(id: ChatId) {
+    return this.apiManager.invokeApi('channels.convertToGigagroup', {
+      channel: this.getChannelInput(id)
+    }).then(this.onChatUpdated.bind(this, id));
+  }
+
   public async migrateChat(id: ChatId): Promise<ChatId> {
     const chat: Chat = this.getChat(id);
-    if(chat._ === 'channel') return chat.id;
+    if(chat._ === 'channel' || chat._ === 'community') return chat.id;
     else {
       const migratedTo = (chat as Chat.chat).migrated_to;
       if(migratedTo) {
@@ -601,24 +796,53 @@ export class AppChatsManager extends AppManager {
     return this.refreshChatAfterRequest(id, promise, doNotRefresh);
   }
 
+  public editAdmin(
+    id: ChatId,
+    participant: PeerId | ChannelParticipant | ChatParticipant,
+    rights: ChatAdminRights,
+    rank?: string
+  ): Promise<ChatId>;
+  public editAdmin(
+    id: ChatId,
+    participant: PeerId | ChannelParticipant | ChatParticipant,
+    rights: ChatAdminRights,
+    rank: string,
+    returnParticipant: true
+  ): Promise<ChannelParticipant>;
   public async editAdmin(
     id: ChatId,
     participant: PeerId | ChannelParticipant | ChatParticipant,
     rights: ChatAdminRights,
-    rank: string = ''
-  ) {
-    const wasChannel = this.isChannel(id);
+    rank: string = '',
+    returnParticipant = false
+  ): Promise<ChatId | ChannelParticipant> {
+    const wasChannel = this.isChannel(id) || this.isCommunity(id);
     const peerId = getParticipantPeerId(participant);
     const userId = peerId.toUserId();
     const makingAdmin = Object.keys(rights.pFlags).length > 0;
     const canStickToLegacy = !rank && (!makingAdmin || deepEqual(rights, CHAT_LEGACY_ADMIN_RIGHTS));
 
     if(!wasChannel && canStickToLegacy) {
-      await this.apiManager.invokeApi('messages.editChatAdmin', {
+      const editChatAdmin = () => this.apiManager.invokeApi('messages.editChatAdmin', {
         chat_id: id,
         user_id: this.appUsersManager.getUserInput(userId),
         is_admin: makingAdmin
       });
+
+      try {
+        await editChatAdmin();
+      } catch(err) {
+        if(!makingAdmin || (err as ApiError)?.type !== 'USER_NOT_PARTICIPANT') {
+          throw err;
+        }
+
+        const missingInvitees = await this.addChatUser(id, userId);
+        if(missingInvitees.length) {
+          throw err;
+        }
+
+        await editChatAdmin();
+      }
 
       this.apiUpdatesManager.processLocalUpdate({
         _: 'updateChatParticipantAdmin',
@@ -628,7 +852,7 @@ export class AppChatsManager extends AppManager {
         version: 0
       });
 
-      return;
+      return id;
     }
 
     id = await this.migrateChat(id);
@@ -658,19 +882,31 @@ export class AppChatsManager extends AppManager {
       prevParticipant: participant,
       wasChannel
     });
+    if(this.isCommunity(id)) {
+      this.appCommunitiesManager.handleAdminEdited({
+        communityId: id,
+        previousParticipant: participant,
+        participant: update.new_participant
+      });
+    }
     this.apiUpdatesManager.processLocalUpdate(update);
 
     this.onChatUpdatedForce(id, updates);
+    return returnParticipant ? update.new_participant : id;
   }
 
-  public editPhoto(id: ChatId, inputFile: InputFile) {
-    const inputChatPhoto: InputChatPhoto = {
+  public editPhoto(id: ChatId, upload?: InputFile | ChatPhotoUpload) {
+    const inputChatPhoto: InputChatPhoto = upload ? {
       _: 'inputChatUploadedPhoto',
-      file: inputFile
+      file: 'file' in upload ? upload.file : upload,
+      video: 'file' in upload ? upload.video : undefined,
+      video_start_ts: 'file' in upload ? upload.videoStartTs : undefined
+    } : {
+      _: 'inputChatPhotoEmpty'
     };
 
     let promise: any;
-    if(this.isChannel(id)) {
+    if(this.isChannel(id) || this.isCommunity(id)) {
       promise = this.apiManager.invokeApi('channels.editPhoto', {
         channel: this.getChannelInput(id),
         photo: inputChatPhoto
@@ -688,7 +924,7 @@ export class AppChatsManager extends AppManager {
   public editTitle(id: ChatId, title: string) {
     let promise: any;
 
-    if(this.isChannel(id)) {
+    if(this.isChannel(id) || this.isCommunity(id)) {
       promise = this.apiManager.invokeApi('channels.editTitle', {
         channel: this.getChannelInput(id),
         title
@@ -816,7 +1052,9 @@ export class AppChatsManager extends AppManager {
 
   public setChatAvailableReactions(id: ChatId, reactions: ChatReactions) {
     this.appProfileManager.modifyCachedFullChat(id, (chatFull) => {
-      chatFull.available_reactions = reactions;
+      if('available_reactions' in chatFull) {
+        chatFull.available_reactions = reactions;
+      }
     });
 
     return this.apiManager.invokeApi('messages.setChatAvailableReactions', {
@@ -920,8 +1158,39 @@ export class AppChatsManager extends AppManager {
     return this.toggleSomething(chatId, 'toggleJoinToSend', enabled);
   }
 
-  public toggleJoinRequest(chatId: ChatId, enabled: boolean) {
-    return this.toggleSomething(chatId, 'toggleJoinRequest', enabled);
+  /**
+   * `guardBotId` hands join requests to a guard bot (`user.pFlags.bot_guard`), which greets new
+   * members in its own mini app; `clearGuardBot` gives them back to the admins.
+   */
+  public toggleJoinRequest(chatId: ChatId, enabled: boolean, options?: {
+    guardBotId?: BotId,
+    clearGuardBot?: boolean
+  }) {
+    const {guardBotId, clearGuardBot} = options || {};
+    const guardBot: InputUser = clearGuardBot ?
+      {_: 'inputUserEmpty'} :
+      (guardBotId ? this.appUsersManager.getUserInput(guardBotId) : undefined);
+
+    return this.migrateChat(chatId).then((channelId) => {
+      return this.apiManager.invokeApi('channels.toggleJoinRequest', {
+        channel: this.getChannelInput(channelId),
+        enabled,
+        guard_bot: guardBot
+      }).then((updates) => {
+        if(guardBot) {
+          this.appProfileManager.modifyCachedFullChat<ChatFull.channelFull>(channelId, (channelFull) => {
+            const newGuardBotId = clearGuardBot ? undefined : guardBotId;
+            if(String(channelFull.guard_bot_id || '') === String(newGuardBotId || '')) {
+              return false;
+            }
+
+            channelFull.guard_bot_id = newGuardBotId;
+          });
+        }
+
+        return this.onChatUpdated(channelId, updates);
+      });
+    });
   }
 
   public toggleForum(chatId: ChatId, enabled: boolean) {
@@ -944,6 +1213,21 @@ export class AppChatsManager extends AppManager {
 
   public toggleAutotranslation(chatId: ChatId, enabled: boolean) {
     return this.toggleSomething(chatId, 'toggleAutotranslation', enabled);
+  }
+
+  /**
+   * Sets (or removes, when `stickerSet` is omitted) the group's sticker set or custom emoji pack.
+   */
+  public async setGroupStickerSet(chatId: ChatId, stickerSet?: StickerSet.stickerSet, isEmoji?: boolean) {
+    await this.apiManager.invokeApi(isEmoji ? 'channels.setEmojiStickers' : 'channels.setStickers', {
+      channel: this.getChannelInput(chatId),
+      stickerset: stickerSet ? getStickerSetInputById(stickerSet) : {_: 'inputStickerSetEmpty'}
+    });
+
+    this.appProfileManager.modifyCachedFullChat<ChatFull.channelFull>(chatId, (channelFull) => {
+      if(isEmoji) channelFull.emojiset = stickerSet;
+      else channelFull.stickerset = stickerSet;
+    });
   }
 
   public getGroupsForDiscussion() {

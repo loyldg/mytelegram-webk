@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {DownloadMediaOptions, DownloadOptions} from '@appManagers/apiFileManager';
 import type {AppMessagesManager} from '@appManagers/appMessagesManager';
 import type {MyDocument} from '@appManagers/appDocsManager';
@@ -26,6 +20,7 @@ import apiManagerProxy from '@lib/apiManagerProxy';
 import {IS_MOBILE_SAFARI} from '@environment/userAgent';
 import isWebFileLocation from '@appManagers/utils/webFiles/isWebFileLocation';
 import {MIME_TYPE_EXTENSION_MAP} from '@environment/mimeTypeMap';
+import {isObjectURL} from '@helpers/objectUrlUtils';
 
 export type ResponseMethodBlob = 'blob';
 export type ResponseMethodJson = 'json';
@@ -38,6 +33,7 @@ export type DownloadUrl = CancellablePromise<string>;
 export type DownloadJson = CancellablePromise<any>;
 // export type Download = DownloadBlob/*  | DownloadJson */;
 export type Download = DownloadBlob | DownloadUrl/*  | DownloadJson */;
+type CachedDownloadUrl = DownloadUrl & {resolvedObjectURL?: string};
 
 export type Progress = {done: number, fileName: string, total: number, offset: number};
 export type ProgressCallback = (details: Progress) => void;
@@ -50,6 +46,9 @@ export class AppDownloadManager {
   private progress: {[fileName: string]: Progress} = {};
   // private progressCallbacks: {[fileName: string]: Array<ProgressCallback>} = {};
   private managers: AppManagers;
+
+  // To be assigned elsewhere in the app, importing confirmationPopup here will result in an importing error
+  public showPollCancelConfirmation: (randomId: string) => void;
 
   public construct(managers: AppManagers) {
     this.managers = managers;
@@ -76,13 +75,19 @@ export class AppDownloadManager {
         main: deferred as any
       };
 
-      deferred.cancel = () => {
+      const runCancel = async() => {
+        if(await this.confirmBeforeCancelingPollUpload(fileName)) return;
+
         const error = makeError('DOWNLOAD_CANCELED');
 
         this.managers.apiFileManager.cancelDownload(fileName);
 
         deferred.reject(error);
         deferred.cancel = noop;
+      };
+
+      deferred.cancel = () => {
+        runCancel();
       };
 
       deferred.catch(() => {
@@ -111,6 +116,15 @@ export class AppDownloadManager {
     }
 
     return download[type] = deferred as any;
+  }
+
+  private async confirmBeforeCancelingPollUpload(fileName: string) {
+    const randomId = await this.managers.appPollsManager.getRandomIdByUploadingFileName(fileName);
+    if(!randomId || !this.showPollCancelConfirmation) return false;
+
+    this.showPollCancelConfirmation(randomId);
+
+    return true;
   }
 
   public getNewDeferredForUpload<T extends Promise<any>>(fileName: string, promise: T) {
@@ -169,6 +183,12 @@ export class AppDownloadManager {
 
     deferred = this.getNewDeferred<Blob>(fileName, type);
     getPromise().then(deferred.resolve.bind(deferred), deferred.reject.bind(deferred));
+    if(type === 'url') {
+      const urlDeferred = deferred as CachedDownloadUrl;
+      urlDeferred.then((url) => {
+        urlDeferred.resolvedObjectURL = url;
+      }, noop);
+    }
     return deferred;
   }
 
@@ -182,7 +202,21 @@ export class AppDownloadManager {
   }
 
   public downloadMedia(options: DownloadMediaOptions, type: DownloadType = 'blob', promiseBefore?: Promise<any>): DownloadBlob {
-    const {downloadOptions, fileName} = getDownloadMediaDetails(options);
+    const {fileName} = getDownloadMediaDetails(options);
+
+    if(type === 'url') {
+      const cached = this.getDownload(fileName, type) as CachedDownloadUrl;
+      const resolvedObjectURL = cached?.resolvedObjectURL;
+      if(
+        isObjectURL(resolvedObjectURL) &&
+        apiManagerProxy.getCacheContext(options.media as any, options.thumb?.type).url !== resolvedObjectURL
+      ) {
+        // The worker evicted this URL and already invalidated the tab mirror.
+        // Do not hand a newly rendered element the fulfilled promise's revoked
+        // value; let the worker recreate/re-adopt a URL from its Blob cache.
+        this.clearDownload(fileName, type);
+      }
+    }
 
     return this.d(fileName, () => {
       let cb: any;

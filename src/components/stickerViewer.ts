@@ -1,10 +1,5 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import {getAppWindow, getOverlayRoot} from '@helpers/appWindow';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {simulateClickEvent, attachClickEvent} from '@helpers/dom/clickEvent';
 import findUpAsChild from '@helpers/dom/findUpAsChild';
@@ -23,8 +18,8 @@ import {MyDocument} from '@appManagers/appDocsManager';
 import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
 import CustomEmojiElement from '@lib/customEmoji/element';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
-import lottieLoader from '@lib/rlottie/lottieLoader';
-import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
+import lottieLoader from '@lib/lottie/lottieLoader';
+import LottiePlayer from '@lib/lottie/lottiePlayer';
 import rootScope from '@lib/rootScope';
 import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
 import {EMOJI_TEXT_COLOR} from '@components/emoticonsDropdown';
@@ -73,6 +68,14 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
       return;
     }
 
+    // The whole hold-drag-release gesture is tracked on document-level mousemove/mouseup + a post-
+    // release click-swallow, and timed by setTimeout/setInterval — all of which must use whichever
+    // window the app currently lives in (the tab, or the Document PiP window). Bound to the MAIN
+    // window, the viewer opens on hold but its mouseup/mousemove fire on the PiP document and never
+    // arrive, so it sticks open and can't switch stickers.
+    const activeWindow = getAppWindow();
+    const activeDocument = activeWindow.document;
+
     const className = 'sticker-viewer';
     const group: AnimationItemGroup = 'STICKER-VIEWER';
     const openDuration = 200;
@@ -111,9 +114,10 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
       /* transformer.style.width =  */stickerContainer.style.width = fitted.width + 'px';
       /* transformer.style.height =  */stickerContainer.style.height = fitted.height + 'px';
 
+      const viewerEmoji = mediaContainer.dataset.stickerEmoji || doc.stickerEmojiRaw;
       const stickerEmoji = document.createElement('div');
       stickerEmoji.classList.add(className + '-emoji');
-      stickerEmoji.append(wrapEmojiText(doc.stickerEmojiRaw));
+      stickerEmoji.append(wrapEmojiText(viewerEmoji));
 
       if(effectThumb) {
         const margin = (size * STICKER_EFFECT_MULTIPLIER - size) / 3 * (isOut ? 1 : -1);
@@ -144,7 +148,7 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
       const transformX = rect.left - (windowSize.width - rect.width) / 2;
       const transformY = rect.top - (windowSize.height - rect.height) / 2;
       transformer.style.transform = `translate(${transformX}px, ${transformY}px) scale(${scaleX}, ${scaleY})`;
-      if(isSwitching) transformer.classList.add('is-switching');
+      if(isSwitching) transformer.classList.add('is-switching', 'forwards');
       transformer.append(stickerContainer, stickerEmoji);
       container.append(transformer);
 
@@ -172,6 +176,7 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
         managers,
         needFadeIn: false,
         isOut,
+        emoji: attribute ? undefined : viewerEmoji,
         withThumb: false,
         relativeEffect: true,
         loopEffect: true,
@@ -180,12 +185,12 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
       if(!middleware()) return;
 
       if(!container.parentElement) {
-        document.body.append(container);
+        getOverlayRoot().append(container);
       }
 
       const player = Array.isArray(o) ? o[0] : o;
 
-      const firstFramePromise = player instanceof RLottiePlayer ?
+      const firstFramePromise = player instanceof LottiePlayer ?
         new Promise<void>((resolve) => player.addEventListener('firstFrame', resolve, {once: true})) :
         Promise.resolve();
       await Promise.all([firstFramePromise, doubleRaf()]);
@@ -197,9 +202,9 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
         animationIntersector.checkAnimations2(true);
       }
 
-      if(player instanceof RLottiePlayer) {
+      if(player instanceof LottiePlayer) {
         const prevPlayer = mediaContainer instanceof CustomEmojiElement ?
-          mediaContainer.player as RLottiePlayer :
+          mediaContainer.player as LottiePlayer :
           lottieLoader.getAnimation(mediaContainer);
         if(prevPlayer) {
           player.curFrame = prevPlayer.curFrame;
@@ -227,7 +232,7 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
 
       return {
         ready: () => {
-          if(player instanceof RLottiePlayer || player instanceof HTMLVideoElement) {
+          if(player instanceof LottiePlayer || player instanceof HTMLVideoElement) {
             safePlay(player);
           }
 
@@ -239,8 +244,8 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
       };
     };
 
-    const timeout = window.setTimeout(async() => {
-      document.removeEventListener('mousemove', onMousePreMove);
+    const timeout = activeWindow.setTimeout(async() => {
+      activeDocument.removeEventListener('mousemove', onMousePreMove);
 
       container = document.createElement('div');
       container.classList.add(className, additionalClass);
@@ -283,7 +288,7 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
         }
       });
 
-      document.addEventListener('mousemove', onMouseMove);
+      activeDocument.addEventListener('mousemove', onMouseMove);
     }, 125);
 
     const onMouseMove = async(e: MouseEvent) => {
@@ -354,8 +359,8 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
 
     const onMouseUp = () => {
       isMouseUp = true;
-      clearTimeout(timeout);
-      clearInterval(unmountInterval);
+      activeWindow.clearTimeout(timeout);
+      activeWindow.clearInterval(unmountInterval);
       // _middleware.clean();
 
       if(container) {
@@ -373,17 +378,17 @@ export default function attachStickerViewerListeners({listenTo, listenerSetter, 
           }
         });
 
-        attachClickEvent(document.body, cancelEvent, {capture: true, once: true});
+        attachClickEvent(activeDocument.body, cancelEvent, {capture: true, once: true});
       }
 
-      document.removeEventListener('mousemove', onMousePreMove);
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp, {capture: true});
+      activeDocument.removeEventListener('mousemove', onMousePreMove);
+      activeDocument.removeEventListener('mousemove', onMouseMove);
+      activeDocument.removeEventListener('mouseup', onMouseUp, {capture: true});
     };
 
-    document.addEventListener('mousemove', onMousePreMove);
-    document.addEventListener('mouseup', onMouseUp, {once: true, capture: true});
-    const unmountInterval = setInterval(() => {
+    activeDocument.addEventListener('mousemove', onMousePreMove);
+    activeDocument.addEventListener('mouseup', onMouseUp, {once: true, capture: true});
+    const unmountInterval = activeWindow.setInterval(() => {
       if(!isInDOM(mediaContainer)) {
         onMouseUp();
       }

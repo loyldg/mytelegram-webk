@@ -16,7 +16,7 @@ import {PreloaderTsx} from '@components/putPreloader';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import appDownloadManager from '@lib/appDownloadManager';
 import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
-import PopupForward from '@components/popups/forward';
+import showForwardPopup from '@components/popups/forward';
 
 import styles from '@components/sidebarRight/tabs/savedMusic.module.scss';
 import createMiddleware from '@helpers/solid/createMiddleware';
@@ -104,7 +104,12 @@ function SavedMusicContent(props: {
     loadCount: 50,
     loadWhenLeft: 5,
     processItem: (message: Message.message) => {
-      appMediaPlaybackController.addMedia(message, false, false);
+      appMediaPlaybackController.addMedia({
+        message,
+        autoload: false,
+        clean: false,
+        middleware
+      });
       return {peerId: message.peerId, mid: message.mid};
     }
   });
@@ -123,7 +128,7 @@ function SavedMusicContent(props: {
           const msg = contextMenuTarget?.message;
           if(!msg) return;
           await rootScope.managers.appMessagesManager.saveMessages([msg]);
-          PopupForward.create({[msg.peerId]: [msg.mid]});
+          showForwardPopup({[msg.peerId]: [msg.mid]});
         }
       }, {
         icon: 'download',

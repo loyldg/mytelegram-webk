@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement from '.';
 import I18n, {FormatterArguments, LangPackKey, _i18n, i18n, join} from '@lib/langPack';
 import Row from '@components/row';
@@ -12,25 +6,22 @@ import Section from '@components/section';
 import RangeStepsSelector from '@components/rangeStepsSelector';
 import {Accessor, For, JSX, createEffect, createMemo, createSignal, untrack} from 'solid-js';
 import tsNow from '@helpers/tsNow';
-import PopupSchedule from '@components/popups/schedule';
+import showDatePickerPopup from '@components/popups/datePicker';
 import {formatFullSentTime, formatMonthsDuration} from '@helpers/date';
 import renderImageFromUrl from '@helpers/dom/renderImageFromUrl';
 import Icon from '@components/icon';
 import {AvatarNew} from '@components/avatarNew';
 import Button from '@components/button';
 import PeerTitle from '@components/peerTitle';
-import {HelpCountry, InputInvoice, InputStorePaymentPurpose, PremiumGiftCodeOption, PrepaidGiveaway, StarsGiveawayOption, StarsGiveawayWinnersOption} from '@layer';
+import {InputInvoice, InputStorePaymentPurpose, PremiumGiftCodeOption, PrepaidGiveaway, StarsGiveawayOption, StarsGiveawayWinnersOption} from '@layer';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import PopupPremium from '@components/popups/premium';
 import {premiumOptionsForm} from '@components/premium/promoSlideTab';
-import PopupPickUser from '@components/popups/pickUser';
+import showPickUserPopup from '@components/popups/pickUser';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import getChatMembersString from '@components/wrappers/getChatMembersString';
 import findUpClassName from '@helpers/dom/findUpClassName';
-import {filterCountries} from '@components/countryInputField';
-import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
-import {getCountryEmoji} from '@vendor/emoji';
 import {toastNew} from '@components/toast';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
@@ -41,13 +32,14 @@ import shake from '@helpers/dom/shake';
 import anchorCallback from '@helpers/dom/anchorCallback';
 import {IconTsx} from '@components/iconTsx';
 import {CPrepaidGiveaway} from '@components/sidebarRight/tabs/boosts';
-import isObject from '@helpers/object/isObject';
 import classNames from '@helpers/string/classNames';
 import RowTsx from '@components/rowTsx';
 import {StarsStackedStars} from '@components/popups/stars';
 import numberThousandSplitter, {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import paymentsWrapCurrencyAmount from '@helpers/paymentsWrapCurrencyAmount';
 import flatten from '@helpers/array/flatten';
+import isGiveawayUntilDateValid from '@helpers/giveaway/isGiveawayUntilDateValid';
+import showPickCountryPopup from '@components/popups/pickCountry';
 
 export const BoostsBadge = (props: {boosts: number}) => {
   return (
@@ -167,17 +159,23 @@ export default class PopupBoostsViaGifts extends PopupElement {
       titleLangKey: 'Ends',
       titleRightSecondary: true,
       clickable: () => {
-        const maxDate = new Date(Date.now() + (this.appConfig.giveaway_period_max ?? 604800) * 1000);
+        const now = tsNow(true);
+        const minTimeDate = new Date(now * 1000);
+        const minDate = new Date(minTimeDate);
+        minDate.setHours(0, 0, 0, 0);
+        const maxDate = new Date((now + (this.appConfig.giveaway_period_max ?? 604800)) * 1000);
         const initDate = new Date(expiration() * 1000);
-        const popup = new PopupSchedule({
+        showDatePickerPopup({
           initDate,
+          withTime: true,
+          minDate,
+          minTimeDate,
           onPick: (timestamp) => {
             setExpiration(timestamp);
           },
           btnConfirmLangKey: 'Save',
           maxDate
         });
-        popup.show();
       },
       listenerSetter: this.listenerSetter
     });
@@ -215,22 +213,20 @@ export default class PopupBoostsViaGifts extends PopupElement {
           }
 
           cancelEvent(e);
-          const popup = PopupElement.createPopup(
-            PopupPickUser,
-            {
-              peerType: ['channelParticipants'],
-              peerId: this.peerId,
-              onMultiSelect: (peerIds) => {
-                setSpecificPeerIds(peerIds);
-                updateSpecific(true);
-                starsRow.checkboxField.setValueSilently(true);
-              },
-              placeholder: 'SearchPlaceholder',
-              exceptSelf: true,
-              titleLangKey: 'Giveaway.Type.Specific.Modal.SelectUsers',
-              initial: specificPeerIds()
-            }
-          );
+          const popup = showPickUserPopup({
+            peerType: ['channelParticipants'],
+            peerId: this.peerId,
+            onSelect: (arr) => {
+              setSpecificPeerIds(arr.map(({peerId}) => peerId));
+              updateSpecific(true);
+              starsRow.checkboxField.setValueSilently(true);
+            },
+            multiSelect: true,
+            placeholder: 'SearchPlaceholder',
+            exceptSelf: true,
+            titleLangKey: 'Giveaway.Type.Specific.Modal.SelectUsers',
+            initial: specificPeerIds()
+          });
 
           popup.selector.setLimit(this.subscribersLimit, () => {
             toastNew({langPackKey: 'Giveaway.MaximumSubscribers', langPackArguments: [this.subscribersLimit]});
@@ -343,25 +339,22 @@ export default class PopupBoostsViaGifts extends PopupElement {
 
     attachClickEvent(addChannelButton, async() => {
       const toggle = toggleDisability(addChannelButton, true);
-      const popup = PopupElement.createPopup(
-        PopupPickUser,
-        {
-          filterPeerTypeBy: ['isBroadcast'],
-          onMultiSelect: (peerIds) => {
-            setPeerIds([this.peerId, ...peerIds]);
-          },
-          placeholder: 'SearchPlaceholder',
-          titleLangKey: 'AddChannels',
-          initial: peerIds().filter((peerId) => peerId !== this.peerId),
-          excludePeerIds: new Set([this.peerId])
-        }
-      );
+      const popup = showPickUserPopup({
+        filterPeerTypeBy: ['isBroadcast'],
+        onSelect: (arr) => {
+          setPeerIds([this.peerId, ...arr.map(({peerId}) => peerId)]);
+        },
+        multiSelect: true,
+        placeholder: 'SearchPlaceholder',
+        titleLangKey: 'AddChannels',
+        initial: peerIds().filter((peerId) => peerId !== this.peerId),
+        excludePeerIds: new Set([this.peerId]),
+        onCloseAfterTimeout: () => toggle()
+      });
 
       popup.selector.setLimit(this.channelsLimit, () => {
         toastNew({langPackKey: 'BoostingSelectUpToWarningChannelsPlural', langPackArguments: [this.channelsLimit]});
       });
-
-      popup.addEventListener('closeAfterTimeout', () => toggle(), {once: true});
 
       const _add = popup.selector.add.bind(popup.selector);
       let ignorePrivatePeerId: PeerId;
@@ -382,7 +375,7 @@ export default class PopupBoostsViaGifts extends PopupElement {
           }).then(() => {
             ignorePrivatePeerId = peerId;
             popup.selector.add({key: peerId});
-            popup.selector.toggleElementCheckboxByPeerId(peerId, true);
+            popup.selector.toggleElementCheckboxByKey(peerId, true);
             ignorePrivatePeerId = undefined;
           });
           return false;
@@ -408,71 +401,13 @@ export default class PopupBoostsViaGifts extends PopupElement {
         return;
       }
 
-      let lastFiltered: Map<string, HelpCountry>;
-      const popup = PopupElement.createPopup(
-        PopupPickUser,
-        {
-          peerType: ['custom'],
-          renderResultsFunc: (iso2s) => {
-            iso2s.forEach((iso2) => {
-              const country = lastFiltered.get(iso2 as any as string);
-              const emoji = getCountryEmoji(country.iso2);
-              const title = document.createDocumentFragment();
-              const emojiContainer = document.createElement('span');
-              emojiContainer.classList.add('selector-countries-emoji');
-              emojiContainer.append(wrapEmojiText(emoji))
-              title.append(emojiContainer, ' ', i18n(country.default_name as any));
-              const row = new Row({
-                title,
-                clickable: true,
-                havePadding: true
-              });
-
-              row.container.append(popup.selector.checkbox(popup.selector.selected.has(iso2)));
-              row.container.dataset.peerId = '' + iso2;
-              popup.selector.list.append(row.container);
-            });
-          },
-          placeholder: 'Search',
-          onMultiSelect: (iso2s) => {
-            setCountries(iso2s as any as string[]);
-          },
-          getMoreCustom: async(q) => {
-            const filtered = filterCountries(q, true);
-            lastFiltered = new Map();
-            return {
-              result: filtered.map((country) => {
-                lastFiltered.set(country.iso2, country);
-                return country.iso2;
-              }) as any,
-              isEnd: true
-            };
-          },
-          titleLangKey: 'BoostingSelectCountry',
-          checkboxSide: 'left',
-          noPlaceholder: true
-        }
-      );
-
-      const _add = popup.selector.add.bind(popup.selector);
-      popup.selector.add = ({key, scroll}) => {
-        const country = I18n.countriesList.find((country) => country.iso2 === key);
-        const ret = _add({
-          key: key,
-          title: i18n(country.default_name as any),
-          scroll
-        });
-        if(isObject(ret)) {
-          ret.avatar.render({peerTitle: getCountryEmoji(country.iso2)});
-        }
-        return ret;
-      };
-
-      popup.selector.searchSection.container.classList.add('is-countries');
-      popup.selector.container.classList.add('is-countries');
-      popup.selector.addInitial(countries());
-      popup.selector.setLimit(this.countriesLimit, () => {
-        toastNew({langPackKey: 'BoostingSelectUpToWarningCountriesPlural', langPackArguments: [this.countriesLimit]});
+      showPickCountryPopup({
+        excludeVirtual: true,
+        initial: countries(),
+        limit: this.countriesLimit,
+        limitReachedLangKey: 'BoostingSelectUpToWarningCountriesPlural',
+        onSelect: setCountries,
+        titleLangKey: 'BoostingSelectCountry'
       });
     };
 
@@ -811,6 +746,17 @@ export default class PopupBoostsViaGifts extends PopupElement {
 
     attachClickEvent(this.btnConfirm, async() => {
       const toggle = toggleDisability(this.btnConfirm, true);
+
+      if(!specific()) {
+        const now = tsNow(true);
+        const periodMax = this.appConfig.giveaway_period_max ?? 604800;
+        if(!isGiveawayUntilDateValid(expiration(), now, periodMax)) {
+          toggle();
+          toastNew({langPackKey: 'BoostsViaGifts.InvalidEndDate'});
+          shake(expirationRow.container);
+          return;
+        }
+      }
 
       try {
         const purpose = await (specific() ? createSpecificStoreInput : createGiveawayStoreInput)();

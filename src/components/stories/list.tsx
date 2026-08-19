@@ -1,11 +1,5 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {JSX, createSignal, For, createEffect, Accessor, onMount, createMemo, splitProps, on, Show, onCleanup} from 'solid-js';
-import {ScrollableX} from '@components/scrollable';
+import Scrollable from '@components/scrollable2';
 import {createStoriesViewer} from '@components/stories/viewer';
 import styles from '@components/stories/list.module.scss';
 import mediaSizes from '@helpers/mediaSizes';
@@ -19,7 +13,7 @@ import findUpClassName from '@helpers/dom/findUpClassName';
 import {StoriesProvider, useStories} from '@components/stories/store';
 import appImManager from '@lib/appImManager';
 import appSidebarLeft from '@components/sidebarLeft';
-import AppMyStoriesTab from '@components/sidebarLeft/tabs/myStories';
+import {AppMyStoriesTab} from '@components/solidJsTabs/tabs';
 import {toastNew} from '@components/toast';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import {ChatType} from '@components/chat/chatType';
@@ -30,36 +24,7 @@ import ListenerSetter from '@helpers/listenerSetter';
 import {PeerTitleTsx} from '@components/peerTitleTsx';
 import showStoriesStealthModePopup from '@components/popups/storiesStealthMode';
 
-
 const TEST_COUNT = 0;
-
-export const ScrollableXTsx = (props: {
-  children: JSX.Element,
-  onAdditionalScroll?: () => void
-} & JSX.HTMLAttributes<HTMLDivElement>) => {
-  const [, rest] = splitProps(props, ['onAdditionalScroll']);
-  let container: HTMLDivElement;
-  const ret = (
-    <div ref={container} {...rest}>
-      {props.children}
-    </div>
-  );
-
-  const scrollable = new ScrollableX(undefined, undefined, undefined, undefined, container);
-
-  if(props.onAdditionalScroll) {
-    scrollable.setListeners();
-    scrollable.onAdditionalScroll = props.onAdditionalScroll;
-  }
-
-  onCleanup(() => {
-    scrollable.destroy();
-  });
-
-  return ret;
-};
-
-
 const ITEM_MARGIN = 0;
 const ITEM_WIDTH = 74 + ITEM_MARGIN * 2;
 const ITEM_AVATAR_SIZE = 54;
@@ -73,7 +38,8 @@ function _StoriesList(props: {
   listenWheelOn: HTMLElement,
   archive?: boolean,
   offsetX?: number,
-  resizeCallback?: (callback: () => void) => void
+  resizeCallback?: (callback: () => void) => void,
+  onExpand?: () => void
 }) {
   type PeerStories = typeof stories['peers'][0];
   const [stories, actions] = useStories();
@@ -106,7 +72,10 @@ function _StoriesList(props: {
   const items = new WeakMap<PeerStories, HTMLDivElement>();
   const itemsTarget = new WeakMap<HTMLDivElement, PeerStories>();
 
-  const onContainerClick = (e: MouseEvent) => unfold(e);
+  const onContainerClick = (e: MouseEvent) => {
+    unfold(e);
+    props.onExpand?.();
+  };
 
   createEffect(() => {
     const peer = viewerPeer();
@@ -340,13 +309,18 @@ function _StoriesList(props: {
     disableHoverWhenFolded: true
   });
 
+  // * declared before `r`: creating it maps `peers()` through `Item` right away, so a list
+  // * that already has its peers (a provider constructed with them) would read this memo
+  // * before initialization
+  const shouldStoriesSegmentsBeFolded = createMemo(() => progress() !== STATE_UNFOLDED);
+
   const r = (
     <div
       ref={container}
       class={styles.ListContainer}
       style={calculateMovement()}
     >
-      <ScrollableXTsx>
+      <Scrollable axis="x">
         <div
           class={styles.List}
           classList={{
@@ -355,7 +329,7 @@ function _StoriesList(props: {
         >
           <For each={peers()}>{Item}</For>
         </div>
-      </ScrollableXTsx>
+      </Scrollable>
     </div>
   );
 
@@ -384,16 +358,14 @@ function _StoriesList(props: {
         icon: 'stories',
         text: 'SavedStories',
         onClick: () => {
-          appSidebarLeft.createTab(AppMyStoriesTab).open();
+          appSidebarLeft.createTab(AppMyStoriesTab).open(AppMyStoriesTab.getInitArgs());
         },
         verify: () => isSelf
       }, {
         icon: 'archive',
         text: 'ArchivedStories',
         onClick: () => {
-          const tab = appSidebarLeft.createTab(AppMyStoriesTab);
-          tab.isArchive = true;
-          tab.open();
+          appSidebarLeft.createTab(AppMyStoriesTab).open({...AppMyStoriesTab.getInitArgs(), isArchive: true});
         },
         verify: () => isSelf
       }, {
@@ -469,8 +441,6 @@ function _StoriesList(props: {
       }
     });
   });
-
-  const shouldStoriesSegmentsBeFolded = createMemo(() => progress() !== STATE_UNFOLDED);
 
   return (
     <>

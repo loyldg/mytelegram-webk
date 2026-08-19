@@ -22,7 +22,7 @@ import {requestRAF} from '@helpers/solid/requestRAF';
 import useElementSize from '@hooks/useElementSize';
 import {useIsCleaned} from '@hooks/useIsCleaned';
 import {useResizeObserver} from '@hooks/useResizeObserver';
-import {useScrollTop} from '@hooks/useScrollTop';
+import {useScrollPosition} from '@hooks/useScrollPosition';
 import {lowerBound} from '@components/dynamicVirtualList/lowerBound';
 import styles from '@components/dynamicVirtualList/styles.module.scss';
 
@@ -135,7 +135,7 @@ const createVirtualRenderState = <T, >({
   verticalPadding,
   renderAtLeastFromBottom
 }: CreateVirtualRenderStateArgs<T>) => {
-  const scrollTop = useScrollTop(scrollable);
+  const scrollTop = useScrollPosition(scrollable);
   const size = useElementSize(scrollable);
 
   const clientHeight = () => size.height;
@@ -193,7 +193,7 @@ const createVirtualRenderState = <T, >({
 
     batch(() => {
       let i = lowerBound(0, prevMinIdx - 1, viewportTop, idx =>
-        untrack(() => list[idx].offset() + (list[idx].cachedHeight() || 0)),
+        untrack(() => list[idx].offset() + (list[idx].cachedHeight() || 0))
       );
 
       const fromBottomIdx = list.length - renderAtLeastFromBottom({clientHeight: localClientHeight});
@@ -266,7 +266,7 @@ const createItemComponent = <T, El extends HTMLElement>({
 }: CreateItemComponentArgs<T, El>) => {
   const registerResizeCallback = useResizeObserver();
 
-  return (props: { item: ListItemState<T> }) => {
+  return (props: {item: ListItemState<T>}) => {
     let ref!: El;
 
     const [isMeasuring, setIsMeasuring] = createSignal(false);
@@ -328,7 +328,7 @@ const createItemComponent = <T, El extends HTMLElement>({
             setTranslation(0);
           });
         }, stableResizeTimeout);
-      }),
+      })
     );
 
     return (
@@ -346,7 +346,7 @@ const createItemComponent = <T, El extends HTMLElement>({
 };
 
 export const DynamicVirtualList = <T, El extends HTMLElement>(
-  inProps: DynamicVirtualListProps<T, El>,
+  inProps: DynamicVirtualListProps<T, El>
 ) => {
   const props = mergeProps({
     nearBottomThreshold: 120,

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import ripple from '@components/ripple';
 import animationIntersector from '@components/animationIntersector';
 import appNavigationController, {NavigationItem} from '@components/appNavigationController';
@@ -16,6 +10,7 @@ import isSendShortcutPressed from '@helpers/dom/isSendShortcutPressed';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import EventListenerBase, {EventListenerListeners} from '@helpers/eventListenerBase';
 import {addFullScreenListener, getFullScreenElement} from '@helpers/dom/fullScreen';
+import {getOverlayRoot} from '@helpers/appWindow';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {AppManagers} from '@lib/managers';
 import overlayCounter from '@helpers/overlayCounter';
@@ -55,7 +50,8 @@ export type PopupOptions = Partial<{
   buttons: Array<PopupButton>,
   title: boolean | LangPackKey | DocumentFragment | HTMLElement,
   floatingHeader: boolean,
-  withFooterConfirm: boolean
+  withFooterConfirm: boolean,
+  old: boolean
 }>;
 
 export interface PopupElementConstructable<T extends PopupElement = any> {
@@ -63,10 +59,11 @@ export interface PopupElementConstructable<T extends PopupElement = any> {
 }
 
 const DEFAULT_APPEND_TO = document.body;
-let appendPopupTo = DEFAULT_APPEND_TO;
+// Resolved lazily: a fullscreen element wins, otherwise the active app window's body (the tab, or the
+// Document PiP window while the client is popped out).
+const appendPopupTo = () => getFullScreenElement() || getOverlayRoot();
 
 const onFullScreenChange = () => {
-  appendPopupTo = getFullScreenElement() || DEFAULT_APPEND_TO;
   PopupElement.reAppend();
 };
 
@@ -124,6 +121,10 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
     this.element.classList.add('popup');
     this.element.className = 'popup' + (className ? ' ' + className : '');
     this.container.classList.add('popup-container', 'z-depth-1');
+
+    if(options.old) {
+      this.element.classList.add('old');
+    }
 
     if(overlayCounter.isDarkOverlayActive) {
       this.night = true;
@@ -353,7 +354,7 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
     appNavigationController.pushItem(this.navigationItem);
 
     blurActiveElement(); // * hide mobile keyboard
-    appendPopupTo.append(this.element);
+    appendPopupTo().append(this.element);
     if(animate) void this.element.offsetWidth; // reflow
     this.element.classList.add('active');
 
@@ -422,7 +423,7 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
     this.middlewareHelper.destroy();
     MarkupTooltip.getInstance().hide();
 
-    if(!this.withoutOverlay) {
+    if(this.shown && !this.withoutOverlay) {
       overlayCounter.isOverlayActive = false;
     }
 
@@ -441,7 +442,7 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
       this.scrollable?.destroy();
       this.lateMiddlewareHelper.destroy();
 
-      if(!this.withoutOverlay) {
+      if(this.shown && !this.withoutOverlay) {
         animationIntersector.checkAnimations2(false);
       }
     }, 250);
@@ -460,11 +461,12 @@ export default class PopupElement<T extends EventListenerListeners = {}> extends
   }
 
   public static reAppend() {
+    const target = appendPopupTo();
     this.POPUPS.forEach((popup) => {
       const {element, container} = popup;
       const parentElement = element.parentElement;
-      if(parentElement && parentElement !== appendPopupTo && appendPopupTo !== container) {
-        appendPopupTo.append(element);
+      if(parentElement && parentElement !== target && target !== container) {
+        target.append(element);
       }
     });
   }

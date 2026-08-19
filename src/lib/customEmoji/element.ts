@@ -1,15 +1,9 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {CancellablePromise} from '@helpers/cancellablePromise';
 import animationIntersector from '@components/animationIntersector';
 import safePlay from '@helpers/dom/safePlay';
 import {MiddlewareHelper} from '@helpers/middleware';
 import {createCustomFiller} from '@lib/richTextProcessor/wrapRichText';
-import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
+import LottiePlayer from '@lib/lottie/lottiePlayer';
 import {CustomEmojiRendererElement, SyncedPlayer} from '@lib/customEmoji/renderer';
 
 export type CustomEmojiElements = Set<CustomEmojiElement>;
@@ -17,11 +11,12 @@ export type CustomEmojiElements = Set<CustomEmojiElement>;
 export default class CustomEmojiElement extends HTMLElement {
   public elements: CustomEmojiElements;
   public renderer: CustomEmojiRendererElement;
-  public player: RLottiePlayer | HTMLVideoElement;
+  public player: LottiePlayer | HTMLVideoElement;
   public paused: boolean;
   public syncedPlayer: SyncedPlayer;
   public clean: boolean;
   public lastChildWas: Node;
+  public savedChildren: Node[];
   // public docId: DocId;
   public placeholder: HTMLImageElement;
   public middlewareHelper: MiddlewareHelper;

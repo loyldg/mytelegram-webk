@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../shared" as *;
 
 html.overlay-scroll {
@@ -61,6 +55,11 @@ html.custom-scroll {
   .scrollable-thumb.is-focused {
     opacity: 1;
   }
+
+  .scrollable-thumb--hidden {
+    transition: none !important;
+    opacity: 0 !important;
+  }
 }
 
 .scrollable-x::-webkit-scrollbar,
@@ -68,7 +67,7 @@ html.custom-scroll {
   display: none; // for safari iOS
 }
 
-/* .no-scrollbar::-webkit-scrollbar {
+.no-scrollbar::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -76,7 +75,11 @@ html.custom-scroll {
 .no-scrollbar::-webkit-scrollbar-thumb {
   width: 0;
   height: 0;
-} */
+}
+
+.no-scrollbar {
+  scrollbar-width: none !important;
+}
 
 .scrollable {
   width: 100%;

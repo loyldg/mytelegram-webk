@@ -1,15 +1,8 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import partition from '@helpers/array/partition';
 import assumeType from '@helpers/assumeType';
 import {formatDate} from '@helpers/date';
 import htmlToDocumentFragment from '@helpers/dom/htmlToDocumentFragment';
 import {getRestrictionReason} from '@helpers/restrictions';
-import escapeRegExp from '@helpers/string/escapeRegExp';
 import limitSymbols from '@helpers/string/limitSymbols';
 import {Message, DocumentAttribute, DraftMessage, MessageMedia, Document, Photo} from '@layer';
 import {MyDocument} from '@appManagers/appDocsManager';
@@ -32,13 +25,13 @@ import TranslatableMessage from '@components/translatableMessage';
 import wrapMessageActionTextNew, {WrapMessageActionTextOptions} from '@components/wrappers/messageActionTextNew';
 import {wrapMessageGiveawayResults} from '@components/wrappers/messageActionTextNewUnsafe';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
+import {flattenRichMessageSummary} from '@lib/richMessage';
 
 export type WrapMessageForReplyOptions = Modify<WrapMessageActionTextOptions, {
   message: MyMessage | MyDraftMessage
 }> & {
   text?: string,
   usingMids?: number[],
-  highlightWord?: string,
   withoutMediaType?: boolean,
   canTranslate?: boolean
 };
@@ -47,11 +40,8 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
   options: T
 ): Promise<T['plain'] extends true ? string : DocumentFragment> {
   options.text ??= (options.message as Message.message).message;
-  if(!options.plain && options.highlightWord) {
-    options.highlightWord = options.highlightWord.trim();
-  }
 
-  const {message, usingMids, plain, highlightWord, withoutMediaType} = options;
+  const {message, usingMids, plain, withoutMediaType} = options;
 
   const parts: (Node | string)[] = [];
 
@@ -69,8 +59,7 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
       parts.push(part);
     } else {
       const el = document.createElement('span');
-      if(typeof(part) === 'string') el.innerHTML = part;
-      else el.append(part);
+      el.append(part); // * every rich part is already a node — a string here is plain text, never markup
       parts.push(el);
     }
   };
@@ -91,6 +80,18 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
   };
 
   let entities = (message as Message.message).totalEntities ?? (message as DraftMessage.draftMessage).entities;
+  const applyRichMessageSummary = () => {
+    const richMessage = (message as Message.message).rich_message;
+    if(!richMessage) {
+      return false;
+    }
+
+    const summary = flattenRichMessageSummary(richMessage);
+    options.text = summary.text;
+    entities = summary.entities;
+    return true;
+  };
+
   if((message as Message.message).media && !isRestricted) {
     assumeType<Message.message>(message);
     let usingFullGrouped = true;
@@ -246,6 +247,10 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
         }
 
         case 'messageMediaUnsupported': {
+          if(applyRichMessageSummary()) {
+            break;
+          }
+
           addPart(UNSUPPORTED_LANG_PACK_KEY);
           break;
         }
@@ -321,6 +326,10 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
         }
 
         default:
+          if(applyRichMessageSummary()) {
+            break;
+          }
+
           addPart(UNSUPPORTED_LANG_PACK_KEY);
           options.text = '';
           // messageText += media._;
@@ -365,21 +374,6 @@ export default async function wrapMessageForReply<T extends WrapMessageForReplyO
       parts.push(wrapPlainText(options.text, entities));
     } else {
       // let entities = parseEntities(text.replace(/\n/g, ' '));
-
-      if(highlightWord) {
-        let found = false;
-        let match: any;
-        const regExp = new RegExp(escapeRegExp(highlightWord), 'gi');
-        entities = entities.slice(); // fix leaving highlight entity
-        while((match = regExp.exec(options.text)) !== null) {
-          entities.push({_: 'messageEntityHighlight', length: highlightWord.length, offset: match.index});
-          found = true;
-        }
-
-        if(found) {
-          sortEntities(entities);
-        }
-      }
 
       const messagePeerId = (message as Message.message).peerId;
       const shouldHideCode = [SERVICE_PEER_ID, VERIFICATION_CODES_BOT_ID].includes(messagePeerId);

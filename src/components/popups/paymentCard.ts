@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement from '.';
 import cardFormattingPatterns from '@helpers/cards/cardFormattingPatterns';
 import {detectUnifiedCardBrand} from '@helpers/cards/cardBrands';
@@ -407,7 +401,7 @@ export default class PopupPaymentCard extends PopupElement<{
         inputField.options.onChange = (transformed) => {
           original?.(transformed);
 
-          if(document.activeElement === inputField.input && transformed.meta.autocorrectComplete) {
+          if(inputField.input.ownerDocument.activeElement === inputField.input && transformed.meta.autocorrectComplete) {
             for(let i = switchFocusOrder.indexOf(inputField), length = switchFocusOrder.length; i < length; ++i) {
               const nextInputField = switchFocusOrder[i];
               if(

@@ -12,12 +12,12 @@ import {IconTsx} from '@components/iconTsx';
 
 import styles from '@components/popups/birthday.module.scss';
 import appSidebarLeft from '@components/sidebarLeft';
-import AppPrivacyBirthdayTab from '@components/sidebarLeft/tabs/privacy/birthday';
+import {AppPrivacyBirthdayTab} from '@components/solidJsTabs/tabs';
 import rootScope from '@lib/rootScope';
 import {doubleRaf} from '@helpers/schedulers';
 import {toastNew} from '@components/toast';
 import {PeerTitleTsx} from '@components/peerTitleTsx';
-import lottieLoader from '@lib/rlottie/lottieLoader';
+import lottieLoader from '@lib/lottie/lottieLoader';
 import LottieAnimation from '@components/lottieAnimation';
 
 const MIN_YEAR = 1900;
@@ -266,7 +266,7 @@ export default async function showBirthdayPopup(props: {
           <Show when={props.fromSuggestion && props.initialDate.year}>
             <PopupElement.FooterButton
               langKey="BirthdayPopup.HideYear"
-              secondary
+              color="secondary"
               callback={() => {
                 setYear(undefined);
                 yearField.setValueSilently('');
@@ -277,7 +277,7 @@ export default async function showBirthdayPopup(props: {
           <Show when={props.fromProfile && props.initialDate}>
             <PopupElement.FooterButton
               langKey="BirthdayPopup.Remove"
-              secondary
+              color="secondary"
               callback={async() => {
                 await props.onSave(null);
                 return true;

@@ -1,11 +1,5 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import Modes from '@config/modes';
-import {ChatInvite, InputUser, StarsSubscriptionPricing, Updates} from '@layer';
+import {ChatInvite, DataJSON, InputUser, StarsSubscriptionPricing, Update, Updates} from '@layer';
 import {AppManager} from '@appManagers/manager';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 
@@ -20,19 +14,30 @@ function starsSubscriptionPricing(amount: number): StarsSubscriptionPricing {
 export default class AppChatInvitesManager extends AppManager {
   protected after() {
     this.apiUpdatesManager.addMultipleEventsListeners({
-      updatePendingJoinRequests: async(update) => {
-        const peerId = getPeerId(update.peer);
-        const state = await this.appStateManager.getState();
-        delete state.hideChatJoinRequests[peerId];
-        this.appStateManager.pushToState('hideChatJoinRequests', state.hideChatJoinRequests);
-        this.rootScope.dispatchEvent('chat_requests', {
-          chatId: peerId.toChatId(),
-          recentRequesters: update.recent_requesters,
-          requestsPending: update.requests_pending
-        });
+      updatePendingJoinRequests: this.onUpdatePendingJoinRequests,
+      updateJoinChatWebViewDecision: (update) => {
+        this.rootScope.dispatchEvent('join_chat_webview_decision', update);
       }
     });
   }
+
+  private onUpdatePendingJoinRequests = async(
+    update: Update.updatePendingJoinRequests
+  ) => {
+    if(this.appCommunitiesManager.handlePendingJoinRequestsUpdate(update)) {
+      return;
+    }
+
+    const peerId = getPeerId(update.peer);
+    const state = await this.appStateManager.getState();
+    delete state.hideChatJoinRequests[peerId];
+    this.appStateManager.pushToState('hideChatJoinRequests', state.hideChatJoinRequests);
+    this.rootScope.dispatchEvent('chat_requests', {
+      chatId: peerId.toChatId(),
+      recentRequesters: update.recent_requesters,
+      requestsPending: update.requests_pending
+    });
+  };
 
   public saveChatInvite(hash: string, chatInvite: ChatInvite) {
     if(!chatInvite) {
@@ -86,10 +91,23 @@ export default class AppChatInvitesManager extends AppManager {
 
   public importChatInvite(hash: string) {
     return this.apiManager.invokeApi('messages.importChatInvite', {hash})
-    .then((updates) => {
-      this.apiUpdatesManager.processUpdateMessage(updates);
-      const chat = (updates as Updates.updates).chats[0];
+    .then((result) => {
+      const processed = this.appChatsManager.processChatInviteJoinResult(result);
+      if(processed._ === 'chatInviteJoinWebView') {
+        return processed;
+      }
+
+      this.apiUpdatesManager.processUpdateMessage(processed);
+      const chat = (processed as Updates.updates).chats[0];
       return chat.id;
+    });
+  }
+
+  public requestChatJoinWebView(queryId: Long, themeParams?: DataJSON) {
+    return this.apiManager.invokeApi('messages.requestChatJoinWebView', {
+      query_id: queryId,
+      theme_params: themeParams ?? this.apiManager.getThemeParams(),
+      platform: 'web'
     });
   }
 

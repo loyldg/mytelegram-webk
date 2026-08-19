@@ -1,10 +1,4 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import type RLottiePlayer from '@lib/rlottie/rlottiePlayer';
+import type LottiePlayer from '@lib/lottie/lottiePlayer';
 import type {ThumbCache} from '@lib/storages/thumbs';
 import type {MyDocument} from '@appManagers/appDocsManager';
 import IS_WEBP_SUPPORTED from '@environment/webpSupport';
@@ -21,20 +15,21 @@ import makeError from '@helpers/makeError';
 import {makeMediaSize} from '@helpers/mediaSize';
 import mediaSizes from '@helpers/mediaSizes';
 import {Middleware} from '@helpers/middleware';
-import {isSavingLottiePreview, saveLottiePreview} from '@helpers/saveLottiePreview';
+import {isSavingLottiePreview, saveLottiePreview, saveLottiePreviewFromPlayer} from '@helpers/saveLottiePreview';
 import sequentialDom from '@helpers/sequentialDom';
 import {DocumentAttribute, PhotoSize, VideoSize} from '@layer';
 import appDownloadManager from '@lib/appDownloadManager';
 import {AppManagers} from '@lib/managers';
 import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
 import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
-import lottieLoader from '@lib/rlottie/lottieLoader';
+import lottieLoader from '@lib/lottie/lottieLoader';
 import rootScope from '@lib/rootScope';
 import webpWorkerController from '@lib/webp/webpWorkerController';
 import {getEmojiToneIndex} from '@vendor/emoji';
 import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
 import LazyLoadQueue from '@components/lazyLoadQueue';
 import wrapStickerAnimation from '@components/wrappers/stickerAnimation';
+import createStickerAppearance, {onAnimationEnd} from '@components/wrappers/stickerAppearance';
 import framesCache from '@helpers/framesCache';
 import liteMode, {LiteModeKey} from '@helpers/liteMode';
 import Scrollable from '@components/scrollable';
@@ -58,23 +53,6 @@ const locksUrls: {[docId: string]: string} = {};
 
 export const videosCache: {[key: string]: Promise<any>} = {};
 
-const onAnimationEnd = (element: HTMLElement, onAnimationEnd: () => void, timeout: number) => {
-  const onEnd = () => {
-    element.removeEventListener('animationend', onEnd);
-    onAnimationEnd();
-    clearTimeout(_timeout);
-  };
-  element.addEventListener('animationend', onEnd);
-  const _timeout = setTimeout(onEnd, timeout);
-};
-
-const isEmptyContainer = (container: HTMLElement) => {
-  const childElementCount = container.childElementCount;
-  if(!childElementCount) return true;
-  const child = container.firstElementChild as HTMLElement;
-  return child.classList.contains('premium-sticker-lock') && childElementCount === 1;
-};
-
 const getThumbFromContainer = (container: HTMLElement) => {
   let element = container.firstElementChild as HTMLElement;
   if(element && element.classList.contains('premium-sticker-lock')) {
@@ -84,7 +62,7 @@ const getThumbFromContainer = (container: HTMLElement) => {
   return element;
 };
 
-export default async function wrapSticker({doc, div, middleware, loadStickerMiddleware, lazyLoadQueue, exportLoad, group, play, onlyThumb, emoji, width, height, withThumb, loop, loadPromises, needFadeIn, needUpscale, skipRatio, static: asStatic, managers = rootScope.managers, fullThumb, isOut, noPremium, withLock, relativeEffect, loopEffect, isCustomEmoji, syncedVideo, liteModeKey, isEffect, textColor, scrollable, showPremiumInfo, useCache, initFrame}: {
+export default async function wrapSticker({doc, div, middleware, loadStickerMiddleware, lazyLoadQueue, exportLoad, group, play, onlyThumb, emoji, width, height, withThumb, loop, loadPromises, needFadeIn, needUpscale, skipRatio, static: asStatic, managers = rootScope.managers, fullThumb, isOut, noPremium, withLock, relativeEffect, loopEffect, isCustomEmoji, syncedVideo, liteModeKey, isEffect, textColor, scrollable, showPremiumInfo, useCache, initFrame, keepThumb, noOffscreen, compositorDelivery}: {
   doc: MyDocument,
   div: HTMLElement | HTMLElement[],
   middleware?: Middleware,
@@ -98,7 +76,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
   width?: number,
   height?: number,
   withThumb?: boolean,
-  loop?: RLottiePlayer['loop'],
+  loop?: LottiePlayer['loop'],
   loadPromises?: Promise<any>[],
   needFadeIn?: boolean,
   needUpscale?: boolean,
@@ -119,7 +97,13 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
   scrollable?: Scrollable
   showPremiumInfo?: () => void,
   useCache?: boolean,
-  initFrame?: number
+  initFrame?: number,
+  // Caller-managed thumb lifecycle: when true, wrapSticker doesn't auto-remove
+  // the thumb after the media is appended, so the caller can keep it visible
+  // underneath during a custom fade-in and remove it when finished.
+  keepThumb?: boolean,
+  noOffscreen?: boolean,
+  compositorDelivery?: boolean
 }) {
   const options = arguments[0];
   div = toArray(div);
@@ -147,8 +131,6 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
     // LottieLoader.loadLottie();
     lottieLoader.loadLottieWorkers();
   }
-
-  loop = !!(!emoji || isCustomEmoji) && loop;
 
   div.forEach((div) => {
     div.dataset.docId = '' + doc.id;
@@ -249,6 +231,17 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
   };
   let loadThumbPromise = deferredPromise<void>();
   let haveThumbCached = false;
+  // per-container appearance controller - the single owner of the thumb/underlay/
+  // canvas layering; adopts a previous generation's media as the bottom layer
+  // (replacing the old isEmptyContainer occupancy gate) and retires it only under
+  // a provably presented upper layer
+  const thumbKey = doc.id + '-' + lottieCachedThumbToneIndex;
+  const appearances = (div as HTMLElement[]).map((container) => createStickerAppearance({
+    container,
+    thumbKey,
+    middleware,
+    replacePreviousMedia: !!onlyThumb
+  }));
   if(
     (
       doc.thumbs?.length ||
@@ -259,34 +252,31 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
       isThumbNeededForType ||
       onlyThumb
     ) &&
-    withThumb !== false &&
-    isEmptyContainer(div[0])/*  && doc.thumbs[0]._ !== 'photoSizeEmpty' */
+    withThumb !== false/*  && doc.thumbs[0]._ !== 'photoSizeEmpty' */
   ) {
     let thumb = lottieCachedThumb || doc.thumbs[0];
 
     // console.log('wrap sticker', thumb, div);
 
-    const afterRender = (div: HTMLElement, thumbImage: HTMLElement) => {
-      if(isEmptyContainer(div)) {
-        sequentialDom.mutateElement(div, () => {
-          if(isEmptyContainer(div)) {
-            thumbImage.classList.add('media-sticker', 'thumbnail');
-            div.append(thumbImage);
-          }
-
-          loadThumbPromise.resolve();
-        });
-      } else {
-        loadThumbPromise.resolve();
-      }
-    };
-
     if('url' in thumb) {
       haveThumbCached = true;
-      div.forEach((div) => {
+      // the cached preview IMAGE loads asynchronously and can lose the race against a
+      // warm render - the cell would stay empty until the first frame pops in from
+      // nothing. Show the instant vector silhouette meanwhile; the image upgrades it.
+      const pathThumb = doc.thumbs?.find((t) => t._ === 'photoPathSize' && (t as PhotoSize.photoPathSize).bytes?.length) as PhotoSize.photoPathSize;
+      div.forEach((div, idx) => {
+        if(pathThumb && appearances[idx].canBuildSilhouette()) {
+          const {svg} = createSvgFromBytes(pathThumb.bytes, doc.w, doc.h);
+          appearances[idx].setSilhouette(svg);
+        }
+
         const thumbImage = new Image();
-        renderImageFromUrl(thumbImage, (thumb as any).url, () => afterRender(div, thumbImage));
+        renderImageFromUrl(thumbImage, (thumb as any).url, () => appearances[idx].upgradeToImage(thumbImage, () => loadThumbPromise.resolve()));
       });
+
+      if(pathThumb) {
+        loadThumbPromise.resolve();
+      }
     } else if('bytes' in thumb) {
       if(thumb._ === 'photoPathSize') {
         if(!thumb.bytes.length) {
@@ -294,7 +284,6 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
         }
 
         const {svg} = createSvgFromBytes((thumb as PhotoSize.photoStrippedSize).bytes, doc.w, doc.h);
-        svg.classList.add('rlottie-vector', 'media-sticker', 'thumbnail');
 
         // const defs = document.createElementNS(ns, 'defs');
         // const linearGradient = document.createElementNS(ns, 'linearGradient');
@@ -331,15 +320,15 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
         // svg.append(defs);
 
         // if(liteMode.isAvailable('animations') && !isCustomEmoji) path.setAttributeNS(null, 'fill', 'url(#g)');
-        div.forEach((div, idx) => div.append(idx > 0 ? svg.cloneNode(true) : svg));
+        div.forEach((div, idx) => appearances[idx].setSilhouette(idx > 0 ? svg.cloneNode(true) as SVGSVGElement : svg));
         haveThumbCached = true;
         loadThumbPromise.resolve();
       } else if(toneIndex <= 0) {
         const r = () => {
-          (div as HTMLElement[]).forEach((div) => {
+          (div as HTMLElement[]).forEach((div, idx) => {
             const thumbImage = new Image();
             const url = getPreviewURLFromThumb(doc, thumb as PhotoSize.photoStrippedSize, true);
-            renderImageFromUrl(thumbImage, url, () => afterRender(div, thumbImage), useCache);
+            renderImageFromUrl(thumbImage, url, () => appearances[idx].upgradeToImage(thumbImage, () => loadThumbPromise.resolve()), useCache);
           });
         };
 
@@ -353,7 +342,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
             (thumb as PhotoSize.photoStrippedSize).bytes = bytes;
             doc.pFlags.stickerThumbConverted = true;
 
-            if((middleware && !middleware()) || !isEmptyContainer((div as HTMLElement[])[0])) {
+            if((middleware && !middleware()) || !appearances[0].canBuildImage()) {
               loadThumbPromise.resolve();
               return;
             }
@@ -364,28 +353,29 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
       }
     } else if(((stickerType === StickerType.Lottie && toneIndex <= 0) || stickerType === StickerType.WebM) && (withThumb || onlyThumb)) {
       const load = async() => {
-        if(!isEmptyContainer((div as HTMLElement[])[0]) || (middleware && !middleware())) {
+        if(!appearances[0].canBuildImage() || (middleware && !middleware())) {
           loadThumbPromise.resolve();
           return;
         }
 
-        const r = (div: HTMLElement, thumbImage: HTMLElement, url: string) => {
-          if(!isEmptyContainer(div) || (middleware && !middleware())) {
+        const r = (thumbImage: HTMLElement, url: string, idx: number) => {
+          if(!appearances[idx].canBuildImage() || (middleware && !middleware())) {
             loadThumbPromise.resolve();
             return;
           }
 
-          if(!url) afterRender(div, thumbImage);
-          else renderImageFromUrl(thumbImage, url, () => afterRender(div, thumbImage), useCache);
+          const upgrade = () => appearances[idx].upgradeToImage(thumbImage as HTMLImageElement, () => loadThumbPromise.resolve());
+          if(!url) upgrade();
+          else renderImageFromUrl(thumbImage, url, upgrade, useCache);
         };
 
         getCacheContext();
-        (div as HTMLElement[]).forEach((div) => {
+        (div as HTMLElement[]).forEach((div, idx) => {
           if(cacheContext.url) {
-            r(div, new Image(), cacheContext.url);
+            r(new Image(), cacheContext.url, idx);
           } else if('bytes' in thumb) {
             const res = getImageFromStrippedThumb(doc, thumb as PhotoSize.photoStrippedSize, true);
-            res.loadPromise.then(() => r(div, res.image, ''));
+            res.loadPromise.then(() => r(res.image, '', idx));
 
             // return managers.appDocsManager.getThumbURL(doc, thumb as PhotoSize.photoStrippedSize).promise.then(r);
           } else {
@@ -393,7 +383,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
               media: doc,
               thumb: thumb as PhotoSize
             }).then(async(url) => {
-              return r(div, new Image(), url);
+              return r(new Image(), url, idx);
             });
           }
         });
@@ -449,7 +439,9 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
         group,
         liteModeKey: liteModeKey || undefined,
         textColor: !isCustomEmoji ? readValue(textColor) : undefined,
-        initFrame
+        initFrame,
+        noOffscreen,
+        compositorDelivery
       });
 
       if(typeof(textColor) === 'function') {
@@ -471,52 +463,23 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
       // const deferred = deferredPromise<void>();
 
       const setLockColor = willHaveLock ? () => {
-        const lockUrl = locksUrls[doc.id] ??= computeLockColor(animation.canvas[0]);
-        (div as HTMLElement[]).forEach((div) => div.style.setProperty('--lock-url', `url(${lockUrl})`));
+        const apply = (lockUrl: string) => (div as HTMLElement[]).forEach((div) => div.style.setProperty('--lock-url', `url(${lockUrl})`));
+        const cached = locksUrls[doc.id];
+        if(cached) {
+          apply(cached);
+        } else if(animation.offscreen) {
+          animation.exportFrame().then(({frame}) => {
+            apply(locksUrls[doc.id] ??= computeLockColor(frame, animation.canvas[0]?.dpr));
+            frame.close?.();
+          }).catch(noop);
+        } else {
+          apply(locksUrls[doc.id] ??= computeLockColor(animation.canvas[0]));
+        }
       } : undefined;
 
-      const onFirstFrame = (container: HTMLElement, canvas: HTMLCanvasElement) => {
-        let element = getThumbFromContainer(container);
-        element = element !== canvas && element as HTMLElement;
-        if(needFadeIn !== false) {
-          needFadeIn = (needFadeIn || !element || element.tagName === 'svg') && liteMode.isAvailable('animations');
-        }
-
-        const cb = () => {
-          if(
-            element &&
-            element !== canvas &&
-            element.tagName !== 'DIV'
-          ) {
-            element.remove();
-          }
-        };
-
-        if(!needFadeIn) {
-          if(element) {
-            sequentialDom.mutate(cb);
-          }
-        } else {
-          sequentialDom.mutate(() => {
-            canvas && canvas.classList.add('fade-in');
-            if(element) {
-              element.classList.add('fade-out');
-            }
-
-            onAnimationEnd(canvas || element, () => {
-              sequentialDom.mutate(() => {
-                canvas && canvas.classList.remove('fade-in');
-                cb();
-              });
-            }, 400);
-          });
-        }
-      };
-
       animation.addEventListener('firstFrame', () => {
-        const canvas = animation.canvas[0];
         if(withThumb !== false || isCustomEmoji) {
-          saveLottiePreview(doc, canvas, lottieCachedThumbToneIndex);
+          saveLottiePreviewFromPlayer(doc, animation, lottieCachedThumbToneIndex);
         }
 
         if(willHaveLock) {
@@ -524,8 +487,11 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
         }
 
         if(!isCustomEmoji) {
-          (div as HTMLElement[]).forEach((container, idx) => {
-            onFirstFrame(container, animation.canvas[idx]);
+          // animation.canvas/animation.offscreen must be read HERE, at dispatch time:
+          // a failed offscreen load recreates the canvases and flips offscreen=false
+          // (the legacy retry belt) before firstFrame can fire
+          appearances.forEach((appearance, idx) => {
+            appearance.onMediaFirstFrame({animation, canvas: animation.canvas[idx], needFadeIn});
           });
         }
       }, {once: true});
@@ -616,7 +582,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
 
               if(!media) {
                 if(!isSingleVideo || !isAnimated) {
-                  UNMOUNT_THUMBS && thumbImage?.remove();
+                  UNMOUNT_THUMBS && !keepThumb && thumbImage?.remove();
                 }
 
                 return;
@@ -697,10 +663,10 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
                 thumbImage && thumbImage.classList.add('fade-out');
                 onAnimationEnd(media, () => {
                   media.classList.remove('fade-in');
-                  UNMOUNT_THUMBS && thumbImage?.remove();
+                  UNMOUNT_THUMBS && !keepThumb && thumbImage?.remove();
                 }, 400);
               } else {
-                UNMOUNT_THUMBS && thumbImage?.remove();
+                UNMOUNT_THUMBS && !keepThumb && thumbImage?.remove();
               }
 
               if(isAnimated) {
@@ -864,7 +830,7 @@ export function StickerTsx(props: {
   autoStyle?: boolean
   class?: string
   extraOptions?: StickerTsxExtraOptions
-  onRender?: (player: RLottiePlayer | HTMLVideoElement[] | HTMLImageElement[]) => void
+  onRender?: (player: LottiePlayer | HTMLVideoElement[] | HTMLImageElement[]) => void
 }) {
   const div = document.createElement('div');
   props.class && div.classList.add(props.class);
@@ -882,6 +848,14 @@ export function StickerTsx(props: {
     await lastRender;
     if(doc !== props.sticker) return
 
+    // each generation dies with its middleware: the previous player is removed
+    // (lottieLoader's onClean) and its appearance controller disposed; the new
+    // wrap adopts the leftover DOM as its bottom layer
+    middleware.clean();
+
+    // the clean above makes a superseded in-flight generation's load() throw
+    // MIDDLEWARE - catch so the rejection cannot kill the serialized chain
+    // (the next run awaits lastRender)
     lastRender = wrapSticker({
       middleware: middleware.get(),
       ...props.extraOptions,
@@ -891,7 +865,7 @@ export function StickerTsx(props: {
       doc
     }).then(res => res.render).then(it => {
       it && props.onRender?.(it);
-    })
+    }).catch(noop)
   }))
 
   onCleanup(() => middleware.destroy())

@@ -18,9 +18,9 @@ import {MyPhoto} from '@appManagers/appPhotosManager';
 import wrapSticker from '@components/wrappers/sticker';
 import wrapVideo from '@components/wrappers/video';
 import wrapDocument from '@components/wrappers/document';
-import rootScope from '@lib/rootScope';
+import {useAppSettings} from '@stores/appSettings';
 import wrapRichText from '@lib/richTextProcessor/wrapRichText';
-import PopupPickUser from '@components/popups/pickUser';
+import {showPickUser2Popup} from '@components/popups/pickUser';
 import appImManager from '@lib/appImManager';
 import generateQId from '@appManagers/utils/inlineBots/generateQId';
 
@@ -46,7 +46,7 @@ export default class PopupWebAppPreparedMessage extends PopupElement<{
           callback: async() => {
             const availableTypes = new Set(this.message.peer_types.map(it => it._))
 
-            const chosenPeerId = await PopupPickUser.createPicker2({
+            const chosenPeerId = await showPickUser2Popup({
               peerType: ['dialogs', 'contacts'],
               filterPeerTypeBy: (peer) => {
                 if(peer._ === 'user') {
@@ -71,11 +71,14 @@ export default class PopupWebAppPreparedMessage extends PopupElement<{
 
             await appImManager.setInnerPeer({peerId: chosenPeerId});
             const queryAndResultIds = generateQId(this.message.query_id, this.message.result.id);
-            await this.managers.appInlineBotsManager.sendInlineResult(chosenPeerId, this.botId, queryAndResultIds, {
+            const sent = await this.managers.appInlineBotsManager.sendInlineResult(chosenPeerId, this.botId, queryAndResultIds, {
               inlineResult: this.message.result,
               ...appImManager.chat.getMessageSendingParams(),
               clearDraft: true
             })
+            if(!sent) {
+              return false;
+            }
 
             finished = true
             this.dispatchEvent('finish');
@@ -209,6 +212,7 @@ export default class PopupWebAppPreparedMessage extends PopupElement<{
           container.append(wrapper);
           contentDiv = container
 
+          const [appSettings] = useAppSettings();
           wrapDocument({
             message: {
               _: 'message',
@@ -220,7 +224,7 @@ export default class PopupWebAppPreparedMessage extends PopupElement<{
             } as Message.message,
             middleware: this.middlewareHelper.get(),
             sizeType: 'documentName',
-            fontSize: rootScope.settings.messagesTextSize,
+            fontSize: appSettings.messagesTextSize,
             canTranscribeVoice: false,
             isOut: true
           }).then((div) => {

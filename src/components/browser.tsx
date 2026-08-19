@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Portal} from 'solid-js/web';
 import {batch, createContext, createEffect, createRoot, For, onCleanup, onMount, useContext, JSX, createMemo, createSignal, Accessor, untrack, createResource, Resource, on, createReaction, Show, createRenderEffect, createComputed, Setter} from 'solid-js';
 import styles from '@components/browser.module.scss';
@@ -41,7 +35,10 @@ import rootScope from '@lib/rootScope';
 import {SimilarPeer} from '@components/chat/similarChannels';
 import SearchIndex from '@lib/searchIndex';
 import {useUser} from '@stores/peers';
-import {Page, User} from '@layer';
+import {Game, Message, Page, User} from '@layer';
+import TelegramWebView from '@components/telegramWebView';
+import showForwardPopup from '@components/popups/forward';
+import {getOverlayRoot} from '@helpers/appWindow';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
 import internalLinkProcessor from '@lib/internalLinkProcessor';
 import {INTERNAL_LINK_TYPE} from '@lib/internalLink';
@@ -59,6 +56,7 @@ import {useAppSettings} from '@stores/appSettings';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import clamp from '@helpers/number/clamp';
 import windowSize from '@helpers/windowSize';
+import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 
 type BrowserPageProps<T = {}> = T & {
   title: string, // plain text
@@ -186,9 +184,9 @@ function BrowserHeader(props: {
       return;
     }
 
-    if(e instanceof MouseEvent) e.preventDefault();
+    if(!('touches' in e)) e.preventDefault(); // cross-realm-safe mouse check (Document PiP window)
     // smth
-    if(e instanceof MouseEvent) e.cancelBubble = true;
+    if(!('touches' in e)) e.cancelBubble = true;
 
     const page = state.pages.find((page) => tabMap.get(page.id) === target);
     if(!page?.menuButtons) {
@@ -207,7 +205,7 @@ function BrowserHeader(props: {
     });
     element.classList.add('contextmenu');
 
-    document.body.append(element);
+    getOverlayRoot().append(element);
 
     positionMenu(e, element);
     contextMenuController.openBtnMenu(element, () => {
@@ -491,7 +489,7 @@ function Browser(props: {
 
           return true;
         },
-        aspectRatio,
+        aspectRatio: IS_TOUCH_SUPPORTED ? aspectRatio : undefined,
         resetTransition: true
       },
       onResize: (movableState) => {
@@ -665,6 +663,12 @@ export async function openWebAppInAppBrowser(options: WebAppLaunchOptions) {
   });
 
   const title = await webApp.getTitle(true);
+  if(destroy()) {
+    webApp.destroy();
+    options.onClose?.();
+    return;
+  }
+
   webApp.init(() => deferred);
 
   const middlewareHelper = getMiddleware();
@@ -674,6 +678,12 @@ export async function openWebAppInAppBrowser(options: WebAppLaunchOptions) {
     middleware: middlewareHelper.get()
   });
   await avatar.readyThumbPromise;
+  if(destroy()) {
+    middlewareHelper.destroy();
+    webApp.destroy();
+    options.onClose?.();
+    return;
+  }
 
   return createRoot((dispose) => {
     const initialState: BrowserPageProps = {
@@ -690,7 +700,10 @@ export async function openWebAppInAppBrowser(options: WebAppLaunchOptions) {
       cacheKey: webApp.cacheKey
     };
 
-    onCleanup(() => webApp.destroy());
+    onCleanup(() => {
+      webApp.destroy();
+      options.onClose?.();
+    });
 
     createEffect(() => {
       if(destroy()) {
@@ -710,6 +723,101 @@ export async function openWebAppInAppBrowser(options: WebAppLaunchOptions) {
     createEffect(on(() => lastContext[0].collapsed, (collapsed) => {
       webApp.notifyVisible(!collapsed);
     }))
+  });
+}
+
+const GAME_SANDBOX_ATTRIBUTES = [
+  'allow-scripts',
+  'allow-same-origin',
+  'allow-popups',
+  'allow-popups-to-escape-sandbox',
+  'allow-forms',
+  'allow-modals',
+  'allow-orientation-lock',
+  'allow-pointer-lock'
+].join(' ');
+
+const GAME_ALLOW_ATTRIBUTES = 'accelerometer; gyroscope; magnetometer; gamepad; fullscreen; autoplay; clipboard-write;';
+
+export async function openGameInAppBrowser(options: {
+  game: Game.game,
+  message: Message.message,
+  url: string
+}) {
+  const {game, message, url} = options;
+  const cacheKey = `game-${game.id}-${message.peerId}-${message.mid}`;
+
+  if(lastContext) {
+    const existing = lastContext[0].pages.find((page) => page.cacheKey === cacheKey);
+    if(existing) {
+      lastContext[1].select(existing);
+      lastContext[1].toggleCollapsed(false);
+      return;
+    }
+  }
+
+  const shareMessage = async() => {
+    const mids = await rootScope.managers.appMessagesManager.getMidsByMessage(message);
+    showForwardPopup({[message.peerId]: mids});
+  };
+
+  const body = document.createElement('div');
+  body.classList.add(styles.BrowserGameBody);
+
+  const telegramWebView = new TelegramWebView({
+    url,
+    sandbox: GAME_SANDBOX_ATTRIBUTES,
+    allow: GAME_ALLOW_ATTRIBUTES,
+    onLoad: () => {
+      telegramWebView.iframe.style.opacity = '1';
+    }
+  });
+
+  const iframe = telegramWebView.iframe;
+  iframe.classList.add(styles.BrowserGameIframe);
+  iframe.style.opacity = '0';
+  body.append(iframe);
+
+  telegramWebView.addEventListener('share_game', shareMessage);
+  telegramWebView.addEventListener('share_score', shareMessage);
+
+  const botId = message.viaBotId || message.fromId;
+  const middlewareHelper = getMiddleware();
+  const avatar = avatarNew({
+    peerId: botId ? (botId as UserId).toPeerId(false) : message.peerId,
+    size: 24,
+    middleware: middlewareHelper.get()
+  });
+  await avatar.readyThumbPromise;
+
+  return createRoot((dispose) => {
+    const initialState: BrowserPageProps = {
+      title: game.title || '',
+      icon: avatar.node,
+      menuButtons: [{
+        icon: 'forward',
+        text: 'ShareFile',
+        onClick: shareMessage,
+        verify: () => true
+      }],
+      dispose,
+      content: body,
+      cacheKey
+    };
+
+    onCleanup(() => {
+      telegramWebView.destroy();
+      middlewareHelper.destroy();
+    });
+
+    queueMicrotask(() => telegramWebView.onMount());
+
+    const lastState = lastContext?.[0];
+    if(lastState && lastState?.page.isCatalogue) {
+      lastContext[1].replace(initialState, lastContext[0].page);
+    } else {
+      openInAppBrowser(initialState);
+    }
   });
 }
 
@@ -1065,14 +1173,16 @@ export function openInstantViewInAppBrowser({
         icon: 'newtab',
         text: 'OpenInNewTab',
         onClick: () => safeWindowOpen(url),
-        separator: true
+        separator: true,
+        verify: () => !!url // * markdown IV has no real URL — hide open/copy-link actions
       }, {
         icon: 'copy',
         text: 'CopyLink',
         onClick: () => {
           copyTextToClipboard(url);
           toastNew({langPackKey: 'LinkCopied'});
-        }
+        },
+        verify: () => !!url
       }],
       icon: <IconTsx icon="boostcircle" />,
       dispose,

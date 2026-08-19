@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type ListenerSetter from '@helpers/listenerSetter';
 import ripple from '@components/ripple';
 import {LangPackKey, _i18n} from '@lib/langPack';
@@ -12,11 +6,14 @@ import rootScope from '@lib/rootScope';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import simulateEvent from '@helpers/dom/dispatchEvent';
 
+export type CheckboxFieldColor = 'white' | 'secondary';
+
 export type CheckboxFieldOptions = {
   text?: LangPackKey,
   textArgs?: any[],
   name?: string,
   round?: boolean,
+  color?: CheckboxFieldColor,
   toggle?: boolean,
   stateKey?: string,
   stateValues?: any[],
@@ -45,6 +42,10 @@ export default class CheckboxField {
 
     if(options.round) {
       label.classList.add('checkbox-field-round');
+    }
+
+    if(options.color && options.color !== 'secondary') {
+      label.classList.add('checkbox-color-' + options.color);
     }
 
     if(options.disabled) {

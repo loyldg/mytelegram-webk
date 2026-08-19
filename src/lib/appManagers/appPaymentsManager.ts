@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {
   HelpPremiumPromo,
   InputInvoice,
@@ -19,7 +13,10 @@ import {
 } from '@layer';
 import {AppManager} from '@appManagers/manager';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import isEphemeralMessageId from '@appManagers/utils/messageId/isEphemeralMessageId';
 import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
+import forEachReverse from '@helpers/array/forEachReverse';
+import makeError from '@helpers/makeError';
 
 export default class AppPaymentsManager extends AppManager {
   private premiumPromo: MaybePromise<HelpPremiumPromo>;
@@ -45,6 +42,10 @@ export default class AppPaymentsManager extends AppManager {
   }
 
   public getInputInvoiceByPeerId(peerId: PeerId, mid: number): InputInvoice.inputInvoiceMessage {
+    if(isEphemeralMessageId(mid)) {
+      throw makeError('MESSAGE_ID_INVALID');
+    }
+
     return {
       _: 'inputInvoiceMessage',
       peer: this.appPeersManager.getInputPeerById(peerId),
@@ -67,6 +68,10 @@ export default class AppPaymentsManager extends AppManager {
   }
 
   public getPaymentReceipt(peerId: PeerId, mid: number) {
+    if(isEphemeralMessageId(mid)) {
+      return Promise.reject(makeError('MESSAGE_ID_INVALID'));
+    }
+
     return this.apiManager.invokeApi('payments.getPaymentReceipt', {
       peer: this.appPeersManager.getInputPeerById(peerId),
       msg_id: getServerMessageId(mid)
@@ -170,6 +175,10 @@ export default class AppPaymentsManager extends AppManager {
   }
 
   public getGiveawayInfo(peerId: PeerId, mid: number) {
+    if(isEphemeralMessageId(mid)) {
+      return Promise.reject(makeError('MESSAGE_ID_INVALID'));
+    }
+
     return this.apiManager.invokeApiSingleProcess({
       method: 'payments.getGiveawayInfo',
       params: {
@@ -211,11 +220,23 @@ export default class AppPaymentsManager extends AppManager {
       }
 
       if(transaction.extended_media) {
-        transaction.extended_media.forEach((messageMedia) => {
+        const removedIds = transaction.extended_media.map((messageMedia, idx) => {
+          const m = {media: messageMedia};
           this.appMessagesManager.saveMessageMedia(
-            {media: messageMedia},
+            m,
+            'media',
             {type: 'starsTransaction', peerId, mid: transaction.msg_id}
           );
+
+          if(!m.media) {
+            return idx;
+          }
+        });
+
+        forEachReverse(removedIds, (idx, _, arr) => {
+          if(idx !== undefined) {
+            arr.splice(idx, 1);
+          }
         });
       }
     });

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type ChatInput from '@components/chat/input';
 import DropdownHover from '@helpers/dropdownHover';
 import {ReplyMarkup} from '@layer';
@@ -34,6 +28,7 @@ export default class ReplyKeyboard extends DropdownHover {
   private chatInput: ChatInput;
   private scrollable: Scrollable;
   private middlewareHelper: MiddlewareHelper;
+  private ephemeralMode = false;
 
   constructor(options: {
     listenerSetter: ListenerSetter,
@@ -97,6 +92,10 @@ export default class ReplyKeyboard extends DropdownHover {
 
   public async checkForceReply() {
     const replyMarkup = await this.getReplyMarkup();
+    if(this.ephemeralMode) {
+      return;
+    }
+
     if(replyMarkup._ === 'replyKeyboardForceReply' &&
       !replyMarkup.pFlags.hidden &&
       !replyMarkup.pFlags.used) {
@@ -154,7 +153,9 @@ export default class ReplyKeyboard extends DropdownHover {
       replyMarkup = await this.getReplyMarkup();
     }
 
-    const hide = replyMarkup._ === 'replyKeyboardHide' || !(replyMarkup as ReplyMarkup.replyInlineMarkup).rows?.length;
+    const hide = this.ephemeralMode ||
+      replyMarkup._ === 'replyKeyboardHide' ||
+      !(replyMarkup as ReplyMarkup.replyInlineMarkup).rows?.length;
     this.btnHover.classList.toggle('hide', hide);
 
     if(hide) {
@@ -162,6 +163,11 @@ export default class ReplyKeyboard extends DropdownHover {
     }
 
     return !hide;
+  }
+
+  public setEphemeralMode(ephemeralMode: boolean) {
+    this.ephemeralMode = ephemeralMode;
+    this.checkAvailability();
   }
 
   public setPeer(peerId: PeerId) {

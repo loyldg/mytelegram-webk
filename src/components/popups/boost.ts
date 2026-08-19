@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement, {addCancelButton} from '.';
 import createBadge from '@helpers/createBadge';
 import cancelEvent from '@helpers/dom/cancelEvent';
@@ -24,17 +18,21 @@ import PopupPeer from '@components/popups/peer';
 import PopupPremium from '@components/popups/premium';
 import PopupReassignBoost from '@components/popups/reassignBoost';
 import {toastNew} from '@components/toast';
+import type {BoostReason} from '@components/openBoosts';
 
 const className = 'popup-boost';
 
 export default class PopupBoost extends PopupPeer {
   constructor(
-    private peerId: PeerId
+    private peerId: PeerId,
+    /** what the level is needed for; without it the copy is about unlocking stories */
+    private reason?: BoostReason
   ) {
     super(className, {
       closable: true,
       overlayClosable: true,
-      description: true
+      description: true,
+      old: true
     });
 
     this.btnClose.remove();
@@ -96,8 +94,14 @@ export default class PopupBoost extends PopupPeer {
       hasMyBoost = !!boostsStatus.pFlags.my_boost;
     };
 
+    // the reason only holds until the level is actually raised — after that the live
+    // "you boosted it" / "reached level N" copy is the correct one again
+    const showReason = () => !!this.reason && !isMaxLevel && !updated;
+
     const setTitle = () => {
-      if(hasMyBoost) {
+      if(showReason()) {
+        title.replaceChildren(i18n(this.reason.titleLangKey));
+      } else if(hasMyBoost) {
         title.replaceChildren(i18n(isBroadcast ? 'YouBoostedChannel' : 'YouBoostedGroup'));
       } else if(isMaxLevel) {
         title.replaceChildren(i18n('BoostsMaxLevelReached'));
@@ -109,7 +113,11 @@ export default class PopupBoost extends PopupPeer {
     };
 
     const setDescription = () => {
-      if(updated && boostsStatus.level === 0 && hasStories) {
+      if(showReason()) {
+        this.description.replaceChildren(
+          i18n(this.reason.descriptionLangKey, this.reason.descriptionArgs)
+        );
+      } else if(updated && boostsStatus.level === 0 && hasStories) {
         this.description.replaceChildren(
           i18n(
             isBroadcast ? 'Boost.DescriptionJustReachedLevel1' : 'Boost.DescriptionJustReachedLevel1.Group'

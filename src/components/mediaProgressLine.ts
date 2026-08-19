@@ -1,9 +1,4 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
+import {getOverlayRoot} from '@helpers/appWindow';
 import createElementFromMarkup from '@helpers/createElementFromMarkup';
 import {GrabEvent} from '@helpers/dom/attachGrabListeners';
 import safePlay from '@helpers/dom/safePlay';
@@ -11,7 +6,7 @@ import setCurrentTime from '@helpers/dom/setCurrentTime';
 import limitSymbols from '@helpers/string/limitSymbols';
 import toHHMMSS from '@helpers/string/toHHMMSS';
 import appMediaPlaybackController from '@components/appMediaPlaybackController';
-import {VideoTimestamp} from '@components/appMediaViewerBase';
+import {VideoTimestamp} from '@components/mediaViewer/base';
 import RangeSelector from '@components/rangeSelector';
 import {observeResize} from '@components/resizeObserver';
 
@@ -284,7 +279,7 @@ export default class MediaProgressLine extends RangeSelector {
       </svg>
     `);
 
-    document.body.append(this.clipPathSvg);
+    getOverlayRoot().append(this.clipPathSvg);
 
     this.filledContainer.style.clipPath = `url(#${clipPathId})`;
   }

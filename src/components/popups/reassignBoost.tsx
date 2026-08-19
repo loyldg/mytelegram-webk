@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Accessor, For, JSX, createEffect, createMemo, createRoot, createSignal, onCleanup, untrack} from 'solid-js';
 import {formatFullSentTime} from '@helpers/date';
 import anchorCallback from '@helpers/dom/anchorCallback';
@@ -27,7 +21,7 @@ import {hideToast, toastNew} from '@components/toast';
 import tsNow from '@helpers/tsNow';
 import {wrapLeftDuration} from '@components/wrappers/wrapDuration';
 import {IconTsx} from '@components/iconTsx';
-import {createListTransition} from '@helpers/solid/createListTransition';
+import {createListTransition} from '@vendor/createListTransition';
 
 const className = 'popup-boost';
 
@@ -216,7 +210,7 @@ export default class PopupReassignBoost extends PopupPeer {
 
     const _add = this.selector.add.bind(this.selector);
     this.selector.add = (...args) => {
-      const element = this.selector.getElementByPeerId(args[0].key as any);
+      const element = this.selector.getElementByKey(args[0].key as any);
       if(element.classList.contains('is-unavailable')) {
         toastNew({
           langPackKey: 'Boost.Reassign.Wait',

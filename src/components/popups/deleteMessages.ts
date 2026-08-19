@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import rootScope from '@lib/rootScope';
 import PopupElement, {addCancelButton} from '.';
 import PopupPeer, {PopupPeerButtonCallbackCheckboxes, PopupPeerOptions} from '@components/popups/peer';
@@ -17,6 +11,7 @@ import tsNow from '@helpers/tsNow';
 import PopupDeleteMegagroupMessages from '@components/popups/deleteMegagroupMessages';
 import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
 import namedPromises from '@helpers/namedPromises';
+import isEphemeralMessage from '@appManagers/utils/messages/isEphemeralMessage';
 
 export default class PopupDeleteMessages {
   constructor(
@@ -39,11 +34,16 @@ export default class PopupDeleteMessages {
     const {peerTitleElement, isBot, messages} = await namedPromises({
       peerTitleElement: wrapPeerTitle({peerId, threadId, onlyFirstName: true}),
       isBot: managers.appPeersManager.isBot(peerId),
-      messages: Promise.all(mids.map((mid) => managers.appMessagesManager.getMessageByPeer(peerId, mid)))
+      // scheduled mids belong to a separate storage; getMessageByPeer would read history and
+      // return undefined / another chat's message (breaking the megagroup-admin & giveaway checks)
+      messages: Promise.all(mids.map((mid) => type === ChatType.Scheduled ?
+        managers.appMessagesManager.getScheduledMessageByPeer(peerId, mid) :
+        managers.appMessagesManager.getMessageByPeer(peerId, mid)))
     });
 
+    const isEphemeral = !!messages.length && messages.every(isEphemeralMessage);
     const isMegagroup = await managers.appPeersManager.isMegagroup(peerId);
-    if(isMegagroup && !messages.some((message) => message.pFlags.out)) {
+    if(!isEphemeral && isMegagroup && !messages.some((message) => message.pFlags.out)) {
       const participants = await managers.appProfileManager.getParticipants({
         id: peerId.toChatId(),
         filter: {_: 'channelParticipantsAdmins'},
@@ -97,7 +97,9 @@ export default class PopupDeleteMessages {
       titleArgs = [i18n('messages', [mids.length])];
     }
 
-    if(isMegagroup) {
+    if(isEphemeral) {
+      description = isSingleMessage ? 'AreYouSureDeleteSingleMessage' : 'AreYouSureDeleteFewMessages';
+    } else if(isMegagroup) {
       description = isSingleMessage ? 'AreYouSureDeleteSingleMessageMega' : 'AreYouSureDeleteFewMessagesMega';
     } else if(isBot) {
       description = isSingleMessage ? 'AreYouSureDeleteSingleMessageBot' : 'AreYouSureDeleteFewMessagesBot';
@@ -106,7 +108,9 @@ export default class PopupDeleteMessages {
     }
 
     let canRevoke: number[] = mids.slice();
-    if(peerId === rootScope.myId || type === ChatType.Scheduled || isBot) {
+    if(isEphemeral) {
+      canRevoke = [];
+    } else if(peerId === rootScope.myId || type === ChatType.Scheduled || isBot) {
 
     } else if(peerId.isUser()) {
       canRevoke = canRevoke.filter((mid, idx) => {

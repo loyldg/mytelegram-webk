@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {EMOJI_VERSION} from '@environment/emojiVersionsSupport';
 import {SITE_HASHTAGS} from '.';
 import {EmojiVersions} from '@config/emoji';
@@ -15,6 +9,7 @@ import {MessageEntity} from '@layer';
 import encodeSpoiler from '@lib/richTextProcessor/encodeSpoiler';
 import parseEntities from '@lib/richTextProcessor/parseEntities';
 import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
+import setExternalToAnchor, {getElectronHelpers} from '@helpers/electronHelpers';
 import wrapUrl from '@lib/richTextProcessor/wrapUrl';
 import EMOJI_VERSIONS_SUPPORTED from '@environment/emojiVersionsSupport';
 import {CLICK_EVENT_NAME} from '@helpers/dom/clickEvent';
@@ -31,9 +26,8 @@ import {CodeLanguageAliases, highlightCode} from '@/codeLanguages';
 import callbackify from '@helpers/callbackify';
 import findIndexFrom from '@helpers/array/findIndexFrom';
 import {observeResize} from '@components/resizeObserver';
-import createElementFromMarkup from '@helpers/createElementFromMarkup';
 import DotRenderer from '@components/dotRenderer';
-import isMixedScriptUrl from '@helpers/string/isMixedScriptUrl';
+import isSuspiciousUrl from '@helpers/string/isSuspiciousUrl';
 import {createRoot, createSignal, createEffect, onCleanup} from 'solid-js';
 import formatFormattedDate from '@helpers/date/formatFormattedDate';
 import formatRelativeTime from '@helpers/date/formatRelativeTime';
@@ -582,7 +576,7 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
               masked = true;
             }
           } else {
-            masked = isMixedScriptUrl(url);
+            masked = isSuspiciousUrl(url);
             // inner = encodeEntities(replaceUrlEncodings(entityText));
           }
 
@@ -600,16 +594,13 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
             onclick = undefined;
           }
 
-          const href = (currentContext || typeof electronHelpers === 'undefined') ?
-            url :
-            `javascript:electronHelpers.openExternal('${url}');`;
-
           element = document.createElement('a');
           element.className = 'anchor-url';
-          (element as HTMLAnchorElement).href = href;
+          (element as HTMLAnchorElement).href = url;
 
-          if(!(currentContext || typeof electronHelpers !== 'undefined')) {
-            setBlankToAnchor(element as HTMLAnchorElement);
+          if(!currentContext) {
+            // under Electron the link belongs to the system browser rather than the app window
+            (getElectronHelpers() ? setExternalToAnchor : setBlankToAnchor)(element as HTMLAnchorElement);
           }
 
           if(onclick) {
@@ -690,10 +681,20 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
 
           if(!IS_FIREFOX) { // Firefox has very poor performance when drawing on canvas
             element = document.createElement('span');
-            element.append(...partText.split('').map((encodedLetter, i) => createElementFromMarkup(`<span class="bluff-spoiler" style="--index:${i}">${encodedLetter}</span>`)))
+            element.className = 'bluff-spoiler';
+            element.append(...partText.split('').map((encodedLetter) => {
+              const letter = document.createElement('span');
+              letter.className = 'bluff-spoiler-letter';
+              letter.textContent = encodedLetter;
+              return letter;
+            }));
+
+            const canvas = document.createElement('canvas');
+            canvas.className = 'bluff-spoiler-canvas';
+            element.append(canvas);
             fragment.append(element);
 
-            DotRenderer.attachBluffTextSpoilerTarget(element);
+            DotRenderer.attachBluffTextSpoilerTarget(element, options.textColor);
 
             usedText = true;
           }
@@ -823,6 +824,32 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
         setDirection(element);
 
         processingBlockElement = true;
+        break;
+      }
+
+      case 'messageEntityDiffInsert':
+        element = document.createElement('span');
+        element.classList.add('markup-diff-insert');
+        break;
+
+      case 'messageEntityDiffDelete':
+        element = document.createElement('span');
+        element.classList.add('markup-diff-delete');
+        break;
+
+      case 'messageEntityDiffReplace': {
+        const container = document.createElement('span');
+        fragment.appendChild(container);
+
+        const deleted = document.createElement('span');
+        deleted.classList.add('markup-diff-delete');
+        deleted.textContent = entity.old_text;
+
+        const inserted = document.createElement('span');
+        inserted.classList.add('markup-diff-insert');
+
+        container.append(deleted, inserted);
+        element = inserted;
         break;
       }
     }

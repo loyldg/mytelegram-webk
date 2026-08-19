@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Chat, ChatAdminRights, ChatBannedRights} from '@layer';
 import {ChatRights} from '@appManagers/appChatsManager';
 
@@ -34,6 +28,7 @@ export default function hasRights(
 
   if(chat._ === 'chatForbidden' ||
       chat._ === 'channelForbidden' ||
+      chat._ === 'communityForbidden' ||
       // (chat as any).pFlags.kicked ||
       (chat.pFlags.left && !(chat as Chat.channel).pFlags.megagroup)) {
     return false;
@@ -85,7 +80,7 @@ export default function hasRights(
       }
 
       if(chat._ === 'channel') {
-        if(!chat.pFlags.megagroup && !myFlags.post_messages) {
+        if((!chat.pFlags.megagroup || chat.pFlags.gigagroup) && !myFlags.post_messages) {
           return false;
         }
       }
@@ -124,6 +119,12 @@ export default function hasRights(
 
     case 'change_info':
     case 'invite_users': {
+      // a Community is administered like a channel: these are granted rights,
+      // not member ones its default banned rights could take away
+      if(chat._ === 'community') {
+        return isAdmin && !!myFlags[action];
+      }
+
       return isAdmin || (chat as Chat.channel).pFlags.broadcast ? !!myFlags[action] : !myFlags[action];
     }
 
@@ -134,6 +135,7 @@ export default function hasRights(
     case 'anonymous':
     case 'post_messages':
     case 'manage_direct_messages':
+    case 'manage_linked_peers':
     case 'edit_messages': {
       return isAdmin && !!myFlags[action];
     }
@@ -144,6 +146,9 @@ export default function hasRights(
     }
 
     case 'view_participants': {
+      if(chat._ === 'community') {
+        return !!(chat.pFlags.creator || isAdmin);
+      }
       return !!(chat._ === 'chat' || !chat.pFlags.broadcast || chat.pFlags.creator || isAdmin);
     }
 

@@ -1,14 +1,9 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {MOUNT_CLASS_TO} from '@config/debug';
 import {IS_FIREFOX, IS_MOBILE_SAFARI} from '@environment/userAgent';
 import {logger} from '@lib/logger';
 import blurActiveElement from '@helpers/dom/blurActiveElement';
 import cancelEvent from '@helpers/dom/cancelEvent';
+import {bindActiveWindowListener} from '@helpers/appWindow';
 import isSwipingBackSafari from '@helpers/dom/isSwipingBackSafari';
 import tabId from '@config/tabId';
 
@@ -17,7 +12,7 @@ export type NavigationItem = {
     'esg' | 'multiselect' | 'input-helper' | 'autocomplete-helper' | 'markup' |
     'global-search' | 'voice' | 'mobile-search' | 'filters' | 'global-search-focus' |
     'toast' | 'dropdown' | 'forum' | 'stories' | 'stories-focus' | 'topbar-search' |
-    'settings-popup' | 'monoforum',
+    'settings-popup' | 'monoforum' | 'inline-message-input',
   onPop: (canAnimate: boolean) => boolean | void,
   onEscape?: () => boolean,
   noHistory?: boolean,
@@ -79,7 +74,9 @@ export class AppNavigationController {
       }
     }
 
-    window.addEventListener('keydown', this.onKeyDown, {capture: true, passive: false});
+    // Follow the active app window so Esc / back-navigation keys keep working when the client is
+    // popped into a Document PiP window (its key events fire on the PiP window, not the tab's).
+    bindActiveWindowListener((w) => w, 'keydown', this.onKeyDown, {capture: true, passive: false});
 
     if(IS_MOBILE_SAFARI) {
       const options = {passive: true};

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 /* @refresh reload */
 
 import PopupElement from '.';
@@ -19,7 +13,6 @@ import useStars, {prefetchStars} from '@stores/stars';
 import safeAssign from '@helpers/object/safeAssign';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
-import {Tabs} from '@components/sidebarRight/tabs/boosts';
 import {createLoadableList} from '@components/sidebarRight/tabs/statistics';
 import Row from '@components/rowTsx';
 import {formatFullSentTime} from '@helpers/date';
@@ -35,7 +28,7 @@ import currencyStarIcon from '@components/currencyStarIcon';
 import {wrapChatInviteAvatar, wrapChatInviteTitle} from '@components/popups/joinChatInvite';
 import tsNow from '@helpers/tsNow';
 import Button from '@components/buttonTsx';
-import PopupPickUser from '@components/popups/pickUser';
+import showPickUserPopup, {showContactPickerPopup} from '@components/popups/pickUser';
 import anchorCallback from '@helpers/dom/anchorCallback';
 import rootScope from '@lib/rootScope';
 import appImManager from '@lib/appImManager';
@@ -47,6 +40,10 @@ import wrapLocalSticker from '@components/wrappers/localSticker';
 import bigInt from 'big-integer';
 import safeWindowOpen from '@helpers/dom/safeWindowOpen';
 import {IconTsx} from '@components/iconTsx';
+import Tabs from '@components/tabs';
+import {GrowHeightReveal} from '@helpers/solid/animations';
+import getStarsSpendPurposePeerId from '@helpers/getStarsSpendPurposePeerId';
+import confirmationPopup from '@components/confirmationPopup';
 
 export function StarsStrokeStar(props: {stroke?: boolean, style?: JSX.HTMLAttributes<HTMLDivElement>['style']}) {
   return (
@@ -181,10 +178,10 @@ export function getExamplesAnchor(hide: (callback: () => void) => void) {
     loading = true;
     const {userIds: botIds} = await popularAppBotsPromise;
     loading = false;
-    PopupElement.createPopup(PopupPickUser, {
-      onSelect: (peerId) => {
+    showPickUserPopup({
+      onSelect: ([obj]) => {
         hide(() => {
-          appImManager.setInnerPeer({peerId});
+          appImManager.setInnerPeer(obj);
         });
       },
       peerType: ['custom'],
@@ -194,7 +191,7 @@ export function getExamplesAnchor(hide: (callback: () => void) => void) {
           isEnd: true
         };
       },
-      headerLangPackKey: 'SearchAppsExamples'
+      titleLangKey: 'SearchAppsExamples'
     });
   });
   anchor.append(i18n('GiftStarsSubtitleLinkName'));
@@ -356,6 +353,8 @@ export default class PopupStars extends PopupElement {
   private toppedUp: boolean;
   private ton: boolean;
   private spendPurposePeerId: PeerId;
+  private purposePeerId: PeerId;
+  private purchaseBlocked: boolean;
 
   constructor(options: {
     paymentForm?: PaymentsPaymentForm.paymentsPaymentFormStars,
@@ -373,11 +372,13 @@ export default class PopupStars extends PopupElement {
       overlayClosable: true,
       floatingHeader: true,
       body: true,
-      title: 'TelegramStars',
+      title: options.ton ? 'GramBalance' : 'TelegramStars',
       scrollable: true
     });
 
     safeAssign(this, options);
+
+    this.purposePeerId = getStarsSpendPurposePeerId(this.spendPurposePeerId);
 
     this.construct();
   }
@@ -531,6 +532,8 @@ export default class PopupStars extends PopupElement {
       } else {
         title = i18n('StarsNeededTitle', [starsNeeded().toJSNumber()]);
       }
+    } else if(this.ton) {
+      title = i18n('GramBalance');
     } else {
       title = i18n('TelegramStars');
     }
@@ -566,15 +569,11 @@ export default class PopupStars extends PopupElement {
     } else if(this.itemPrice) {
       subtitle = i18n(this.paymentForm ? 'StarsNeededText' : 'Stars.Subscribe.Need', [peerTitle]);
     } else {
-      subtitle = i18n('TelegramStarsInfo');
+      subtitle = i18n(this.purchaseBlocked ? 'StarsPurchaseUnavailable' : 'TelegramStarsInfo');
     }
 
-    const firstSection = (
+    const firstSection = !this.purchaseBlocked && (
       <Section caption="Stars.TOS">
-        {image}
-        {avatar}
-        <div class="popup-stars-title">{title}</div>
-        <div class="popup-stars-subtitle">{subtitle}</div>
         <div class="popup-stars-options" style={{height: (displayingRows() * 79 + (displayingRows() - 1) * 8) + 'px'}}>
           <Show when={this.ton}>
             <Button
@@ -626,8 +625,8 @@ export default class PopupStars extends PopupElement {
                     amount: option.amount,
                     currency: option.currency,
                     stars: option.stars,
-                    spend_purpose_peer: this.spendPurposePeerId && this.spendPurposePeerId !== rootScope.myId ?
-                      await this.managers.appPeersManager.getInputPeerById(this.spendPurposePeerId) :
+                    spend_purpose_peer: this.purposePeerId ?
+                      await this.managers.appPeersManager.getInputPeerById(this.purposePeerId) :
                       undefined
                   };
 
@@ -665,12 +664,14 @@ export default class PopupStars extends PopupElement {
             );
           }}</For>
         </div>
-        <Button
-          class={classNames('btn-primary btn-transparent primary popup-stars-more', !extended() && 'is-visible')}
-          icon="down"
-          text="ShowMoreOptions"
-          onClick={() => setExtended((v) => !v)}
-        />
+        <GrowHeightReveal when={!extended()} appear={false}>
+          <Button
+            class="btn-primary btn-transparent primary popup-stars-more"
+            icon="down"
+            text="ShowMoreOptions"
+            onClick={() => setExtended((v) => !v)}
+          />
+        </GrowHeightReveal>
       </Section>
     );
 
@@ -764,7 +765,7 @@ export default class PopupStars extends PopupElement {
 
     const transactionsSection = (
       <Section class="popup-stars-transactions-section">
-        <Tabs
+        <Tabs.Simple
           tab={tab}
           onChange={setTab}
           class="popup-stars-transactions"
@@ -782,14 +783,14 @@ export default class PopupStars extends PopupElement {
 
     const restSection = (
       <>
-        {this.appConfig.stars_gifts_enabled && !this.ton && (
+        {this.appConfig.stars_gifts_enabled && !this.ton && !this.purchaseBlocked && (
           <Section>
             <Button
               class="btn-primary btn-transparent primary"
               text="TelegramStarsGift"
               onClick={async() => {
                 this.hide();
-                const peerId = await PopupPickUser.createContactPicker();
+                const peerId = await showContactPickerPopup();
                 PopupElement.createPopup(PopupStars, {
                   giftPeerId: peerId,
                   onTopup: async(stars) => {
@@ -810,6 +811,10 @@ export default class PopupStars extends PopupElement {
 
     return (
       <>
+        {image}
+        {avatar}
+        <div class="popup-stars-title">{title}</div>
+        <div class="popup-stars-subtitle">{subtitle}</div>
         {firstSection}
         {starsNeeded() === bigInt.zero && !this.giftPeerId && restSection}
       </>
@@ -853,6 +858,28 @@ export default class PopupStars extends PopupElement {
     ]);
     this.options = options;
     this.appConfig = appConfig;
+
+    // * stars can be unavailable for purchase at all, then only the balance and the history are left
+    this.purchaseBlocked = !this.ton && !!appConfig.stars_purchase_blocked;
+    if(this.purchaseBlocked && (this.itemPrice || this.giftPeerId)) {
+      confirmationPopup({
+        titleLangKey: 'StarsNotAvailableTitle',
+        descriptionLangKey: 'StarsNotAvailableText',
+        button: {langKey: 'OK', isCancel: true}
+      }).catch(() => {});
+      this.hide();
+      this.onCancel?.();
+      return;
+    }
+
+    // * topping up for a spend on a bot or a channel can be forbidden, then there's nothing to offer
+    if(!this.ton && this.purposePeerId && appConfig.stars_spend_topup_invoice_disabled) {
+      toastNew({langPackKey: 'PaymentInvoiceDisabledStarsText'});
+      this.hide();
+      this.onCancel?.();
+      return;
+    }
+
     this.appendSolid(() => this._construct(image, peerTitle, avatar));
     this.addEventListener('close', () => {
       if(!this.toppedUp && this.onCancel) {

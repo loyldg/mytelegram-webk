@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement, {addCancelButton} from '.';
 import setInnerHTML from '@helpers/dom/setInnerHTML';
 import {Middleware} from '@helpers/middleware';
@@ -116,7 +110,7 @@ export default class PopupJoinChatInvite extends PopupPeer {
       buttons: addCancelButton([{
         langKey: getJoinLangKey(chatInvite),
         callback: () => {
-          PopupJoinChatInvite.import(hash);
+          PopupJoinChatInvite.import(hash, chatInvite.title);
         }
       }]),
       description: true
@@ -127,13 +121,22 @@ export default class PopupJoinChatInvite extends PopupPeer {
 
   public static openChat(chatId: ChatId) {
     const peerId = chatId.toPeerId(true);
-    appImManager.setInnerPeer({peerId});
+    // Use `open` (not `setInnerPeer`) so forums route through `op`, which opens the topics
+    // tab in the left sidebar instead of just dropping the user into the chat view.
+    appImManager.open({peerId});
   }
 
-  public static import(hash: string) {
+  public static import(hash: string, chatTitle?: string) {
     rootScope.managers.appChatInvitesManager.importChatInvite(hash)
-    .then((chatId) => {
-      this.openChat(chatId);
+    .then((result) => {
+      if(typeof(result) === 'object') {
+        void appImManager.openJoinChatWebView(result, chatTitle);
+        return;
+      }
+
+      if(result) {
+        this.openChat(result);
+      }
     }, (error) => {
       if((error as ApiError).type === 'INVITE_REQUEST_SENT') {
         toastNew({langPackKey: 'RequestToJoinSent'});

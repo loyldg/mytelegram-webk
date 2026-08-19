@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {AdminLog, ChatRights} from '@appManagers/appChatsManager';
 import type {RequestWebViewOptions} from '@appManagers/appAttachMenuBotsManager';
 import type {HistoryStorageKey, MessageSendingParams, MessagesStorageKey, MyMessage, RequestHistoryOptions} from '@appManagers/appMessagesManager';
@@ -18,25 +12,21 @@ import ChatInput from '@components/chat/input';
 import ChatSelection from '@components/chat/selection';
 import ChatTopbar from '@components/chat/topbar';
 import {HIDDEN_PEER_ID, NULL_PEER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SERVICE_PEER_ID, VERIFICATION_CODES_BOT_ID} from '@appManagers/constants';
-import SetTransition from '@components/singleTransition';
-import AppPrivateSearchTab from '@components/sidebarRight/tabs/search';
-import renderImageFromUrl from '@helpers/dom/renderImageFromUrl';
+import {AppPrivateSearchTab} from '@components/solidJsTabs/tabs';
 import mediaSizes, {ScreenSize} from '@helpers/mediaSizes';
 import ChatSearch from '@components/chat/search';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import ChatBackgroundGradientRenderer from '@components/chat/gradientRenderer';
-import ChatBackgroundPatternRenderer from '@components/chat/patternRenderer';
-import pause from '@helpers/schedulers/pause';
+import {ChatBackgroundTransition} from '@components/chat/bubbles/chatBackground';
 import {AppManagers} from '@lib/managers';
 import SlicedArray from '@helpers/slicedArray';
 import themeController from '@helpers/themeController';
-import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMedia';
+import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMediaTab';
 import noop from '@helpers/noop';
 import middlewarePromise from '@helpers/middlewarePromise';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import {Message, WallPaper, Chat as MTChat, Reaction, AvailableReaction, ChatFull, MessageEntity, PaymentsPaymentForm, InputPeer, ChatTheme, UserFull, User, StoriesStealthMode} from '@layer';
 import animationIntersector, {AnimationItemGroup} from '@components/animationIntersector';
-import {getColorsFromWallPaper} from '@helpers/color';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import deferredPromise, {CancellablePromise, bindPromiseToDeferred} from '@helpers/cancellablePromise';
 import {isDialog} from '@appManagers/utils/dialogs/isDialog';
@@ -50,19 +40,15 @@ import {Accessor, createEffect, createMemo, createRoot, createSignal, on, onClea
 import TopbarSearch from '@components/chat/topbarSearch';
 import createUnifiedSignal from '@helpers/solid/createUnifiedSignal';
 import liteMode from '@helpers/liteMode';
-import {useFullPeer} from '@stores/fullPeers';
+import {useFullPeer, type PeerFull} from '@stores/fullPeers';
 import {useAppConfig, useAppState} from '@stores/appState';
 import {unwrap} from 'solid-js/store';
-import {averageColorFromCanvas, averageColorFromImage} from '@helpers/averageColor';
-import highlightingColor from '@helpers/highlightingColor';
 import callbackify from '@helpers/callbackify';
 import useIsNightTheme from '@hooks/useIsNightTheme';
 import useStars, {setReservedStars} from '@stores/stars';
 import PopupElement from '@components/popups';
 import PopupStars from '@components/popups/stars';
 import {getPendingPaidReactionKey, PENDING_PAID_REACTION_SENT_ABORT_REASON, PENDING_PAID_REACTIONS} from '@components/chat/reactions';
-import ChatBackgroundStore from '@lib/chatBackgroundStore';
-import appDownloadManager from '@lib/appDownloadManager';
 import showUndoablePaidTooltip, {paidReactionLangKeys} from '@components/chat/undoablePaidTooltip';
 import namedPromises from '@helpers/namedPromises';
 import {getCurrentNewMediaPopup} from '@components/popups/newMedia';
@@ -82,6 +68,7 @@ import {AckedResult} from '@lib/superMessagePort';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import hasRights from '@appManagers/utils/chats/hasRights';
 import {ChatType} from '@components/chat/chatType';
+import {animateSingle} from '@helpers/animation';
 
 export type ChatSearchKeys = Pick<RequestHistoryOptions, 'query' | 'isCacheableSearch' | 'isPublicHashtag' | 'savedReaction' | 'fromPeerId' | 'inputFilter' | 'hashtagType'>;
 export const CHAT_SEARCH_KEYS: (keyof ChatSearchKeys)[] = ['query', 'isCacheableSearch', 'isPublicHashtag', 'savedReaction', 'fromPeerId', 'inputFilter', 'hashtagType'];
@@ -90,7 +77,7 @@ export default class Chat extends EventListenerBase<{
   setPeer: (mid: number, isTopMessage: boolean) => void
 }> {
   public container: HTMLElement;
-  public backgroundEl: HTMLElement;
+  public bubblesViewport: HTMLElement;
 
   public topbar: ChatTopbar;
   public bubbles: ChatBubbles;
@@ -115,6 +102,8 @@ export default class Chat extends EventListenerBase<{
   public inputFilter: RequestHistoryOptions['inputFilter'];
   public hashtagType: 'this' | 'my' | 'public';
   public peerIdSignal: Signal<PeerId>;
+  public chatPaddingTop: Signal<number>;
+  public chatPaddingBottom: Signal<number>;
 
   public setPeerPromise: Promise<void>;
   public peerChanged: boolean;
@@ -128,17 +117,25 @@ export default class Chat extends EventListenerBase<{
 
   public noForwards: boolean;
 
+  /**
+   * Preview mode (Shift+Click on a dialog). The chat renders messages and background
+   * but performs no side effects — no readHistory / readMessages / incrementMessageViews,
+   * and no global background swap (the preview popup paints its own).
+   */
+  public isPreview: boolean;
+
+  /**
+   * Set by the preview popup before `setPeer` so the topbar's close button (rendered with a
+   * `close` icon instead of `back` in preview mode) tears down the popup instead of running
+   * `chat.pop()` against `appImManager.chat`.
+   */
+  public onPreviewClose?: () => void;
+
   public inited: boolean;
 
   public isRestricted: boolean;
   public autoDownload: ChatAutoDownloadSettings;
 
-  public gradientRenderer: ChatBackgroundGradientRenderer;
-  public patternRenderer: ChatBackgroundPatternRenderer;
-  public gradientCanvas: HTMLCanvasElement;
-  public patternCanvas: HTMLCanvasElement;
-  public backgroundTempId: number;
-  public setBackgroundPromise: Promise<void>;
   public sharedMediaTab: AppSharedMediaTab;
   public sharedMediaTabs: AppSharedMediaTab[];
 
@@ -172,9 +169,43 @@ export default class Chat extends EventListenerBase<{
 
   public searchSignal: ReturnType<typeof createUnifiedSignal<Parameters<Chat['initSearch']>[0]>>;
 
-  public theme: Parameters<typeof themeController['getThemeSettings']>[0];
-  public wallPaper: WallPaper;
-  public hadAnyBackground: boolean;
+  public currentTheme: Parameters<typeof themeController['getThemeSettings']>[0];
+  public currentWallPaper: WallPaper;
+  public preferredBackgroundTransition?: ChatBackgroundTransition;
+
+  /**
+   * Stashed by `_handleBackgrounds` on the peer-change publish: a bundle of the staging-slot
+   * reveal, container `--message-highlighting-color` apply and `applyContainerTheme` (when
+   * applicable). Invoked by `revealPreparedBackground` from `bubbles.setPeer` in the same sync
+   * block as `scrollable.replaceChildren`, so wallpaper flip, theme vars, and bubble mount land
+   * in one paint frame instead of two.
+   *
+   * `undefined` outside a peer change. Same-bg short-circuits store a no-op (still bundled with
+   * theme/hsla apply), so callers can always invoke unconditionally.
+   */
+  private pendingBackgroundReveal: (() => void) | undefined;
+  /**
+   * True when the currently-stored `pendingBackgroundReveal` carries an actual staging-slot
+   * flip (`reveal !== noop`). Same-bg short-circuits in subsequent publishes during the same
+   * peer-change scope must not downgrade a real flip to a noop one — without this flag,
+   * comparing the bundled callbacks against `noop` directly is impossible.
+   */
+  private pendingBackgroundRevealIsReal: boolean;
+  /**
+   * Set true once `revealPreparedBackground` runs. Lets `deferReveal` callbacks that arrive
+   * after the bubbles mount (not-cached wallpaper path) fire their bundled reveal inline
+   * instead of waiting forever in `pendingBackgroundReveal`.
+   */
+  private bubblesRevealCalled: boolean;
+
+  /**
+   * True while this chat is off-screen on mobile (the chat list or profile tab is shown instead
+   * of the chat). A theme/wallpaper that finishes loading in this window must NOT drive the
+   * global background — otherwise opening a chat, then backing out before its theme loads, still
+   * flips the background once the slow load lands. Reset on peer change, re-asserted when the
+   * chat returns on screen (see `setBackgroundHidden`). Driven by the `tab_changing` listener.
+   */
+  private backgroundHidden = false;
 
   public ignoreSearchCleaning: boolean;
 
@@ -188,7 +219,7 @@ export default class Chat extends EventListenerBase<{
   public historyStorage: ReturnType<typeof useHistoryStorage>;
   public historyStorageNoThreadId: ReturnType<typeof useHistoryStorage>;
   public peerTranslation: ReturnType<typeof usePeerTranslation>;
-  public fullPeer: Accessor<ChatFull | UserFull>;
+  public fullPeer: Accessor<PeerFull>;
 
   public staticMessages: MyMessage[] = [];
 
@@ -214,21 +245,16 @@ export default class Chat extends EventListenerBase<{
     this.middlewareHelper = getMiddleware();
     this.destroyMiddlewareHelper = getMiddleware();
 
-    this.hadAnyBackground = false;
-
     if(!this.excludeParts.elements) {
       this.container = document.createElement('div');
       this.container.classList.add('chat', 'tabs-tab');
-
-      this.backgroundEl = document.createElement('div');
-      this.backgroundEl.classList.add('chat-background');
-
-      this.container.append(this.backgroundEl);
     }
 
     this.peerIdSignal = createSignal(this.peerId = NULL_PEER_ID);
+    this.chatPaddingTop = createSignal(0);
+    this.chatPaddingBottom = createSignal(0);
+    this.recomputePaddings();
 
-    this.backgroundTempId = 0;
     this.sharedMediaTabs = [];
 
     createRoot((dispose) => {
@@ -241,309 +267,246 @@ export default class Chat extends EventListenerBase<{
     });
   }
 
-  public hasBackgroundSet() {
-    return !!(this.theme || this.wallPaper);
+  public get gradientRenderer(): ChatBackgroundGradientRenderer | undefined {
+    return this.appImManager.appChatBackground.getActiveGradientRenderer();
   }
 
-  public async setBackground({
-    url,
-    theme,
-    wallPaper,
-    skipAnimation,
-    manual,
-    onCachedStatus
-  }: {
-    url?: string,
-    theme?: Chat['theme'],
-    wallPaper?: Chat['wallPaper'],
-    skipAnimation?: boolean,
-    manual?: boolean,
-    onCachedStatus?: (cached: boolean) => void
-  }): Promise<() => void> {
-    this.hadAnyBackground = true;
-    const log = this.log.bindPrefix('setBackground');
-    log('start');
-    const isGlobalTheme = !theme;
-    const globalTheme = themeController.getTheme();
-    const globalWallPaper = themeController.getThemeSettings(globalTheme).wallpaper;
-    const newTheme = theme ?? globalTheme;
-    const shouldComputeHighlightingColor = !!(newTheme || !isGlobalTheme || wallPaper);
-    if(!wallPaper) {
-      const themeSettings = themeController.getThemeSettings(newTheme);
-      wallPaper = themeSettings.wallpaper;
+  private chatInputSurplusPx = 0;
+  private pinnedFloatingHeightPx = 0;
+  private preservePaddingScrollAbort?: () => void;
+
+  public updateChatInputHeight(surplus: number) {
+    if(this.chatInputSurplusPx === surplus) return;
+    this.preservePaddingScroll();
+    this.chatInputSurplusPx = surplus;
+    this.container.style.setProperty('--chat-input-height-surplus', surplus + 'px');
+    this.recomputePaddings();
+  }
+
+  public updatePinnedFloatingHeight(value: number) {
+    if(this.pinnedFloatingHeightPx === value) return;
+    const delta = value - this.pinnedFloatingHeightPx;
+    this.pinnedFloatingHeightPx = value;
+    const scrollable = this.bubbles?.scrollable;
+    const wasAtEnd = scrollable?.isScrolledToEnd;
+    this.recomputePaddings();
+    // Mobile-faithful (verified against iOS ListView + Android ChatActivity):
+    // leave a mid-scroll position anchored. recomputePaddings grows the
+    // in-scroller paddingTop, and the browser's own scroll anchoring keeps the
+    // visible content put as it grows — so the plate slides in OVER the content
+    // (which scrolls under it) rather than shoving it down. Both mobile clients
+    // do exactly this; neither shifts the history when a top panel appears.
+    // Only re-pin when the chat was glued to the bottom, so the newest message
+    // stays in view — otherwise the grown paddingTop drifts it off the end.
+    if(scrollable && wasAtEnd && delta > 0) {
+      scrollable.setScrollPositionSilently(scrollable.scrollPosition + delta);
     }
+  }
 
-    if(this.wallPaper === wallPaper && this.theme === newTheme) {
-      log('same background');
-      onCachedStatus?.(true);
-      return;
-    }
-
-    const colors = getColorsFromWallPaper(wallPaper);
-    const slug = (wallPaper as WallPaper.wallPaper)?.slug;
-
-    let item: HTMLElement, image: HTMLImageElement;
-    const isColorBackground = !!colors && !slug && !wallPaper.settings.intensity;
+  private preservePaddingScroll() {
     if(
-      isColorBackground &&
-      document.documentElement.style.cursor === 'grabbing' &&
-      this.gradientRenderer &&
-      !this.patternRenderer
-    ) {
-      log('just changing color');
-      this.gradientCanvas.dataset.colors = colors;
-      this.gradientRenderer.init(this.gradientCanvas);
-      onCachedStatus?.(true);
-      return;
-    }
-
-    const tempId = ++this.backgroundTempId;
-
-    if(!url && !isColorBackground) {
-      const settings = wallPaper.settings;
-      const r = ChatBackgroundStore.getBackground({
-        slug,
-        canDownload: true,
-        managers: this.managers,
-        appDownloadManager: appDownloadManager,
-        blur: settings && settings.pFlags.blur
-      });
-
-      const cached: boolean = !(r instanceof Promise);
-      log('getting background, cached', cached);
-      onCachedStatus?.(cached);
-      skipAnimation ??= cached;
-      if(!cached) manual = undefined;
-      url = await r;
-      if(this.backgroundTempId !== tempId) {
-        return;
-      }
-    } else {
-      log('global background');
-      onCachedStatus?.(true);
-    }
-
-    const previousGradientRenderer = this.gradientRenderer;
-    const previousPatternRenderer = this.patternRenderer;
-    const previousGradientCanvas = this.gradientCanvas;
-    const previousPatternCanvas = this.patternCanvas;
-    const previousTheme = this.theme;
-    const previousWallPaper = this.wallPaper;
-
-    this.gradientRenderer =
-      this.patternRenderer =
-      this.gradientCanvas =
-      this.patternCanvas =
-      this.theme =
-      this.wallPaper =
-      undefined;
-
-    if(newTheme !== globalTheme) {
-      this.theme = theme;
-    }
-
-    if(wallPaper !== globalWallPaper) {
-      this.wallPaper = wallPaper;
-    }
-
-    const isPattern = !!(wallPaper as WallPaper.wallPaper).pFlags.pattern;
-    const intensity = wallPaper.settings?.intensity && wallPaper.settings.intensity / 100;
-    const isDarkPattern = !!intensity && intensity < 0;
-
-    let patternRenderer: ChatBackgroundPatternRenderer;
-    let patternCanvas = item?.firstElementChild as HTMLCanvasElement;
-    let gradientCanvas: HTMLCanvasElement;
-    if(!item) {
-      item = document.createElement('div');
-      item.classList.add('chat-background-item');
-
-      if(url) {
-        if(isPattern) {
-          item.classList.add('is-pattern');
-
-          const rect = this.appImManager.chatsContainer.getBoundingClientRect();
-          patternRenderer = this.patternRenderer = ChatBackgroundPatternRenderer.getInstance({
-            element: this.appImManager.chatsContainer,
-            url,
-            width: rect.width,
-            height: rect.height,
-            mask: isDarkPattern
-          });
-
-          patternCanvas = this.patternCanvas = patternRenderer.createCanvas();
-          patternCanvas.classList.add('chat-background-item-canvas', 'chat-background-item-pattern-canvas');
-
-          if(isDarkPattern) {
-            item.classList.add('is-dark');
-          }
-        } else {
-          image = document.createElement('img');
-          image.classList.add('chat-background-item-image');
-          item.classList.add('is-image', 'chat-background-item-scalable');
-          item.append(image);
-        }
-      } else {
-        item.classList.add('is-color');
-      }
-    }
-
-    let gradientRenderer: ChatBackgroundGradientRenderer;
-    if(colors) {
-      // if(color.includes(',')) {
-      const {canvas, gradientRenderer: _gradientRenderer} = ChatBackgroundGradientRenderer.create(colors);
-      gradientRenderer = this.gradientRenderer = _gradientRenderer;
-      gradientCanvas = this.gradientCanvas = canvas;
-      gradientCanvas.classList.add('chat-background-item-canvas', 'chat-background-item-color-canvas');
-      gradientCanvas.classList.add('chat-background-item-scalable');
-
-      // if(liteMode.isAvailable('animations')) {
-      //   gradientRenderer.scrollAnimate(true);
-      // }
-      // } else {
-      //   item.style.backgroundColor = color;
-      //   item.style.backgroundImage = 'none';
-      // }
-    }
-
-    if(intensity && (!image || themeController.isNight())) {
-      let setOpacityTo: HTMLElement;
-      if(image) {
-        setOpacityTo = image;
-      } else {
-        setOpacityTo = isDarkPattern ? gradientCanvas : patternCanvas;
+      !this.bubbles ||
+      !this.bubbles.scrollable.isScrolledToEnd/*  ||
+      true */
+    ) return;
+    this.preservePaddingScrollAbort?.();
+    let finished = false;
+    const timeout = setTimeout(() => {
+      finished = true;
+    }, 250);
+    this.preservePaddingScrollAbort = () => {
+      finished = true;
+      clearTimeout(timeout);
+      this.preservePaddingScrollAbort = undefined;
+    };
+    animateSingle(() => {
+      if(finished) {
+        return false;
       }
 
-      let opacityMax = Math.abs(intensity) * (isDarkPattern ? .5 : 1);
-      if(image) {
-        opacityMax = Math.max(0.3, 1 - intensity);
-      } else if(isDarkPattern) {
-        opacityMax = Math.max(0.3, opacityMax);
-      }
+      this.bubbles.scrollable.setScrollPositionSilently(99999);
+      return true;
+    }, this.bubbles.scrollable.container);
 
-      setOpacityTo.style.setProperty('--opacity-max', '' + opacityMax);
-    }
-
-    const promise = new Promise<() => void>((resolve) => {
-      const cb = () => {
-        if(this.backgroundTempId !== tempId) {
-          patternRenderer?.cleanup(patternCanvas);
-          gradientRenderer?.cleanup();
-          return;
-        }
-
-        const prev = this.backgroundEl.lastElementChild as HTMLElement;
-        if(prev === item) {
-          return;
-        }
-
-        const getHighlightningColor = () => {
-          const perf = performance.now();
-          let pixel: Uint8ClampedArray;
-          if(image) {
-            pixel = averageColorFromImage(image);
-          } else {
-            pixel = averageColorFromCanvas(gradientCanvas);
-          }
-
-          const hsla = highlightingColor(Array.from(pixel) as any);
-          log('getHighlightningColor', hsla, performance.now() - perf);
-          return hsla;
-        };
-
-        const append = [
-          gradientCanvas,
-          patternCanvas
-        ].filter(Boolean);
-        if(append.length) {
-          item.append(...append);
-        }
-
-        this.backgroundEl.append(item);
-
-        SetTransition({
-          element: item,
-          className: 'is-visible',
-          forwards: true,
-          duration: !skipAnimation ? 200 : 0,
-          onTransitionStart: () => {
-            const perf = performance.now();
-            if(newTheme) {
-              themeController.applyTheme(newTheme, this.container);
-            }
-
-            if(shouldComputeHighlightingColor) {
-              themeController.applyHighlightingColor({hsla: getHighlightningColor(), element: this.container});
-            }
-            log('transition start time', performance.now() - perf);
-          },
-          onTransitionEnd: prev ? () => {
-            previousPatternRenderer?.cleanup(previousPatternCanvas);
-            previousGradientRenderer?.cleanup();
-
-            prev.remove();
-          } : null,
-          useRafs: 2
-        });
-      };
-
-      const wrappedCallback = () => {
-        log('background is ready', performance.now() - perf);
-        if(manual) {
-          resolve(cb);
-        } else {
-          cb();
-          resolve(undefined);
-        }
-      };
-
-      const perf = performance.now();
-      if(patternRenderer) {
-        patternRenderer.renderToCanvas(patternCanvas).then(wrappedCallback);
-      } else if(url) {
-        renderImageFromUrl(image, url, wrappedCallback, false);
-      } else {
-        wrappedCallback();
-      }
-    });
-
-    if(manual) {
-      return promise;
-    }
-
-    return this.setBackgroundPromise = Promise.race([
-      pause(500),
-      promise
-    ]).then(() => {
-      rootScope.dispatchEvent('chat_background_set');
-    }) as any;
+    // const scrollSaver = this.bubbles.createScrollSaver(false);
+    // scrollSaver.save();
+    // const promise = new Promise<void>((resolve) => setTimeout(resolve, 250));
+    // this.bubbles.animateSomethingWithScroll(promise, scrollSaver);
   }
 
-  public setBackgroundIfNotSet(options: Parameters<Chat['setBackground']>[0]) {
-    if(this.hasBackgroundSet()) {
+  // Hands scroll control to an imminent new-message reveal (renderNewMessage →
+  // scrollToEnd). Otherwise the pin above slams to the absolute bottom every frame
+  // and swallows the reveal animation — most visibly when forwarding a tall message,
+  // where the input helper collapse that triggers the pin coincides with the new bubble.
+  public cancelPreservePaddingScroll() {
+    this.preservePaddingScrollAbort?.();
+  }
+
+  public recomputePaddings() {
+    // const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const rem = 16;
+    // Main chat reserves 4.5rem above + 4rem below for the floating topbar / pinned-plate
+    // buffer and the chat-input plate. The preview shows neither — only the basic 3rem
+    // topbar — so collapse to topbar-height + 0.5rem (page-chats-padding) on each side.
+    // Handhelds drop those buffers too: the page inset shrinks to 8px so each floating
+    // plate's inner edge sits at 56px (3rem + 0.5rem). Collapse both spacers to sit flush
+    // (= --chat-padding-top / --chat-padding-bottom) instead of the wider desktop gap. Kept
+    // in sync across mobile<->desktop transitions by the 'changeScreen' listener in init().
+    const collapse = this.isPreview || mediaSizes.isMobile;
+    const topBase = collapse ? 3.5 : 4.5;
+    const bottomBase = collapse ? 3.5 : 4;
+    const top = Math.round(topBase * rem + this.pinnedFloatingHeightPx);
+    const bottom = Math.round(bottomBase * rem + this.chatInputSurplusPx);
+    this.chatPaddingTop[1](top);
+    this.chatPaddingBottom[1](bottom);
+    if(this.bubbles?.paddingTop) this.bubbles.paddingTop.style.height = top + 'px';
+    if(this.bubbles?.paddingBottom) this.bubbles.paddingBottom.style.height = bottom + 'px';
+    this.bubbles?.updateStickyIntersectorRootMargin?.();
+  }
+
+  public applyContainerTheme() {
+    if(!this.container) return;
+    const newTheme = this.currentTheme ?? themeController.getTheme();
+    themeController.applyTheme(newTheme, this.container);
+  }
+
+  public publishBackground(
+    transition: ChatBackgroundTransition = 'auto',
+    onCachedStatus?: (cached: boolean) => void,
+    deferReveal?: (reveal: () => void) => void
+  ): Promise<void> {
+    if(this !== this.appImManager.chat || this.backgroundHidden) {
+      onCachedStatus?.(true);
+      deferReveal?.(noop);
+      return Promise.resolve();
+    }
+
+    const finalTransition = this.preferredBackgroundTransition ?? transition;
+    this.preferredBackgroundTransition = undefined;
+
+    // When `deferReveal` is provided, stash the hsla and apply it as part of the bundled
+    // reveal — otherwise `--message-highlighting-color` lands on the container ahead of the
+    // staging-slot flip, and bubbles read the new highlighting color while the old wallpaper
+    // is still on screen.
+    let pendingHsla: string | undefined;
+    const applyPendingHsla = () => {
+      if(pendingHsla === undefined || !this.container) return;
+      themeController.applyHighlightingColor({hsla: pendingHsla, element: this.container});
+    };
+
+    return this.appImManager.appChatBackground.setBackground({
+      theme: this.currentTheme,
+      wallPaper: this.currentWallPaper,
+      transition: finalTransition,
+      onCachedStatus,
+      // Scope the canvas-computed hsla to this chat's container so each chat's
+      // bubbles see *their* highlighting color. Without this, root would carry
+      // the most recently opened chat's value and leak into other chats whose
+      // containers still inherit from `:root`.
+      onHighlightColor: (hsla) => {
+        if(deferReveal) {
+          pendingHsla = hsla;
+          return;
+        }
+        if(this.container) {
+          themeController.applyHighlightingColor({hsla, element: this.container});
+        }
+      },
+      deferReveal: deferReveal ? (slotReveal) => {
+        // Bundle slot flip and hsla apply into one callback — caller invokes them together,
+        // sync with the bubbles mount.
+        deferReveal(() => {
+          slotReveal();
+          applyPendingHsla();
+        });
+      } : undefined
+    });
+  }
+
+  private setBackgroundHidden(hidden: boolean) {
+    if(this.backgroundHidden === hidden) {
       return;
     }
 
-    return this.setBackground(options);
+    this.backgroundHidden = hidden;
+    // Coming back on screen: re-assert our background. A theme that finished loading while we
+    // were off-screen had its publish suppressed by `publishBackground`'s guard; surface it now.
+    // `setBackground` short-circuits when the background is already current, so this is cheap.
+    if(!hidden && this === this.appImManager.chat && this.peerId) {
+      this.publishBackground('auto');
+    }
   }
 
   private _handleBackgrounds() {
     const log = this.log.bindPrefix('handleBackgrounds');
     const deferred = deferredPromise<() => void>();
-    let manual = true;
+    // Wipe any leftover reveal from a previous peer change that errored out before
+    // `bubbles.setPeer` reached `revealPreparedBackground`.
+    this.pendingBackgroundReveal = undefined;
+    this.pendingBackgroundRevealIsReal = false;
+    this.bubblesRevealCalled = false;
 
-    const setBackground = (options: Partial<Parameters<Chat['setBackground']>[0]>) => {
-      const promise = this.setBackground({
-        manual,
-        onCachedStatus: (cached) => {
-          if(!cached) {
-            deferred.resolve(undefined);
-          }
-        },
-        ...options
+    const publish = () => {
+      const applyTheme = () => this.applyContainerTheme();
+      // First publish in this peer-change scope owns the staging-slot reveal — it's the one
+      // racing the bubbles mount. Later re-publishes (night toggle, fullPeer details update)
+      // happen well after bubbles are settled, so they reveal inline as before.
+      const isFirstPublish = !deferred.isFulfilled;
+
+      // For not-cached wallpapers, `onCachedStatus(false)` resolves the deferred early with
+      // `applyTheme` so `finishPeerChange` doesn't block on a slow image download — in that
+      // case `applyTheme` runs via `callbacks.forEach` and must not also run in the bundled
+      // reveal (would double-apply the heavy theme computation).
+      let themeOwnedByCallbacks = false;
+
+      const deferRevealCb = isFirstPublish ? (reveal: () => void) => {
+        const isReal = reveal !== noop;
+        // Bundle slot flip + theme apply so wallpaper, theme vars and `--message-highlighting-color`
+        // (set inside `publishBackground`'s wrapped `onHighlightColor` → bundled into `reveal`)
+        // all land in one sync block alongside the bubbles mount.
+        const bundled = themeOwnedByCallbacks ? reveal : () => {
+          reveal();
+          applyTheme();
+        };
+
+        // Late stage: bubbles already mounted (e.g. not-cached wallpaper path where
+        // `onCachedStatus(false)` resolved the deferred and bubbles ran ahead). Fire the
+        // bundled reveal now — the SCSS fade transition still animates the slot in.
+        if(this.bubblesRevealCalled) {
+          bundled();
+          return;
+        }
+
+        // Don't let a same-bg short-circuit (which hands back the `noop` sentinel) downgrade
+        // a real pending reveal from an earlier publish in this peer-change scope.
+        if(!isReal && this.pendingBackgroundRevealIsReal) {
+          return;
+        }
+        this.pendingBackgroundReveal = bundled;
+        this.pendingBackgroundRevealIsReal = isReal;
+      } : undefined;
+
+      const promise = this.publishBackground('auto', (cached) => {
+        if(!cached && !deferred.isFulfilled) {
+          // Cached canvas not ready yet — let `finishPeerChange` proceed without the bundled
+          // reveal (it'll fire late via `bubblesRevealCalled`); apply theme inline so bubbles
+          // mount against the new vars even before the wallpaper fades in.
+          themeOwnedByCallbacks = true;
+          deferred.resolve(applyTheme);
+        }
+      }, deferRevealCb);
+
+      promise.then(() => {
+        if(!deferred.isFulfilled) {
+          // Cached path: wallpaper fully staged. `applyTheme` is bundled into the reveal —
+          // resolve with `noop` so `callbacks.forEach` doesn't apply it ahead of the slot flip.
+          deferred.resolve(noop);
+        } else {
+          // Subsequent publishes (night toggle, peer details change): canvas
+          // already settled, just apply theme inline now that it's painted.
+          applyTheme();
+        }
       });
-
-      bindPromiseToDeferred(promise, deferred);
-      return promise;
     };
 
     const getThemeByEmoticon = (emoticon: string) => {
@@ -555,64 +518,80 @@ export default class Chat extends EventListenerBase<{
       return accountThemes.themes?.find((theme) => theme.emoticon === emoticon);
     };
 
-    const maybeResetBackground = () => {
-      if(!this.hasBackgroundSet() && this.hadAnyBackground) {
-        log('no background');
-        deferred.resolve(undefined);
-        return;
-      }
-
-      log('resetting background');
-      setBackground(this.getResetBackgroundOptions());
-    };
-
     const update = () => {
       const _fullPeer = fullPeer();
-      if(!_fullPeer) {
-        maybeResetBackground();
-        return;
+      let wallPaper: WallPaper;
+      let theme: Chat['currentTheme'];
+
+      if(_fullPeer) {
+        wallPaper = unwrap((_fullPeer as ChatFull.channelFull).wallpaper);
+        const emoticon = (_fullPeer as ChatFull.channelFull).theme_emoticon ||
+          ((_fullPeer as UserFull.userFull).theme as ChatTheme.chatTheme)?.emoticon ||
+          (wallPaper && wallPaper.settings?.emoticon);
+
+        theme = unwrap(getThemeByEmoticon(emoticon));
+        if(emoticon && theme) {
+          wallPaper = undefined;
+        }
       }
 
-      let wallPaper = unwrap((_fullPeer as ChatFull.channelFull).wallpaper);
-      const emoticon = (_fullPeer as ChatFull.channelFull).theme_emoticon ||
-        ((_fullPeer as UserFull.userFull).theme as ChatTheme.chatTheme)?.emoticon ||
-        (wallPaper && wallPaper.settings?.emoticon);
-
-      const theme = unwrap(getThemeByEmoticon(emoticon));
-      if(!theme && !wallPaper) {
-        maybeResetBackground();
-        return;
-      }
-
-      // * handle case when theme is in wallpaper
-      if(emoticon && theme) {
-        wallPaper = undefined;
-      }
+      this.currentTheme = theme;
+      this.currentWallPaper = wallPaper;
 
       log('updating', _fullPeer, theme, wallPaper);
+      publish();
 
-      setBackground({
-        theme,
-        wallPaper,
-        skipAnimation: manual
-      });
-
-      const isNightTheme = useIsNightTheme();
       createEffect(on(isNightTheme, update, {defer: true}));
     };
 
+    const isNightTheme = useIsNightTheme();
     const fullPeer = useFullPeer(this.peerId);
     const [appState] = useAppState();
     createEffect(() => {
       update();
-      manual = false;
     });
+
+    // Defensive: when the global theme toggles (day↔night, accent change),
+    // chatBackground's own listener fires first and replaces props (dropping
+    // our per-chat onHighlightColor). Re-apply the container theme and copy
+    // the freshly-computed highlighting color from :root (where the canvas
+    // already wrote it) onto our container so per-chat bubbles see the new
+    // value instead of the stale cached one.
+    const onThemeChanged = async() => {
+      this.applyContainerTheme();
+      await this.appImManager.appChatBackground.getReadyPromise();
+      if(!this.container) return;
+      const rootHsla = getComputedStyle(document.documentElement).getPropertyValue('--message-highlighting-color').trim();
+      if(rootHsla) {
+        themeController.applyHighlightingColor({hsla: rootHsla, element: this.container});
+      }
+    };
+    rootScope.addEventListener('theme_changed', onThemeChanged);
+    onCleanup(() => rootScope.removeEventListener('theme_changed', onThemeChanged));
 
     return deferred;
   }
 
+  /**
+   * Run the pending wallpaper flip + theme apply + `--message-highlighting-color` apply
+   * bundle, if any, synchronously. Called from `bubbles.setPeer` in the same sync block as
+   * `scrollable.replaceChildren` so all chat-visual state lands with the bubbles mount in one
+   * paint frame instead of bleeding the new highlighting/wallpaper onto the old bubbles first.
+   *
+   * Idempotent: clears the pending bundle after invocation. Setting `bubblesRevealCalled`
+   * also flips `_handleBackgrounds` into late-stage mode for any `deferReveal` callback that
+   * arrives afterwards (not-cached wallpaper path).
+   */
+  public revealPreparedBackground() {
+    const reveal = this.pendingBackgroundReveal;
+    this.pendingBackgroundReveal = undefined;
+    this.pendingBackgroundRevealIsReal = false;
+    this.bubblesRevealCalled = true;
+    reveal?.();
+  }
+
   private handleBackgrounds() {
-    if(this.type === ChatType.Stories) {
+    if(this.type === ChatType.Stories || this.isPreview) {
       return Promise.resolve(noop);
     }
 
@@ -658,7 +637,10 @@ export default class Chat extends EventListenerBase<{
 
     this.bubbles.attachContainerListeners();
 
-    this.container.append(this.topbar.container, this.bubbles.container, this.input.chatInput);
+    this.bubblesViewport = document.createElement('div');
+    this.bubblesViewport.classList.add('bubbles-viewport', 'disable-hover');
+
+    this.container.append(this.topbar.container, this.bubbles.container, this.bubblesViewport, this.input.chatInput);
 
     this.bubbles.listenerSetter.add(rootScope)('dialog_migrate', ({migrateFrom, migrateTo}) => {
       if(this.peerId === migrateFrom) {
@@ -666,17 +648,27 @@ export default class Chat extends EventListenerBase<{
       }
     });
 
-    this.bubbles.listenerSetter.add(rootScope)('dialog_drop', (dialog) => {
-      if(dialog.peerId === this.peerId && (isDialog(dialog) || this.threadId === getDialogKey(dialog))) {
-        this.appImManager.setPeer({isDeleting: true});
-      }
+    // Spacer heights depend on the screen (desktop reserves a wider floating-plate buffer
+    // than handheld), so recompute them when crossing the mobile boundary. See recomputePaddings().
+    this.bubbles.listenerSetter.add(mediaSizes)('changeScreen', () => {
+      this.recomputePaddings();
     });
 
-    this.bubbles.listenerSetter.add(rootScope)('monoforum_dialogs_drop', ({ids, parentPeerId}) => {
-      if(parentPeerId === this.peerId && ids.includes(this.monoforumThreadId)) {
-        this.appImManager.setPeer({isDeleting: true});
-      }
-    });
+    if(!this.isPreview) {
+      // Preview popup owns its own lifecycle — these callbacks talk to the main appImManager
+      // and would close the *real* chat behind the popup if the previewed dialog got dropped.
+      this.bubbles.listenerSetter.add(rootScope)('dialog_drop', (dialog) => {
+        if(dialog.peerId === this.peerId && (isDialog(dialog) || this.threadId === getDialogKey(dialog))) {
+          this.appImManager.setPeer({isDeleting: true});
+        }
+      });
+
+      this.bubbles.listenerSetter.add(rootScope)('monoforum_dialogs_drop', ({ids, parentPeerId}) => {
+        if(parentPeerId === this.peerId && ids.includes(this.monoforumThreadId)) {
+          this.appImManager.setPeer({isDeleting: true});
+        }
+      });
+    }
 
     this.bubbles.listenerSetter.add(rootScope)('chat_update', async(chatId) => {
       const {peerId} = this;
@@ -735,7 +727,9 @@ export default class Chat extends EventListenerBase<{
     });
 
     this.bubbles.listenerSetter.add(this.appImManager)('tab_changing', (tabId) => {
-      freezeObservers(this.appImManager.chat !== this || (tabId !== APP_TABS.CHAT && mediaSizes.activeScreen === ScreenSize.mobile));
+      const offScreenOnMobile = tabId !== APP_TABS.CHAT && mediaSizes.activeScreen === ScreenSize.mobile;
+      freezeObservers(this.appImManager.chat !== this || offScreenOnMobile);
+      this.setBackgroundHidden(offScreenOnMobile);
     });
 
     const setInChatQueryDebounced = debounce((query: string) => {
@@ -812,6 +806,7 @@ export default class Chat extends EventListenerBase<{
             const scrollSaver = this.bubbles.createScrollSaver();
             scrollSaver.save();
             this.container.classList.toggle(className, !isSmallScreen && isActive);
+            this.topbar.setFloating();
             this.topbar.container.classList.toggle('hide-pinned', isSmallScreen);
             scrollSaver.restore();
           },
@@ -840,13 +835,6 @@ export default class Chat extends EventListenerBase<{
     this.searchSignal?.(undefined);
   }
 
-  private cleanupBackground() {
-    ++this.backgroundTempId;
-    this.patternRenderer?.cleanup(this.patternCanvas);
-    this.gradientRenderer?.cleanup();
-    this.patternRenderer = this.gradientRenderer = undefined;
-  }
-
   public destroy() {
     // const perf = performance.now();
 
@@ -858,8 +846,6 @@ export default class Chat extends EventListenerBase<{
     this.contextMenu?.destroy();
     this.selection?.attachListeners(undefined, undefined);
     this.destroyMiddlewareHelper.destroy();
-
-    this.cleanupBackground();
 
     this.topbar =
       this.bubbles =
@@ -989,6 +975,11 @@ export default class Chat extends EventListenerBase<{
       this.selection.isScheduled = type === ChatType.Scheduled;
     }
 
+    // NB: ChatType.Logs also has its own per-peer box (`${peerId}_logs`, via saveLogsMessage), but it's
+    // intentionally NOT mapped here — it stays `_history`. The logs view works through other paths (bubbles
+    // hold the message objects directly, and getMessageByPeer falls back to `… || _logs`), so wiring it to
+    // `_logs` here would need the whole admin-log read path re-verified. If that's ever done, the scheduled
+    // chokepoint in getMessage() can generalize to "own-peer non-history box".
     this.messagesStorageKey = `${this.peerId}_${this.type === ChatType.Scheduled ? 'scheduled' : 'history'}`;
 
     // this.container && this.container.classList.toggle('no-forwards', this.noForwards);
@@ -1044,9 +1035,17 @@ export default class Chat extends EventListenerBase<{
       this.peerIdSignal[1](this.peerId = peerId || NULL_PEER_ID);
       this.threadId = threadId;
       this.monoforumThreadId = monoforumThreadId;
+      // `onChangePeer` (async) only assigns `isForum` after awaiting the topic reload. Set it
+      // synchronously here too so the `chat_update` listener in bubbles doesn't compare the new
+      // peer against a stale `isForum` mid-transition and reset us to the forum root — which would
+      // drop the threadId when opening a just-created topic in a cold (not-yet-warm) forum.
+      this.isForum = apiManagerProxy.isForum(this.peerId);
       this.isTemporaryThread = isTempId(threadId);
       this.noInput = [ChatType.Static, ChatType.Logs].includes(type);
       this.middlewareHelper.clean();
+      // A fresh peer change always shows the chat next, so its background must publish normally;
+      // the off-screen suppression only guards a stale load from a peer we've already left.
+      this.backgroundHidden = false;
 
       createRoot((dispose) => {
         this.middlewareHelper.get().onClean(dispose);
@@ -1067,8 +1066,10 @@ export default class Chat extends EventListenerBase<{
       this.peerIdSignal[1](this.peerId = 0);
       let promise: Promise<any>;
 
-      if(this.hasBackgroundSet() && this === this.appImManager.chats[0]) {
-        promise = this.setBackground(this.getResetBackgroundOptions());
+      if(this === this.appImManager.chat) {
+        this.currentTheme = undefined;
+        this.currentWallPaper = undefined;
+        promise = this.publishBackground('auto');
       }
 
       callbackify(promise, () => {
@@ -1152,13 +1153,6 @@ export default class Chat extends EventListenerBase<{
     });
   }
 
-  private getResetBackgroundOptions(): Partial<Parameters<Chat['setBackground']>[0]> {
-    return {
-      url: this.appImManager.lastBackgroundUrl,
-      skipAnimation: true
-    };
-  }
-
   public destroySharedMediaTab(tab = this.sharedMediaTab) {
     if(!tab) {
       return;
@@ -1168,12 +1162,9 @@ export default class Chat extends EventListenerBase<{
     tab.destroy();
   }
 
-  public setMessageId(options: Partial<{
-    lastMsgId: number,
-    lastMsgPeerId: PeerId,
-    mediaTimestamp: number,
-    type: ChatType
-  } & ChatSearchKeys> = {}) {
+  public setMessageId(options: Partial<Pick<ChatSetPeerOptions,
+    'lastMsgId' | 'lastMsgPeerId' | 'mediaTimestamp' | 'pollOption' | 'highlight' | 'type'
+  > & ChatSearchKeys> = {}) {
     return this.setPeer({
       peerId: this.peerId,
       threadId: this.threadId,
@@ -1243,6 +1234,13 @@ export default class Chat extends EventListenerBase<{
   public getMessage(mid: number | FullMid) {
     if(typeof(mid) === 'string') {
       const {peerId, mid: _mid} = splitFullMid(mid);
+      // scheduled messages live in a separate per-peer storage; resolving a bare id via
+      // getMessageByPeer would hit history/global and return another chat's message, so for
+      // our own scheduled peer read from this chat's (scheduled) storage instead
+      if(this.type === ChatType.Scheduled && peerId === this.peerId) {
+        return apiManagerProxy.getMessageFromStorage(this.messagesStorageKey, _mid);
+      }
+
       return apiManagerProxy.getMessageByPeer(peerId, _mid);
     }
 
@@ -1363,7 +1361,8 @@ export default class Chat extends EventListenerBase<{
         silent: this.input.sendSilent,
         sendAsPeerId: this.input.sendAsPeerId,
         effect: this.input.effect(),
-        suggestedPost: this.input.suggestedPost
+        suggestedPost: this.input.suggestedPost,
+        ...this.input.getEphemeralSendingParams()
       }),
       replyToMonoforumPeerId: this.input?.suggestedPost?.monoforumThreadId || this.input?.getReplyTo()?.replyToMonoforumPeerId || this.monoforumThreadId,
       savedReaction: this.savedReaction
@@ -1572,7 +1571,9 @@ export default class Chat extends EventListenerBase<{
 
       return {
         cached: fullPeer.cached,
-        result: fullPeer.result.then((fullPeer) => fullPeer.ttl_period)
+        result: fullPeer.result.then((fullPeer) => {
+          return 'ttl_period' in fullPeer ? fullPeer.ttl_period : undefined;
+        })
       }
     } catch{
       return {

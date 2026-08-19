@@ -1,16 +1,10 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import getCallAudioAsset from '@components/call/getAudioAsset';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import IS_CALL_SUPPORTED from '@environment/callSupport';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
 import AudioAssetPlayer from '@helpers/audioAssetPlayer';
-import bytesCmp from '@helpers/bytes/bytesCmp';
+import bytesCmpConstTime from '@helpers/bytes/bytesCmpConstTime';
 import EventListenerBase from '@helpers/eventListenerBase';
 import tsNow from '@helpers/tsNow';
 import {PhoneCallProtocol} from '@layer';
@@ -22,6 +16,7 @@ import {NULL_PEER_ID} from '@appManagers/constants';
 import rootScope from '@lib/rootScope';
 import CallInstance from '@lib/calls/callInstance';
 import CALL_STATE from '@lib/calls/callState';
+import IS_CONFERENCE_CALL_SUPPORTED from '@environment/conferenceCallSupport';
 
 const CALL_REQUEST_TIMEOUT = 45e3;
 
@@ -60,6 +55,17 @@ export class CallsController extends EventListenerBase<{
       switch(call._) {
         case 'phoneCallDiscarded': {
           if(instance) {
+            // Server-initiated migration to a conference call: the 1-on-1
+            // is being ended specifically so both parties can rejoin via
+            // the new GroupCall. Hand off via the conference path (which
+            // suppresses the "call ended" audio + preserves duration/emoji)
+            // instead of the normal hangUp. Gated until the SFU exposes a
+            // multi-mid layout to browser clients — see
+            // docs/conf-call-browser-recv-blocker.md.
+            if(call.reason?._ === 'phoneCallDiscardReasonMigrateConferenceCall' && IS_CONFERENCE_CALL_SUPPORTED) {
+              this.migrateToConference(instance);
+              break;
+            }
             instance.hangUp(call.reason, true);
           }
 
@@ -101,25 +107,45 @@ export class CallsController extends EventListenerBase<{
         }
 
         case 'phoneCall': {
-          if(!instance || instance.encryptionKey) {
+          // `dh.g_a` is what getEmojisFingerprint hashes into the emoji SAS — the only
+          // human-verifiable MITM defence of the call — so a server-relayed value must
+          // never land there before it is checked against the commitment, and a failed
+          // check has to be fatal instead of leaving a poisoned value behind.
+          // `dh.g_a` being set already means there is nothing to accept (the caller
+          // generated its own), and the in-flight flag closes the window that the two
+          // awaits below open for a second, forged update.
+          if(!instance || instance.encryptionKey || instance.dh?.g_a || instance.isVerifyingPeerG_a) {
             break;
           }
 
-          const g_a = instance.dh.g_a = call.g_a_or_b;
+          instance.isVerifyingPeerG_a = true;
+
           const dh = instance.dh;
+          const g_a = call.g_a_or_b;
           const g_a_hash = await apiManagerProxy.invokeCrypto('sha256', g_a);
-          if(!bytesCmp(dh.g_a_hash, g_a_hash)) {
+          if(!bytesCmpConstTime(dh.g_a_hash, g_a_hash)) {
             this.log.error('Incorrect g_a_hash', dh.g_a_hash, g_a_hash);
+            instance.hangUp('phoneCallDiscardReasonDisconnect');
             break;
           }
 
-          const {key, key_fingerprint} = await this.managers.appCallsManager.computeKey(g_a, dh.b, dh.p);
+          let key: Uint8Array, key_fingerprint: string;
+          try {
+            ({key, key_fingerprint} = await this.managers.appCallsManager.computeKey(g_a, dh.b, dh.p));
+          } catch(err) {
+            this.log.error('computeKey failed (invalid DH public value)', err, g_a, dh);
+            instance.hangUp('phoneCallDiscardReasonDisconnect');
+            break;
+          }
           if(call.key_fingerprint !== key_fingerprint) {
             this.log.error('Incorrect key fingerprint', call.key_fingerprint, key_fingerprint, g_a, dh);
             instance.hangUp('phoneCallDiscardReasonDisconnect');
             break;
           }
 
+          // Authenticated against both the commitment and the key fingerprint — only
+          // now may it drive the SAS.
+          instance.dh.g_a = g_a;
           instance.encryptionKey = key;
           instance.joinCall();
 
@@ -136,6 +162,9 @@ export class CallsController extends EventListenerBase<{
 
       instance.onUpdatePhoneCallSignalingData(data);
     });
+
+    // Conference chain delivery (sub_chain_id 0 = blocks, 1 = broadcasts)
+    // is handled by `GroupCallInstance.attachE2e` for the active instance.
   }
 
   public get currentCall() {
@@ -232,8 +261,6 @@ export class CallsController extends EventListenerBase<{
       interlocutorUserId: userId
     });
 
-    call.requestInputSource(true, !!(isVideo && video_calls_available), false);
-
     call.overrideConnectionState(CALL_STATE.REQUESTING);
     call.setPhoneCall({
       _: 'phoneCallWaiting',
@@ -257,7 +284,68 @@ export class CallsController extends EventListenerBase<{
       call.overrideConnectionState(CALL_STATE.PENDING);
       call.setPhoneCall(phoneCall);
       call.setHangUpTimeout(CALL_REQUEST_TIMEOUT, 'phoneCallDiscardReasonHangup');
+    }).catch((err) => {
+      this.log.error('outgoing call DH/setup error', err);
+      call.hangUp('phoneCallDiscardReasonHangup');
     });
+  }
+
+  // ===== 1-on-1 → conference migration =====
+  //
+  // Called when a 1-on-1 PhoneCall is discarded with the migrate reason. We
+  // stop the P2P engine but DO NOT play the "call ended" tone, and we
+  // capture state that needs to carry over to the conference (current
+  // duration, emoji fingerprint, mute/video flags). The actual conference
+  // join is driven by the server-side `updateGroupCall` that arrives in the
+  // same Updates batch — `createConferenceInstance` is invoked there.
+  //
+  // UI continuity (preserve topbar in place, animate handoff) is Phase 6.
+
+  public migratedCallSnapshot: {
+    interlocutorUserId: UserId;
+    duration: number;
+    emojisFingerprint: ReturnType<CallInstance['getEmojisFingerprint']> | undefined;
+    wasMuted: boolean;
+    wasVideo: boolean;
+    timestamp: number;
+  } | undefined;
+
+  private migrateToConference(instance: CallInstance): void {
+    this.log('migrateToConference', instance.id);
+    let fingerprint: ReturnType<CallInstance['getEmojisFingerprint']> | undefined;
+    try {
+      fingerprint = instance.getEmojisFingerprint();
+    } catch{
+      fingerprint = undefined;
+    }
+    this.migratedCallSnapshot = {
+      interlocutorUserId: instance.interlocutorUserId,
+      duration: instance.duration,
+      emojisFingerprint: fingerprint,
+      wasMuted: instance.isMuted,
+      wasVideo: instance.isSharingVideo,
+      timestamp: Date.now()
+    };
+
+    // Tear down the 1-on-1 without sending discard or playing audio. The
+    // server already discarded the call; instance.hangUp with no reason
+    // skips the API call but still walks the state machine to CLOSED.
+    instance.overrideConnectionState(CALL_STATE.CLOSED);
+    try {
+      (instance as unknown as {stopPhoneCall?: () => void}).stopPhoneCall?.();
+    } catch(err) {
+      this.log.error('migrateToConference: stopPhoneCall failed', err);
+    }
+    this.audioAsset?.stop();
+  }
+
+  // Consume the migration snapshot. The conference connect flow calls this
+  // exactly once after spinning up the ConferenceCallInstance so it can hydrate
+  // the topbar from the prior 1-on-1's timer / fingerprint.
+  public consumeMigratedCallSnapshot(): CallsController['migratedCallSnapshot'] {
+    const snap = this.migratedCallSnapshot;
+    this.migratedCallSnapshot = undefined;
+    return snap;
   }
 }
 

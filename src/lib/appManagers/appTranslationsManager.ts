@@ -1,13 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import makeError from '@helpers/makeError';
 import pause from '@helpers/schedulers/pause';
-import {TextWithEntities, MessagesTranslatedText, MessagesTranslateText} from '@layer';
+import {TextWithEntities, MessagesTranslatedText, MessagesTranslateText, MessageEntity} from '@layer';
 import {AppManager} from '@appManagers/manager';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 
@@ -145,12 +139,29 @@ export default class AppTranslationsManager extends AppManager {
     mid: number
   } | {
     text: TextWithEntities
-  }) & {lang: string, onlyCache?: boolean}) {
+  }) & {lang: string, onlyCache?: boolean}): MaybeDeferredPromise<TextWithEntities> {
     this.translateTextBatch[options.lang] ??= {text: new Map(), messages: new Map(), messagesPromises: new Map()};
     const batch = this.translateTextBatch[options.lang];
     const isMessage = 'peerId' in options;
 
     if(isMessage) {
+      const message = this.appMessagesManager.getMessageByPeer(options.peerId, options.mid);
+      if(this.appMessagesManager.isEphemeralMessageId(options.mid) && !message) {
+        return Promise.reject(makeError('MESSAGE_ID_INVALID'));
+      }
+
+      if(this.appMessagesManager.isEphemeralMessage(message)) {
+        return this.translateText({
+          text: {
+            _: 'textWithEntities',
+            text: message.message,
+            entities: message.entities || []
+          },
+          lang: options.lang,
+          onlyCache: options.onlyCache
+        });
+      }
+
       let map = batch.messages.get(options.peerId);
       if(!map) {
         batch.messages.set(options.peerId, map = new Map());
@@ -175,7 +186,11 @@ export default class AppTranslationsManager extends AppManager {
 
       return promise;
     } else {
-      const key = JSON.stringify(options.text);
+      const key = JSON.stringify({
+        _: 'textWithEntities',
+        text: options.text.text,
+        entities: this.getInputEntities(options.text.entities)
+      });
       let promise = batch.text.get(key);
       if(promise || options.onlyCache) {
         return promise;
@@ -192,6 +207,9 @@ export default class AppTranslationsManager extends AppManager {
 
   public togglePeerTranslations(peerId: PeerId, disabled: boolean) {
     this.appProfileManager.modifyCachedFullPeer(peerId, (fullPeer) => {
+      if(!('pFlags' in fullPeer)) {
+        return false;
+      }
       if(disabled) fullPeer.pFlags.translations_disabled = true;
       else delete fullPeer.pFlags.translations_disabled;
     });
@@ -207,6 +225,13 @@ export default class AppTranslationsManager extends AppManager {
     mid: number,
     lang?: string
   }) {
+    if(
+      this.appMessagesManager.isEphemeralMessageId(mid) ||
+      this.appMessagesManager.isEphemeralMessage(this.appMessagesManager.getMessageByPeer(peerId, mid))
+    ) {
+      return Promise.reject(makeError('UNKNOWN'));
+    }
+
     let promise = ((this.summaries[peerId] ??= {})[mid] ??= {})[lang];
     if(promise) {
       return promise;
@@ -240,5 +265,9 @@ export default class AppTranslationsManager extends AppManager {
     } else {
       delete this.summaries[peerId];
     }
+  }
+
+  private getInputEntities(entities: MessageEntity[]): MessageEntity[] {
+    return entities ? this.appMessagesManager.getInputEntities(entities)?.filter((entity) => entity._ !== 'messageEntityEmoji') || [] : [];
   }
 }

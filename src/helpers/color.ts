@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {WallPaper} from '@layer';
 import clamp from '@helpers/number/clamp';
 
@@ -268,19 +262,36 @@ export function getRgbColorFromTelegramColor(color: number) {
   return hexToRgb(getHexColorFromTelegramColor(color));
 }
 
+// Telegram sends 1–4 gradient stops as flagged optional ints (absent ⇒ the field
+// is omitted ⇒ undefined; present ⇒ the value, which may be 0). The first stop,
+// background_color, is the base fill and is kept whenever present — even a pure
+// black 0 (so a solid-black wallpaper survives). A 0 in any LATER slot is a "no
+// further colour" sentinel, NOT a real black stop: every cloud *day* theme ships
+// its solid-white wallpaper as background_color 0xffffff + second_background_color
+// 0 (verified against the live default themes — their baseThemeDay entries carry
+// no pattern and no intensity). Keeping that trailing 0 paints a white→black
+// gradient instead of the intended flat white, so later zero stops are dropped.
+export function getWallPaperColors(wallPaper: WallPaper): string[] {
+  const settings = wallPaper?.settings;
+  if(!settings) return [];
+  return [
+    settings.background_color,
+    settings.second_background_color,
+    settings.third_background_color,
+    settings.fourth_background_color
+  ]
+  .filter((color, index): color is number => color != null && (index === 0 || color !== 0))
+  .map(getHexColorFromTelegramColor);
+}
+
 export function getColorsFromWallPaper(wallPaper: WallPaper) {
-  return wallPaper.settings ? [
-    wallPaper.settings.background_color,
-    wallPaper.settings.second_background_color,
-    wallPaper.settings.third_background_color,
-    wallPaper.settings.fourth_background_color
-  ].filter(Boolean).map(getHexColorFromTelegramColor).join(',') : '';
+  return getWallPaperColors(wallPaper).join(',');
 }
 
 export function rgbaToRgb(rgba: ColorRgba, bg: ColorRgb): ColorRgb {
   const a = rgba[3];
   return rgba.slice(0, 3).map((color, idx) => {
-    return clamp(Math.round((a * (color / 255) + (a * (bg[idx] / 255))) * 255), 0, 255);
+    return clamp(Math.round((a * (color / 255) + ((1 - a) * (bg[idx] / 255))) * 255), 0, 255);
   }) as ColorRgb;
 }
 
@@ -288,6 +299,41 @@ export function calculateLuminance(rgb: ColorRgb) {
   const [r, g, b] = rgb;
   const luminance = (0.2126 * r / 255 + 0.7152 * g / 255 + 0.0722 * b / 255);
   return luminance;
+}
+
+/**
+ * WCAG relative luminance — sRGB-gamma–linearized, unlike the cheaper non-linear
+ * `calculateLuminance` / `computePerceivedBrightness`. Use this when you need
+ * real contrast math (e.g. clamping a colour to a contrast ratio against white).
+ * @param rgb r, g, b in [0, 255]
+ */
+export function relativeLuminance(rgb: ColorRgb): number {
+  const lin = (c: number) => {
+    c /= 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+}
+
+/**
+ * Scales a `#rrggbb` colour toward black until its WCAG relative luminance is
+ * ≤ `maxL`, preserving hue (the r:g:b ratios). Colours already at/below `maxL`
+ * pass through unchanged; non-`#rrggbb` input is returned untouched.
+ */
+export function darkenToMaxLuminance(hex: string, maxL: number): string {
+  if(!/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  if(relativeLuminance([r, g, b]) <= maxL) return hex;
+  let lo = 0, hi = 1;
+  for(let i = 0; i < 20; i++) {
+    const f = (lo + hi) / 2;
+    if(relativeLuminance([r * f, g * f, b * f]) > maxL) hi = f;
+    else lo = f;
+  }
+  const c = (v: number) => Math.round(v * lo).toString(16).padStart(2, '0');
+  return '#' + c(r) + c(g) + c(b);
 }
 
 export function getTextColor(luminance: number): ColorRgb {

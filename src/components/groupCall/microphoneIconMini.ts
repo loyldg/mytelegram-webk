@@ -1,22 +1,16 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
+import {SuperLottieIcon} from '@components/superIcon';
 
-import {SuperRLottieIcon} from '@components/superIcon';
-
-export default class GroupCallMicrophoneIconMini extends SuperRLottieIcon<{
+export default class GroupCallMicrophoneIconMini extends SuperLottieIcon<{
   PartState: boolean,
   ColorState: boolean,
   Items: {
     name: 'voice_mini'
   }[]
 }> {
-  constructor(colored?: boolean, skipAnimation?: boolean) {
+  constructor(colored?: boolean, skipAnimation?: boolean, size?: number) {
     super({
-      width: 36,
-      height: 36,
+      width: size,
+      height: size,
       getPart: (state) => {
         return this.getItem().getPart(state ? 'unmute' : 'mute');
       },

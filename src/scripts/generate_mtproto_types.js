@@ -1,19 +1,19 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 // @ts-check
 const schema = require(__dirname + '/in/schema.json');
 const additional = require(__dirname + '/in/schema_additional_params.json');
 const replace = require(__dirname + '/in/schema_replace_types.json');
+const typeExcludes = require(__dirname + '/in/schema_type_excludes.json');
 
 const mtproto = schema.API;
 
 const TABULATION = '  ';
 const NEW_LINE = '\n';
 const FLAGS_KEYS = new Set(['flags', 'flags2']);
+// Keep runtime schema support for newly introduced constructors while the
+// application model catches up. The excluded types are still emitted in their
+// namespaces and ConstructorDeclMap, but do not widen existing app-facing
+// unions yet.
+const CONSTRUCTORS_EXCLUDED_FROM_UNIONS = new Set(typeExcludes.constructorsFromUnions);
 
 for(const constructor of additional) {
   const additionalParams = constructor.params || (constructor.params = []);
@@ -204,6 +204,8 @@ const constructorsTypes = {};
 
 mtproto.constructors.forEach((constructor) => {
   const {type, predicate, params} = constructor;
+  const excludedParams = new Set(typeExcludes.constructorParams[predicate] || []);
+  const typeParams = excludedParams.size ? params.filter(({name}) => !excludedParams.has(name)) : params;
 
   if(!types.hasOwnProperty(type)) {
     types[type] = [];
@@ -221,7 +223,7 @@ mtproto.constructors.forEach((constructor) => {
   };
   constructors[predicate] = c;
 
-  processParams(params, c, true);
+  processParams(typeParams, c, true);
 
   /* if(predicate == 'inputFileLocation') {
     console.log(c);
@@ -230,6 +232,7 @@ mtproto.constructors.forEach((constructor) => {
 
 for(const type in types) {
   const cs = types[type];
+  const unionConstructors = cs.filter((predicate) => !CONSTRUCTORS_EXCLUDED_FROM_UNIONS.has(predicate));
 
   const camelizedType = camelizeName(type, true);
 
@@ -245,7 +248,7 @@ for(const type in types) {
   out += `/**
  * @link https://core.telegram.org/type/${type}
  */
-export type ${camelizedType} = ${cs.map(name => camelizedType + '.' + camelizeName(name, false)).join(' | ')};
+export type ${camelizedType} = ${unionConstructors.map(name => camelizedType + '.' + camelizeName(name, false)).join(' | ')};
 
 export namespace ${camelizedType} {
   ${csTypes.join(`${NEW_LINE}${NEW_LINE}${TABULATION}`)}

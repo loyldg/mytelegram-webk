@@ -1,15 +1,20 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {UrlAuthResult} from '@layer';
 import {AppManager} from '@appManagers/manager';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 
 export default class AppSeamlessLoginManager extends AppManager {
   public requestUrlAuth(url: string, peerId?: PeerId, mid?: number, buttonId?: number) {
+    if(
+      peerId &&
+      mid &&
+      (
+        this.appMessagesManager.isEphemeralMessageId(mid) ||
+        this.appMessagesManager.isEphemeralMessage(this.appMessagesManager.getMessageByPeer(peerId, mid))
+      )
+    ) {
+      return Promise.resolve({_: 'urlAuthResultDefault'} as const);
+    }
+
     return this.apiManager.invokeApi('messages.requestUrlAuth', {
       button_id: buttonId,
       msg_id: mid ? getServerMessageId(mid) : undefined,
@@ -25,6 +30,17 @@ export default class AppSeamlessLoginManager extends AppManager {
   }
 
   public acceptUrlAuth(url: string, peerId?: PeerId, mid?: number, buttonId?: number, writeAllowed?: boolean) {
+    if(
+      peerId &&
+      mid &&
+      (
+        this.appMessagesManager.isEphemeralMessageId(mid) ||
+        this.appMessagesManager.isEphemeralMessage(this.appMessagesManager.getMessageByPeer(peerId, mid))
+      )
+    ) {
+      return Promise.resolve({_: 'urlAuthResultDefault'} as const);
+    }
+
     return this.apiManager.invokeApi('messages.acceptUrlAuth', {
       button_id: buttonId,
       msg_id: mid ? getServerMessageId(mid) : undefined,

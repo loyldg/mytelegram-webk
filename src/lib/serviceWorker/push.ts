@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -41,6 +37,7 @@ export type PushNotificationObject = {
     chat_id?: string, // should be number
     from_id?: string, // should be number
     msg_id: string,
+    story_id?: string, // should be number; set for story notifications
     peerId?: string, // should be number
     silent?: string // can be '1'
   },

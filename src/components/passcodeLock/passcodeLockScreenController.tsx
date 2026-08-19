@@ -1,4 +1,5 @@
 import {render} from 'solid-js/web';
+import {getOverlayRoot} from '@helpers/appWindow';
 
 import appNavigationController from '@components/appNavigationController';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -6,8 +7,8 @@ import deferredPromise from '@helpers/cancellablePromise';
 import {doubleRaf} from '@helpers/schedulers';
 import pause from '@helpers/schedulers/pause';
 import apiManagerProxy from '@lib/apiManagerProxy';
+import {takeEncryptionKeyHandoff} from '@lib/passcode/keyHandoff';
 import EncryptionKeyStore from '@lib/passcode/keyStore';
-import sessionStorage from '@lib/sessionStorage';
 import LockScreenHotReloadGuardProvider from '@lib/solidjs/lockScreenHotReloadGuardProvider';
 import StaticUtilityClass from '@lib/staticUtilityClass';
 
@@ -26,11 +27,9 @@ export default class PasscodeLockScreenController extends StaticUtilityClass {
   }
 
   private static async tryGetStoredEncryptionHash() {
-    const storedBase64Key = await sessionStorage.get('encryption_key');
+    const storedBase64Key = takeEncryptionKeyHandoff();
 
     if(storedBase64Key) {
-      sessionStorage.delete('encryption_key');
-
       const isValid = typeof storedBase64Key === 'string'; // storedEncryptionHash instanceof Array && storedEncryptionHash.every((num) => typeof num === 'number');
       if(!isValid) return false;
 
@@ -106,7 +105,7 @@ export default class PasscodeLockScreenController extends StaticUtilityClass {
     if(shouldAnimateIn) {
       this.mountedElement.classList.add('passcode-lock-screen--hidden');
     }
-    document.body.append(this.mountedElement);
+    getOverlayRoot().append(this.mountedElement);
 
     const {default: PasscodeLockScreen} = await importPasscodeLockScreen();
 

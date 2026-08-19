@@ -1,13 +1,8 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type LazyLoadQueue from '@components/lazyLoadQueue';
 import type {PeerPhotoSize} from '@appManagers/appAvatarsManager';
-import type {StoriesSegment, StoriesSegments} from '@appManagers/appStoriesManager';
+import type {StoriesSegment, StoriesSegments as StoriesSegmentsType} from '@appManagers/appStoriesManager';
 import {getMiddleware, type Middleware} from '@helpers/middleware';
+import clearMediaElementSource from '@helpers/dom/clearMediaElementSource';
 import deferredPromise from '@helpers/cancellablePromise';
 import {
   createSignal,
@@ -48,10 +43,12 @@ import currencyStarIcon from '@components/currencyStarIcon';
 import type {ActiveAccountNumber} from '@lib/accounts/types';
 import {getCurrentAccount} from '@lib/accounts/getCurrentAccount';
 import {appSettings} from '@stores/appSettings';
-import {createAutoDeleteIcon} from '@components/chat/utils';
+import {createAutoDeleteIcon} from '@components/autoDeleteIcon';
 import {resolveElements} from '@solid-primitives/refs';
 import toArray from '@helpers/array/toArray';
 import computeLockColor from '@helpers/computeLockColor';
+import createLoopingMutedVideo from '@helpers/dom/createLoopingMutedVideo';
+import animationIntersector from '@components/animationIntersector';
 
 const FADE_IN_DURATION = 200;
 const TEST_SWAPPING = 0;
@@ -102,12 +99,37 @@ rootScope.addEventListener('stories_read', onAvatarStoriesUpdate);
 rootScope.addEventListener('story_deleted', onAvatarStoriesUpdate);
 rootScope.addEventListener('story_new', onAvatarStoriesUpdate);
 
+function createAvatarVideo(url: string, startTime: number, middleware: Middleware) {
+  const video = createLoopingMutedVideo(
+    url,
+    'avatar-photo avatar-video',
+    startTime,
+    middleware
+  );
 
-const getStoriesSegments = async(peerId: PeerId, storyId?: number): Promise<AckedResult<StoriesSegments>> => {
+  // Pause videos that are off-screen, blurred, idle or disabled by lite mode.
+  // Observing the video itself also lets the intersector notice DOM removal.
+  animationIntersector.addAnimation({
+    animation: video,
+    observeElement: video,
+    type: 'video'
+  });
+
+  middleware.onClean(() => {
+    animationIntersector.removeAnimationByPlayer(video);
+    clearMediaElementSource(video);
+    video.remove();
+  });
+
+  return video;
+}
+
+
+const getStoriesSegments = async(peerId: PeerId, storyId?: number): Promise<AckedResult<StoriesSegmentsType>> => {
   if(storyId) {
     const storyUnreadType = await rootScope.managers.appStoriesManager.getUnreadType(peerId, storyId);
 
-    const segments: StoriesSegments = [{
+    const segments: StoriesSegmentsType = [{
       length: 1,
       type: storyUnreadType
     }];
@@ -151,6 +173,27 @@ export function findUpAvatar(target: Element | EventTarget) {
   return avatar;
 }
 
+async function loadAvatarVideoOverlay(
+  peerId: PeerId,
+  photo: UserProfilePhoto.userProfilePhoto | ChatPhoto.chatPhoto,
+  middleware: Middleware,
+  videoSize: PeerPhotoSize = 'photo_video'
+): Promise<HTMLVideoElement | undefined> {
+  // Load the URL and the video_start_ts (cover/start frame) in parallel so
+  // playback can begin at that frame, matching the static cover.
+  const [url, videoStartTs] = await Promise.all([
+    Promise.resolve(apiManagerProxy.loadAvatar(peerId, photo, videoSize)).catch((): string => undefined),
+    rootScope.managers.appAvatarsManager.getAvatarVideoStartTs(peerId, photo, videoSize === 'photo_video_full').catch((): number => undefined)
+  ]);
+  if(!url || !middleware()) {
+    return;
+  }
+
+  // Muted-autoplay setup with src assigned last (see helper) — retry on
+  // canplay/loadeddata covers the "interrupted by a new load request" reject.
+  return createAvatarVideo(url, videoStartTs, middleware);
+}
+
 const calculateSegmentsDimensions = (s: number) => {
   const willBeSize = Math.round(s * (1 - 6 / 54));
   const totalSvgSize = s * (1 + 2 / 54);
@@ -172,6 +215,12 @@ export function wrapPhotoToAvatar(
   boxSize: number = 100,
   photoSize?: PhotoSize
 ) {
+  // The profile re-mounts its avatar several times while peer data loads. If the
+  // full photo is already cached, skip the appearance fade so the re-mounts are
+  // seamless instead of replaying the fade-in (avatar "blinking" away and back).
+  // The first, uncached load still fades in normally.
+  const middleware = avatarElem.getMiddleware();
+  const cacheContext = apiManagerProxy.getCacheContext(photo as any, photoSize?.type);
   return wrapPhoto({
     container: avatarElem.node,
     message: null,
@@ -179,7 +228,9 @@ export function wrapPhotoToAvatar(
     boxHeight: boxSize,
     boxWidth: boxSize,
     withoutPreloader: true,
-    size: photoSize
+    size: photoSize,
+    noFadeIn: !!cacheContext?.downloaded,
+    middleware
   }).then((result) => {
     avatarElem.node.classList.replace('media-container', 'avatar-relative');
     avatarElem.node.style.width = avatarElem.node.style.height = '';
@@ -195,8 +246,35 @@ export function wrapPhotoToAvatar(
       result.images.thumb.classList.add('avatar-photo-thumbnail');
     }
 
+    // For photos that include a video variant (animated profile photo), overlay
+    // a muted looping <video> on top of the still image once it is loaded.
+    if((photo as any)?.video_sizes?.length) {
+      attachAvatarVideoFromPhoto(avatarElem.node, photo as any, middleware);
+    }
+
     return result.loadPromises.thumb;
   });
+}
+
+async function attachAvatarVideoFromPhoto(
+  container: HTMLElement,
+  photo: import('@layer').Photo.photo,
+  middleware: Middleware
+) {
+  const [{default: chooseProfileVideoSize}, {default: appDownloadManager}] = await Promise.all([
+    import('@appManagers/utils/photos/chooseProfileVideoSize'),
+    import('@lib/appDownloadManager')
+  ]);
+  const videoSize = chooseProfileVideoSize(photo, 'full');
+  if(!videoSize) return;
+
+  const url = await appDownloadManager.downloadMediaURL({
+    media: photo,
+    thumb: videoSize
+  });
+  if(!middleware()) return;
+
+  container.appendChild(createAvatarVideo(url, videoSize.video_start_ts, middleware));
 }
 
 export function StoriesSegments(props: {
@@ -207,7 +285,7 @@ export function StoriesSegments(props: {
   simple?: boolean,
   isStoryFolded?: Accessor<boolean>,
 }) {
-  const [storiesSegments, setStoriesSegments] = createSignal<StoriesSegments>();
+  const [storiesSegments, setStoriesSegments] = createSignal<StoriesSegmentsType>();
   const storyDimensions: Accessor<ReturnType<typeof calculateSegmentsDimensions>> = createMemo((previousDimensions) => {
     if(storiesSegments() === undefined) {
       return;
@@ -327,6 +405,8 @@ export const AvatarNew = (props: {
   threadId?: number,
   isDialog?: boolean,
   isBig?: boolean,
+  withVideoAvatar?: boolean,
+  noFadeIn?: boolean,
   isSubscribed?: boolean,
   peerTitle?: string,
   lazyLoadQueue?: LazyLoadQueue | false,
@@ -349,6 +429,7 @@ export const AvatarNew = (props: {
   const [ready, setReady] = createSignal(false);
   const [icon, setIcon] = createSignal<Icon>();
   const [media, setMedia] = createSignal<JSX.Element>();
+  const [video, setVideo] = createSignal<JSX.Element>();
   const [thumb, setThumb] = createSignal<JSX.Element>();
   const [abbreviature, setAbbreviature] = createSignal<JSX.Element>();
   const [color, setColor] = createSignal<string>();
@@ -454,16 +535,23 @@ export const AvatarNew = (props: {
     const middleware = middlewareHelper.get();
     const {peerId, useCache} = props;
     const {photo, size} = options;
+    // Drop any previously rendered video overlay — the new avatar load will
+    // re-issue the lazy video fetch if this photo also has a video variant.
+    // Must clear for the FINAL size of this avatar (photo_big for big avatars,
+    // photo_small for dialog/topbar), otherwise a recycled small avatar keeps
+    // playing the previous peer's video.
+    const finalSizeForClear: PeerPhotoSize = props.isBig ? 'photo_big' : 'photo_small';
+    if(size === finalSizeForClear) setVideo();
     const result = apiManagerProxy.loadAvatar(peerId, photo, size, props.accountNumber);
     const loadPromise = result;
     const cached = !(result instanceof Promise);
 
-    const animate = !cached && liteMode.isAvailable('animations');
-    let image: HTMLImageElement;
-    const element = image = document.createElement('img');
+    const animate = !cached && liteMode.isAvailable('animations') && !props.noFadeIn;
+    const image = document.createElement('img');
+    const element = image;
     element.className = classNames('avatar-photo', animate && 'fade-in');
 
-    let renderThumbPromise: Promise<void>;
+    let renderThumbPromise: Promise<any>;
     let callback: () => void;
     let thumbImage: HTMLImageElement, thumbElement: JSX.Element;
     if(cached) {
@@ -518,11 +606,59 @@ export const AvatarNew = (props: {
       };
     }
 
+    // Resolves to whether the image actually rendered: the download can fail
+    // (e.g. FILE_ID_INVALID when the cached peer references a stale photo_id).
+    // On failure keep the colour/initials placeholder and settle the ready
+    // promises — chat opening (bubbleGroups.createAvatar), the media viewer and
+    // profile avatars all await readyThumbPromise, so leaving it pending blocks
+    // them — and swallow the rejection so it doesn't surface as unhandled.
     const renderPromise = callbackify(loadPromise, (url) => {
       const result = renderImageFromUrl(image, url, undefined, useCache, props.processImageOnLoad);
       callbackify(result, callback);
       return result instanceof Promise ? result : Promise.resolve(result);
+    }).then(() => true, () => {
+      if(middleware()) {
+        setReady(true);
+        readyPromise.resolve();
+        readyThumbPromise.resolve();
+      }
+
+      return false;
     });
+
+    // After the static image loads, if the photo has a video variant, lazily
+    // load and overlay the looping muted video. Played in the profile (isBig)
+    // and in opted-in surfaces (chat list / topbar via withVideoAvatar), but
+    // NOT in message bubbles. Gated by lite-mode video so power-saving disables
+    // it everywhere. The final loaded size is photo_big for big avatars and
+    // photo_small otherwise — guard on it so we trigger exactly once.
+    //
+    // In the small surfaces (chat list / topbar) a video avatar animates ONLY for a
+    // Premium USER — matching Telegram Android exactly. ImageReceiver.setForUserOrChat
+    // sets a videoLocation only when isPremiumUser(user) && has_video; its chat branch
+    // sets no video at all. So in the list/topbar non-Premium users, bots (bots can't
+    // hold Premium) and groups/channels are all STATIC — only Premium users animate.
+    // The big profile (isBig) and the avatar viewer are separate, ungated paths and
+    // animate for everyone. Owner Premium is read synchronously from the cached peers
+    // mirror, so this adds no request to the avatar-render path.
+    const finalSize: PeerPhotoSize = props.isBig ? 'photo_big' : 'photo_small';
+    const photoHasVideo = (photo._ === 'userProfilePhoto' || photo._ === 'chatPhoto') && photo.pFlags?.has_video;
+    const ownerIsPremiumUser = photo._ === 'userProfilePhoto' && !!peerId &&
+      !!apiManagerProxy.getUser(peerId.toUserId())?.pFlags?.premium;
+    const wantsVideo = (props.isBig || (props.withVideoAvatar && ownerIsPremiumUser)) &&
+      liteMode.isAvailable('video');
+    if(wantsVideo && photoHasVideo && size === finalSize) {
+      renderPromise.then((rendered) => {
+        if(!rendered || !middleware()) return;
+        // Big profile avatar gets the full-quality video ('u'); chat list /
+        // topbar use the small preview ('p') to save bandwidth.
+        const videoSize: PeerPhotoSize = props.isBig ? 'photo_video_full' : 'photo_video';
+        loadAvatarVideoOverlay(peerId, photo, middleware, videoSize).then((videoElement) => {
+          if(!middleware() || !videoElement) return;
+          setVideo(videoElement);
+        });
+      });
+    }
 
     return {
       cached,
@@ -552,10 +688,11 @@ export const AvatarNew = (props: {
     isTopic?: boolean,
     isSubscribed?: boolean,
     isMonoforum?: boolean,
-    storiesSegments?: StoriesSegments
+    storiesSegments?: StoriesSegmentsType
   }) => {
     setThumb();
     setMedia();
+    setVideo();
     setIcon(icon);
     setAbbreviature(abbreviature);
     setColor(color);
@@ -581,9 +718,9 @@ export const AvatarNew = (props: {
 
   const _render = async(onlyThumb?: boolean) => {
     const middleware = middlewareHelper.get();
-    const {isDialog, withStories, storyId, isBig, peerTitle: title, threadId, wrapOptions} = props;
+    const {isDialog, withStories, storyId, isBig, peerTitle: title, wrapOptions} = props;
 
-    let {peerId} = props;
+    let {peerId, threadId} = props;
     if(title !== undefined) {
       peerId = NULL_PEER_ID;
     }
@@ -613,6 +750,12 @@ export const AvatarNew = (props: {
         middleware.onDestroy(dispose);
       });
       return;
+    }
+
+    // * fix monoforum
+    if(threadId && apiManagerProxy.isMonoforum(peerId)) {
+      peerId = threadId;
+      threadId = undefined;
     }
 
     const peer = props.peer ?? apiManagerProxy.getPeer(peerId);
@@ -665,7 +808,15 @@ export const AvatarNew = (props: {
     const photo = getPeerPhoto(linkedMonoforumPeer || peer);
     const avatarAvailable = !!photo;
     const avatarRendered = avatarAvailable && !!media(); // if avatar isn't available, let's reset it
-    const isAvatarCached = props.accountNumber === getCurrentAccount() && avatarAvailable && apiManagerProxy.isAvatarCached(peerId, size);
+    const sameAccount = props.accountNumber === getCurrentAccount();
+    let isAvatarCached = sameAccount && avatarAvailable && apiManagerProxy.isAvatarCached(peerId, size);
+    // A big avatar's photo_big often isn't cached on first open, but the small
+    // thumb usually is (loaded by the chat list). Treat it as cached so we render
+    // that thumb instantly instead of flashing the colour placeholder while
+    // photo_big downloads (the visible "blink" when opening/switching profiles).
+    if(!isAvatarCached && isBig && avatarAvailable && sameAccount) {
+      isAvatarCached = apiManagerProxy.isAvatarCached(peerId, 'photo_small');
+    }
     if(!middleware()) {
       return;
     }
@@ -847,7 +998,9 @@ export const AvatarNew = (props: {
       'is-topic': isTopic(),
       'is-monoforum': isMonoforum(),
       'is-relative': !!autoDeletePeriod(),
-      'avatar-relative': !!thumb() || isSubscribed()
+      // The video overlay is absolutely positioned (inset: 0); without a
+      // positioning context it would anchor to the wrong ancestor.
+      'avatar-relative': !!thumb() || isSubscribed() || !!video()
     };
   };
 
@@ -871,6 +1024,7 @@ export const AvatarNew = (props: {
       {icon() && Icon(icon(), 'avatar-icon', 'avatar-icon-' + icon())}
       {thumb()}
       {[media(), abbreviature()].find(Boolean)}
+      {video()}
       {isSubscribed() && currencyStarIcon({class: 'avatar-star', stroke: true})}
       {autoDeletePeriod() && (
         <div
@@ -941,6 +1095,7 @@ export const AvatarNew = (props: {
     setIsSubscribed,
     setAutoDeletePeriod,
     updateStoriesSegments,
+    getMiddleware: () => middlewareHelper.get(),
     set,
     color
   };

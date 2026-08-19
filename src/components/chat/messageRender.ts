@@ -1,18 +1,12 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type LazyLoadQueue from '@components/lazyLoadQueue';
-import {formatFullSentTimeRaw, formatTime} from '@helpers/date';
+import {formatDate, formatFullSentTimeRaw, formatTime} from '@helpers/date';
 import {getFullDate} from '@helpers/date/getFullDate';
 import setInnerHTML from '@helpers/dom/setInnerHTML';
 import {Middleware} from '@helpers/middleware';
 import formatNumber from '@helpers/number/formatNumber';
 import {AvailableEffect, Message, MessageReplyHeader} from '@layer';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
-import {i18n, _i18n, LangPackKey} from '@lib/langPack';
+import I18n, {i18n, _i18n, LangPackKey} from '@lib/langPack';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
 import rootScope from '@lib/rootScope';
@@ -32,8 +26,9 @@ import wrapStickerAnimation from '@components/wrappers/stickerAnimation';
 import Scrollable from '@components/scrollable';
 import appDownloadManager from '@lib/appDownloadManager';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
-import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
+import numberThousandSplitter, {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import {makeTime} from '@components/chat/utils';
+import {useAppConfig} from '@stores/appState';
 import {formatNanoton} from '@helpers/paymentsWrapCurrencyAmount';
 
 const NBSP = '&nbsp;';
@@ -62,6 +57,24 @@ const makeEdited = () => {
   edited.classList.add('time-edited', 'time-part');
   _i18n(edited, 'EditedMessage');
   return edited;
+};
+
+// * when the `message_primary_edited_date` app config flag is on, the edited badge is
+// * replaced by the actual edit time ("edited at HH:MM" / "edited on <date> at HH:MM")
+// * shown in place of the sent time — matches tdesktop's EditedPrimary behaviour.
+const isSameDay = (a: Date, b: Date) => {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+};
+
+const makeEditedTime = (sentDate: Date, editDate: Date) => {
+  const timeEl = formatTime(editDate);
+  const now = new Date();
+  if(isSameDay(sentDate, now) && isSameDay(editDate, now)) {
+    return i18n('EditedMessage.At', [timeEl]);
+  }
+
+  const dateEl = formatDate(editDate, {shortMonth: true});
+  return i18n('EditedMessage.On', [dateEl, timeEl]);
 };
 
 const makeEffect = (props: {
@@ -225,8 +238,27 @@ export namespace MessageRender {
     // let hasReactions: boolean;
 
     const fwdFrom = isMessage && message.fwd_from;
-    const time: HTMLElement = /* isSponsored ? undefined :  */makeTime(date, includeDate);
+
+    // * when enabled by app config, an edited message shows its actual edit time in place of the
+    // * sent time (and drops the separate "edited" badge) — but not when the footer is already
+    // * showing a forwarded/saved date (matches tdesktop's EditedPrimary && !ForwardedDate).
+    const editDate = isMessage && (message as Message.message).edit_date;
+    const editedPrimary = isMessage &&
+      !!useAppConfig().message_primary_edited_date &&
+      !!editDate &&
+      chatType !== ChatType.Scheduled &&
+      !(message as Message.message).pFlags.edit_hide &&
+      !(includeDate && !!fwdFrom);
+
+    const time: HTMLElement = /* isSponsored ? undefined :  */editedPrimary ?
+      makeEditedTime(date, new Date(editDate * 1000)) :
+      makeTime(date, includeDate);
+
+    let title = /* isSponsored ? undefined :  */getFullDate(new Date(message.date * 1000));
     if(isMessage) {
+      title += (message.edit_date && !message.pFlags.edit_hide ? `\nEdited: ${getFullDate(new Date(message.edit_date * 1000))}` : '') +
+        (fwdFrom ? `\nOriginal: ${getFullDate(new Date(fwdFrom.saved_date || fwdFrom.date * 1000))}` : '');
+
       const messageMedia = message.media;
       if(messageMedia?._ === 'messageMediaDice' && messageMedia.game_outcome) {
         const span = document.createElement('span');
@@ -245,6 +277,11 @@ export namespace MessageRender {
 
         const channelViews = Icon('channelviews', 'time-icon', 'time-part', 'time-icon-views');
 
+        title += '\n' + I18n.format('ViewsTooltip', true, [numberThousandSplitter(message.views)]);
+        if(message.forwards) {
+          title += '\n' + I18n.format('SharesTooltip', true, [numberThousandSplitter(message.forwards)]);
+        }
+
         args.push(postViewsSpan, channelViews);
       }
 
@@ -257,12 +294,23 @@ export namespace MessageRender {
         args.push(span);
       }
 
-      if(message.edit_date && chatType !== ChatType.Scheduled && !message.pFlags.edit_hide) {
+      if(message.via_business_bot_id) {
+        const bot = apiManagerProxy.getUser(message.via_business_bot_id as UserId);
+        const botName = [bot?.first_name, bot?.last_name].filter(Boolean).join(' ') || bot?.username || 'Bot';
+        const span = document.createElement('span');
+        span.classList.add('time-post-author', 'time-business-bot');
+        span.title = I18n.format('ChatAutomation.ViaBotTooltip', true);
+        span.append(wrapEmojiText(botName));
+        span.insertAdjacentHTML('beforeend', '<span class="time-post-author-comma">,' + NBSP + '</span>');
+        args.push(span);
+      }
+
+      if(!editedPrimary && message.edit_date && chatType !== ChatType.Scheduled && !message.pFlags.edit_hide) {
         args.unshift(editedSpan = makeEdited());
       }
 
       if(chatType !== ChatType.Pinned && message.pFlags.pinned) {
-        const i = Icon('pinnedchat', 'time-icon', 'time-pinned', 'time-part');
+        const i = Icon('pinnedchat_filled', 'time-icon', 'time-pinned', 'time-part');
         args.unshift(i);
       }
 
@@ -276,7 +324,7 @@ export namespace MessageRender {
         inlineStars.classList.add('inline-stars', 'bubble-meta-inline-stars');
         inlineStars.append(
           numberThousandSplitterForStars(+message.paid_message_stars * Math.max(groupedMessagesCount || 0, 1)),
-          Icon('star')
+          Icon('star', 'inline-stars-icon')
         );
         args.push(inlineStars)
       }
@@ -302,12 +350,6 @@ export namespace MessageRender {
 
     if(time) {
       args.push(time);
-    }
-
-    let title = /* isSponsored ? undefined :  */getFullDate(new Date(message.date * 1000));
-    if(isMessage) {
-      title += (message.edit_date && !message.pFlags.edit_hide ? `\nEdited: ${getFullDate(new Date(message.edit_date * 1000))}` : '') +
-        (fwdFrom ? `\nOriginal: ${getFullDate(new Date(fwdFrom.saved_date || fwdFrom.date * 1000))}` : '');
     }
 
     const timeSpan = document.createElement('span');
@@ -350,7 +392,9 @@ export namespace MessageRender {
           a;
     });
     if(time) {
-      clonedArgs[clonedArgs.length - 1] = makeTime(date, includeDate); // clone time
+      clonedArgs[clonedArgs.length - 1] = editedPrimary ? // clone time
+        makeEditedTime(date, new Date(editDate * 1000)) :
+        makeTime(date, includeDate);
     }
     inner.append(...clonedArgs);
 

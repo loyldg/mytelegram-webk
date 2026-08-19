@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -33,7 +29,7 @@ import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
 import pause from '@helpers/schedulers/pause';
 
 export type User = MTUser.user;
-export type TopPeerType = 'correspondents' | 'bots_inline' | 'bots_app';
+export type TopPeerType = 'correspondents' | 'bots_inline' | 'bots_app' | 'bots_guestchat';
 export type MyTopPeer = {id: PeerId, rating: number};
 
 const SEARCH_OPTIONS: ProcessSearchTextOptions = {
@@ -352,8 +348,9 @@ export class AppUsersManager extends AppManager {
 
     username = username.toLowerCase();
     const peerId = this.usernames[username];
-    if(peerId) {
-      return this.appPeersManager.getPeer(peerId);
+    const peer = peerId && this.appPeersManager.getPeer(peerId);
+    if(peer && !(peer as User | Chat.channel).pFlags.min) {
+      return peer;
     }
 
     return this.apiManager.invokeApiSingleProcess({
@@ -380,6 +377,12 @@ export class AppUsersManager extends AppManager {
     return this.apiManager.invokeApi('contacts.resolvePhone', {phone}).then((resolvedPeer) => {
       return this.processResolvedPeer(resolvedPeer) as User;
     });
+  }
+
+  // One-time `t.me/contact/<token>` link to add the current user as a contact —
+  // used by the My QR popup when you have no username (mirrors iOS).
+  public exportContactToken() {
+    return this.apiManager.invokeApiSingle('contacts.exportContactToken', {});
   }
 
   private pushContact(id: UserId) {
@@ -568,6 +571,7 @@ export class AppUsersManager extends AppManager {
 
     const userId = user.id;
     const oldUser = this.users[userId];
+    const previousCommunityId = oldUser?.linked_community_id?.toChatId();
 
     // ! commented block can affect performance !
     // if(oldUser && !override) {
@@ -579,6 +583,10 @@ export class AppUsersManager extends AppManager {
 
     if(user.pFlags.min && oldUser !== undefined) {
       return;
+    }
+
+    if(user.linked_community_id) {
+      user.linked_community_id = user.linked_community_id.toChatId();
     }
 
     // * exclude from state
@@ -670,6 +678,15 @@ export class AppUsersManager extends AppManager {
 
     this.checkPremium(user, oldUser);
     this.setUserToStateIfNeeded(user);
+
+    const communityId = user.linked_community_id?.toChatId();
+    if(String(previousCommunityId || '') !== String(communityId || '')) {
+      this.appCommunitiesManager.handlePeerLinkedCommunityUpdate({
+        peerId,
+        previousCommunityId,
+        communityId
+      });
+    }
   }
 
   private mirrorUser(user: User) {
@@ -746,6 +763,35 @@ export class AppUsersManager extends AppManager {
 
   public getUsers() {
     return this.users;
+  }
+
+  public setLinkedCommunityId(userId: UserId, communityId?: ChatId) {
+    const user = this.users[userId];
+    communityId = communityId?.toChatId();
+    if(!user || String(user.linked_community_id || '') === String(communityId || '')) {
+      return false;
+    }
+
+    const previousCommunityId = user.linked_community_id?.toChatId();
+    if(communityId) {
+      user.linked_community_id = communityId;
+    } else {
+      delete user.linked_community_id;
+    }
+
+    this.mirrorUser(user);
+    this.rootScope.dispatchEvent('user_update', userId);
+    this.appCommunitiesManager.handlePeerLinkedCommunityUpdate({
+      peerId: userId.toPeerId(false),
+      previousCommunityId,
+      communityId
+    });
+    if(this.peersStorage.isPeerNeeded(userId.toPeerId(false))) {
+      this.storage.set({
+        [userId]: user
+      });
+    }
+    return true;
   }
 
   public getUserStatus(id: UserId) {

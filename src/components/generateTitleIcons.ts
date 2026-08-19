@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {Chat, User} from '@layer';
 import {i18n} from '@lib/langPack';
@@ -39,7 +33,7 @@ export default async function generateTitleIcons({
   noDirectMessagesBadge?: boolean,
   clickableEmojiStatus?: boolean,
   peer?: Chat | User
-}): Promise<{ elements: HTMLElement[]; botVerification?: HTMLElement; }> {
+}): Promise<{elements: HTMLElement[]; botVerification?: HTMLElement;}> {
   peer ??= apiManagerProxy.getPeer(peerId);
   const elements: HTMLElement[] = [];
   if(!peer) {

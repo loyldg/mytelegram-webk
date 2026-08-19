@@ -1,28 +1,25 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {AppMessagesManager} from '@appManagers/appMessagesManager';
-import IS_PARALLAX_SUPPORTED from '@environment/parallaxSupport';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import findAndSplice from '@helpers/array/findAndSplice';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
 import filterChatPhotosMessages from '@helpers/filterChatPhotosMessages';
+import getChatPhotosCount from '@helpers/getChatPhotosCount';
 import ListenerSetter from '@helpers/listenerSetter';
 import ListLoader from '@helpers/listLoader';
 import {getMiddleware, MiddlewareHelper} from '@helpers/middleware';
+import {makeMediaSize} from '@helpers/mediaSize';
 import {fastRaf} from '@helpers/schedulers';
-import {Message, ChatFull, MessageAction, Photo, User} from '@layer';
+import {Message, ChatFull, MessageAction, Photo, User, ChatPhoto, UserFull} from '@layer';
 import {AppManagers} from '@lib/managers';
+import rootScope from '@lib/rootScope';
 import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
 import {avatarNew, wrapPhotoToAvatar} from '@components/avatarNew';
+import animationIntersector from '@components/animationIntersector';
 import Scrollable from '@components/scrollable';
 import SwipeHandler from '@components/swipeHandler';
 import wrapPhoto from '@components/wrappers/photo';
-import openAvatarViewer from '@components/openAvatarViewer';
+import openAvatarViewer from '@components/mediaViewer/openAvatarViewer';
 import Icon from '@components/icon';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import {createEffect, createRoot, on} from 'solid-js';
@@ -30,19 +27,26 @@ import {usePeerProfileAppearance} from '@hooks/useProfileColors';
 import {getHexColorFromTelegramColor} from '@helpers/color';
 import wrapEmojiPattern from '@components/wrappers/emojiPattern';
 import {useCollapsable} from '@hooks/useCollapsable';
-import deferredPromise from '@helpers/cancellablePromise';
+import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import useIsNightTheme from '@hooks/useIsNightTheme';
 import customProperties from '@helpers/dom/customProperties';
 import findUpClassName from '@helpers/dom/findUpClassName';
+import {getOverlayRoot} from '@helpers/appWindow';
 import {changeTitleEmojiColor} from '@components/peerTitle';
+import ProgressivePreloader from '@components/preloader';
+import {avatarUploads} from '@stores/avatarUpload';
 
 const LOAD_NEAREST = 3;
 export const SHOW_NO_AVATAR = true;
 
+const getPhotoFromAvatarMessage = (message: Message.messageService) => {
+  return (message.action as MessageAction.messageActionChannelEditPhoto).photo as Photo.photo;
+};
+
 export default class PeerProfileAvatars {
   private static BASE_CLASS = 'profile-avatars';
-  private static SCALE = IS_PARALLAX_SUPPORTED ? 2 : 1;
-  private static TRANSLATE_TEMPLATE = IS_PARALLAX_SUPPORTED ? `translate3d({x}, 0, -1px) scale(${PeerProfileAvatars.SCALE})` : 'translate({x}, 0)';
+  private static SCALE = 1;
+  private static TRANSLATE_TEMPLATE = 'translate({x}, 0)';
   public container: HTMLElement;
   private avatars: HTMLElement;
   private gradient: HTMLElement;
@@ -53,6 +57,7 @@ export default class PeerProfileAvatars {
   private tabs: HTMLDivElement;
   private listLoader: ListLoader<Photo.photo['id'] | Message.messageService, Photo.photo['id'] | Message.messageService>;
   private peerId: PeerId;
+  private threadId: number;
   private intersectionObserver: IntersectionObserver;
   private loadCallbacks: Map<Element, () => void>;
   private listenerSetter: ListenerSetter;
@@ -63,6 +68,15 @@ export default class PeerProfileAvatars {
   private unfold: (e?: MouseEvent) => void;
   private fakeAvatar: ReturnType<typeof avatarNew>;
   private hasNoPhoto: boolean;
+  private videoProgressRAF: number;
+  private fold: () => void;
+  private uploadInProgress: boolean;
+  private uploadPreloader: ProgressivePreloader;
+  private photosByElement = new WeakMap<HTMLElement, Photo.photo>();
+  // The public (fallback) photo, appended at the END of the carousel on the
+  // self profile. Resolved id + a once-guard so it's added on exactly one page.
+  private fallbackPhotoId: Photo.photo['id'];
+  private fallbackAppended: boolean;
   public onNeedWhiteChanged: (needWhite: boolean) => void;
 
   constructor(
@@ -103,6 +117,19 @@ export default class PeerProfileAvatars {
     this.loadCallbacks = new Map();
     this.listenerSetter = new ListenerSetter();
 
+    // An avatar video fires 'play' when it (re)starts — e.g. when the right
+    // sidebar is reopened (animationIntersector.toggleVideosUnder resumes it) or
+    // it's scrolled back into view. 'play' doesn't bubble, so capture it on the
+    // container to wake the progress loop, which self-suspends (see the tick)
+    // whenever the active video is paused so it isn't churning rAF for nothing.
+    // Scope to avatar videos — other <video>s appended into the container (pinned
+    // gifts, story previews) shouldn't wake the loop.
+    this.listenerSetter.add(this.container)('play', (e) => {
+      if((e.target as HTMLElement)?.classList?.contains('avatar-video') && !this.videoProgressRAF) {
+        this.startVideoProgressLoop();
+      }
+    }, {capture: true});
+
     const checkScrollTop = () => {
       if(this.scrollable.scrollPosition !== 0) {
         this.scrollable.scrollIntoViewNew({
@@ -133,6 +160,12 @@ export default class PeerProfileAvatars {
 
       if(cancel) {
         cancel = false;
+        return;
+      }
+
+      // While an avatar upload is running the header stays collapsed and locked;
+      // let clicks fall through to the cancel preloader instead of expanding.
+      if(this.uploadInProgress) {
         return;
       }
 
@@ -175,17 +208,27 @@ export default class PeerProfileAvatars {
         });
 
         const prevTargets = targets.slice(0, this.listLoader.previous.length);
-        const nextTargets = targets.slice(this.listLoader.previous.length + 1);
+        // The viewer's own loader owns the public (fallback) photo — it keeps it
+        // last and never paginates from it. Don't pass it through here, or it
+        // would be re-anchored (duplicates) / no longer last in the viewer.
+        const nextTargets = targets.slice(this.listLoader.previous.length + 1)
+        .filter((target) => target.item !== this.fallbackPhotoId);
 
         const target = this.avatars.children[this.listLoader.previous.length] as HTMLElement;
+        const currentItem = this.listLoader.current;
+        const currentPhoto = typeof(currentItem) === 'object' ?
+          getPhotoFromAvatarMessage(currentItem) :
+          this.photosByElement.get(target);
         freeze = true;
         openAvatarViewer(
           target,
           peerId,
           () => peerId === this.peerId,
-          this.listLoader.current as Message.messageService,
+          currentItem,
           prevTargets,
-          nextTargets
+          nextTargets,
+          currentPhoto,
+          this.fallbackPhotoId
         );
         freeze = false;
       } else {
@@ -203,7 +246,7 @@ export default class PeerProfileAvatars {
 
     const cancelNextClick = () => {
       cancel = true;
-      document.body.addEventListener(IS_TOUCH_SUPPORTED ? 'touchend' : 'click', (e) => {
+      getOverlayRoot().addEventListener(IS_TOUCH_SUPPORTED ? 'touchend' : 'click', (e) => {
         cancel = false;
       }, {once: true});
     };
@@ -298,10 +341,13 @@ export default class PeerProfileAvatars {
         container: () => this.container,
         listenWheelOn: this.setCollapsedOn,
         scrollable: () => scrollable.container,
-        disableHoverWhenFolded: false
+        disableHoverWhenFolded: false,
+        // Don't let wheel/swipe expand the header while an avatar upload runs.
+        shouldIgnore: () => this.uploadInProgress
       });
 
       this.unfold = unfold;
+      this.fold = fold;
 
       createEffect(() => {
         if(this.hasNoPhoto && !folded()) {
@@ -339,11 +385,14 @@ export default class PeerProfileAvatars {
     });
   }
 
-  public async setPeer(peerId: PeerId) {
+  public async setPeer(peerId: PeerId, threadId?: number) {
     this.peerId = peerId;
+    this.threadId = threadId;
     this.middlewareHelper.clean();
 
-    const photo = await this.managers.appPeersManager.getPeerPhoto(peerId);
+    // A topic isn't backed by its own photo history — render the topic icon as a
+    // single, collapse-locked avatar, exactly like a chat with no avatar photo.
+    const photo = threadId ? undefined : await this.managers.appPeersManager.getPeerPhoto(peerId);
     if(!photo && !SHOW_NO_AVATAR) {
       return;
     }
@@ -351,6 +400,16 @@ export default class PeerProfileAvatars {
     this.hasNoPhoto = !photo;
 
     await this.applyAppearance();
+
+    // Topics have no photo carousel and no stories: render the topic icon as a
+    // single avatar-120 item (exactly like before) and skip the fake avatar +
+    // list loader entirely. hasNoPhoto keeps the header collapsed and locked, so
+    // the swipe/click paths that need listLoader are never reached.
+    if(threadId) {
+      this.container.classList.add('is-topic');
+      await this.processItem(undefined);
+      return;
+    }
 
     if(this.fakeAvatar) {
       this.fakeAvatar.node.remove();
@@ -372,6 +431,17 @@ export default class PeerProfileAvatars {
     await this.fakeAvatar.readyThumbPromise;
     this.avatars.before(this.fakeAvatar.node);
 
+    // Resolve the public (fallback) photo to append at the END of the carousel.
+    // Only on the user's own profile (fallback_photo is a self concept), and
+    // only when they have avatars. getProfile is normally already cached here.
+    this.fallbackPhotoId = undefined;
+    this.fallbackAppended = false;
+    if(peerId === rootScope.myId && peerId.isUser() && !this.hasNoPhoto) {
+      const userFull = await this.managers.appProfileManager.getProfile(peerId.toUserId());
+      const fallback = (userFull as UserFull.userFull)?.fallback_photo as Photo.photo;
+      if(fallback?._ === 'photo') this.fallbackPhotoId = fallback.id;
+    }
+
     const listLoader: PeerProfileAvatars['listLoader'] = this.listLoader = new ListLoader({
       loadCount: 50,
       loadMore: (anchor, older, loadCount) => {
@@ -380,10 +450,19 @@ export default class PeerProfileAvatars {
         if(peerId.isUser()) {
           const maxId: Photo.photo['id'] = anchor as any;
           return this.managers.appPhotosManager.getUserPhotos(peerId, maxId, loadCount).then((value) => {
-            return {
-              count: value.count,
-              items: value.photos
-            };
+            const items = value.photos.slice();
+            let count = value.count;
+            if(this.fallbackPhotoId) {
+              // The public photo is one extra item beyond the real ones.
+              if(count !== undefined) count += 1;
+              // Append it once, on the last page (a short page = the end).
+              if(!this.fallbackAppended && value.photos.length < loadCount) {
+                items.push(this.fallbackPhotoId);
+                this.fallbackAppended = true;
+              }
+            }
+
+            return {count, items};
           });
         } else {
           const promises: [Promise<ChatFull> | ChatFull, ReturnType<AppMessagesManager['getHistory']>] = [] as any;
@@ -411,6 +490,7 @@ export default class PeerProfileAvatars {
 
             filterChatPhotosMessages(value);
 
+            let count = value.count;
             if(!listLoader.current) {
               const chatFull = result[0];
               const chatPhoto = chatFull?.chat_photo;
@@ -418,12 +498,13 @@ export default class PeerProfileAvatars {
                 return ((message as Message.messageService).action as MessageAction.messageActionChannelEditPhoto).photo.id === chatPhoto?.id;
               }) as Message.messageService;
 
-              listLoader.current = message || (chatPhoto && await this.managers.appMessagesManager.generateFakeAvatarMessage(this.peerId, chatPhoto));
+              const current = listLoader.current = message || (chatPhoto && await this.managers.appMessagesManager.generateFakeAvatarMessage(this.peerId, chatPhoto));
+              count = getChatPhotosCount(value.count, messages.length, !message && !!current);
             }
 
             // console.log('avatars loaded:', value);
             return {
-              count: value.count,
+              count,
               items: messages
             };
           });
@@ -445,6 +526,11 @@ export default class PeerProfileAvatars {
         });
 
         this.loadNearestToTarget(this.avatars.children[id]);
+
+        // The active item changed — wake the (possibly self-suspended) progress
+        // loop so the newly-active video's tab fill updates even if it was
+        // already playing and so didn't fire a fresh 'play' event.
+        if(!this.videoProgressRAF) this.startVideoProgressLoop();
       }
     });
 
@@ -456,6 +542,125 @@ export default class PeerProfileAvatars {
 
     // listLoader.loaded
     listLoader.load(true);
+
+    // Only run the per-frame tab-progress loop when the current photo is an
+    // animated (video) avatar. For static photos it has nothing to do, and a
+    // forever-running rAF needlessly churns the rendering pipeline every frame
+    // (which can visibly interfere with the avatar's load fade-in).
+    if((photo as ChatPhoto.chatPhoto)?.pFlags?.has_video) {
+      this.startVideoProgressLoop();
+    }
+    this.watchAvatarUpload();
+  }
+
+  // Watches the per-peer avatar-upload store; while an upload for THIS peer is in
+  // flight, collapse the header, lock expansion and show a cancellable progress
+  // ring centered on the avatar.
+  private watchAvatarUpload() {
+    const middleware = this.middlewareHelper.get();
+    createRoot((dispose) => {
+      middleware.onDestroy(() => {
+        dispose();
+        this.hideUploadProgress();
+      });
+
+      createEffect(() => {
+        const entry = avatarUploads().get(this.peerId);
+        if(entry) this.showUploadProgress(entry.promise);
+        else this.hideUploadProgress();
+      });
+    });
+  }
+
+  private showUploadProgress(promise: CancellablePromise<any>) {
+    if(this.uploadInProgress) return;
+    this.uploadInProgress = true;
+    this.container.classList.add('is-avatar-uploading');
+
+    // Force the header collapsed (shouldIgnore + the click guard keep it there).
+    this.fold?.();
+
+    if(!this.uploadPreloader) {
+      this.uploadPreloader = new ProgressivePreloader({
+        isUpload: true,
+        cancelable: true,
+        tryAgainOnFail: false
+      });
+    }
+
+    const target = this.fakeAvatar?.node || this.container;
+    this.uploadPreloader.attach(target, true, promise);
+  }
+
+  private hideUploadProgress() {
+    if(!this.uploadInProgress) return;
+    this.uploadInProgress = false;
+    this.container.classList.remove('is-avatar-uploading');
+    this.uploadPreloader?.detach();
+  }
+
+  // Drives the active .profile-avatars-tab fill from the playing video avatar's
+  // currentTime, reusing the stories progress-bar mechanism (--progress + a
+  // bright :before fill) while keeping the profile tab styling.
+  private startVideoProgressLoop() {
+    cancelAnimationFrame(this.videoProgressRAF);
+    // Tie the loop to this setPeer's middleware: it becomes invalid on the next
+    // setPeer (middlewareHelper.clean) or on cleanup(), so a previous profile's
+    // loop can't leak and churn the DOM while the next profile loads. Robust to
+    // transient DOM detachment (unlike an isConnected check).
+    const middleware = this.middlewareHelper.get();
+    const tick = () => {
+      if(!middleware()) {
+        this.videoProgressRAF = 0;
+        return;
+      }
+      // Suspend the loop the moment the active video stops advancing (paused
+      // because the right bar is closed / scrolled off / idle / lite-mode) —
+      // there's nothing to animate, so don't keep churning rAF every frame. The
+      // captured 'play' listener restarts it when the video resumes.
+      if(!this.updateActiveTabProgress()) {
+        this.videoProgressRAF = 0;
+        return;
+      }
+      this.videoProgressRAF = requestAnimationFrame(tick);
+    };
+    this.videoProgressRAF = requestAnimationFrame(tick);
+  }
+
+  // Returns whether the active avatar video is currently playing (so the rAF
+  // progress loop knows whether it's still worth running).
+  private updateActiveTabProgress() {
+    const activeIndex = this.listLoader?.index ?? 0;
+    const tabs = this.tabs.children;
+    const avatars = this.avatars.children;
+    let activePlaying = false;
+    for(let i = 0; i < tabs.length; ++i) {
+      const tab = tabs[i] as HTMLElement;
+      const avatar = avatars[i] as HTMLElement;
+      let video = avatar?.querySelector('video.avatar-video') as HTMLVideoElement;
+      // The first carousel item mirrors the current profile photo, which the
+      // (reliably loaded) fake/main avatar already plays — fall back to it.
+      if(!video && i === 0) {
+        video = this.fakeAvatar?.node.querySelector('video.avatar-video') as HTMLVideoElement;
+      }
+      const isPlaying = tab.classList.contains('is-playing');
+      if(i === activeIndex && video && video.duration && !video.paused) {
+        activePlaying = true;
+        // Only touch the DOM when something actually changed — re-asserting the
+        // class / style every animation frame churns the header (style recalc +
+        // paint) for nothing and can flicker the loading avatar underneath.
+        if(!isPlaying) tab.classList.add('is-playing');
+        const value = Math.min(100, (video.currentTime / video.duration) * 100).toFixed(1) + '%';
+        if(tab.style.getPropertyValue('--progress') !== value) {
+          tab.style.setProperty('--progress', value);
+        }
+      } else if(isPlaying) {
+        tab.classList.remove('is-playing');
+        tab.style.removeProperty('--progress');
+      }
+    }
+
+    return activePlaying;
   }
 
   private _applyAppearance() {
@@ -625,15 +830,32 @@ export default class PeerProfileAvatars {
     if(photoId) {
       photo = typeof(photoId) !== 'object' ?
         await this.managers.appPhotosManager.getPhoto(photoId) :
-        (photoId.action as MessageAction.messageActionChannelEditPhoto).photo as Photo.photo;
+        getPhotoFromAvatarMessage(photoId);
+    }
+    if(photo) {
+      this.photosByElement.set(avatar, photo);
     }
 
+    const isTopic = !!this.threadId;
     const loadCallback = async() => {
       const avatarElem = avatarNew({
         middleware,
-        size: 'full',
+        // A topic has no photo to scale up — render its icon at a fixed avatar-120
+        // (centered via the .is-topic styles), exactly like the old simple avatar.
+        size: isTopic ? 120 : 'full',
         isDialog: false,
-        isBig: true
+        isBig: true,
+        // Show the cached small thumb first, then the big — but DON'T fade the
+        // big in. On first open photo_big isn't cached anywhere, so its fade-in
+        // animation makes the avatar's colour gradient show through (the
+        // "blink"). No fade => the big just swaps over the small instantly.
+        noFadeIn: true,
+        ...(isTopic && {
+          wrapOptions: {
+            customEmojiSize: makeMediaSize(120, 120),
+            middleware
+          }
+        })
         // size: isFirst ? 120 : 'full',
         // withStories: isFirst
       });
@@ -642,13 +864,20 @@ export default class PeerProfileAvatars {
         avatarElem.node.classList.add('profile-avatars-avatar-first');
       }
 
-      if(photo) {
+      // The first carousel item IS the peer's current avatar, which the chat
+      // list already cached (inputPeerPhotoFileLocation). Render it via the
+      // cached-avatar path so it shows INSTANTLY on open/navigation instead of
+      // flashing the solid colour placeholder while the full photo
+      // (inputPhotoFileLocation, uncached) downloads. Older photos still go
+      // through wrapPhoto.
+      if(photo && !isFirst) {
         const boxSize = 420;
         const photoSize = choosePhotoSize(photo, boxSize, boxSize, false);
         await wrapPhotoToAvatar(avatarElem, photo, boxSize, photoSize);
       } else {
         avatarElem.render({
-          peerId: this.peerId
+          peerId: this.peerId,
+          threadId: this.threadId
         });
 
         await avatarElem.readyThumbPromise;
@@ -743,6 +972,17 @@ export default class PeerProfileAvatars {
   }
 
   public cleanup() {
+    cancelAnimationFrame(this.videoProgressRAF);
+    // Release the avatar videos we registered with the intersector. While the
+    // right sidebar was closed, toggleVideosUnder may have LOCKED them, and a
+    // locked item is NOT auto-removed when it leaves the DOM (checkAnimation
+    // early-returns on locked) — so unregister + free the decoder explicitly.
+    this.container.querySelectorAll<HTMLVideoElement>('video.avatar-video').forEach((video) => {
+      animationIntersector.removeAnimationByPlayer(video);
+      video.pause();
+      video.src = '';
+      video.load();
+    });
     this.listenerSetter.removeAll();
     this.swipeHandler.removeListeners();
     this.intersectionObserver?.disconnect();

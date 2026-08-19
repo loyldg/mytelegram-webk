@@ -1,14 +1,10 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import tsNow from '@helpers/tsNow';
 import {LangPackKey} from '@lib/langPack';
 import {MUTE_UNTIL} from '@appManagers/constants';
 import {RadioFormFromValues} from '@components/row';
 import PopupPeer from '@components/popups/peer';
+import createCommunityAvatarElement
+from '@components/communities/communityAvatarElement';
 
 const ONE_HOUR = 3600;
 const times: {value: number | string, langPackKey: LangPackKey, checked?: boolean}[] = [{
@@ -33,18 +29,46 @@ const times: {value: number | string, langPackKey: LangPackKey, checked?: boolea
 }];
 
 export default class PopupMute extends PopupPeer {
-  constructor(peerId: PeerId, threadId?: number) {
+  constructor(
+    peerId?: PeerId,
+    threadId?: number,
+    communityId?: ChatId
+  ) {
+    // a Community can't go through `peerId`: its avatar is the decorated one, built here
+    // so the popup looks like every other mute popup instead of a bare title
+    const communityAvatar = communityId ?
+      createCommunityAvatarElement(communityId, 32) :
+      undefined;
     super('popup-mute', {
-      peerId,
+      peerId: communityId ? undefined : peerId,
+      avatar: communityAvatar?.element,
       titleLangKey: 'Notifications',
       buttons: [{
         langKey: 'ChatList.Context.Mute',
         callback: () => {
-          this.managers.appMessagesManager.mutePeer({peerId, muteUntil: time === -1 ? MUTE_UNTIL : tsNow(true) + time, threadId});
+          const muteUntil = time === -1 ?
+            MUTE_UNTIL :
+            tsNow(true) + time;
+          if(communityId) {
+            this.managers.appCommunitiesManager.muteCommunity(
+              communityId,
+              muteUntil
+            );
+          } else {
+            this.managers.appMessagesManager.mutePeer({
+              peerId,
+              muteUntil,
+              threadId
+            });
+          }
         }
       }],
       body: true
     });
+
+    if(communityAvatar) {
+      this.addEventListener('closeAfterTimeout', communityAvatar.dispose);
+    }
 
     let time: number;
     const radioForm = RadioFormFromValues(times, (value) => {

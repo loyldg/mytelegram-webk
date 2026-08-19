@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../shared" as *;
 
 .pinned-message {
@@ -11,18 +5,17 @@
 
   &-border {
     position: relative;
-    height: 2rem;
-    width: .125rem;
+    height: 2.5rem;
+    width: .1875rem;
     flex: 0 0 auto;
-    // padding: .125rem 0;
 
     &-wrapper-1 {
       position: relative;
       top: 50%;
       transform: translateY(-50%);
-      height: 2rem;
-      width: .125rem;
-      border-radius: 1px;
+      height: 2.5rem;
+      width: .1875rem;
+      border-radius: 3px;
       background: var(--primary-color);
     }
 
@@ -31,17 +24,8 @@
       --height: 2.5rem;
       height: var(--height);
       overflow: hidden;
-      /* mask-image: linear-gradient(to bottom, transparent 0, black var(--mask-height), black calc(var(--height) - var(--mask-height)), transparent var(--height));
-      
-      &.mask-top {
-        mask-image: linear-gradient(to bottom, transparent 0, black var(--mask-height));
-      }
 
-      &.mask-bottom {
-        mask-image: linear-gradient(to bottom, black calc(var(--height) - var(--mask-height)), transparent var(--height));
-      } */
-
-      &:before, 
+      &:before,
       &:after {
         position: absolute;
         left: 0;
@@ -101,30 +85,25 @@
       position: absolute;
       left: 0;
       top: 0;
-      width: 2px;
+      width: 3px;
       background: currentColor;
-      border-radius: 1px;
+      border-radius: 3px;
     }
 
     body:not(.animation-level-0) & {
-      &-wrapper, 
+      &-wrapper,
       &-mark {
         transition: transform .25s ease-in-out;
       }
     }
   }
 
-  &-content {
-    --height: 32px;
-    height: var(--height);
-  }
-
   &-media {
-    border-radius: .1875rem;
+    border-radius: .25rem;
   }
 }
 
-.pinned-message, 
+.pinned-message,
 .reply {
   --font-size: var(--font-size-14);
   --custom-emoji-size: calc(var(--font-size) + 4px);
@@ -132,9 +111,7 @@
   cursor: pointer;
   display: flex;
   align-items: center;
-  overflow: hidden;
   position: relative;
-  user-select: none;
 
   &-content {
     flex-grow: 1;
@@ -151,8 +128,8 @@
   &-title {
     color: var(--primary-color);
   }
-  
-  &-title, 
+
+  &-title,
   &-subtitle {
     font-size: var(--font-size);
     line-height: var(--line-height);
@@ -210,6 +187,7 @@
   display: block;
   white-space: initial;
   font-size: var(--font-size);
+  overflow: hidden;
   // width: min-content;
   // max-width: 100%;
   // min-width: 100%;
@@ -248,9 +226,9 @@
 
   &-background-canvas {
     position: absolute;
-    top: -6px;
-    bottom: -6px;
-    inset-inline-end: 9px;
+    top: 0;
+    inset-inline-end: 0;
+    pointer-events: none;
   }
 
   &.quote-like-icon &-title {
@@ -270,97 +248,46 @@
 
 .pinned-container {
   --container-height: var(--pinned-container-height);
+  --pc-button-height: 2.5rem;
+  // Width of a pill centred between two button slots — one at each end of the
+  // plate, whether or not both actually carry a button (`.pinned-translation`,
+  // `.pinned-requests`).
+  --pc-centered-button-width: calc(100% - var(--pc-button-height) * 2 - 1rem);
+  position: relative;
+  inset-inline: 0;
+  margin: 0;
+  width: auto;
+  height: var(--container-height);
+  max-height: var(--container-height);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex: 0 0 auto;
-  overflow: visible;
-  cursor: pointer;
+  background-color: var(--surface-color) !important;
+  padding: .25rem;
 
-  &.is-floating {
-    position: absolute !important;
-    top: var(--topbar-height);
-    right: 0;
-    left: 0;
-    margin: 0;
-    width: auto;
-    height: var(--container-height);
-    max-height: var(--container-height);
-    background-color: var(--surface-color) !important;
-    // box-shadow: 0px 1px 3px 0px rgba(0, 0, 0, .15);
-    // box-shadow: 0px 2px 3px 0px rgb(0 0 0 / 10%);
+  // &.is-first {
+  //   border-top-left-radius: $border-radius-big;
+  //   border-top-right-radius: $border-radius-big;
+  // }
 
-    .pinned-container-wrapper {
-      order: 0;
-      padding: 0 1rem;
-      height: 100%;
-      border-radius: 0;
-      z-index: 0;
-      max-width: 100%;
-
-      @include respond-to(handhelds) {
-        padding: 0 .5rem;
-      }
-
-      /* &-utils {
-        position: relative;
-        z-index: 0;
-      } */
-    }
-
-    .pinned-container-content {
-      margin-inline-end: .5rem;
-
-      @include respond-to(medium-screens) {
-				body.is-right-column-shown & {
-          padding-right: var(--right-column-width);
-        }
-      }
-    }
-
-    /* &:before {
-      content: " ";
-      height: 1px;
-      background-color: var(--border-color);
-      top: 0;
-      right: 0;
-      left: 0;
-      position: absolute;
-    } */
-
-    &:before {
-      content: " ";
-      border-top: 1px solid var(--border-color);
-      // border-bottom: 1px solid var(--border-color);
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-    }
-
-    // &:before {
-    //   width: 100%;
-    //   content: " ";
-    //   height: 52px;
-    //   left: 0;
-    //   top: 0;
-    //   position: absolute;
-    //   /* box-shadow: inset 0px 2px 3px 0px rgba(0, 0, 0, .15); */
-    //   box-shadow: inset 0px 1px 2px 0px rgba(0, 0, 0, .15);
-    // }
-  }
+  // &.is-last {
+  //   border-bottom-left-radius: $border-radius-big;
+  //   border-bottom-right-radius: $border-radius-big;
+  // }
 
   &-content {
     flex: 1 1 auto;
     overflow: hidden;
     position: relative;
     pointer-events: none;
+    margin-inline-end: .5rem;
   }
 
   .btn-icon {
     font-size: 1.5rem;
     display: flex;
     justify-content: center;
-    // z-index: 1;
     flex: 0 0 auto;
   }
 
@@ -369,9 +296,13 @@
     flex: 1 1 auto;
     overflow: hidden;
     align-items: center;
-    padding: .25rem;
-    border-radius: .25rem;
-    order: 1;
+    order: 0;
+    padding: 0 1rem;
+    height: 100%;
+    border-radius: 0;
+    z-index: 0;
+    max-width: 100%;
+    cursor: pointer;
 
     &-utils {
       flex: 0 0 auto;
@@ -379,120 +310,96 @@
       align-items: center;
       position: relative;
     }
+  }
 
-    /* html.no-touch &:hover {
-      background-color: var(--light-secondary-text-color);
-    } */
+  &-action-button {
+    --font-size: var(--font-size-16);
+    --custom-emoji-size: calc(var(--font-size) + 4px);
+    height: var(--pc-button-height);
+    border-radius: calc(var(--pc-button-height) / 2);
+    padding: 0 1rem;
+    background-color: var(--primary-color);
+    color: #fff;
+    border: none;
+    outline: none;
+    font-weight: var(--font-weight-bold);
+    line-height: var(--pc-button-height);
+    cursor: pointer;
+    text-decoration: none;
+    max-width: 10rem;
+    transition: opacity .2s ease;
+
+    @include hover() {
+      background-color: var(--dark-primary-color);
+    }
+
+    &.is-leaving {
+      opacity: 0;
+      pointer-events: none;
+    }
+  }
+
+  &-primary-button {
+    font-size: var(--font-size-16);
+    font-weight: var(--font-weight-bold);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(100%);
+    height: var(--pc-button-height);
+    border-radius: calc(var(--pc-button-height) / 2);
   }
 }
 
 .pinned-message {
-  // display: none;
+  --pm-item-height: 2.5rem;
+  --pm-row-height: 1.25rem;
+  --pm-media-offset: var(--pm-item-height) + .375rem;
+  --container-height: var(--pinned-message-height);
   display: flex;
-  width: auto;
+  cursor: initial;
+
+  &-wrapper {
+    --ripple-color: var(--light-primary-color);
+    height: 2.75rem;
+    padding: .125rem .25rem;
+    border-radius: .5rem;
+  }
+
+  &-action {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    position: relative;
+
+    &-button {
+      position: absolute;
+      inset-inline-end: 0;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+  }
+
+  &.has-custom-action-button .pinned-message-wrapper {
+    padding-inline-end: var(--action-button-width, 8rem);
+  }
 
   &-content {
     overflow: visible !important; // * fix blinking in Safari iOS, transform overflow
+    justify-content: flex-end;
+    height: var(--pm-item-height);
   }
 
-  &-media-container {
-    width: 2rem;
-    height: 2rem;
-    position: absolute;
-    margin-inline-start: -.25rem;
+  &-media {
+    width: inherit !important;
+    height: inherit !important;
 
-    @include animation-level(2) {
-      transition: transform var(--pm-transition)/* , opacity var(--pm-transition) */;
-    }
-  }
-
-  /* &-media {
-    transform: none !important;
-
-    &.is-hiding {
-      &.backwards {
-        
-      }
-    }
-  } */
-  
-  // * fix blink in safari, can't add translateX from nowhere...
-  &-title, 
-  &-subtitle {
-    transform: translateX(0);
-  }
-
-  &.is-media {
-    .pinned-message-title, 
-    .pinned-message-subtitle {
-      transform: translateX(calc(2.25rem * var(--reflect)));
-      //overflow: hidden !important;
-    }
-  }
-
-  &:not(.is-media) &-media-container {
-    transform: scale(0);
-    //opacity: 0;
-  }
-
-  .pinned-container-wrapper {
-    min-width: 16rem;
-  }
-
-  &:not(.is-floating) {
-    margin-inline-end: 1rem;
-    //width: 15.5rem;
-
-    /* .pinned-message-content {
-      margin-right: 2.25rem;
-    } */
-
-    .pinned-container-wrapper-utils {
-      display: none;
-    }
-
-    > .pinned-message-close {
-      display: flex;
-      margin-inline-end: .75rem;
-      order: 0;
-    }
-  }
-
-  &.is-media {
-    .pinned-message-title, 
-    .pinned-message-subtitle {
-      width: calc(100% - 2.25rem);    
-    }
-  }
-
-  &.is-floating {
-    --container-height: var(--pinned-message-height);
-    /* .chat:not(.type-discussion) & {
-      .pinned-container-wrapper {
-        padding-right: 3rem;
-      }
-    } */
-
-    > .btn-icon {
-      display: none;
-    }
-
-    .pinned-container-wrapper {
-      padding-inline-start: 1rem;
-    }
-
-    .pinned-container-content {
-      margin-inline-end: 0;
-    }
-  }
-
-  &-content {
-    .pinned-message-title, 
-    .pinned-message-subtitle {
-      position: relative;
-      height: calc(var(--height) / 2);
-      min-height: calc(var(--height) / 2);
-      overflow: visible;
+    &-container {
+      width: var(--pm-item-height);
+      height: var(--pm-item-height);
+      position: absolute;
+      margin-inline-start: -.25rem;
 
       @include animation-level(2) {
         transition: transform var(--pm-transition);
@@ -500,15 +407,37 @@
     }
   }
 
+  &:not(.is-media) &-media-container {
+    transform: scale(0);
+  }
+
+  &-title,
+  &-subtitle {
+    position: relative;
+    height: var(--pm-row-height);
+    min-height: var(--pm-row-height);
+    overflow: visible;
+    transform: translateX(0);
+
+    .is-media & {
+      width: calc(100% - var(--pm-media-offset));
+      transform: translateX(calc(var(--pm-media-offset) * var(--reflect)));
+    }
+
+    @include animation-level(2) {
+      transition: transform var(--pm-transition);
+    }
+  }
+
   &-title {
-    // margin-top: -.125rem;
-    margin-bottom: .25rem;
+    font-weight: var(--font-weight-bold);
+    margin-bottom: -2px;
   }
 
   &-subtitle {
     .animated-super-row {
       font-size: var(--font-size-14);
-      line-height: 16px;
+      line-height: 18px;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
@@ -527,66 +456,27 @@
     }
 
     &.is-last {
-      &:not(.backwards) {
-        transform: scale(0.68);
-        opacity: 0;
-      }
-
-      /* .animated-super-row {
-        transition: none !important;
-      } */
+      transform: scale(0.68);
+      opacity: 0;
     }
   }
 
   .animated-super-row {
-    --translateY: 16px;
+    --translateY: var(--pm-row-height);
   }
 
   .pinned-message-media {
-    --translateY: 32px;
+    --translateY: var(--pm-item-height);
   }
 
-  /* .animated-super-row.is-hiding {
-    &.from-top {
-      transform: translateY(-16px);
-    }
-  
-    &.from-bottom {
-      transform: translateY(16px);
-    }
-  }
-  
-  .pinned-message-media.is-hiding {
-    &.from-top {
-      transform: translateY(-32px);
-    }
-  
-    &.from-bottom {
-      transform: translateY(32px);
-    }
-  } */
- 
-
-  &.hide ~ .chat-pinlist, 
+  &.hide ~ .chat-pinlist,
   &:not(.is-many) ~ .chat-pinlist {
-    display: none; 
+    display: none;
   }
 
   &.is-many {
     .pinned-message-close {
       display: none;
-    }
-    
-    &:not(.is-floating) {
-      .pinned-message-pinlist {
-        display: none;
-      }
-    }
-  
-    &.is-floating {
-      .pinned-message-close {
-        display: none;
-      }
     }
   }
 
@@ -594,10 +484,6 @@
     .pinned-message-pinlist {
       display: none;
     }
-  }
-
-  &-pinlist {
-    order: 2;
   }
 
   .chat[data-type="discussion"] & {
@@ -612,8 +498,25 @@
   --container-height: var(--topbar-audio-height);
 
   z-index: 2;
-  top: calc(var(--topbar-audio-height) * -1) !important;
-  transform: translateY(calc(var(--topbar-floating-audio-height) + var(--topbar-floating-call-height)));
+  top: 0 !important;
+  // Hidden state: shift the plate fully past column-center's top inset so no
+  // sliver peeks through the page-chats gutter on the first animation frame.
+  transform: translateY(calc(-1 * (var(--topbar-audio-height) + var(--page-chats-padding))));
+
+  body.is-pinned-audio-shown & {
+    transform: translateY(var(--topbar-floating-call-height));
+  }
+
+  position: absolute;
+  // No explicit `width` — inherit `.pinned-container`'s `width: auto` so the
+  // plate fills the inset #column-center, capped + centred by max-width +
+  // margin-inline:auto (mirrors `.topbar`). An explicit `width: var(--chat-width)`
+  // overflows on handhelds, where --chat-width is the full vw but #column-center
+  // is inset by --page-chats-padding (8px) each side, so the plate would be 16px
+  // too wide and spill past the screen edge.
+  max-width: var(--chat-width);
+  margin-inline: auto !important;
+  border-radius: $border-radius-big;
 
   &:not(.is-visible) {
     display: none !important;
@@ -622,13 +525,11 @@
   &-wrapper {
     overflow: visible !important;
     z-index: 1 !important;
+    padding: 0;
+    cursor: default;
 
     > .btn-icon {
       margin-inline-start: 0 !important;
-    }
-
-    &-utils {
-      @include sidebar-transform(0, true);
     }
   }
 
@@ -646,7 +547,7 @@
     color: var(--secondary-text-color);
   }
 
-  &-title, 
+  &-title,
   &-subtitle {
     font-size: var(--font-size-14);
     line-height: var(--line-height-14);
@@ -657,7 +558,12 @@
   }
 
   &-content {
-    margin-inline-start: .75rem;
+    margin-inline-start: .25rem;
+    pointer-events: all;
+    padding-block: .25rem;
+    padding-inline: .5rem .25rem;
+    border-radius: .5rem;
+    cursor: pointer;
   }
 
   &-progress {
@@ -668,10 +574,9 @@
     right: 0;
     bottom: 0;
     left: 0;
-    transform: scaleX(var(--topbar-floating-scaleX)) translateY(var(--translateY));
+    transform: translateY(var(--translateY));
     transform-origin: var(--transform-origin-left-center);
-
-    @include sidebar-transform(0, false);
+    transition: transform var(--transition-standard-out);
 
     &:before {
       @include animation-level(2) {
@@ -701,10 +606,8 @@
 
     &-wrapper {
       position: absolute;
-      height: .5rem;
-      right: 0;
-      bottom: 0;
-      left: 0;
+      inset: 0;
+      border-radius: inherit;
       overflow: hidden;
     }
   }
@@ -736,9 +639,9 @@
       &-container {
         position: absolute;
         top: 100%;
-        width: 5rem;
+        width: 7rem;
         padding: .75rem 1rem;
-        margin-top: 2.25rem;
+        margin-top: 3.25rem;
         transform: rotate(270deg);
         border-radius: $border-radius-medium;
         background-color: var(--surface-color);
@@ -774,20 +677,35 @@
 }
 
 .pinned-requests {
-  &-title {
-    color: var(--primary-color);
-    font-weight: var(--font-weight-bold);
+  color: var(--primary-color);
+  justify-content: center;
 
-    @include sidebar-transform(1, true);
+  // Stretched and centred exactly like the translation plate's pill.
+  &-primary-button {
+    width: var(--pc-centered-button-width);
   }
 
-  &-title,
+  // The faces take the start slot exactly the way the close button takes the
+  // end one — out of flow, so neither of them shifts the centred label. Same
+  // .25rem inset: an avatar is `--pc-button-height` tall, like that button.
   .stacked-avatars {
+    position: absolute;
+    inset-inline-start: .25rem;
     pointer-events: none;
+
+    // A phone's plate is too narrow for the full-size stack: the label is
+    // centred on the plate, so it would run under the faces. Same trade-off as
+    // `.pinned-group-call` — shrink the stack (the avatars are still rendered
+    // at full size, so they stay sharp) rather than give up the centring.
+    // `!important` because StackedAvatars writes the var as an inline style.
+    @include respond-to(handhelds) {
+      --avatar-size: 2rem !important;
+    }
   }
 
-  &-wrapper {
-    justify-content: space-between;
+  &-close {
+    position: absolute;
+    inset-inline-end: .25rem;
   }
 }
 
@@ -814,27 +732,9 @@
       }
     }
 
-    @include sidebar-transform(1, true);
-
     &-text {
       display: block;
       pointer-events: none;
-    }
-
-    // &.is-first {
-    //   @include sidebar-transform(1, true);
-    // }
-
-    &.is-first &-text {
-      @include sidebar-transform(-0.5, true);
-    }
-
-    // &.is-last {
-    //   @include sidebar-transform(1, true);
-    // }
-
-    &.is-last &-text {
-      @include sidebar-transform(0.5, true);
     }
   }
 
@@ -867,21 +767,33 @@
   }
 }
 
+.pinned-automation {
+  &-wrapper {
+    gap: 0;
+    padding: 0;
+    cursor: default;
+  }
+
+  &-action-button {
+    flex: 0 0 auto;
+    margin-inline-end: .25rem;
+  }
+
+  &-menu {
+    flex: 0 0 auto;
+    color: var(--secondary-text-color);
+  }
+}
+
 .pinned-translation {
   height: var(--pinned-translation-height) !important;
   color: var(--primary-color);
-  font-size: var(--font-size-15);
+  font-size: var(--font-size);
+  justify-content: center;
 
-  &-button {
-    font-weight: var(--font-weight-bold);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    height: 100%;
+  &-primary-button {
+    width: var(--pc-centered-button-width);
     gap: .375rem;
-
-    @include sidebar-transform(1, true);
 
     &-icon {
       font-size: 1.25rem;
@@ -890,18 +802,259 @@
 
   &-menu {
     position: absolute;
-    inset-inline-end: 1.25rem;
-    padding: .25rem;
-    @include sidebar-transform(0, true);
+    inset-inline-end: .25rem;
+  }
+}
 
-    @include respond-to(handhelds) {
-      inset-inline-end: .75rem;
+// Animatable color slots for the call panel's center gradient.
+// Registering them via @property lets the browser interpolate the colors,
+// which means switching state classes cross-fades the gradient (the old
+// TopbarWeave used to animate this over ~250ms).
+@property --pc-c1 {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: #0976E3;
+}
+
+@property --pc-c2 {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: #2BCEFF;
+}
+
+@property --pc-c3 {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: #2BCEFF;
+}
+
+.pinned-call {
+  --container-height: var(--topbar-call-height);
+  --pinned-call-side-btn-width: 44px;
+  --pinned-call-item-radius: 28px;
+  --pc-transition: 250ms ease;
+  height: var(--container-height) !important;
+  max-height: var(--container-height) !important;
+  position: absolute;
+  top: 0 !important;
+  // No explicit `width` — see `.pinned-audio`: inherit `.pinned-container`'s
+  // `width: auto` so the plate fills the inset #column-center (capped + centred
+  // by max-width + margin-inline:auto, like `.topbar`). An explicit width spills
+  // past the screen edge on handhelds.
+  max-width: var(--chat-width);
+  margin-inline: auto !important;
+  z-index: 3;
+  color: #fff;
+  cursor: pointer !important;
+  padding: 0 !important;
+  font-size: var(--font-size-12);
+  background-color: var(--surface-color) !important;
+  border-radius: 12px;
+  overflow: hidden;
+
+  transform: translateY(calc(-1 * (var(--topbar-call-height) + var(--page-chats-padding))));
+
+  body.is-calling.forwards & {
+    transform: translateY(0);
+  }
+
+  &-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px !important;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .topbar-call {
+    &-side-btn {
+      flex: 0 0 auto;
+      width: var(--pinned-call-side-btn-width) !important;
+      height: 100% !important;
+      padding: 0 !important;
+      margin: 0;
+      border-radius: var(--pinned-call-item-radius) !important;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.125rem;
+      line-height: 1;
+      overflow: hidden;
+      cursor: pointer;
     }
+
+    &-mic-btn {
+      // Default (muted / connecting / etc.) — primary blue.
+      // Overridden to green on `.is-unmuted` below.
+      background-color: var(--primary-color);
+      transition: background-color var(--pc-transition);
+
+      @include hover() {
+        background-color: var(--dark-primary-color) !important;
+      }
+    }
+
+    &-end-btn {
+      background-color: var(--danger-color);
+      transition: background-color var(--pc-transition);
+
+      &.btn-icon {
+        color: #fff;
+      }
+
+      @include hover() {
+        background-color: var(--dark-danger-color) !important;
+      }
+
+      &.endcall {
+        font-size: 1.5rem;
+      }
+    }
+
+    &-center {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 100%;
+      border-radius: var(--pinned-call-item-radius);
+      overflow: hidden;
+      font-weight: var(--font-weight-bold);
+      line-height: 1;
+      color: #fff;
+
+      display: flex;
+      align-items: center;
+      padding-inline-start: 2px;
+      padding-inline-end: .5rem;
+
+      // Default (no state class yet) — blue, same as `.is-muted`.
+      --pc-c1: #0976E3;
+      --pc-c2: #2BCEFF;
+      --pc-c3: #2BCEFF;
+      background: linear-gradient(90deg, var(--pc-c1), var(--pc-c2), var(--pc-c3));
+      transition:
+        --pc-c1 var(--pc-transition),
+        --pc-c2 var(--pc-transition),
+        --pc-c3 var(--pc-transition);
+    }
+
+    &-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      margin-inline-start: .25rem;
+      display: flex;
+      align-items: baseline;
+      gap: .25rem;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    &-title,
+    &-status {
+      @include text-overflow();
+      min-width: 0;
+    }
+
+    &-status {
+      opacity: .8;
+      font-weight: var(--font-weight-normal);
+    }
+
+    &-extra {
+      flex: 0 0 auto;
+      margin-inline-start: .25rem;
+      display: flex;
+      align-items: center;
+      font-weight: var(--font-weight-bold);
+    }
+  }
+
+  // Avatar stack inside the gradient bar — borderless so the gradient shows through.
+  .stacked-avatars {
+    --border-color: transparent;
+    --avatar-size: 16px;
+    flex: 0 0 auto;
+  }
+
+  // State-driven gradient colors on the center bar — colors from the old
+  // TopbarWeave. We swap individual color slots (registered via @property
+  // above) so the browser cross-fades between gradients instead of cutting.
+  // Order matters: `.is-rtmp` overrides muted/unmuted; `.is-connecting`
+  // overrides everything.
+  &.is-unmuted .topbar-call-center {
+    --pc-c1: #52CE5D;
+    --pc-c2: #00B1C0;
+    --pc-c3: #00B1C0;
+  }
+
+  &.is-muted .topbar-call-center {
+    --pc-c1: #0976E3;
+    --pc-c2: #2BCEFF;
+    --pc-c3: #2BCEFF;
+  }
+
+  &.is-muted-by-admin .topbar-call-center {
+    --pc-c1: #F05459;
+    --pc-c2: #766EE9;
+    --pc-c3: #57A4FE;
+  }
+
+  &.is-rtmp .topbar-call-center {
+    --pc-c1: #4588E3;
+    --pc-c2: #976FFF;
+    --pc-c3: #E46ACE;
+  }
+
+  &.is-connecting .topbar-call-center {
+    --pc-c1: #8599aa;
+    --pc-c2: #8599aa;
+    --pc-c3: #8599aa;
+  }
+
+  // Mic button color: green when actively unmuted, primary otherwise.
+  &.is-unmuted .topbar-call-mic-btn {
+    background-color: #54B655;
+
+    @include hover() {
+      background-color: #4D9F4C !important;
+    }
+  }
+
+  .peer-title {
+    white-space: nowrap;
+  }
+
+  .group-call-description,
+  .call-description,
+  .rtmp-description {
+    white-space: nowrap;
+    opacity: .8;
+    font-weight: var(--font-weight-normal);
+  }
+
+  .call-description-duration {
+    font-weight: var(--font-weight-bold);
+    opacity: 1;
   }
 }
 
 .pinned-remove-fee {
-  --container-height: 64px;
-  cursor: initial;
-  @include sidebar-transform(1, true);
+  --container-height: var(--pinned-fee-height);
+
+  &-text {
+    font-size: var(--font-size-14);
+    text-align: center;
+    color: var(--secondary-text-color);
+    margin-bottom: .125rem;
+  }
+
+  &-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    width: 100%;
+    height: 100%;
+  }
 }

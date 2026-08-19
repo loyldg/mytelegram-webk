@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import findAndSplice from '@helpers/array/findAndSplice';
 import assumeType from '@helpers/assumeType';
 import {BotInlineResult, MessagesSavedGifs, Document} from '@layer';
@@ -11,6 +5,9 @@ import {NULL_PEER_ID} from '@appManagers/constants';
 import {ReferenceContext} from '@lib/storages/references';
 import {AppManager} from '@appManagers/manager';
 import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
+
+// * used only until help.getConfig arrives with the real one
+const GIF_SEARCH_USERNAME = 'gif';
 
 export default class AppGifsManager extends AppManager {
   private gifs: MaybePromise<Document.document[]>;
@@ -51,7 +48,9 @@ export default class AppGifsManager extends AppManager {
   }
 
   public async searchGifs(query: string, nextOffset?: string) {
-    const user = await this.appUsersManager.resolveUsername('gif');
+    // * the bot that answers GIF search is named by the server config, it is not always @gif
+    const config = await this.apiManager.getConfig();
+    const user = await this.appUsersManager.resolveUsername(config.gif_search_username || GIF_SEARCH_USERNAME);
     const gifBotPeerId = user.id.toPeerId(false);
     const {results, next_offset} = await this.appInlineBotsManager.getInlineResults(
       NULL_PEER_ID,
@@ -66,22 +65,50 @@ export default class AppGifsManager extends AppManager {
     return {documents, nextOffset: next_offset};
   }
 
-  public async saveGif(docId: DocId, unsave?: boolean) {
+  /**
+   * Moves the gif to the front of the saved ones — adding it when it is not among them — and
+   * caps the list at the limit, reporting whether that pushed one out.
+   */
+  private async unshiftGif(docId: DocId, unsave?: boolean) {
     const [limit, gifs] = await Promise.all([
       this.apiManager.getLimit('gifs'),
       this.getGifs()
     ]);
 
+    // resolved after the list, which is what saves the documents it is made of
     const doc = this.appDocsManager.getDoc(docId);
     findAndSplice(gifs as Document.document[], (_doc) => _doc.id === doc.id);
 
+    let limitReached = false;
     if(!unsave) {
       gifs.unshift(doc);
       const spliced = gifs.splice(limit, gifs.length - limit);
+      limitReached = spliced.length > 0;
     }
 
     this.rootScope.dispatchEvent('gifs_updated', gifs);
-    this.rootScope.dispatchEvent('gif_updated', {saved: !unsave, document: doc});
+    return {doc, limitReached};
+  }
+
+  /**
+   * Using a gif puts it back at the front of the saved ones, exactly like tdesktop's
+   * Stickers::addSavedGif, Android's MediaDataController.addRecentGif and iOS' ApplyUpdateMessage
+   * do for a gif that was just sent. Like them it stays local and asks for nothing: the server
+   * reorders the list on its own and `updateSavedGifs` brings the result over.
+   */
+  public async addRecentGif(docId: DocId) {
+    const gifs = await this.getGifs();
+    const doc = this.appDocsManager.getDoc(docId);
+    if(!doc || gifs[0]?.id === doc.id) {
+      return;
+    }
+
+    await this.unshiftGif(docId);
+  }
+
+  public async saveGif(docId: DocId, unsave?: boolean) {
+    const {doc, limitReached} = await this.unshiftGif(docId, unsave);
+    this.rootScope.dispatchEvent('gif_updated', {saved: !unsave, document: doc, limitReached});
 
     return this.apiManager.invokeApi('messages.saveGif', {
       id: getDocumentInput(doc),

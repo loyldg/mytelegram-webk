@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement from '.';
 import {copyTextToClipboard} from '@helpers/clipboard';
 import {formatFullSentTime} from '@helpers/date';
@@ -29,7 +23,7 @@ import partition from '@helpers/array/partition';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 import wrapTelegramUrlToAnchor from '@lib/richTextProcessor/wrapTelegramUrlToAnchor';
 import cancelEvent from '@helpers/dom/cancelEvent';
-import AppMediaViewer from '@components/appMediaViewer';
+import AppMediaViewer from '@components/mediaViewer';
 import {NULL_PEER_ID, TON_CURRENCY} from '@appManagers/constants';
 import tsNow from '@helpers/tsNow';
 import classNames from '@helpers/string/classNames';
@@ -79,7 +73,8 @@ export default class PopupStarsPay extends PopupElement<{
       scrollable: true,
       footer: true,
       withConfirm: true,
-      title: true
+      title: true,
+      old: true
     });
 
     safeAssign(this, options);

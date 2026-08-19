@@ -1,14 +1,8 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import {RLottieIconItemPartOptions} from '@lib/rlottie/rlottieIcon';
+import {LottieIconItemPartOptions} from '@lib/lottie/lottieIcon';
 import {GROUP_CALL_MICROPHONE_BUTTON_STATE} from '.';
-import {SuperRLottieIcon} from '@components/superIcon';
+import {SuperLottieIcon} from '@components/superIcon';
 
-export default class GroupCallMicrophoneIcon extends SuperRLottieIcon<{
+export default class GroupCallMicrophoneIcon extends SuperLottieIcon<{
   PartState: GROUP_CALL_MICROPHONE_BUTTON_STATE
 }> {
   constructor() {
@@ -37,7 +31,7 @@ export default class GroupCallMicrophoneIcon extends SuperRLottieIcon<{
     const className = 'group-call-microphone-icon';
     this.container.classList.add(className + '-container');
 
-    const parts: RLottieIconItemPartOptions[] = [{
+    const parts: LottieIconItemPartOptions[] = [{
       startFrame: 0,
       endFrame: 35,
       name: 'hand-to-muted'

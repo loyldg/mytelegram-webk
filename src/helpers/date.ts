@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {MOUNT_CLASS_TO} from '@config/debug';
 import I18n, {i18n} from '@lib/langPack';
 import {days, months} from '@helpers/date/common';
@@ -16,6 +10,24 @@ export const ONE_DAY = 86400;
 export const ONE_DAY_MINUTES = 1440;
 export const ONE_WEEK = 604800;
 export const ONE_WEEK_MINUTES = 10080;
+export const MILLIS_IN_MINUTE = 60 * 1000;
+
+/**
+ * The earliest minute a date/time picker may offer for a "send at/after
+ * `minTimeMs`" control, evaluated against the current time `nowMs`.
+ *
+ * Takes the later of the two and rounds it UP to the next full minute: a
+ * partially-elapsed minute's :00 instant is already in the past, so offering it
+ * would let the user pick a time behind real time — which the server rejects
+ * (e.g. a giveaway end-date that must be strictly in the future). The `max`
+ * keeps the caller's lead time as a floor while never falling behind the clock.
+ *
+ * Both arguments and the result are UNIX timestamps in MILLISECONDS; the result
+ * is minute-aligned.
+ */
+export function earliestSelectableMinuteMs(minTimeMs: number, nowMs: number) {
+  return Math.ceil(Math.max(minTimeMs, nowMs) / MILLIS_IN_MINUTE) * MILLIS_IN_MINUTE;
+}
 
 export function getWeekDays() {
   const dateTimeFormat = I18n.getDateTimeFormat({weekday: 'long'});
@@ -50,7 +62,8 @@ export const getWeekNumber = (date: Date) => {
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d.getTime() - yearStart.getTime()) / ONE_DAY) + 1) / 7);
+  // getTime() deltas are in milliseconds, so divide by ms-per-day (ONE_DAY is in seconds)
+  return Math.ceil((((d.getTime() - yearStart.getTime()) / (ONE_DAY * 1000)) + 1) / 7);
 };
 
 
@@ -337,7 +350,7 @@ export function fillTipDates(query: string, dates: DateData[]) {
     const g1 = matches[1];
     const g2 = matches[3];
     const g3 = matches[5];
-    if(!matches[2] === matches[4]) {
+    if(matches[2] !== matches[4]) {
       return;
     }
 

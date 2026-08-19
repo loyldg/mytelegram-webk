@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {formatFullSentTime, formatMonthsDuration} from '@helpers/date';
 import liteMode from '@helpers/liteMode';
 import clamp from '@helpers/number/clamp';
@@ -11,7 +5,7 @@ import {Message, MessageMedia} from '@layer';
 import appImManager from '@lib/appImManager';
 import I18n, {FormatterArguments, LangPackKey, i18n, join} from '@lib/langPack';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
-import {LottieAssetName} from '@lib/rlottie/lottieLoader';
+import {LottieAssetName} from '@lib/lottie/lottieLoader';
 import rootScope from '@lib/rootScope';
 import {getCountryEmoji} from '@vendor/emoji';
 import AppSelectPeers from '@components/appSelectPeers';

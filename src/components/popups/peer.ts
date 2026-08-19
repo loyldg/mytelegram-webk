@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement, {addCancelButton, PopupButton, PopupOptions} from '.';
 import {i18n, LangPackKey} from '@lib/langPack';
 import CheckboxField, {CheckboxFieldOptions} from '@components/checkboxField';
@@ -22,6 +16,9 @@ export type PopupPeerCheckboxOptions = CheckboxFieldOptions & {checkboxField?: C
 export type PopupPeerOptions = Omit<PopupOptions, 'buttons' | 'title'> & Partial<{
   peerId: PeerId,
   threadId: number,
+  // for a peer the plain avatar can't draw on its own (a Community and its decoration);
+  // the caller owns it and its teardown
+  avatar: HTMLElement,
   title: string | HTMLElement | DocumentFragment,
   titleLangKey: LangPackKey,
   titleLangArgs: any[],
@@ -32,7 +29,8 @@ export type PopupPeerOptions = Omit<PopupOptions, 'buttons' | 'title'> & Partial
   descriptionLangArgs: any[],
   buttons: Array<PopupPeerButton>,
   checkboxes: Array<PopupPeerCheckboxOptions>,
-  inputField: InputField
+  inputField: InputField,
+  old: boolean
 }>;
 export default class PopupPeer extends PopupElement {
   protected description: HTMLParagraphElement;
@@ -46,7 +44,9 @@ export default class PopupPeer extends PopupElement {
       buttons: options.buttons && addCancelButton(options.buttons)
     });
 
-    if(options.peerId) {
+    if(options.avatar) {
+      this.header.prepend(options.avatar);
+    } else if(options.peerId) {
       const isSavedDialog = !!(options.peerId === rootScope.myId && options.threadId);
       const {node} = avatarNew({
         middleware: this.middlewareHelper.get(),

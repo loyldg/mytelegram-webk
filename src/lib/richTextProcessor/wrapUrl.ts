@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type addAnchorListener from '@helpers/addAnchorListener';
 import {PHONE_NUMBER_REG_EXP} from '.';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -45,11 +39,13 @@ export default function wrapUrl(url: string, safe?: boolean) {
       case 'addstickers':
       case 'addemoji':
       case 'voicechat':
+      case 'call':
       case 'invoice':
       case 'boost':
       case 'giftcode':
       case 'share':
       case 'nft':
+      case 'addstyle':
         if(path.length !== 1 && !prefix) {
           onclick = path[0];
           break;
@@ -76,7 +72,14 @@ export default function wrapUrl(url: string, safe?: boolean) {
             throw 'unsafe';
           }
 
-          out.url = decodeURIComponent(new URL(url).searchParams.get('url'));
+          // `safe` only means the wire said webpage_id != 0 — the decoded URL itself is unvetted,
+          // so run it through the same protocol filter the incoming url got above
+          let decoded = decodeURIComponent(new URL(url).searchParams.get('url'));
+          if(!matchUrlProtocol(decoded)) {
+            decoded = 'https://' + decoded;
+          }
+
+          out.url = decoded;
         } catch(err) {
           onclick = undefined;
         }

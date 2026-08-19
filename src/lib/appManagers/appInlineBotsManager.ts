@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -13,7 +9,7 @@ import type {MyDocument} from '@appManagers/appDocsManager';
 import type {MyPhoto} from '@appManagers/appPhotosManager';
 import type {MyTopPeer} from '@appManagers/appUsersManager';
 import type {AppMessagesManager} from '@appManagers/appMessagesManager';
-import {BotInlineResult, GeoPoint, InputGeoPoint, MessageMedia} from '@layer';
+import {BotInlineResult, Document, GeoPoint, InputGeoPoint, MessageMedia, Photo} from '@layer';
 import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
 import {AppManager} from '@appManagers/manager';
 import getPhotoMediaInput from '@appManagers/utils/photos/getPhotoMediaInput';
@@ -226,31 +222,30 @@ export class AppInlineBotsManager extends AppManager {
     this.appDraftsManager.setDraft(peerId, threadId, message);
   }
 
-  public callbackButtonClick(peerId: PeerId, mid: number, button: any) {
+  public callbackButtonClick(peerId: PeerId, mid: number, button?: any, game?: boolean) {
+    const message = this.appMessagesManager.getMessageByPeer(peerId, mid);
+    if(
+      this.appMessagesManager.isEphemeralMessageId(mid) ||
+      this.appMessagesManager.isEphemeralMessage(message)
+    ) {
+      if(game) {
+        return Promise.resolve(undefined);
+      }
+
+      if(!message) {
+        return Promise.resolve(undefined);
+      }
+
+      return this.appMessagesManager.getEphemeralCallbackAnswer(peerId, mid, button?.data);
+    }
+
     return this.apiManager.invokeApi('messages.getBotCallbackAnswer', {
       peer: this.appPeersManager.getInputPeerById(peerId),
       msg_id: getServerMessageId(mid),
-      data: button.data
+      data: button?.data,
+      game
     }, {/* timeout: 1,  */stopTime: -1, noErrorBox: true});
   }
-
-  /* function gameButtonClick (id) {
-    var message = AppMessagesManager.getMessage(id)
-    var peerId = AppMessagesManager.getMessagePeer(message)
-
-    return MtpApiManager.invokeApi('messages.getBotCallbackAnswer', {
-      peer: AppPeersManager.getInputPeerByID(peerId),
-      msg_id: AppMessagesIDsManager.getMessageLocalID(id)
-    }, {timeout: 1, stopTime: -1, noErrorBox: true}).then(function (callbackAnswer) {
-      if (typeof callbackAnswer.message === 'string' &&
-      callbackAnswer.message.length) {
-        showCallbackMessage(callbackAnswer.message, callbackAnswer.pFlags.alert)
-      }
-      else if (typeof callbackAnswer.url === 'string') {
-        AppGamesManager.openGame(message.media.game.id, id, callbackAnswer.url)
-      }
-    })
-  } */
 
   public sendInlineResult(
     peerId: PeerId,
@@ -265,6 +260,10 @@ export class AppInlineBotsManager extends AppManager {
       return;
     }
 
+    if(options.ephemeral) {
+      return;
+    }
+
     this.pushPopularBot(botId);
     const splitted = queryAndResultIds.split('_');
     const queryId = splitted.shift();
@@ -272,8 +271,20 @@ export class AppInlineBotsManager extends AppManager {
     options.viaBotId = botId;
     options.queryId = queryId;
     options.resultId = resultId;
+    options.peerId = peerId;
+    options.forceOrdinary = true;
+    this.appMessagesManager.stripEphemeralReply(options);
     if(inlineResult.send_message.reply_markup) {
       options.replyMarkup = inlineResult.send_message.reply_markup;
+    }
+
+    // picking a gif out of an inline bot's results counts as using it, exactly like sending one
+    // from the panel does — tdesktop and iOS catch both at the sent message, Android at each
+    // send path. A game is left out of it the same way they do: its animation is not a gif the
+    // user picked (tdesktop's MediaGame has no document at all for checkSavedGif to look at)
+    const inlineDocument = (inlineResult as BotInlineResult.botInlineMediaResult).document as MyDocument;
+    if(inlineResult.type !== 'game' && inlineDocument?.type === 'gif') {
+      this.appGifsManager.addRecentGif(inlineDocument.id);
     }
 
     if(inlineResult.send_message._ === 'botInlineMessageText') {
@@ -290,6 +301,31 @@ export class AppInlineBotsManager extends AppManager {
       switch(sendMessage._) {
         case 'botInlineMessageMediaAuto': {
           caption = sendMessage.message;
+
+          if(inlineResult.type === 'game') {
+            let gamePhoto: Photo = {_: 'photoEmpty', id: 0};
+            let gameDocument: Document;
+
+            if(inlineResult._ === 'botInlineMediaResult') {
+              if(inlineResult.photo) gamePhoto = inlineResult.photo as Photo;
+              if(inlineResult.document) gameDocument = inlineResult.document as Document;
+            }
+
+            messageMedia = {
+              _: 'messageMediaGame',
+              game: {
+                _: 'game',
+                id: 0,
+                access_hash: 0,
+                short_name: inlineResult.id || '',
+                title: inlineResult.title || '',
+                description: inlineResult.description || '',
+                photo: gamePhoto,
+                document: gameDocument
+              }
+            };
+            break;
+          }
 
           if(inlineResult._ === 'botInlineMediaResult') {
             const {document, photo} = inlineResult;
@@ -409,6 +445,8 @@ export class AppInlineBotsManager extends AppManager {
 
       this.appMessagesManager.sendOther({...options, peerId, inputMedia});
     }
+
+    return true;
   }
 
   /* function checkGeoLocationAccess (botID) {

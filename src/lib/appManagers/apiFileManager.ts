@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -92,6 +88,11 @@ const MAX_DOWNLOAD_FILE_PART_SIZE = 1 * 1024 * 1024;
 const MAX_UPLOAD_FILE_PART_SIZE = 512 * 1024;
 const MIN_PART_SIZE = 64 * 1024;
 const AVG_PART_SIZE = 512 * 1024;
+const TGS_MAX_DECOMPRESSED_SIZE = 8 * 1024 * 1024;
+// .tgv is a gzipped SVG wallpaper pattern — a few hundred KB in practice. Without a
+// cap a sender-supplied gzip bomb (deflate reaches ~1032:1) expands unbounded inside
+// the crypto worker, which also carries all transport obfuscation.
+const TGV_MAX_DECOMPRESSED_SIZE = 8 * 1024 * 1024;
 
 const REGULAR_DOWNLOAD_DELTA = (9 * 512 * 1024) / MIN_PART_SIZE;
 // const PREMIUM_DOWNLOAD_DELTA = REGULAR_DOWNLOAD_DELTA * 2;
@@ -514,7 +515,7 @@ export class ApiFileManager extends AppManager {
   private uncompressTGS = (bytes: Uint8Array, fileName: string) => {
     // this.log('uncompressTGS', bytes, bytes.slice().buffer);
     // slice нужен потому что в uint8array - 5053 length, в arraybuffer - 5084
-    return this.cryptoWorker.invokeCrypto('gzipUncompress', bytes.slice().buffer, false) as Promise<Uint8Array>;
+    return this.cryptoWorker.invokeCrypto('gzipUncompress', bytes.slice().buffer, false, TGS_MAX_DECOMPRESSED_SIZE) as Promise<Uint8Array>;
   };
 
   private uncompressTGV = (bytes: Uint8Array, fileName: string) => {
@@ -522,7 +523,7 @@ export class ApiFileManager extends AppManager {
     // slice нужен потому что в uint8array - 5053 length, в arraybuffer - 5084
     const buffer = bytes.slice().buffer;
     if(getEnvironment().IS_FIREFOX) {
-      return this.cryptoWorker.invokeCrypto('gzipUncompress', buffer, true).then((text) => {
+      return this.cryptoWorker.invokeCrypto('gzipUncompress', buffer, true, TGV_MAX_DECOMPRESSED_SIZE).then((text) => {
         return fixFirefoxSvg(text as string);
       }).then((text) => {
         const textEncoder = new TextEncoder();
@@ -530,7 +531,7 @@ export class ApiFileManager extends AppManager {
       });
     }
 
-    return this.cryptoWorker.invokeCrypto('gzipUncompress', buffer, false) as Promise<Uint8Array>;
+    return this.cryptoWorker.invokeCrypto('gzipUncompress', buffer, false, TGV_MAX_DECOMPRESSED_SIZE) as Promise<Uint8Array>;
   };
 
   private convertWebp = (bytes: Uint8Array, fileName: string) => {
@@ -1032,15 +1033,20 @@ export class ApiFileManager extends AppManager {
   public downloadMediaURL(options: DownloadMediaOptions): Promise<string> {
     const {media, thumb} = options;
 
-    let cacheContext = this.thumbsStorage.getCacheContext(media as any, thumb?.type);
+    const cacheContext = this.thumbsStorage.getCacheContext(media as any, thumb?.type);
     if((thumb ? (cacheContext.downloaded >= ('size' in thumb ? thumb.size : 0)) : true) && cacheContext.url) {
       return Promise.resolve(cacheContext.url);
     }
 
     return this.downloadMedia(options).then((blob) => {
+      let cacheContext = this.thumbsStorage.getCacheContext(media as any, thumb?.type);
       if(!cacheContext.downloaded || !cacheContext.url || cacheContext.downloaded < blob.size) {
-        const url = URL.createObjectURL(blob);
-        cacheContext = this.thumbsStorage.setCacheContextURL(media as any, cacheContext.type, url, blob.size);
+        cacheContext = this.thumbsStorage.setCacheContextBlob(
+          media as any,
+          cacheContext.type,
+          blob,
+          blob.size
+        );
       }
 
       return cacheContext.url;

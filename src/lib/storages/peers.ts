@@ -1,14 +1,8 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import applyMixins from '@helpers/applyMixins';
 import EventListenerBase from '@helpers/eventListenerBase';
 import {AppManager} from '@appManagers/manager';
 
-export type StatePeerType = 'recentSearch' | 'topPeer' | 'dialog' | 'contact' | 'topMessage' | 'self';
+export type StatePeerType = 'recentSearch' | 'topPeer' | 'dialog' | 'contact' | 'topMessage' | 'self' | 'community';
 
 type PeersStorageKey = `${StatePeerType}_${string | PeerId}` | StatePeerType;
 

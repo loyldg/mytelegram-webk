@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Middleware} from '@helpers/middleware';
 import {Document, Message, MessageMedia, Photo, WebPage, VideoSize, StoryItem, MessageReplyHeader, MessageEntity} from '@layer';
 import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
@@ -23,8 +17,135 @@ import limitSymbols from '@helpers/string/limitSymbols';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
 import wrapMediaSpoiler from '@components/wrappers/mediaSpoiler';
 import {isMessageSensitive} from '@appManagers/utils/messages/isMessageRestricted';
+import compareUint8Arrays from '@helpers/bytes/compareUint8Arrays';
 
 const MEDIA_SIZE = 32;
+
+export type WrapReplyMediaOptions = {
+  message?: Message.message | Message.messageService,
+  storyItem?: StoryItem.storyItem,
+  replyHeader?: MessageReplyHeader,
+  mediaEl: HTMLElement,
+  size?: number,
+  isSensitive?: boolean,
+  middleware?: Middleware,
+  lazyLoadQueue?: false | LazyLoadQueue,
+  loadPromises?: Promise<any>[],
+  animationGroup?: WrapRichTextOptions['animationGroup']
+};
+
+/**
+ * Render a small thumbnail of the media attached to a message (or story item)
+ * into `mediaEl`. Handles photos, videos (via thumbs), stickers, gifs, and
+ * round videos. Returns `{setMedia, isRound}` describing whether anything was
+ * inserted and whether it should be drawn as a circle.
+ *
+ * Extracted from `wrapReplyDivAndCaption` so the same render can be reused
+ * outside of reply-style previews (e.g. day cells in the date-picker calendar).
+ */
+export async function wrapReplyMedia({
+  message,
+  storyItem,
+  replyHeader,
+  mediaEl,
+  size = MEDIA_SIZE,
+  isSensitive,
+  middleware,
+  lazyLoadQueue,
+  loadPromises,
+  animationGroup
+}: WrapReplyMediaOptions): Promise<{setMedia: boolean, isRound: boolean}> {
+  loadPromises ??= [];
+
+  let messageMedia: MessageMedia | WebPage.webPage = storyItem?.media ||
+    (message as Message.message)?.media ||
+    (replyHeader?._ === 'messageReplyHeader' && replyHeader.reply_media);
+
+  if(messageMedia?._ === 'messageMediaStory') {
+    storyItem = messageMedia.story as StoryItem.storyItem;
+    messageMedia = storyItem?.media;
+  }
+
+  let setMedia = false, isRound = false;
+  if(!messageMedia || !mediaEl || (messageMedia as MessageMedia.messageMediaPhoto).ttl_seconds) {
+    return {setMedia, isRound};
+  }
+
+  messageMedia = (messageMedia as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage || messageMedia;
+  const photo = (messageMedia as MessageMedia.messageMediaPhoto).photo as Photo.photo;
+  const document = (messageMedia as MessageMedia.messageMediaDocument).document as Document.document;
+  const spoiler = (messageMedia as MessageMedia.messageMediaPhoto | MessageMedia.messageMediaDocument)?.pFlags?.spoiler;
+
+  if(!photo && !(document && document.thumbs?.length)) {
+    return {setMedia, isRound};
+  }
+
+  if(document?.type === 'sticker') {
+    await wrapSticker({
+      doc: document,
+      div: mediaEl,
+      lazyLoadQueue: lazyLoadQueue || undefined,
+      group: animationGroup,
+      width: size,
+      height: size,
+      middleware,
+      loadPromises
+    });
+    setMedia = true;
+  } else if(document?.type === 'gif' && document.video_thumbs) {
+    setMedia = true;
+    await wrapVideo({
+      doc: document,
+      container: mediaEl,
+      boxWidth: size,
+      boxHeight: size,
+      lazyLoadQueue: lazyLoadQueue || undefined,
+      noPlayButton: true,
+      noInfo: true,
+      middleware,
+      loadPromises,
+      withoutPreloader: true,
+      videoSize: document.video_thumbs[0] as Extract<VideoSize, VideoSize.videoSize>,
+      group: animationGroup
+    });
+  } else {
+    const m = photo || document;
+    isRound = document?.type === 'round';
+
+    try {
+      await wrapPhoto({
+        photo: m,
+        container: mediaEl,
+        boxWidth: size,
+        boxHeight: size,
+        size: choosePhotoSize(m, size, size),
+        middleware,
+        lazyLoadQueue,
+        noBlur: true,
+        withoutPreloader: true,
+        loadPromises
+      });
+
+      if(spoiler || isSensitive) {
+        const spoilerEl = await wrapMediaSpoiler({
+          media: m,
+          width: size,
+          height: size,
+          multiply: 0.1,
+          middleware,
+          animationGroup
+        });
+        mediaEl.append(spoilerEl);
+      }
+
+      setMedia = true;
+    } catch(err) {
+
+    }
+  }
+
+  return {setMedia, isRound};
+}
 
 export async function wrapReplyDivAndCaption(options: {
   title?: string | HTMLElement | DocumentFragment,
@@ -47,6 +168,7 @@ export async function wrapReplyDivAndCaption(options: {
 
   const {titleEl, subtitleEl, mediaEl, message, loadPromises, animationGroup, middleware, lazyLoadQueue, replyHeader} = options;
   let {storyItem, quote} = options;
+  let quoteIcon: HTMLElement | undefined;
 
   let wrappedTitle = options.title;
   if(wrappedTitle !== undefined) {
@@ -70,90 +192,29 @@ export async function wrapReplyDivAndCaption(options: {
     };
   }
 
-  let messageMedia: MessageMedia | WebPage.webPage = storyItem?.media ||
-    (message as Message.message)?.media ||
-    (isMessageReply && replyHeader.reply_media);
-
-  if(messageMedia?._ === 'messageMediaStory') {
-    storyItem = messageMedia.story as StoryItem.storyItem;
-    messageMedia = storyItem?.media;
-  }
-
-  let setMedia = false, isRound = false;
-  const mediaChildren = mediaEl ? Array.from(mediaEl.children).slice() : [];
-  if(messageMedia && mediaEl && !(messageMedia as MessageMedia.messageMediaPhoto).ttl_seconds) {
-    messageMedia = (messageMedia as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage || messageMedia;
-    const photo = (messageMedia as MessageMedia.messageMediaPhoto).photo as Photo.photo;
-    const document = (messageMedia as MessageMedia.messageMediaDocument).document as Document.document;
-    const spoiler = (messageMedia as MessageMedia.messageMediaPhoto | MessageMedia.messageMediaDocument)?.pFlags?.spoiler;
-
-    if(photo || (document && document.thumbs?.length)/* ['video', 'sticker', 'gif', 'round', 'photo', 'audio'].indexOf(document.type) !== -1) */) {
-      if(document?.type === 'sticker') {
-        await wrapSticker({
-          doc: document,
-          div: mediaEl,
-          lazyLoadQueue: lazyLoadQueue || undefined,
-          group: animationGroup,
-          // onlyThumb: document.sticker === 2,
-          width: MEDIA_SIZE,
-          height: MEDIA_SIZE,
-          middleware,
-          loadPromises
-        });
-        setMedia = true;
-      } else if(document?.type === 'gif' && document.video_thumbs) {
-        setMedia = true;
-        await wrapVideo({
-          doc: document,
-          container: mediaEl,
-          boxWidth: MEDIA_SIZE,
-          boxHeight: MEDIA_SIZE,
-          lazyLoadQueue: lazyLoadQueue || undefined,
-          noPlayButton: true,
-          noInfo: true,
-          middleware,
-          loadPromises,
-          withoutPreloader: true,
-          videoSize: document.video_thumbs[0] as Extract<VideoSize, VideoSize.videoSize>,
-          group: animationGroup
-        });
-      } else {
-        const m = photo || document;
-        isRound = document?.type === 'round';
-
-        try {
-          await wrapPhoto({
-            photo: m,
-            container: mediaEl,
-            boxWidth: MEDIA_SIZE,
-            boxHeight: MEDIA_SIZE,
-            size: choosePhotoSize(m, MEDIA_SIZE, MEDIA_SIZE),
-            middleware,
-            lazyLoadQueue,
-            noBlur: true,
-            withoutPreloader: true,
-            loadPromises
-          });
-
-          if(spoiler || options.isSensitive) {
-            const spoiler = await wrapMediaSpoiler({
-              media: m,
-              width: MEDIA_SIZE,
-              height: MEDIA_SIZE,
-              multiply: 0.1,
-              middleware,
-              animationGroup
-            });
-            mediaEl.append(spoiler);
-          }
-
-          setMedia = true;
-        } catch(err) {
-
-        }
-      }
+  if(isMessageReply && replyHeader.poll_option && message?._ === 'message' && message.media?._ === 'messageMediaPoll') {
+    const pollOption = message.media.poll.answers.find(answer => answer._ === 'pollAnswer' && compareUint8Arrays(replyHeader.poll_option, answer.option));
+    if(pollOption) {
+      quoteIcon = Icon('checkround_filled', 'inline-icon', 'inline-icon-left');
+      quote ??= {
+        text: pollOption.text.text,
+        entities: pollOption.text.entities
+      };
     }
   }
+
+  const mediaChildren = mediaEl ? Array.from(mediaEl.children).slice() : [];
+  const {setMedia, isRound} = await wrapReplyMedia({
+    message,
+    storyItem,
+    replyHeader,
+    mediaEl,
+    isSensitive: options.isSensitive,
+    middleware,
+    lazyLoadQueue,
+    loadPromises,
+    animationGroup
+  });
 
   if(options.subtitle !== undefined) {
     let wrappedSubtitle = options.subtitle;
@@ -177,7 +238,7 @@ export async function wrapReplyDivAndCaption(options: {
       // noTextFormat: true
     });
 
-    subtitleEl.replaceChildren(fragment);
+    subtitleEl.replaceChildren(...[quoteIcon, fragment].filter(Boolean));
   } else if(message) {
     const fragment = await wrapMessageForReply(options);
     subtitleEl.replaceChildren(fragment);

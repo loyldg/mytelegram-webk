@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import contextMenuController from '@helpers/contextMenuController';
 import {attachContextMenuListener} from '@helpers/dom/attachContextMenuListener';
 import cancelEvent from '@helpers/dom/cancelEvent';
@@ -30,6 +24,7 @@ export default class SendMenu {
     openSide: string,
     onContextElement: HTMLElement,
     onOpen?: () => boolean,
+    onToggle?: (open: boolean) => void,
     canSendWhenOnline?: () => boolean | Promise<boolean>,
     withEffects?: () => boolean,
     effect?: () => DocId,
@@ -64,7 +59,7 @@ export default class SendMenu {
       icon: 'online',
       text: 'Schedule.SendWhenOnline',
       onClick: this.options.onSendWhenOnlineClick,
-      verify: () => this.type === 'schedule' && this.options.canSendWhenOnline?.() && !this.isPaid
+      verify: async() => this.type === 'schedule' && (await this.options.canSendWhenOnline?.()) && !this.isPaid
     }, {
       icon: 'crossround',
       text: 'Effect.Remove',
@@ -140,7 +135,9 @@ export default class SendMenu {
 
         const reactionsCallbacks = reactionsMenu && ChatContextMenu.appendReactionsMenu({element: element, reactionsMenu, reactionsMenuPosition});
 
+        this.options.onToggle?.(true);
         contextMenuController.openBtnMenu(element, () => {
+          this.options.onToggle?.(false);
           reactionsCallbacks?.onClose();
           middlewareHelper.destroy();
           this.createMenu();

@@ -1,10 +1,4 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import rootScope from '@lib/rootScope';
+import {useAppSettings} from '@stores/appSettings';
 import {IS_MOBILE, IS_APPLE} from '@environment/userAgent';
 
 export default function isSendShortcutPressed(e: KeyboardEvent) {
@@ -15,7 +9,8 @@ export default function isSendShortcutPressed(e: KeyboardEvent) {
       return;
     } */
 
-    if(rootScope.settings.sendShortcut === 'enter') {
+    const [appSettings] = useAppSettings();
+    if(appSettings.sendShortcut === 'enter') {
       if(e.shiftKey || e.ctrlKey || e.metaKey) {
         return;
       }

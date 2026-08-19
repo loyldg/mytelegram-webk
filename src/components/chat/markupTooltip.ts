@@ -1,10 +1,6 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import ButtonIcon from '@components/buttonIcon';
+import {bindActiveWindowListener, getAppWindow, getOverlayRoot} from '@helpers/appWindow';
+import {replaceButtonIcon} from '@components/button';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import {IS_APPLE, IS_MOBILE} from '@environment/userAgent';
 import appNavigationController from '@components/appNavigationController';
@@ -21,7 +17,7 @@ import getMarkupInSelection from '@helpers/dom/getMarkupInSelection';
 import {applyMarkdown} from '@helpers/dom/markdown';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import overlayCounter from '@helpers/overlayCounter';
-import type PopupSchedule from '@components/popups/schedule';
+import type showDatePickerPopup from '@components/popups/datePicker';
 
 export type MarkupTooltipTypes = Extract<MarkdownType, 'bold' | 'italic' | 'underline' | 'strikethrough' | 'monospace' | 'spoiler' | 'quote' | 'link' | 'date'>;
 
@@ -32,8 +28,10 @@ export default class MarkupTooltip {
   public container: HTMLElement;
   private wrapper: HTMLElement;
   private buttons: {[type in MarkupTooltipTypes]: HTMLElement} = {} as any;
+  private buttonIcons: Partial<{[type in MarkupTooltipTypes]: {inactive: Icon, active: Icon}}> = {};
   private linkBackButton: HTMLElement;
   private linkApplyButton: HTMLButtonElement;
+  private linkDelimiter: HTMLElement;
   private hideTimeout: number;
   private addedListener = false;
   private waitingForMouseUp = false;
@@ -44,7 +42,7 @@ export default class MarkupTooltip {
   private linkInputFocusTimeout: number;
   // private log: ReturnType<typeof logger>;
 
-  public static PopupSchedule: typeof PopupSchedule;
+  public static showDatePickerPopup: typeof showDatePickerPopup;
 
   constructor() {
     // this.log = logger('MARKUP');
@@ -66,21 +64,25 @@ export default class MarkupTooltip {
     tools1.classList.add('markup-tooltip-tools', 'markup-tooltip-tools-regular');
     tools2.classList.add('markup-tooltip-tools', 'markup-tooltip-tools-link');
 
-    const arr: Array<keyof MarkupTooltip['buttons'] | [keyof MarkupTooltip['buttons'], Icon]> = [
+    const arr: Array<keyof MarkupTooltip['buttons'] | [keyof MarkupTooltip['buttons'], Icon] | [keyof MarkupTooltip['buttons'], Icon, Icon]> = [
       'bold',
       'italic',
       'underline',
       'strikethrough',
       'monospace',
       'spoiler',
-      ['quote', 'quote_outline'],
+      ['quote', 'quote_outline', 'quote'],
       ['date', 'calendar'],
       'link'
     ];
     arr.forEach((c) => {
       const type = typeof(c) === 'string' ? c : c[0];
-      const icon = typeof(c) === 'string' ? c : c[1];
-      const button = ButtonIcon(icon, {noRipple: true});
+      const inactiveIcon = (typeof(c) === 'string' ? c : c[1]) as Icon;
+      const activeIcon = typeof(c) === 'string' ? undefined : c[2];
+      if(activeIcon !== undefined && activeIcon !== inactiveIcon) {
+        this.buttonIcons[type] = {inactive: inactiveIcon, active: activeIcon};
+      }
+      const button = ButtonIcon(inactiveIcon, {noRipple: true});
       tools1.append(this.buttons[type] = button);
 
       if(type === 'link') {
@@ -162,13 +164,14 @@ export default class MarkupTooltip {
     delimiter2.classList.add('markup-tooltip-delimiter');
     delimiter3.classList.add('markup-tooltip-delimiter');
     tools1.insertBefore(delimiter1, this.buttons.link);
+    this.linkDelimiter = delimiter1;
     applyDiv.append(delimiter3, this.linkApplyButton);
     tools2.append(this.linkBackButton, delimiter2, this.linkInput, applyDiv);
     // tools1.insertBefore(delimiter2, this.buttons.link.nextSibling);
 
     this.wrapper.append(tools1, tools2);
     this.container.append(this.wrapper);
-    document.body.append(this.container);
+    getOverlayRoot().append(this.container);
 
     window.addEventListener('resize', () => {
       this.hide();
@@ -192,8 +195,9 @@ export default class MarkupTooltip {
       const entity = getFormattedDateEntityByElement(element, 0, 0);
       initDate = new Date(entity.date * 1000);
     }
-    new MarkupTooltip.PopupSchedule({
+    MarkupTooltip.showDatePickerPopup({
       initDate,
+      withTime: true,
       onPick: (timestamp: number) => {
         setTimeout(() => {
           this.resetSelection();
@@ -211,7 +215,7 @@ export default class MarkupTooltip {
       },
       btnConfirmLangKey: element ? 'EditDate' : 'AddDate',
       btnDangerLangKey: element ? 'RemoveDate' : undefined
-    }).show();
+    });
   }
 
   public showLinkEditor() {
@@ -325,9 +329,16 @@ export default class MarkupTooltip {
     const activeButtons = this.getActiveMarkupButton();
 
     for(const i in this.buttons) {
-      // @ts-ignore
-      const button = this.buttons[i];
-      button.classList.toggle('active', activeButtons.includes(button));
+      const type = i as MarkupTooltipTypes;
+      const button = this.buttons[type];
+      const isActive = activeButtons.includes(button);
+      const wasActive = button.classList.contains('active');
+      button.classList.toggle('active', isActive);
+
+      const icons = this.buttonIcons[type];
+      if(icons && wasActive !== isActive) {
+        replaceButtonIcon(button, isActive ? icons.active : icons.inactive);
+      }
     }
   }
 
@@ -335,13 +346,18 @@ export default class MarkupTooltip {
     const selection = document.getSelection();
     const range = selection.getRangeAt(0);
 
-    const rowsWrapper = findUpClassName(this.input, 'rows-wrapper') ||
+    const rowsWrapper = findUpClassName(this.input, 'simple-message-input-container') ||
+      findUpClassName(this.input, 'rows-wrapper') ||
       findUpClassName(this.input, 'input-message-container') ||
-      findUpClassName(this.input, 'input-field');
+      findUpClassName(this.input, 'input-field') ||
+      this.input?.closest('[data-markup-tooltip-host]');
+
+    if(!rowsWrapper) return;
+
     const currentTools = this.container.classList.contains('is-link') ?
       this.wrapper.lastElementChild :
       this.wrapper.firstElementChild;
-    const bodyRect = document.body.getBoundingClientRect();
+    const bodyRect = getOverlayRoot().getBoundingClientRect();
     const selectionRect = range.getBoundingClientRect();
     const inputRect = rowsWrapper.getBoundingClientRect();
     const sizesRect = currentTools.getBoundingClientRect();
@@ -406,6 +422,18 @@ export default class MarkupTooltip {
 
     this.setActiveMarkupButton();
 
+    const canFormat = this.input.getAttribute('can-format');
+    const allowedTypes = canFormat ?
+      new Set(canFormat.split(',').filter(Boolean) as MarkupTooltipTypes[]) :
+      null;
+    (Object.keys(this.buttons) as MarkupTooltipTypes[]).forEach((type) => {
+      const hidden = !!allowedTypes && !allowedTypes.has(type);
+      this.buttons[type].classList.toggle('hide', hidden);
+      if(type === 'link') {
+        this.linkDelimiter.classList.toggle('hide', hidden);
+      }
+    });
+
     this.container.classList.remove('is-link');
     const isFirstShow = this.container.classList.contains('hide');
     if(isFirstShow) {
@@ -467,13 +495,14 @@ export default class MarkupTooltip {
 
     // this.log('setMouseUpEvent');
 
-    document.addEventListener('mouseup', this.onMouseUpSingle, {once: true});
+    // Active window's document so text-selection formatting still works in a Document PiP window.
+    getAppWindow().document.addEventListener('mouseup', this.onMouseUpSingle, {once: true});
   }
 
   public cancelClosening() {
     if(IS_TOUCH_SUPPORTED && !IS_APPLE) {
-      document.removeEventListener('mouseup', this.onMouseUpSingle);
-      document.addEventListener('mouseup', (e) => {
+      getAppWindow().document.removeEventListener('mouseup', this.onMouseUpSingle);
+      getAppWindow().document.addEventListener('mouseup', (e) => {
         cancelEvent(e);
         this.mouseUpCounter = 1;
         this.waitingForMouseUp = false;
@@ -489,23 +518,26 @@ export default class MarkupTooltip {
   public handleSelection() {
     if(this.addedListener) return;
     this.addedListener = true;
-    document.addEventListener('selectionchange', (e) => {
+    // selectionchange/beforeinput are document-level — follow the active window so text-selection
+    // formatting works in a Document PiP window (the events fire on the PiP document there).
+    bindActiveWindowListener((w) => w.document, 'selectionchange', (e) => {
+      const doc = getAppWindow().document;
       if(this.linkInputFocusTimeout) { // * if it soon will be focused, ignore the event because of click event
         return;
       }
       // this.log('selectionchange');
 
-      if(document.activeElement === this.linkInput) {
+      if(doc.activeElement === this.linkInput) {
         return;
       }
 
-      const activeElement = document.activeElement as HTMLElement;
+      const activeElement = doc.activeElement as HTMLElement;
       if(this.input ? activeElement !== this.input : !this.canFormatInput(activeElement)) {
         this.hide();
         return;
       }
 
-      const selection = document.getSelection();
+      const selection = doc.getSelection();
       if(isSelectionEmpty(selection)) {
         this.hide();
         return;
@@ -541,7 +573,7 @@ export default class MarkupTooltip {
       }
     });
 
-    document.addEventListener('beforeinput', (e) => {
+    bindActiveWindowListener((w) => w.document, 'beforeinput', (e) => {
       if(e.inputType === 'historyRedo' || e.inputType === 'historyUndo') {
         e.target.addEventListener('input', () => this.setActiveMarkupButton(), {once: true});
       }

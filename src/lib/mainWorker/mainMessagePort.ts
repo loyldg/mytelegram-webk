@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {MOUNT_CLASS_TO} from '@config/debug';
 import type {getEnvironment} from '@environment/utils';
 import type {LocalStorageEncryptedProxyTaskPayload, LocalStorageProxyTask} from '@lib/localStorage';
@@ -12,7 +6,9 @@ import type toggleStorages from '@helpers/toggleStorages';
 import type {ActiveAccountNumber} from '@lib/accounts/types';
 import type {LoadStateResult} from '@appManagers/utils/state/loadState';
 import type {PasscodeStorageValue} from '@lib/commonStateStorage';
-import type {ThreadedWorkerType} from '@lib/appManagers/appManagersManager';
+import type {ThreadedWorkerType} from '@lib/threadedWorkerTypes';
+import type {LogEntry} from '@lib/debug/logsBuffer';
+import type {ObjectURLPinUpdate, SharedObjectURLUpdate} from '@helpers/objectUrlUtils';
 import SuperMessagePort from '@lib/superMessagePort';
 import {CacheStorageDbName} from '@lib/files/cacheStorage';
 
@@ -48,7 +44,13 @@ export default class MTProtoMessagePort<Master extends boolean = true> extends S
   serviceWorkerOnline: (online: boolean) => void,
   serviceWorkerPort: (payload: void, source: MessageEventSource, event: MessageEvent) => void,
   threadedPort: (payload: ThreadedWorkerType, source: MessageEventSource, event: MessageEvent) => void,
-  createObjectURL: (blob: Blob) => string,
+  updateObjectURLPins: (
+    updates: ObjectURLPinUpdate[],
+    source: MessageEventSource
+  ) => void,
+  createSharedObjectURL: (payload: {blob: Blob, owner: string}) => string,
+  setSharedObjectURL: (payload: {url: string, owner: string}, source: MessageEventSource) => void,
+  releaseSharedObjectURL: (payload: {url: string, owner: string}) => void,
   tabState: (payload: TabState, source: MessageEventSource) => void,
   createProxyWorkerURLs: (payload: {originalUrl: string, blob: Blob, type: ThreadedWorkerType}) => string[],
   setInterval: (timeout: number) => number,
@@ -63,17 +65,26 @@ export default class MTProtoMessagePort<Master extends boolean = true> extends S
   toggleCacheStorage: (value: boolean, source: MessageEventSource) => void,
   resetEncryptableCacheStorages: () => void,
   forceLogout: () => void,
-  toggleUninteruptableActivity: (payload: { activity: string, active: boolean }, source: MessageEventSource) => void,
+  toggleUninteruptableActivity: (payload: {activity: string, active: boolean}, source: MessageEventSource) => void,
   disableCacheStoragesByNames: (names: CacheStorageDbName[]) => void,
   enableCacheStoragesByNames: (names: CacheStorageDbName[]) => void,
-  resetOpenCacheStoragesByNames: (names: CacheStorageDbName[]) => void
+  resetOpenCacheStoragesByNames: (names: CacheStorageDbName[]) => void,
+  // Debug log buffer (see @lib/debug/logsBuffer): the master pulls the worker's
+  // ring buffer on export, and propagates the enabled flag (prod ?debug=1 isn't
+  // visible to the worker's own location.search).
+  getLogs: (payload: void) => LogEntry[],
+  setLogBufferEnabled: (enabled: boolean) => void
 } & MTProtoBroadcastEvent, {
   convertWebp: (payload: {fileName: string, bytes: Uint8Array}) => Promise<Uint8Array>,
   convertOpus: (payload: {fileName: string, bytes: Uint8Array}) => Promise<Uint8Array>,
   localStorageProxy: (payload: LocalStorageProxyTask['payload']) => Promise<any>,
+  // Tab-scoped hand-off of the passcode key across an account-switch reload; see
+  // @lib/passcode/keyHandoff for why it must not go through localStorage.
+  passcodeKeyHandoff: (payload: string) => void,
   mirror: (payload: MirrorTaskPayload) => void,
   notificationBuild: (payload: NotificationBuildTaskPayload) => void,
   receivedServiceMessagePort: (payload: void) => void,
+  sharedObjectURLUpdated: (payload: SharedObjectURLUpdate) => void,
   log: (payload: any) => void,
   tabsUpdated: (payload: TabState[]) => void,
   callNotification: (payload: CallNotificationPayload) => void,
@@ -84,16 +95,32 @@ export default class MTProtoMessagePort<Master extends boolean = true> extends S
   toggleUsingPasscode: (payload: ToggleUsingPasscodePayload, source: MessageEventSource) => void,
 } & MTProtoBroadcastEvent, Master> {
   private static INSTANCE: MTProtoMessagePort;
+  // In Modes.noWorker, both the proxy (master) and the worker-side port live
+  // in the same realm; the legacy INSTANCE field would only hold the last one
+  // constructed. These two track both so getMasterInstance/getNonMasterInstance
+  // resolve to the right end of the in-process channel.
+  private static MASTER_INSTANCE: MTProtoMessagePort<true>;
+  private static NON_MASTER_INSTANCE: MTProtoMessagePort<false>;
 
-  constructor() {
+  constructor(isMaster: boolean = true) {
     super('MTPROTO');
 
     MTProtoMessagePort.INSTANCE = this;
+    if(isMaster) MTProtoMessagePort.MASTER_INSTANCE = this as any;
+    else MTProtoMessagePort.NON_MASTER_INSTANCE = this as any;
 
     MOUNT_CLASS_TO && (MOUNT_CLASS_TO.mtprotoMessagePort = this);
   }
 
   public static getInstance<Master extends boolean>() {
     return this.INSTANCE as MTProtoMessagePort<Master>;
+  }
+
+  public static getMasterInstance() {
+    return this.MASTER_INSTANCE;
+  }
+
+  public static getNonMasterInstance() {
+    return this.NON_MASTER_INSTANCE;
   }
 }

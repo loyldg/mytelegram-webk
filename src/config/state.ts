@@ -1,13 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {LiteModeKey} from '@helpers/liteMode';
 import type {AppMediaPlaybackController} from '@components/appMediaPlaybackController';
 import type {TopPeerType, MyTopPeer} from '@appManagers/appUsersManager';
-import type {AccountContentSettings, AccountThemes, AutoDownloadSettings, BaseTheme, NotifyPeer, PeerNotifySettings, Theme, ThemeSettings, WallPaper} from '@layer';
+import type {AccountContentSettings, AccountThemes, AutoDownloadSettings, BaseTheme, BotCommand, Dialog, NotifyPeer, PeerNotifySettings, Theme, ThemeSettings, WallPaper} from '@layer';
 import type DialogsStorage from '@lib/storages/dialogs';
 import type FiltersStorage from '@lib/storages/filters';
 import type {AuthState, Modify} from '@types';
@@ -15,11 +9,24 @@ import type {ShortcutKey as PasscodeLockShortcutKey} from '@components/sidebarLe
 import {IS_MOBILE} from '@environment/userAgent';
 import getTimeFormat from '@helpers/getTimeFormat';
 import App from '@config/app';
+import {getAccentPresetsForBase} from '@config/themePresets';
 import {ColoredBrushType} from '@components/mediaEditor/context';
 import {FontKey} from '@components/mediaEditor/types';
+import type {BotConnectionReview} from '@appManagers/appBusinessManager';
+import type {UnconfirmedAuthorization} from '@appManagers/appAccountManager';
+
+// Factory tinted ("Dark") collapses onto the first base-color preset (blue) so the accent picker
+// can omit a separate "default" swatch — resetting to factory now reaches the same state the user
+// gets by tapping the blue circle.
+const TINTED_DEFAULT_PRESET = getAccentPresetsForBase('baseThemeTinted')[0];
 
 const STATE_VERSION = App.version;
 const BUILD = App.build;
+
+export type GlobalNotifySettingsKey =
+  NotifyPeer.notifyUsers['_'] |
+  NotifyPeer.notifyChats['_'] |
+  NotifyPeer.notifyBroadcasts['_'];
 
 // ! DEPRECATED
 export type Background = {
@@ -32,11 +39,13 @@ export type Background = {
   id: string | number,  // wallpaper id
 };
 
+export type AppThemeSettings = Modify<ThemeSettings, {
+  highlightingColor: string
+}>;
+
 export type AppTheme = Modify<Theme, {
-  name: 'day' | 'night' | 'system',
-  settings?: Modify<ThemeSettings, {
-    highlightingColor: string
-  }>
+  name: 'day' | 'night' | 'light' | 'tinted' | 'system',
+  settings?: Array<AppThemeSettings>
 }>;
 
 export type AutoDownloadPeerTypeSettings = {
@@ -68,7 +77,14 @@ export type StateSettings = {
   stickers: {
     suggest: 'all' | 'installed' | 'none',
     dynamicPackOrder: boolean,
-    loop: boolean
+    loop: boolean,
+    /**
+     * Groups whose own sticker set / emoji pack the user collapsed in the panel, as
+     * `chatId` -> the set id that was collapsed. Keyed by set so that a group swapping
+     * packs brings the section back.
+     */
+    hiddenGroupSets: {[chatId: string]: string},
+    hiddenGroupEmojiSets: {[chatId: string]: string}
   },
   emoji: {
     suggest: boolean,
@@ -77,6 +93,14 @@ export type StateSettings = {
   background?: Background, // ! DEPRECATED
   themes: AppTheme[],
   theme: AppTheme['name'],
+  // Last explicitly-picked theme variant on each side. The burger-menu Dark-Mode toggle uses
+  // these so toggling away and back returns to the same variant (e.g. tinted ↔ classic ↔ tinted)
+  // instead of always flipping to the legacy night/classic pair. Updated in themeController on
+  // settings.theme changes; radios/UI / `switchTheme(name)` direct calls feed it.
+  lastThemeNames: {
+    dark: Extract<AppTheme['name'], 'night' | 'tinted'>,
+    light: Extract<AppTheme['name'], 'day' | 'light'>
+  },
   notifications: {
     sound: boolean,
     push: boolean,
@@ -95,7 +119,9 @@ export type StateSettings = {
   tabsInSidebar: boolean,
   seenTooltips: {
     storySound: boolean,
-    noForwards: boolean
+    noForwards: boolean,
+    sidebarResize: boolean,
+    guestBotPrivacy: number // how many times the guest-bot hint has been shown (capped at 2, like iOS)
   },
   playbackParams: ReturnType<AppMediaPlaybackController['getPlaybackParams']>,
   translations: {
@@ -130,6 +156,36 @@ export type StateSettings = {
     textStyle?: string;
     textFont?: FontKey;
   },
+  // Persisted device choices for the audio/video stack used by the
+  // SettingsCallsPanel ("Speakers and Camera" tab) and the per-call settings
+  // popup. Empty string = follow the OS default (no setSinkId / no deviceId
+  // constraint). `micVolume` is a 0..2 multiplier applied to the captured
+  // input via a GainNode in StreamManager; 1 = unity.
+  callDevices: {
+    speakerId: string,
+    microphoneId: string,
+    cameraId: string,
+    micVolume: number,
+    // Whether to apply the browser's `noiseSuppression` constraint when
+    // requesting a microphone stream. Skipped if the browser doesn't
+    // advertise support (`IS_NOISE_SUPPRESSION_SUPPORTED`). Default true
+    // matches tdesktop / the legacy behavior before this flag existed.
+    noiseSuppression: boolean
+  },
+  // What the composer's recording button captures when the input is empty.
+  // 'voice' shows a microphone icon and records OGG/Opus; 'video' shows a
+  // videocamera icon and records a round 360x360 video note. Toggled by
+  // clicking the button itself (when input is empty), matches the per-client
+  // toggle in tdesktop / iOS / Android.
+  recordingMediaType: 'voice' | 'video',
+  // My QR-code popup: remembers the user's last picked chat-theme + brightness
+  // so reopens land back where they left off. `nightMode` falls back to the
+  // global theme's brightness when unset; `selectedThemeId` empty = the
+  // DEFAULT_THEME sentinel (i.e. "use the current chat theme").
+  qrCode: {
+    nightMode?: boolean,
+    selectedThemeId: string
+  },
 };
 
 // (1 - use swatch, 2 - use picker color), (color from swatch), (color from picker)
@@ -143,6 +199,9 @@ type CacheSomething<T> = {
 export type State = {
   allDialogsLoaded: DialogsStorage['allDialogsLoaded'],
   pinnedOrders: DialogsStorage['pinnedOrders'],
+  communityDialogs: {[communityId: string]: Dialog.dialogCommunity},
+  joinedCommunityIds: ChatId[] | null,
+  botCommands: {[peerId: PeerId]: {[botId: string]: BotCommand[]}},
   // contactsList: UserId[],
   contactsListCachedTime: number,
   updates: Partial<{
@@ -156,6 +215,7 @@ export type State = {
   stateCreatedTime: number,
   recentEmoji: string[],
   recentCustomEmoji: DocId[],
+  emojiVariants: {[emoji: string]: 0 | 1 | 2 | 3 | 4 | 5},
   topPeersCache: {
     [type in TopPeerType]?: {
       peers: MyTopPeer[],
@@ -168,13 +228,15 @@ export type State = {
   authState: AuthState,
   hiddenPinnedMessages: {[peerId: PeerId]: number},
   hideChatJoinRequests: {[peerId: PeerId]: number},
+  botConnectionReviews: BotConnectionReview[],
   // stateId?: number, // ! DEPRECATED
-  notifySettings: {[k in Exclude<NotifyPeer['_'], 'notifyPeer'>]?: PeerNotifySettings.peerNotifySettings},
+  notifySettings: {[k in GlobalNotifySettingsKey]?: PeerNotifySettings.peerNotifySettings},
   confirmedWebViews: BotId[],
   hiddenSimilarChannels: number[],
   appConfig: MTAppConfig,
   accountThemes: AccountThemes.accountThemes,
   shownUploadSpeedTimestamp?: number,
+  birthdayContactsDismissedDayKey?: string,
   dontShowPaidMessageWarningFor: PeerId[],
   ageVerification?: {
     date: string,
@@ -182,6 +244,7 @@ export type State = {
     clientVersion: string,
   },
   accountContentSettings: CacheSomething<AccountContentSettings>,
+  unconfirmedAuthorizations: UnconfirmedAuthorization[],
 
 
   // playbackParams?: StateSettings['playbackParams'], // ! MIGRATED TO SETTINGS
@@ -270,6 +333,68 @@ export const DEFAULT_THEME: Theme = {
         fourth_background_color: 0x4f5bd5
       }
     }
+  }, {
+    _: 'themeSettings',
+    pFlags: {},
+    base_theme: {_: 'baseThemeTinted'},
+    // accent + wallpaper aligned with iOS Dark Blue ("nightAccent"). See submodules/Telegram-iOS/
+    // submodules/TelegramPresentationData/Sources/DefaultDarkTintedPresentationTheme.swift —
+    // the home wallpaper is the `.blue` baseColor variant from `colorWallpaper` (line 13-14):
+    //   case .blue: return (.variant7, 40, [0x1e3557, 0x182036, 0x1c4352, 0x16263a])
+    // accent + bubble gradient come from the blue base-color preset so factory state matches what
+    // the accent picker offers as its first swatch (the "default" swatch is hidden on tinted).
+    accent_color: TINTED_DEFAULT_PRESET.accent_color,
+    message_colors: TINTED_DEFAULT_PRESET.message_colors,
+    wallpaper: {
+      _: 'wallPaper',
+      pFlags: {
+        default: true,
+        pattern: true,
+        dark: true
+      },
+      access_hash: '',
+      document: undefined,
+      id: '',
+      slug: 'pattern',
+      settings: {
+        _: 'wallPaperSettings',
+        pFlags: {},
+        // iOS stores intensity 40 (positive) for these dark wallpapers. tweb's pattern renderer
+        // expects the dark-pattern sign convention: dark wallpapers carry negative intensity, abs
+        // value used as the pattern overlay opacity. So we flip iOS' 40 to -40.
+        intensity: -40,
+        background_color: 0x1e3557,
+        second_background_color: 0x182036,
+        third_background_color: 0x1c4352,
+        fourth_background_color: 0x16263a
+      }
+    }
+  }, {
+    _: 'themeSettings',
+    pFlags: {},
+    base_theme: {_: 'baseThemeDay'},
+    accent_color: 0x2D7ED5,
+    message_colors: [0x2D7ED5],
+    wallpaper: {
+      _: 'wallPaper',
+      pFlags: {
+        default: true,
+        pattern: true
+      },
+      access_hash: '',
+      document: undefined,
+      id: '',
+      slug: 'pattern',
+      settings: {
+        _: 'wallPaperSettings',
+        pFlags: {},
+        intensity: 50,
+        background_color: 0xb1e0fa,
+        second_background_color: 0x82b0d8,
+        third_background_color: 0xa0d8e8,
+        fourth_background_color: 0xe5f0f8
+      }
+    }
   }],
   slug: '',
   title: '',
@@ -277,18 +402,24 @@ export const DEFAULT_THEME: Theme = {
   pFlags: {default: true}
 };
 
-const makeDefaultAppTheme = (
-  name: AppTheme['name'],
-  baseTheme: BaseTheme['_'],
-  highlightingColor: string
-): AppTheme => {
+// Per-base highlighting colors used when nothing has been computed from a wallpaper yet.
+// Stored on every settings entry so that switching the active base theme keeps highlights coherent
+// (mirrors how iOS persists a per-base TelegramThemeSettings array).
+const DEFAULT_HIGHLIGHTING_COLORS: {[base in BaseTheme['_']]?: string} = {
+  baseThemeClassic: 'hsla(86.4, 43.846153%, 45.117647%, .4)',
+  baseThemeNight: 'hsla(299.142857, 44.166666%, 37.470588%, .4)',
+  baseThemeTinted: 'hsla(258.461538, 50%, 65.490196%, .4)',
+  baseThemeDay: 'hsla(210, 67.741935%, 50.588235%, .4)'
+};
+
+const makeDefaultAppTheme = (name: AppTheme['name']): AppTheme => {
   return {
     ...DEFAULT_THEME,
     name,
-    settings: {
-      ...DEFAULT_THEME.settings.find((s) => s.base_theme._ === baseTheme),
-      highlightingColor
-    }
+    settings: DEFAULT_THEME.settings.map((s) => ({
+      ...s,
+      highlightingColor: DEFAULT_HIGHLIGHTING_COLORS[s.base_theme._] ?? ''
+    }))
   };
 };
 
@@ -332,17 +463,25 @@ export const SETTINGS_INIT: StateSettings = {
   stickers: {
     suggest: 'all',
     dynamicPackOrder: true,
-    loop: true
+    loop: true,
+    hiddenGroupSets: {},
+    hiddenGroupEmojiSets: {}
   },
   emoji: {
     suggest: true,
     big: true
   },
   themes: [
-    makeDefaultAppTheme('day', 'baseThemeClassic', 'hsla(86.4, 43.846153%, 45.117647%, .4)'),
-    makeDefaultAppTheme('night', 'baseThemeNight', 'hsla(299.142857, 44.166666%, 37.470588%, .4)')
+    makeDefaultAppTheme('day'),
+    makeDefaultAppTheme('night'),
+    makeDefaultAppTheme('tinted'),
+    makeDefaultAppTheme('light')
   ],
   theme: 'system',
+  lastThemeNames: {
+    dark: 'night',
+    light: 'day'
+  },
   notifications: {
     sound: false,
     push: true,
@@ -355,6 +494,7 @@ export const SETTINGS_INIT: StateSettings = {
   liteMode: {
     all: false,
     animations: false,
+    blur: false,
     chat: false,
     chat_background: false,
     chat_spoilers: false,
@@ -363,6 +503,7 @@ export const SETTINGS_INIT: StateSettings = {
     effects_reactions: false,
     effects_emoji: false,
     emoji: false,
+    emoji_appear: false,
     emoji_messages: false,
     emoji_panel: false,
     gif: false,
@@ -376,6 +517,7 @@ export const SETTINGS_INIT: StateSettings = {
   tabsInSidebar: false,
   playbackParams: {
     volume: 1,
+    boost: 0,
     muted: false,
     playbackRate: 1,
     playbackRates: {
@@ -389,7 +531,9 @@ export const SETTINGS_INIT: StateSettings = {
   chatContextMenuHintWasShown: false,
   seenTooltips: {
     storySound: false,
-    noForwards: false
+    noForwards: false,
+    sidebarResize: false,
+    guestBotPrivacy: 0
   },
   translations: {
     peers: {},
@@ -413,12 +557,26 @@ export const SETTINGS_INIT: StateSettings = {
   showArchiveInChatList: true,
   mediaEditor: {
     colorByBrush: {}
+  },
+  callDevices: {
+    speakerId: '',
+    microphoneId: '',
+    cameraId: '',
+    micVolume: 1,
+    noiseSuppression: true
+  },
+  recordingMediaType: 'voice',
+  qrCode: {
+    selectedThemeId: ''
   }
 };
 
 export const STATE_INIT: State = {
   allDialogsLoaded: {},
   pinnedOrders: {},
+  communityDialogs: {},
+  joinedCommunityIds: null,
+  botCommands: {},
   // contactsList: [],
   contactsListCachedTime: 0,
   updates: {},
@@ -427,6 +585,7 @@ export const STATE_INIT: State = {
   stateCreatedTime: Date.now(),
   recentEmoji: [],
   recentCustomEmoji: [],
+  emojiVariants: {},
   topPeersCache: {},
   recentSearch: [],
   version: STATE_VERSION,
@@ -436,14 +595,17 @@ export const STATE_INIT: State = {
   },
   hiddenPinnedMessages: {},
   hideChatJoinRequests: {},
+  botConnectionReviews: [],
   // stateId: nextRandomUint(32),
   notifySettings: {},
   confirmedWebViews: [],
   hiddenSimilarChannels: [],
   appConfig: {} as any,
   accountThemes: {} as any,
+  birthdayContactsDismissedDayKey: undefined,
   dontShowPaidMessageWarningFor: [],
-  accountContentSettings: {} as any
+  accountContentSettings: {} as any,
+  unconfirmedAuthorizations: []
 };
 
 export const COMMON_STATE_INIT: CommonState = {

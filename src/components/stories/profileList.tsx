@@ -1,12 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {createEffect, createSignal, For, JSX, createMemo, onCleanup, untrack, createReaction, Show, Switch, Match} from 'solid-js';
+import {getOverlayRoot} from '@helpers/appWindow';
 import {Portal} from 'solid-js/web';
-import {createStoriesViewer} from '@components/stories/viewer';
+import {createStoriesViewer, createStoriesViewerWithPeer} from '@components/stories/viewer';
 import {Document, MessageMedia, Photo, StoryItem} from '@layer';
 import {wrapStoryMedia} from '@components/stories/preview';
 import getMediaThumbIfNeeded from '@helpers/getStrippedThumbIfNeeded';
@@ -34,17 +29,18 @@ import ListenerSetter from '@helpers/listenerSetter';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import cancelClickOrNextIfNotClick from '@helpers/dom/cancelClickOrNextIfNotClick';
 import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
-import AppMyStoriesTab from '../sidebarLeft/tabs/myStories';
+import {AppMyStoriesTab} from '@components/solidJsTabs/tabs';
 import SidebarSlider from '../slider';
 import InputField from '@components/inputField';
 import confirmationPopup from '@components/confirmationPopup';
 import PopupElement from '@components/popups';
 import PopupChooseStory from '@components/popups/chooseStoryPopup';
 import createSubmenuTrigger from '@components/createSubmenuTrigger';
+import showStoriesStealthModePopup from '@components/popups/storiesStealthMode';
 import {toastNew} from '@components/toast';
 import {IconTsx} from '@components/iconTsx';
 import LottieAnimation from '@components/lottieAnimation';
-import lottieLoader from '@lib/rlottie/lottieLoader';
+import lottieLoader from '@lib/lottie/lottieLoader';
 import {copyTextToClipboard} from '@helpers/clipboard';
 import {handleShareStory} from './share';
 import wrapPeerTitle from '../wrappers/peerTitle';
@@ -85,11 +81,11 @@ class StoriesContextMenu {
 
         if(!item) return;
 
-        if(e instanceof MouseEvent) e.preventDefault();
+        if(!('touches' in e)) e.preventDefault(); // cross-realm-safe mouse check (Document PiP window)
         if(this.element.classList.contains('active')) {
           return false;
         }
-        if(e instanceof MouseEvent) e.cancelBubble = true;
+        if(!('touches' in e)) e.cancelBubble = true;
 
         const r = async() => {
           this.target = item;
@@ -249,6 +245,19 @@ class StoriesContextMenu {
         return !!story.pFlags.public && (!story.pFlags.noforwards || !!username)
       }
     }, {
+      icon: 'eyecross_outline',
+      text: 'Stories.StealthMode.View',
+      onClick: () => {
+        const {peerId} = this;
+        const id = this.storyItem.id;
+        showStoriesStealthModePopup({
+          onActivate: () => {
+            createStoriesViewerWithPeer({peerId, id});
+          }
+        });
+      },
+      verify: () => this.peerId !== rootScope.myId
+    }, {
       icon: 'select',
       text: 'Message.Context.Select',
       onClick: () => this.selection.toggleByElement(this.target),
@@ -268,7 +277,7 @@ class StoriesContextMenu {
 
     this.element = ButtonMenuSync({buttons: this.buttons, listenerSetter: this.listenerSetter});
     this.element.classList.add('search-contextmenu', 'contextmenu');
-    document.body.append(this.element);
+    getOverlayRoot().append(this.element);
 
     this.buttons.forEach((button) => button.onOpen?.());
   }
@@ -501,6 +510,7 @@ function StoriesGrid(props: {
         // @ts-ignore
         'data-mid': storyItem.id,
         'data-peer-id': stories.peer.peerId,
+        'data-timestamp': (storyItem as StoryItem.storyItem).date,
         'class': 'grid-item search-super-item',
         'onClick': () => {
           setViewerId(storyItem.id);
@@ -638,7 +648,10 @@ function StoriesGrid(props: {
           element: searchSuper,
           container: scrollable,
           position: 'center',
-          axis: 'y'
+          axis: 'y',
+          getElementPosition: ({elementPosition}) => {
+            return elementPosition - 24;
+          }
         });
       }
     }
@@ -789,12 +802,11 @@ export function profileStoriesButtonMenu(props: {
     icon: 'archive',
     text: 'MyStories.ShowArchive',
     onClick: () => {
-      const tab = props.slider.createTab(AppMyStoriesTab);
-      tab.isArchive = true;
-      if(props.peerId.isAnyChat()) {
-        tab.chatId = props.peerId.toChatId();
-      }
-      tab.open();
+      props.slider.createTab(AppMyStoriesTab).open({
+        ...AppMyStoriesTab.getInitArgs(),
+        isArchive: true,
+        chatId: props.peerId.isAnyChat() ? props.peerId.toChatId() : undefined
+      });
     },
     verify: () => Promise.resolve(props.canEdit?.() ?? true).then((canEdit) => (
       props.verify() &&

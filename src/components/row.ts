@@ -1,10 +1,4 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import type {SliderSuperTab} from '@components/slider';
+import type {default as SidebarSlider, SliderSuperTab} from '@components/slider';
 import type {SliderSuperTabEventable, SliderSuperTabEventableConstructable} from '@components/sliderTab';
 import CheckboxField, {CheckboxFieldOptions} from '@components/checkboxField';
 import RadioField from '@components/radioField';
@@ -17,7 +11,6 @@ import {attachClickEvent} from '@helpers/dom/clickEvent';
 import ListenerSetter from '@helpers/listenerSetter';
 import Button from '@components/button';
 import createContextMenu from '@helpers/dom/createContextMenu';
-import SidebarSlider from '@components/slider';
 import Icon from '@components/icon';
 
 type K = string | HTMLElement | DocumentFragment | true;

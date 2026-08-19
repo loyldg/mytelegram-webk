@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -12,7 +8,8 @@
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 
 export default function placeCaretAtEnd(el: HTMLElement, ignoreTouchCheck = false, focus = true) {
-  if(IS_TOUCH_SUPPORTED && (!ignoreTouchCheck || (document.activeElement.tagName !== 'INPUT' && !(document.activeElement as HTMLElement).isContentEditable))) {
+  const activeElement = el.ownerDocument.activeElement;
+  if(IS_TOUCH_SUPPORTED && (!ignoreTouchCheck || (activeElement.tagName !== 'INPUT' && !(activeElement as HTMLElement).isContentEditable))) {
     return;
   }
 
@@ -22,10 +19,15 @@ export default function placeCaretAtEnd(el: HTMLElement, ignoreTouchCheck = fals
     el.selectionStart = length;
     el.selectionEnd = length;
   } else {
-    const range = document.createRange();
+    const view = el.ownerDocument.defaultView;
+    if(!view) return;
+
+    const range = el.ownerDocument.createRange();
     range.selectNodeContents(el);
     range.collapse(false);
-    const sel = window.getSelection();
+    const sel = view.getSelection();
+    if(!sel) return;
+
     sel.removeAllRanges();
     sel.addRange(range);
   }

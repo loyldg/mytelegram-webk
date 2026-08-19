@@ -1,11 +1,5 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag, InputSavedStarGift, LangPackDifference, StarsAmount, MessageEntity, HelpPromoData, StoriesStealthMode, StoryAlbum} from '@layer';
-import type {Dialog, ForumTopic, MessagesStorageKey, MyMessage} from '@appManagers/appMessagesManager';
+import type {Message, StickerSet, Update, NotifyPeer, PeerNotifySettings, PollResults, Poll, WebPage, GroupCall, GroupCallParticipant, ReactionCount, MessagePeerReaction, PhoneCall, Config, Reaction, AttachMenuBot, PeerSettings, StoryItem, PeerStories, SavedDialog, SavedReactionTag, InputSavedStarGift, LangPackDifference, StarsAmount, MessageEntity, HelpPromoData, StoriesStealthMode, StoryAlbum, GlobalPrivacySettings, ConnectedBot} from '@layer';
+import type {Dialog, ForumTopic, MessagesStorageKey, MyEphemeralMessage, MyMessage} from '@appManagers/appMessagesManager';
 import type {MyDialogFilter} from '@lib/storages/filters';
 import type {AnyDialog, Folder} from '@lib/storages/dialogs';
 import type {UserTyping} from '@appManagers/appProfileManager';
@@ -13,7 +7,7 @@ import type {MyDraftMessage} from '@appManagers/appDraftsManager';
 import type {ConnectionStatusChange} from '@lib/mtproto/connectionStatus';
 import type {GroupCallId} from '@appManagers/appGroupCallsManager';
 import type {AppManagers} from '@lib/managers';
-import type {StateSettings} from '@config/state';
+import type {GlobalNotifySettingsKey, StateSettings} from '@config/state';
 import type {Progress} from '@lib/appDownloadManager';
 import type {CallId} from '@appManagers/appCallsManager';
 import type {MyDocument} from '@appManagers/appDocsManager';
@@ -25,7 +19,9 @@ import type {ApiManager} from '@appManagers/apiManager';
 import type {MonoforumDialog} from '@lib/storages/monoforumDialogs';
 import type {MyStarGift} from '@appManagers/appGiftsManager';
 import type {MyPromoData} from '@appManagers/appPromoManager';
+import type {UnconfirmedAuthorization} from '@appManagers/appAccountManager';
 import type {ActiveAccountNumber} from '@lib/accounts/types';
+import type {BotConnectionReview} from '@appManagers/appBusinessManager';
 import {NULL_PEER_ID, UserAuth} from '@appManagers/constants';
 import EventListenerBase, {EventListenerListeners} from '@helpers/eventListenerBase';
 import {MOUNT_CLASS_TO} from '@config/debug';
@@ -57,6 +53,8 @@ export type BroadcastEvents = {
   'peer_deleted': PeerId, // left chat, deleted user dialog, left channel
   'peer_full_update': PeerId,
   'peer_settings': {peerId: PeerId, settings: PeerSettings},
+  'chat_automation_update': ConnectedBot.connectedBot | undefined,
+  'bot_connection_reviews_update': BotConnectionReview[],
   'peer_stories': {peerId: PeerId, available: boolean},
   'peer_stories_hidden': {peerId: PeerId, hidden: boolean},
 
@@ -67,9 +65,6 @@ export type BroadcastEvents = {
   'filter_joined': MyDialogFilter,
 
   'folder_unread': Omit<Folder, 'dialogs' | 'dispatchUnreadTimeout'>,
-
-  'changing_folder_from_chatlist': number,
-  'changing_folder_from_sidebar': {id: number, dontAnimate?: boolean},
 
   'dialog_draft': {peerId: PeerId, dialog: Dialog | ForumTopic, drop: boolean, draft: MyDraftMessage | undefined},
   'dialog_unread': {peerId: PeerId, dialog: Dialog | ForumTopic},
@@ -92,6 +87,12 @@ export type BroadcastEvents = {
   'history_reload': PeerId,
   'history_delete_key': {historyKey: string, mid: number},
   // 'history_request': void,
+
+  'ephemeral_history_append': {storageKey: MessagesStorageKey, message: MyEphemeralMessage},
+  'ephemeral_history_edit': {storageKey: MessagesStorageKey, peerId: PeerId, mid: number, message: MyEphemeralMessage},
+  'ephemeral_history_delete': {peerId: PeerId, msgs: Set<number>},
+  'ephemeral_send_blocked': {peerId: PeerId, reason: 'ambiguous' | 'unavailable'},
+  'ephemeral_send_error': {peerId: PeerId, retryId: number},
 
   'message_edit': {storageKey: MessagesStorageKey, peerId: PeerId, mid: number, message: MyMessage},
   'message_sent': {storageKey: MessagesStorageKey, tempId: number, tempMessage: any, mid: number, message: MyMessage},
@@ -130,10 +131,10 @@ export type BroadcastEvents = {
   'stickers_updated': {type: 'recent' | 'faved', stickers: MyDocument[]},
   'stickers_top': Long,
   'stickers_order': {type: 'masks' | 'emojis' | 'stickers', order: Long[]},
-  'sticker_updated': {type: 'recent' | 'faved', document: MyDocument, faved: boolean},
+  'sticker_updated': {type: 'recent' | 'faved', document: MyDocument, faved: boolean, limitReached?: boolean},
 
   'gifs_updated': MyDocument[],
-  'gif_updated': {document: MyDocument, saved: boolean},
+  'gif_updated': {document: MyDocument, saved: boolean, limitReached?: boolean},
 
   'state_cleared': void,
   'state_synchronized': void,
@@ -142,6 +143,7 @@ export type BroadcastEvents = {
   'contacts_update': UserId,
   'avatar_update': {peerId: PeerId, threadId?: number},
   'poll_update': {poll: Poll, results: PollResults},
+  'poll_vote_restriction': {pollId: Poll['id'], state?: import('@appManagers/utils/polls/pollVoteRestriction').PollVoteRestrictionState},
   'invalidate_participants': ChatId,
   // 'channel_settings': {channelId: number},
   'webpage_updated': {id: WebPage.webPage['id'], msgs: {peerId: PeerId, mid: number, isScheduled: boolean}[]},
@@ -153,12 +155,18 @@ export type BroadcastEvents = {
   'background_change': void,
 
   'privacy_update': Update.updatePrivacy,
+  'global_privacy_update': GlobalPrivacySettings,
 
   'notify_settings': Update.updateNotifySettings,
-  'notify_peer_type_settings': {key: Exclude<NotifyPeer['_'], 'notifyPeer'>, settings: PeerNotifySettings},
+  'notify_peer_type_settings': {key: GlobalNotifySettingsKey, settings: PeerNotifySettings},
 
   'notification_reset': string,
-  'notification_cancel': `msg_${ActiveAccountNumber}_${PeerId}_${number}`,
+  'notification_cancel': `msg_${ActiveAccountNumber}_${PeerId}_${number}` |
+    `story_${ActiveAccountNumber}_${PeerId}_${number}` |
+    `storyReaction_${ActiveAccountNumber}_${PeerId}_${number}`,
+  // * `notification_cancel` can only be fired for messages that are in memory, this one covers
+  // * the whole read range (e.g. a read that came from another client after a restart)
+  'notification_cancel_up_to': {accountNumber: ActiveAccountNumber, peerId: PeerId, maxId: number},
 
   'notification_count_update': void,
 
@@ -173,6 +181,7 @@ export type BroadcastEvents = {
   'media_play': void,
 
   'emoji_recent': {emoji: AppEmoji, deleted?: boolean},
+  'emoji_variant': {baseEmoji: string, emoji: string, tone: 0 | 1 | 2 | 3 | 4 | 5},
 
   'download_progress': Progress,
   'document_downloading': DocId,
@@ -186,6 +195,7 @@ export type BroadcastEvents = {
 
   'call_update': PhoneCall,
   'call_signaling': {callId: CallId, data: Uint8Array},
+  'group_call_chain_blocks': {callId: GroupCallId, subChainId: number, blocks: Uint8Array[], nextOffset: number},
 
   'rtmp_call_update': RtmpCallInstance,
 
@@ -198,6 +208,7 @@ export type BroadcastEvents = {
   'payment_sent': {peerId: PeerId, mid: number, receiptMessage: Message.messageService},
 
   'web_view_result_sent': Long,
+  'join_chat_webview_decision': Update.updateJoinChatWebViewDecision,
 
   'premium_toggle': boolean,
   'premium_toggle_private': {isNew: boolean, isPremium: boolean},
@@ -245,6 +256,7 @@ export type BroadcastEvents = {
 
   'botforum_pending_topic_created': {peerId: PeerId, tempId: number, newId?: number},
   'promo_data_update': MyPromoData,
+  'unconfirmed_authorizations_update': UnconfirmedAuthorization[],
 
   'auto_delete_period_update': {peerId: PeerId, period: number},
 };
@@ -256,7 +268,6 @@ export type BroadcastEventsListeners = {
 export class RootScope extends EventListenerBase<BroadcastEventsListeners> {
   public myId: PeerId;
   private connectionStatus: {[name: string]: ConnectionStatusChange};
-  public settings: StateSettings;
   public managers: AppManagers;
   public premium: boolean;
 

@@ -1,4 +1,4 @@
-import {children, createMemo, JSX, onCleanup, Ref, Show, useContext} from 'solid-js';
+import {children, createMemo, JSX, onCleanup, Ref, Show, splitProps, useContext} from 'solid-js';
 import classNames from '@helpers/string/classNames';
 import {IconTsx} from '@components/iconTsx';
 import RippleElement from '@components/rippleElement';
@@ -24,6 +24,10 @@ const {
 const Row = (props: {children: JSX.Element} & Partial<{
   ref: Ref<HTMLElement>,
   clickable: boolean | JSX.HTMLAttributes<HTMLElement>['onClick'],
+  role: JSX.HTMLAttributes<HTMLElement>['role'],
+  tabIndex: number,
+  'aria-label': string,
+  'on:keydown': JSX.HTMLAttributes<HTMLElement>['on:keydown'],
   havePadding: boolean,
   noRipple: boolean,
   noWrap: boolean,
@@ -34,6 +38,8 @@ const Row = (props: {children: JSX.Element} & Partial<{
   // buttonRightLangKey: LangPackKey,
   // rightTextContent?: string,
   as: 'a' | 'label' | 'div',
+  'aria-checked': boolean,
+  'aria-disabled': boolean,
   contextMenu: Omit<Parameters<typeof createContextMenu>[0], 'findElement' | 'listenTo' | 'listenerSetter'>,
   // checkboxKeys: [LangPackKey, LangPackKey],
   classList: {[key: string]: boolean},
@@ -91,6 +97,10 @@ const Row = (props: {children: JSX.Element} & Partial<{
     <RippleElement
       ref={ref()}
       component={props.as === 'a' ? 'a' : (props.as === 'label' || isCheckbox() ? 'label' : 'div')}
+      role={props.role}
+      tabIndex={props.tabIndex}
+      aria-checked={props['aria-checked']}
+      aria-disabled={props['aria-disabled']}
       classList={{
         'row': true,
         'no-subtitle': !store.subtitle,
@@ -109,6 +119,16 @@ const Row = (props: {children: JSX.Element} & Partial<{
         (typeof(props.clickable) !== 'boolean' && props.clickable) ||
         (props.contextMenu ? openContextMenu : undefined)
       }
+      aria-label={props['aria-label']}
+      onKeyDown={!props['on:keydown'] && props.tabIndex !== undefined && props.clickable ? (event: KeyboardEvent) => {
+        if(event.key !== 'Enter' && event.key !== ' ') {
+          return;
+        }
+
+        event.preventDefault();
+        (event.currentTarget as HTMLElement).click();
+      } : undefined}
+      on:keydown={props['on:keydown']}
       noRipple={!haveRipple()}
     >
       {resolvedChildren()}
@@ -146,6 +166,7 @@ Row.RowPart = (props: {
 Row.Row = (props: {
   class: string,
   additionalClass?: string,
+  rightAdditionalClass?: string,
   left?: JSX.Element,
   right?: JSX.Element,
   rightSecondary?: boolean
@@ -160,6 +181,7 @@ Row.Row = (props: {
           class={classNames(
             props.class,
             props.additionalClass,
+            props.rightAdditionalClass,
             `row-${props.class}-right${props.rightSecondary ? ` row-${props.class}-right-secondary` : ''}`
           )}
           part={resolved()}
@@ -173,6 +195,7 @@ Row.Title = (props: {
   children: JSX.Element,
   class?: string,
   titleRight?: JSX.Element,
+  titleRightClass?: string,
   titleRightSecondary?: boolean
 }) => {
   const context = useContext(RowContext);
@@ -182,6 +205,7 @@ Row.Title = (props: {
       additionalClass={props.class}
       left={props.children}
       right={props.titleRight || context.store.checkboxFieldToggle}
+      rightAdditionalClass={props.titleRightClass}
       rightSecondary={props.titleRightSecondary}
     />
   ));
@@ -222,11 +246,10 @@ Row.Icon = (props: {
   ));
 };
 
-Row.RightContent = (props: {
-  children: JSX.Element
-}) => {
+Row.RightContent = (inProps: JSX.HTMLAttributes<HTMLDivElement>) => {
+  const [props, restProps] = splitProps(inProps, ['class']);
   return useContext(RowContext).register('rightContent', (
-    <div class="row-right">{props.children}</div>
+    <div class={classNames('row-right', props.class)} {...restProps} />
   ));
 };
 
@@ -248,12 +271,13 @@ Row.CheckboxFieldToggle = (props: {
   return useContext(RowContext).register('checkboxFieldToggle', props.children);
 };
 
-Row.Media = (props: {
+Row.Media = (inProps: JSX.HTMLAttributes<HTMLDivElement> & {
   children?: JSX.Element,
-  size: RowMediaSizeType,
-  ref?: Ref<HTMLDivElement>,
+  size?: RowMediaSizeType,
   class?: string
 }) => {
+  const [props, restProps] = splitProps(inProps, ['children', 'size', 'class']);
+
   return useContext(RowContext).register('media', (
     <div
       class={classNames(
@@ -261,7 +285,7 @@ Row.Media = (props: {
         props.size && `row-media-${props.size}`,
         props.class
       )}
-      ref={props.ref}
+      {...restProps}
     >
       {props.children}
     </div>

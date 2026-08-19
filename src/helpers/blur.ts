@@ -1,11 +1,6 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type fastBlur from '@vendor/fastBlur';
 import addHeavyTask from '@helpers/heavyQueue';
+import clearMediaElementSource from '@helpers/dom/clearMediaElementSource';
 import IS_CANVAS_FILTER_SUPPORTED from '@environment/canvasFilterSupport';
 
 const RADIUS = 2;
@@ -25,17 +20,29 @@ function processBlurNext(
   img: HTMLImageElement,
   radius: number,
   iterations: number,
-  canvas: HTMLCanvasElement = document.createElement('canvas')
+  canvas: HTMLCanvasElement = document.createElement('canvas'),
+  maxSize?: number
 ) {
-  canvas.width = img.width;
-  canvas.height = img.height;
+  let width = img.width;
+  let height = img.height;
+  // downscale the source before blurring (like the official clients do for the side-fill):
+  // blurring a small thumbnail and upscaling it produces a far stronger, frosted-glass blur
+  // than blurring the full-resolution image and scaling it down.
+  if(maxSize && Math.max(width, height) > maxSize) {
+    const scale = maxSize / Math.max(width, height);
+    width = Math.round(width * scale) || 1;
+    height = Math.round(height * scale) || 1;
+  }
+
+  canvas.width = width;
+  canvas.height = height;
 
   const ctx = canvas.getContext('2d', {alpha: false});
   if(IS_CANVAS_FILTER_SUPPORTED) {
     ctx.filter = `blur(${radius}px)`;
     ctx.drawImage(img, -radius * 2, -radius * 2, canvas.width + radius * 4, canvas.height + radius * 4);
   } else {
-    ctx.drawImage(img, 0, 0);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     fastBlurFunc(ctx, 0, 0, canvas.width, canvas.height, radius, iterations);
   }
 
@@ -46,7 +53,7 @@ type CacheValue = {canvas: HTMLCanvasElement, promise: Promise<void>};
 const cache: Map<string, CacheValue> = new Map();
 const CACHE_SIZE = 150;
 
-export default function blur(dataUri: string, radius: number = RADIUS, iterations: number = ITERATIONS) {
+export default function blur(dataUri: string, radius: number = RADIUS, iterations: number = ITERATIONS, maxSize?: number) {
   if(!dataUri) {
     throw 'no dataUri for blur: ' + dataUri;
   }
@@ -60,32 +67,30 @@ export default function blur(dataUri: string, radius: number = RADIUS, iteration
 
   let cached = cache.get(dataUri);
   if(!cached) {
-    const promise: CacheValue['promise'] = new Promise((resolve) => {
+    const img = new Image();
+    const promise: CacheValue['promise'] = requireBlurPromise.then(async() => {
       // return resolve(dataUri);
-      requireBlurPromise.then(() => {
-        const img = new Image();
-        img.onload = () => {
-          // if(IS_CANVAS_FILTER_SUPPORTED) {
-          // resolve(processBlurNext(img, radius, iterations));
-          // } else {
-          const promise = addHeavyTask({
-            items: [[img, radius, iterations, canvas]],
-            context: null,
-            process: processBlurNext
-          }, 'unshift');
-
-          promise.then(() => {
-            resolve();
-          });
-          // }
-        };
+      try {
         img.src = dataUri;
-      });
+        await img.decode();
+        await addHeavyTask({
+          items: [[img, radius, iterations, canvas, maxSize]],
+          context: null,
+          process: processBlurNext
+        }, 'unshift');
+      } finally {
+        clearMediaElementSource(img);
+      }
     });
 
     cache.set(dataUri, cached = {
       canvas,
       promise
+    });
+    promise.catch(() => {
+      if(cache.get(dataUri)?.promise === promise) {
+        cache.delete(dataUri);
+      }
     });
   } else {
     canvas.width = cached.canvas.width;

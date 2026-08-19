@@ -22,7 +22,7 @@ import {ButtonIconTsx} from '@components/buttonIconTsx';
 import {StarGiftBackdrop} from '@components/stargifts/stargiftBackdrop';
 import {ButtonMenuToggleTsx} from '@components/buttonMenuToggleTsx';
 import {copyTextToClipboard} from '@helpers/clipboard';
-import PopupPickUser from '@components/popups/pickUser';
+import {showSharingPicker2Popup} from '@components/popups/pickUser';
 import {I18nTsx} from '@helpers/solid/i18n';
 import tsNow from '@helpers/tsNow';
 import {useAppState} from '@stores/appState';
@@ -42,7 +42,7 @@ import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
 import PopupStarGiftValue from '@components/popups/starGiftValue';
 import Icon from '@components/icon';
 import PopupStarGiftWear from '@components/popups/starGiftWear';
-import {setQuizHint} from '@components/poll';
+import {setQuizHint} from '@components/quizHint';
 import createStarGiftUpgradePopup from '@components/popups/starGiftUpgrade';
 import classNames from '@helpers/string/classNames';
 import PopupPayment from '@components/popups/payment';
@@ -50,7 +50,7 @@ import {StarGiftUpgradePreview} from '@appManagers/appGiftsManager';
 import {rgbIntToHex} from '@helpers/color';
 import wrapSticker from '@components/wrappers/sticker';
 import createMiddleware from '@helpers/solid/createMiddleware';
-import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
+import LottiePlayer from '@lib/lottie/lottiePlayer';
 import {SimpleAnimation} from '@helpers/solid/animations';
 import BezierEasing from '@vendor/bezierEasing';
 import {AnimatedSuper} from '@components/animatedSuper';
@@ -230,6 +230,7 @@ function UpgradeAnimation(props: {
   const totalSections = backdrops.length + 2;
   const sectionSize = 100 / totalSections;
   const colors = backdrops.map((b) => rgbIntToHex(b.edge_color));
+  const lastColor = colors[colors.length - 1];
   const gradientStopsStr = [
     // initial padding
     `${colors[0]} 0%`, `${colors[0]} ${sectionSize}%`,
@@ -239,7 +240,7 @@ function UpgradeAnimation(props: {
       return [`${color} ${base + sectionSize * 0.33}%`, `${color} ${base + sectionSize * 0.67}%`];
     }),
     // final padding
-    `${colors.at(-1)} ${(totalSections - 1) * sectionSize}%`, `${colors.at(-1)} 100%`
+    `${lastColor} ${(totalSections - 1) * sectionSize}%`, `${lastColor} 100%`
   ].join(', ');
 
   let modelsContainer!: HTMLDivElement;
@@ -249,7 +250,7 @@ function UpgradeAnimation(props: {
   onMount(async() => {
     const middleware = createMiddleware();
 
-    let lastPlayer: RLottiePlayer;
+    let lastPlayer: LottiePlayer;
     await Promise.all(models.map(async(model, idx) => {
       const div = document.createElement('div');
       const isLast = idx === models.length - 1;
@@ -269,7 +270,7 @@ function UpgradeAnimation(props: {
         middleware: middleware.get()
       }).then(({render}) => render).then((player) => {
         if(isLast) {
-          lastPlayer = player as RLottiePlayer;
+          lastPlayer = player as LottiePlayer;
         }
       });
     }));
@@ -575,6 +576,12 @@ export default class PopupStarGiftInfo extends PopupElement {
       setIsWearing(wearingGiftId === gift.id);
     })
 
+    const openPeer = (peerId: PeerId) => {
+      appImManager.setInnerPeer({peerId})
+      this.onClickAway?.()
+      this.hide()
+    }
+
     const handleAttributeClick = (attribute: StarGiftAttribute.starGiftAttributeModel | StarGiftAttribute.starGiftAttributeBackdrop | StarGiftAttribute.starGiftAttributePattern) => {
       if(this.onAttributeClick) {
         this.onAttributeClick(attribute);
@@ -645,11 +652,7 @@ export default class PopupStarGiftInfo extends PopupElement {
             'StarGiftOwner',
             <TablePeer
               peerId={getPeerId(gift.owner_id)}
-              onClick={() => {
-                appImManager.setInnerPeer({peerId: getPeerId(gift.owner_id)})
-                this.onClickAway?.()
-                this.hide()
-              }}
+              onClick={() => openPeer(getPeerId(gift.owner_id))}
             />
           ]);
         } else if(gift.owner_name) {
@@ -749,7 +752,10 @@ export default class PopupStarGiftInfo extends PopupElement {
         rows.push([
           'StarGiftFromShort',
           <>
-            <TablePeer peerId={fromId} />
+            <TablePeer
+              peerId={fromId}
+              onClick={() => openPeer(fromId)}
+            />
             <TableButton
               text="StarGiftSendInline"
               onClick={() => {
@@ -840,10 +846,7 @@ export default class PopupStarGiftInfo extends PopupElement {
             <PeerTitleTsx
               peerId={peerId}
               onlyFirstName
-              onClick={() => {
-                appImManager.setInnerPeer({peerId})
-                this.hide()
-              }}
+              onClick={() => openPeer(peerId)}
             />
           );
         };
@@ -901,7 +904,7 @@ export default class PopupStarGiftInfo extends PopupElement {
     }
 
     const handleShare = () => {
-      PopupPickUser.createSharingPicker2().then(({peerId, threadId, monoforumThreadId}) => {
+      showSharingPicker2Popup().then(({peerId, threadId, monoforumThreadId}) => {
         rootScope.managers.appMessagesManager.sendText({peerId, threadId, replyToMonoforumPeerId: monoforumThreadId, text: 'https://t.me/nft/' + (gift as StarGift.starGiftUnique).slug});
         appImManager.setInnerPeer({peerId, threadId, monoforumThreadId});
         this.hide();
@@ -1108,10 +1111,7 @@ export default class PopupStarGiftInfo extends PopupElement {
                       <PeerTitleTsx
                         peerId={getPeerId(gift.released_by)}
                         username
-                        onClick={() => {
-                          appImManager.setInnerPeer({peerId: getPeerId(gift.released_by)})
-                          this.hide()
-                        }}
+                        onClick={() => openPeer(getPeerId(gift.released_by))}
                       />
                     ]}
                   /> :

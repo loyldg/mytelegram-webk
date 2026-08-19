@@ -1,5 +1,6 @@
 import {RichText, TextWithEntities, MessageEntity} from '@layer';
 import wrapTextWithEntities from '@lib/richTextProcessor/wrapTextWithEntities';
+import {encodeInlineMath} from '@helpers/math/mathMarker';
 
 type Options = {
   webPageId: Long,
@@ -102,16 +103,20 @@ function processRichText(richText: RichText, options: Options): TextWithEntities
         offset,
         length
       }), options);
-    case 'textUrl':
+    case 'textUrl': {
+      // fetchLong only returns a number for longs inside the safe-integer range — a bare truthy
+      // check would take a stringified '0' for a real webpage
+      const hasWebPage = !!richText.webpage_id && richText.webpage_id !== '0';
       return wrapEntity(richText.text, (offset, length) => ({
         _: 'messageEntityTextUrl',
         offset,
         length,
-        url: richText.webpage_id ?
+        url: hasWebPage ?
           'tg://iv?url=' + encodeURIComponent(richText.url) :
           richText.url,
-        safe: !!richText.webpage_id
+        safe: hasWebPage
       }), options);
+    }
     case 'textEmail':
       return wrapEntity(richText.text, (offset, length) => ({
         _: 'messageEntityEmail',
@@ -130,6 +135,15 @@ function processRichText(richText: RichText, options: Options): TextWithEntities
         offset,
         length
       }), options);
+    case 'textMath':
+      // Carry inline math as a base64 marker (like master's markdown path) so the IV's
+      // RichTextRenderer -> hydrateInlineMath() renders it with Temml. Consumers that want plain
+      // text (e.g. reply/search summaries) decode the marker back to the raw LaTeX source.
+      return {
+        _: 'textWithEntities',
+        text: encodeInlineMath(richText.source),
+        entities: []
+      };
     case 'textImage':
       return wrapEntity({_: 'textPlain', text: '\x01'}, (offset, length) => ({
         _: 'messageEntityCustomEmoji',
@@ -138,6 +152,82 @@ function processRichText(richText: RichText, options: Options): TextWithEntities
         length,
         w: richText.w,
         h: richText.h
+      }), options);
+    case 'textCustomEmoji':
+      return wrapEntity({_: 'textPlain', text: richText.alt || '\x01'}, (offset, length) => ({
+        _: 'messageEntityCustomEmoji',
+        document_id: richText.document_id,
+        offset,
+        length
+      }), options);
+    case 'textSpoiler':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntitySpoiler',
+        offset,
+        length
+      }), options);
+    case 'textMention':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityMention',
+        offset,
+        length
+      }), options);
+    case 'textHashtag':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityHashtag',
+        offset,
+        length
+      }), options);
+    case 'textBotCommand':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityBotCommand',
+        offset,
+        length
+      }), options);
+    case 'textCashtag':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityCashtag',
+        offset,
+        length
+      }), options);
+    case 'textAutoUrl':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityUrl',
+        offset,
+        length
+      }), options);
+    case 'textAutoEmail':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityEmail',
+        offset,
+        length
+      }), options);
+    case 'textAutoPhone':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityPhone',
+        offset,
+        length
+      }), options);
+    case 'textBankCard':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityBankCard',
+        offset,
+        length
+      }), options);
+    case 'textMentionName':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityMentionName',
+        offset,
+        length,
+        user_id: richText.user_id
+      }), options);
+    case 'textDate':
+      return wrapEntity(richText.text, (offset, length) => ({
+        _: 'messageEntityFormattedDate',
+        pFlags: richText.pFlags,
+        offset,
+        length,
+        date: richText.date
       }), options);
     case 'textSubscript':
       return wrapEntity(richText.text, (offset, length) => ({
@@ -165,6 +255,10 @@ function processRichText(richText: RichText, options: Options): TextWithEntities
         // )
       }), options);
     }
+    case 'textDiff':
+      // Normal rendering resolves a diff to its updated text. A dedicated diff
+      // viewer can render old_text separately when that UI is implemented.
+      return processRichText(richText.text, options);
     default:
       return {
         _: 'textWithEntities',

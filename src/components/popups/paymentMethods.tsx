@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import PopupElement from '.';
 import {i18n} from '@lib/langPack';
 import {PaymentsPaymentForm, User} from '@layer';
@@ -20,7 +14,7 @@ export default class PopupPaymentMethods extends PopupElement {
   constructor(
     private paymentForm: PaymentsPaymentForm.paymentsPaymentForm,
     private user: User.user,
-    private savedCard?: PaymentCardDetails,
+    private savedCard?: PaymentCardDetails
   ) {
     super('popup-payment popup-payment-methods', {
       closable: true,

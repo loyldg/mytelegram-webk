@@ -1,20 +1,9 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import EventListenerBase from '@helpers/eventListenerBase';
-import {TelegramWebViewEvent, TelegramWebViewEventCallback, TelegramWebViewEventMap, TelegramWebViewSendEventMap} from '@types';
+import {TelegramWebViewEvent, TelegramWebViewEventMap, TelegramWebViewSendEventMap} from '@types';
 
-const weakMap: WeakMap<Window, TelegramWebViewEventCallback> = new WeakMap();
+const weakMap: WeakMap<Window, TelegramWebView> = new WeakMap();
 window.addEventListener('message', (e) => {
-  const callback = weakMap.get(e.source as Window);
-  if(!callback) {
-    return;
-  }
-
-  callback(JSON.parse(e.data));
+  weakMap.get(e.source as Window)?.onMessage(e.origin, e.data);
 });
 
 export default class TelegramWebView extends EventListenerBase<{
@@ -25,12 +14,14 @@ export default class TelegramWebView extends EventListenerBase<{
 
   private onLoad: () => void;
   private html: string;
+  private origin: string;
 
-  constructor({url, sandbox, allow, html, onLoad}: {
+  constructor({url, sandbox, allow, html, origin, onLoad}: {
     url?: string,
     sandbox?: string,
     allow?: string,
     html?: string,
+    origin?: string,
     onLoad?: () => void
   }) {
     super(false);
@@ -40,6 +31,7 @@ export default class TelegramWebView extends EventListenerBase<{
     if(sandbox) iframe.setAttribute('sandbox', sandbox);
     if(allow) iframe.allow = allow;
     if(html) this.html = html;
+    if(origin) this.origin = origin;
 
     if(onLoad) {
       this.onLoad = onLoad;
@@ -47,12 +39,31 @@ export default class TelegramWebView extends EventListenerBase<{
     }
   }
 
+  // ! `origin` is set only for a frame the server asked to keep on the origin it was opened at
+  // ! (`webViewResultUrl.same_origin`) — the WindowProxy keeps its identity across a cross-origin
+  // ! navigation, so without this the document that replaced it would inherit the bridge, and with
+  // ! it the privileges of the bot the frame was opened for
+  public setOrigin(origin: string) {
+    this.origin = origin;
+  }
+
+  public onMessage(origin: string, data: string) {
+    if(this.origin && origin !== this.origin) {
+      return;
+    }
+
+    this.onTelegramWebViewEvent(JSON.parse(data));
+  }
+
   public onMount() {
-    weakMap.set(this.iframe.contentWindow, this.onTelegramWebViewEvent);
+    // ! the WindowProxy stays the same object across the srcdoc navigation, so registering
+    // ! before assigning it keeps the bridge working and avoids missing an early event
+    // ! from the frame
+    weakMap.set(this.iframe.contentWindow, this);
     if(this.html) {
-      this.iframe.contentWindow.document.open();
-      this.iframe.contentWindow.document.write(this.html);
-      this.iframe.contentWindow.document.close();
+      // ! never write into contentWindow.document — a no-src iframe inherits this origin,
+      // ! which would run the embedded third-party scripts as web.telegram.org
+      this.iframe.srcdoc = this.html;
     }
   }
 
@@ -80,9 +91,12 @@ export default class TelegramWebView extends EventListenerBase<{
     }
 
     ++this.lastDispatchedWebViewEvent.count;
+    // ! targeting the origin makes the browser drop the event when the frame has navigated away —
+    // ! otherwise an answer to a request the mini app made (its location, the clipboard, a custom
+    // ! method result) would be handed to whatever document occupies the frame by the time it arrives
     this.iframe.contentWindow.postMessage(JSON.stringify({
       eventType,
       eventData
-    }), '*');
+    }), this.origin || '*');
   }
 }

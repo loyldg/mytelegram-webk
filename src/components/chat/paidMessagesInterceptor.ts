@@ -65,6 +65,7 @@ export default class PaidMessagesInterceptor {
   //   messageCount: 3
   // };
 
+  public static PaymentRejectedSymbol: typeof PAYMENT_REJECTED = PAYMENT_REJECTED;
 
   constructor(private chat: Chat, private managers: AppManagers) {}
 
@@ -90,7 +91,7 @@ export default class PaidMessagesInterceptor {
     if(PaidMessagesInterceptor.starsBalance < totalStarsAmount)
     {
       this.pendingUndoableMessage.abort();
-      PopupElement.createPopup(PopupStars);
+      PopupElement.createPopup(PopupStars, {spendPurposePeerId: peerId});
       return PAYMENT_REJECTED;
     }
 
@@ -141,7 +142,7 @@ export default class PaidMessagesInterceptor {
 
     if(PaidMessagesInterceptor.starsBalance < totalStarsAmount)
     {
-      PopupElement.createPopup(PopupStars);
+      PopupElement.createPopup(PopupStars, {spendPurposePeerId: peerId});
       return PAYMENT_REJECTED;
     }
 

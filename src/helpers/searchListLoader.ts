@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {MediaSearchContext} from '@components/appMediaPlaybackController';
 import type {SearchSuperContext} from '@components/appSearchSuper';
 import type {Message} from '@layer';
@@ -50,16 +44,17 @@ export default class SearchListLoader<Item extends {mid: number, peerId: PeerId}
             this.log('loaded more media by maxId:', maxId, value, older, this.reverse);
           } */
 
+          // * a cached (non-global) search returns only mids, resolve them before filtering
+          if(!value.messages) {
+            value.messages = value.history.map((mid) => apiManagerProxy.getMessageByPeer(peerId, mid));
+          }
+
           if(this.searchContext.inputFilter._ === 'inputMessagesFilterChatPhotos') {
             filterChatPhotosMessages(value);
           }
 
           if(value.nextRate) {
             this.searchContext.nextRate = value.nextRate;
-          }
-
-          if(!value.messages) {
-            value.messages = value.history.map((mid) => apiManagerProxy.getMessageByPeer(peerId, mid));
           }
 
           return {count: value.count, items: value.messages};
