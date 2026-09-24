@@ -2,10 +2,12 @@ import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import DialogsPlaceholder from '@helpers/dialogsPlaceholder';
 import replaceContent from '@helpers/dom/replaceContent';
 import ListenerSetter from '@helpers/listenerSetter';
+import {getMiddleware, MiddlewareHelper} from '@helpers/middleware';
+import attachPinnedDialogsReorder from '@components/dialogsPinnedReorder';
 import throttle from '@helpers/schedulers/throttle';
 import {SequentialCursorFetcher, SequentialCursorFetcherResult} from '@helpers/sequentialCursorFetcher';
 import windowSize from '@helpers/windowSize';
-import type {AppDialogsManager} from '@lib/appDialogsManager';
+import type {AppDialogsManager, DialogDom} from '@lib/appDialogsManager';
 import appImManager from '@lib/appImManager';
 import {AppManagers} from '@lib/managers';
 import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
@@ -22,6 +24,34 @@ import {AutonomousDialogList} from '@components/autonomousDialogList/dialogs';
 
 export const DIALOG_LOAD_COUNT = 20;
 const NOT_IMPLEMENTED_ERROR = new Error('not implemented');
+
+/**
+ * Shows the peer's ongoing activity in place of the last message. Applied both
+ * from the `peer_typings` event and when a dialog element is (re)built, since a
+ * row created while the peer is already typing gets no event of its own.
+ *
+ * Returns whether the row is left showing an activity that can no longer be
+ * rendered, i.e. the caller has to put the last message back.
+ */
+export async function setDialogTyping({dom, peerId, threadId}: {
+  dom: DialogDom,
+  peerId: PeerId,
+  threadId?: number
+}) {
+  const oldTypingElement = dom.lastMessageSpan.querySelector('.peer-typing-container') as HTMLElement;
+  const newTypingElement = await appImManager.getPeerTyping(peerId, oldTypingElement, threadId);
+  if(newTypingElement) {
+    if(!oldTypingElement) {
+      replaceContent(dom.lastMessageSpan, newTypingElement);
+      dom.lastMessageSpan.classList.add('user-typing');
+    }
+
+    return false;
+  }
+
+  // * the row shows an activity that can no longer be rendered — its last message has to come back
+  return !!oldTypingElement;
+}
 
 type DialogKey = any;
 export type PossibleDialog = AnyDialog | MonoforumDialog;
@@ -47,6 +77,7 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
   protected managers: AppManagers;
   protected appDialogsManager: AppDialogsManager;
   protected listenerSetter: ListenerSetter;
+  protected middlewareHelper: MiddlewareHelper;
   protected loadDialogsPromise: Promise<{cached: boolean, renderPromise: AutonomousDialogList['loadDialogsRenderPromise']}>;
   protected loadDialogsRenderPromise: Promise<void>;
   protected placeholder: DialogsPlaceholder;
@@ -80,6 +111,7 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
     this.log = logger('CL');
     this.managers = rootScope.managers;
     this.listenerSetter = new ListenerSetter();
+    this.middlewareHelper = getMiddleware();
     this.appDialogsManager = appDialogsManager;
   }
 
@@ -305,15 +337,14 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
       return;
     }
 
-    const oldTypingElement = dom.lastMessageSpan.querySelector('.peer-typing-container') as HTMLElement;
-    const newTypingElement = await appImManager.getPeerTyping(
-      dialog.peerId,
-      oldTypingElement,
-      isForumTopic(dialog) ? dialog.id : undefined
-    );
-    if(!oldTypingElement && newTypingElement) {
-      replaceContent(dom.lastMessageSpan, newTypingElement);
-      dom.lastMessageSpan.classList.add('user-typing');
+    const needsLastMessage = await setDialogTyping({
+      dom,
+      peerId: dialog.peerId,
+      threadId: isForumTopic(dialog) ? dialog.id : undefined
+    });
+
+    if(needsLastMessage) {
+      this.unsetTyping(dialog);
     }
   }
 
@@ -334,14 +365,17 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
   }
 
   public getDialogDom(key: DialogKey) {
-    // return this.doms[peerId];
-    const element = this.sortedList.getDialogElement(key);
+    const element = this.getDialogElement(key);
     return element?.dom;
   }
 
   public getDialogElement(key: DialogKey) {
     const element = this.sortedList.getDialogElement(key);
     return element;
+  }
+
+  public getListElement(key: DialogKey) {
+    return this.getDialogElement(key)?.dom.listEl;
   }
 
   public bindScrollable() {
@@ -372,10 +406,29 @@ export class AutonomousDialogListBase<T extends PossibleDialog = PossibleDialog>
     return this.onChatsScroll();
   }
 
+  /**
+   * Lets the pinned block of this list be reordered by dragging one of its rows, like every other
+   * client - the list answers for what the reorder needs to know (`attachPinnedDialogsReorder`).
+   * `canReorder` is for a list that can be reordered only while a mode is on.
+   */
+  public attachPinnedReorder(canReorder?: () => boolean) {
+    return attachPinnedDialogsReorder({
+      list: this.sortedList.list,
+      scrollable: this.scrollable,
+      middleware: this.middlewareHelper.get(),
+      sortedList: this.sortedList,
+      managers: this.managers,
+      getFilterId: () => this.getFilterId(),
+      getDialogKey: (element) => this.getDialogKeyFromElement(element),
+      canReorder
+    });
+  }
+
   public destroy() {
     this.clear();
     this.scrollable.destroy();
     this.listenerSetter.removeAll();
+    this.middlewareHelper.destroy();
     this.sortedList?.destroy();
   }
 }

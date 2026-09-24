@@ -1,13 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../shared" as *;
 
 .invite-link {
-  border-radius: $border-radius-medium;
+  border-radius: $button-border-radius;
   background-color: var(--background-color);
   position: relative;
   color: var(--primary-text-color);
@@ -40,12 +34,24 @@
 
   &-menu {
     flex: 0 0 auto;
+    margin-inline-start: .375rem;
   }
 
   &-button {
-    margin-top: .5rem;
+    margin-block: .5rem;
     height: 3rem;
     text-transform: uppercase;
+  }
+
+  // Two actions under the link share the row evenly.
+  &-buttons {
+    display: flex;
+    gap: .5rem;
+
+    > .invite-link-button {
+      flex: 1 1 0;
+      min-width: 0;
+    }
   }
 
   &-subtitle {

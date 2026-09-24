@@ -2,7 +2,7 @@ import Section from '@components/section';
 import {useSuperTab} from '@components/solidJsTabs/superTabProvider';
 import type {AppPasskeysTab} from '@components/solidJsTabs';
 import anchorCallback from '@helpers/dom/anchorCallback';
-import StickerAndTitle from '@components/stickerAndTitle';
+import MediaHeader from '@components/mediaHeader';
 import {createEffect, createSignal, For, Show} from 'solid-js';
 import {formatFullSentTime} from '@helpers/date';
 import createMiddleware from '@helpers/solid/createMiddleware';
@@ -58,7 +58,7 @@ const PasskeyItem = (passkey: Passkey) => {
       }}
     >
       <Show when={!passkey.software_emoji_id}>
-        <Row.Icon icon="key" />
+        <Row.Icon icon="key_filled" />
       </Show>
       <Row.Title class="text-bold">{wrapEmojiText(passkey.name)}</Row.Title>
       <Row.Subtitle>{subtitle()}</Row.Subtitle>
@@ -102,11 +102,10 @@ const PasskeysTab = () => {
       caption="Privacy.Passkeys.Caption"
       captionArgs={[anchorCallback(() => showPasskeyPopup(onCreation))]}
     >
-      <StickerAndTitle
-        sticker={{name: 'key', size: 100}}
-        subtitle={i18n('Passkey.Subtitle')}
-        subtitleSecondary
-      />
+      <MediaHeader>
+        <MediaHeader.Sticker name="key" size={100} />
+        <MediaHeader.Subtitle color="secondary">{i18n('Passkey.Subtitle')}</MediaHeader.Subtitle>
+      </MediaHeader>
       <div class={styles.items}>
         <For each={tab.payload.passkeys}>
           {PasskeyItem}

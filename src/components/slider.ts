@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {horizontalMenu} from '@components/horizontalMenu';
 import TransitionSlider from '@components/transition';
 import appNavigationController, {NavigationItem} from '@components/appNavigationController';
@@ -136,13 +130,11 @@ export default class SidebarSlider {
       // @ts-ignore
       tab.onOpen?.();
 
-      // @ts-ignore
-      if(tab.onOpenAfterTimeout) {
-        setTimeout(() => {
-          // @ts-ignore
-          tab.onOpenAfterTimeout();
-        }, TRANSITION_TIME);
-      }
+      setTimeout(() => {
+        // @ts-ignore
+        tab.onOpenAfterTimeout?.();
+        tab.shown.resolve();
+      }, TRANSITION_TIME);
     }
 
     this.pushNavigationItem(tab);
@@ -165,6 +157,52 @@ export default class SidebarSlider {
       tab.close();
     }
     return hasTabs;
+  }
+
+  private async closeTabsNaturallyUntil(
+    target?: SliderSuperTab
+  ): Promise<boolean> {
+    while(
+      this.historyTabIds.length &&
+      this.historyTabIds[this.historyTabIds.length - 1] !== target
+    ) {
+      const tabId = this.historyTabIds[this.historyTabIds.length - 1];
+      const tab = tabId instanceof SliderSuperTab ? tabId : this.tabs.get(tabId);
+
+      const confirmation = tab?.isConfirmationNeededOnClose?.();
+      if(confirmation) {
+        const confirmed = await Promise.resolve(confirmation).then(() => true, () => false);
+        if(!confirmed) {
+          return false;
+        }
+
+        // The stack may have shifted while the popup was open; re-evaluate.
+        if(this.historyTabIds[this.historyTabIds.length - 1] !== tabId) {
+          continue;
+        }
+      }
+
+      this.closeTab(tabId, undefined, false);
+    }
+
+    return !target || this.historyTabIds.includes(target);
+  }
+
+  // Close the open tabs from the top of the stack down, the same way the back
+  // arrow does — each tab that needs confirmation (isConfirmationNeededOnClose)
+  // gets to show its popup. If the user declines (the confirmation rejects),
+  // stop and return false; the declined tab and everything beneath it stay open.
+  // Unlike closeAllTabs, which force-closes every tab and ignores confirmation.
+  public closeAllTabsNaturally(): Promise<boolean> {
+    return this.closeTabsNaturallyUntil();
+  }
+
+  public closeTabsUntilTab(target: SliderSuperTab): Promise<boolean> {
+    if(!this.historyTabIds.includes(target)) {
+      return Promise.resolve(false);
+    }
+
+    return this.closeTabsNaturallyUntil(target);
   }
 
   public sliceTabsUntilTab(tabConstructor: SliderSuperTabConstructable, preserveTab: SliderSuperTab) {
@@ -200,6 +238,8 @@ export default class SidebarSlider {
 
     const tab: SliderSuperTab = id instanceof SliderSuperTab ? id : this.tabs.get(id);
     if(tab) {
+      tab.resetShown();
+
       try {
         // @ts-ignore
         tab.onClose?.();

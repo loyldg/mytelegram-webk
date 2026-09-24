@@ -6,17 +6,24 @@ import rootScope from '@lib/rootScope';
 import {AutonomousForumTopicList} from '@components/autonomousDialogList/forumTopics';
 import ButtonMenuToggle from '@components/buttonMenuToggle';
 import {ChatType} from '@components/chat/chatType';
-import PopupElement from '@components/popups';
-import PopupDeleteDialog from '@components/popups/deleteDialog';
+import showDeleteDialogPopup from '@components/popups/deleteDialog';
 import appSidebarLeft from '@components/sidebarLeft';
-import AppEditTopicTab from '@components/sidebarRight/tabs/editTopic';
-import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMedia';
+import {AppEditTopicTab} from '@components/solidJsTabs/tabs';
+import AppSharedMediaTab from '@components/sidebarRight/tabs/sharedMediaTab';
+import ForumTopicsSelection from '@components/forumTopicsSelection';
 import SortedDialogList from '@components/sortedDialogList';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import {ForumTab} from '@components/forumTab/forumTab';
+import getGroupForumMembershipAction
+from '@components/forumTab/getGroupForumMembershipAction';
+import joinChat from '@components/chat/joinChat';
+import {toastNew} from '@components/toast';
 
 
 export class GroupForumTab extends ForumTab {
+  /** Selecting several topics of this forum at once, for as long as the tab is open */
+  protected selection: ForumTopicsSelection;
+
   syncInit(): void {
     super.syncInit();
 
@@ -38,9 +45,52 @@ export class GroupForumTab extends ForumTab {
     });
 
     const list = this.xd.sortedList.list;
-    appDialogsManager.setListClickListener({list, onFound: null, withContext: true});
+
+    // * the topics of this forum are selected on their own, and by their own rules - a topic is
+    // * neither archived nor marked unread, and it is closed and reopened instead (Android's
+    // * `TopicsFragment`). The bar stands in for this tab's header, so it goes with the tab
+    this.selection = new ForumTopicsSelection({
+      managers: this.managers,
+      getHeader: () => this.header,
+      getFilterId: () => this.peerId,
+      getSortedList: () => this.xd.sortedList,
+      getDialogKey: (element) => this.xd.getDialogKeyFromElement(element),
+      listContainer: this.scrollable.container
+    });
+
+    appDialogsManager.setListClickListener({list, onFound: null, withContext: true, selection: this.selection});
     this.scrollable.append(list);
     this.xd.bindScrollable();
+
+    // a forum keeps its pinned topics in the same kind of block a folder keeps its pinned chats
+    this.xd.attachPinnedReorder();
+
+    const getMembershipAction = () => {
+      return getGroupForumMembershipAction(
+        apiManagerProxy.getChat(this.peerId.toChatId())
+      );
+    };
+
+    let joining = false;
+    const join = async() => {
+      if(joining) {
+        return;
+      }
+
+      joining = true;
+      try {
+        await joinChat({
+          peerId: this.peerId,
+          managers: this.managers,
+          appImManager
+        });
+      } catch(error) {
+        console.error('join forum error', error);
+        toastNew({langPackKey: 'Error.AnError'});
+      } finally {
+        joining = false;
+      }
+    };
 
     const btnMenu = ButtonMenuToggle({
       listenerSetter: this.listenerSetter,
@@ -49,7 +99,7 @@ export class GroupForumTab extends ForumTab {
         icon: 'add',
         text: 'ForumTopic.Context.New',
         onClick: () => {
-          appSidebarLeft.createTab(AppEditTopicTab).open(this.peerId);
+          appSidebarLeft.createTab(AppEditTopicTab).open({peerId: this.peerId});
         },
         separatorDown: true,
         verify: () => this.managers.appChatsManager.hasRights(this.peerId.toChatId(), 'manage_topics')
@@ -77,12 +127,24 @@ export class GroupForumTab extends ForumTab {
         danger: true,
         text: 'LeaveMegaMenu',
         onClick: () => {
-          PopupElement.createPopup(PopupDeleteDialog, this.peerId, undefined, (promise) => {
+          showDeleteDialogPopup(this.peerId, undefined, (promise) => {
             this._close();
           });
         },
         separator: true,
-        verify: async() => !!(await this.managers.appMessagesManager.getDialogOnly(this.peerId))
+        verify: () => getMembershipAction() === 'leave'
+      }, {
+        icon: 'adduser',
+        text: 'JoinByPeekGroupTitle',
+        onClick: join,
+        separator: true,
+        verify: () => !joining && getMembershipAction() === 'join'
+      }, {
+        icon: 'adduser',
+        text: 'ForumTopic.Context.ApplyToJoin',
+        onClick: join,
+        separator: true,
+        verify: () => !joining && getMembershipAction() === 'request'
       }]
     });
 

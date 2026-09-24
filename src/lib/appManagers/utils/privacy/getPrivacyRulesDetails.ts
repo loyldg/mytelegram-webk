@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {PrivacyRule} from '@layer';
 import PrivacyType from '@appManagers/utils/privacy/privacyType';
 
@@ -12,6 +6,8 @@ export default function getPrivacyRulesDetails(rules: PrivacyRule[]) {
 
   type peers = {users: UserId[], chats: ChatId[]};
   const allowPeers: peers = {users: [], chats: []}, disallowPeers: peers = {users: [], chats: []};
+  let allowMiniApps = false;
+  let disallowMiniApps = false;
   rules.forEach((rule) => {
     switch(rule._) {
       case 'privacyValueAllowAll':
@@ -38,8 +34,14 @@ export default function getPrivacyRulesDetails(rules: PrivacyRule[]) {
       case 'privacyValueDisallowUsers':
         disallowPeers.users.push(...rule.users);
         break;
+      case 'privacyValueAllowBots':
+        allowMiniApps = true;
+        break;
+      case 'privacyValueDisallowBots':
+        disallowMiniApps = true;
+        break;
     }
   });
 
-  return {type: types[0], disallowPeers, allowPeers};
+  return {type: types[0], disallowPeers, allowPeers, allowMiniApps, disallowMiniApps};
 }

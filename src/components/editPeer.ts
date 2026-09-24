@@ -1,11 +1,4 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import {InputFile} from '@layer';
-import AvatarEdit from '@components/avatarEdit';
+import AvatarEdit, {AvatarEditPayload} from '@components/avatarEdit';
 import InputField from '@components/inputField';
 import ListenerSetter from '@helpers/listenerSetter';
 import ButtonCorner from '@components/buttonCorner';
@@ -17,7 +10,7 @@ import {avatarNew} from '@components/avatarNew';
 export default class EditPeer {
   public nextBtn: HTMLButtonElement;
 
-  public uploadAvatar: () => Promise<InputFile>;
+  public uploadAvatar: AvatarEditPayload | undefined;
   public avatarEdit: AvatarEdit;
   public avatarElem: ReturnType<typeof avatarNew>;
 
@@ -61,8 +54,8 @@ export default class EditPeer {
       this.avatarElem.node.classList.add('avatar-placeholder');
 
       if(!options.doNotEditAvatar) {
-        this.avatarEdit = new AvatarEdit((_upload) => {
-          this.uploadAvatar = _upload;
+        this.avatarEdit = new AvatarEdit((payload) => {
+          this.uploadAvatar = payload;
           this.handleChange();
           this.avatarElem.node.remove();
         }, options.popupOptions);

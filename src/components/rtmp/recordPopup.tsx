@@ -1,7 +1,7 @@
 import {Show, createSignal} from 'solid-js';
-import {render} from 'solid-js/web';
 import {InputFieldTsx} from '@components/inputFieldTsx';
-import PopupElement from '@components/popups';
+import PopupElement, {createPopup} from '@components/popups/indexTsx';
+import rootScope from '@lib/rootScope';
 
 import Row from '@components/rowTsx';
 import CheckboxField from '@components/checkboxField';
@@ -22,29 +22,12 @@ import {i18n} from '@lib/langPack';
 
 const cnPopup = (className = '') => `rtmp-record-popup${className}`;
 
-export class RtmpRecordPopup extends PopupElement {
-  private _dispose: () => void;
+export function showRtmpRecordPopup() {
+  const [show, setShow] = createSignal(true);
 
-  constructor() {
-    super(cnPopup(), {
-      overlayClosable: true,
-      closable: true,
-      title: true,
-      body: true
-    });
-
-    this.title.append(i18n('Rtmp.RecordPopup.Title'));
-    this._dispose = render(() => (
-      <RtmpRecordPopupContent onSubmit={this._onSubmit} />
-    ), this.body);
-    // if(!document.documentElement.classList.contains('night')) {
-    //   this.element.classList.remove('night')
-    // }
-  }
-
-  private _onSubmit = (params: CallRecordParams) => {
-    this.forceHide();
-    this.managers.appGroupCallsManager.startRecording(
+  const onSubmit = (params: CallRecordParams) => {
+    setShow(false);
+    rootScope.managers.appGroupCallsManager.startRecording(
       rtmpCallsController.currentCall.inputCall,
       params
     ).catch(() => {
@@ -52,12 +35,19 @@ export class RtmpRecordPopup extends PopupElement {
         langPackKey: 'Rtmp.RecordPopup.Failed'
       });
     });
-  }
+  };
 
-  cleanup() {
-    super.cleanup();
-    this._dispose();
-  }
+  createPopup(() => (
+    <PopupElement class={cnPopup()} closable show={show()}>
+      <PopupElement.Header>
+        <PopupElement.CloseButton />
+        <PopupElement.Title>{i18n('Rtmp.RecordPopup.Title')}</PopupElement.Title>
+      </PopupElement.Header>
+      <PopupElement.Body>
+        <RtmpRecordPopupContent onSubmit={onSubmit} />
+      </PopupElement.Body>
+    </PopupElement>
+  ));
 }
 
 interface RtmpRecordPopupContentProps {
@@ -103,11 +93,11 @@ const RtmpRecordPopupContent = (props: RtmpRecordPopupContentProps) => {
           {i18n('Rtmp.RecordPopup.RecordingHint')}
         </div>
 
-        <Row>
-          <Row.Title>{i18n('Rtmp.RecordPopup.AlsoRecordVideo')}</Row.Title>
-          <Row.CheckboxField>{recordVideoCheck.label}</Row.CheckboxField>
-          <Row.Icon icon="videocamera" />
-        </Row>
+          <Row>
+            <Row.Title>{i18n('Rtmp.RecordPopup.AlsoRecordVideo')}</Row.Title>
+            <Row.CheckboxFieldToggle>{recordVideoCheck.label}</Row.CheckboxFieldToggle>
+            <Row.Icon icon="videocamera_filled" />
+          </Row>
       </div>
 
       <div class={cnPopup('-preview')}>

@@ -1,12 +1,8 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {ButtonMenuDirection} from '@components/buttonMenuToggle';
-import I18n from '@lib/langPack';
 import mediaSizes from '@helpers/mediaSizes';
+import I18n from '@lib/langPack';
+import clamp from './number/clamp';
+import {getAppWindow} from '@helpers/appWindow';
 
 export type MenuPositionPadding = {
   top?: number,
@@ -21,12 +17,136 @@ const PADDING_LEFT = 8;
 const PADDING_RIGHT = PADDING_LEFT;
 
 export const DEFAULT_MENU_WINDOW_MARGIN = 16;
+
 export type MenuHorizontalDirection = 'left' | 'right';
+
+export type FloatingMenuSide = 'top' | 'left' | 'right' | 'bottom';
+export type FloatingMenuAlignment = 'start' | 'center' | 'end';
+export type FloatingMenuDirection = `${FloatingMenuSide}-${FloatingMenuAlignment}`;
+
+const OPPOSITE_SIDE: Record<FloatingMenuSide, FloatingMenuSide> = {
+  top: 'bottom',
+  bottom: 'top',
+  left: 'right',
+  right: 'left'
+};
+
+function canFitSide(
+  triggerBcr: DOMRect,
+  menu: HTMLElement,
+  side: FloatingMenuSide,
+  mainOffset: number
+) {
+  const margin = DEFAULT_MENU_WINDOW_MARGIN;
+  switch(side) {
+    case 'right':
+      return triggerBcr.right + mainOffset + menu.clientWidth + margin <= getAppWindow().innerWidth;
+    case 'left':
+      return triggerBcr.left - mainOffset - menu.clientWidth - margin >= 0;
+    case 'bottom':
+      return triggerBcr.bottom + mainOffset + menu.clientHeight + margin <= getAppWindow().innerHeight;
+    case 'top':
+      return triggerBcr.top - mainOffset - menu.clientHeight - margin >= 0;
+  }
+}
+
+/**
+ * Positions a floating menu next to a trigger element.
+ * - `side` is the side of the trigger the menu opens on.
+ * - `alignment` aligns the menu along the perpendicular axis.
+ * - `offset` is `[x, y]`. The component along the main axis acts as a gap from the trigger,
+ *   the perpendicular component nudges along the alignment axis.
+ *
+ * Sets `left`, `top`, and `transformOrigin` on `menu`. Returns the actually used direction
+ * (the side may flip to the opposite if the menu doesn't fit).
+ */
+export function positionFloatingMenu(
+  triggerBcr: DOMRect,
+  menu: HTMLElement,
+  direction: FloatingMenuDirection,
+  offset: [number, number] = [0, 0]
+): FloatingMenuDirection {
+  const [requestedSide, alignment] = direction.split('-') as [FloatingMenuSide, FloatingMenuAlignment];
+
+  const isHorizontalSide = requestedSide === 'left' || requestedSide === 'right';
+  const mainOffset = isHorizontalSide ? offset[0] : offset[1];
+  const crossOffset = isHorizontalSide ? offset[1] : offset[0];
+
+  // Flip side if it doesn't fit and the opposite does (mirrors the original right/left logic).
+  const opposite = OPPOSITE_SIDE[requestedSide];
+  const side: FloatingMenuSide = canFitSide(triggerBcr, menu, requestedSide, mainOffset) ||
+      !canFitSide(triggerBcr, menu, opposite, mainOffset) ?
+    requestedSide :
+    opposite;
+
+  const margin = DEFAULT_MENU_WINDOW_MARGIN;
+  const menuW = menu.clientWidth;
+  const menuH = menu.clientHeight;
+
+  // Main-axis position.
+  let left: number;
+  let top: number;
+
+  if(side === 'right' || side === 'left') {
+    if(side === 'right') {
+      left = triggerBcr.right + mainOffset;
+    } else {
+      left = triggerBcr.left - mainOffset - menuW;
+    }
+    left = clamp(left, margin, getAppWindow().innerWidth - menuW - margin);
+
+    // Cross axis: vertical.
+    if(alignment === 'start') {
+      top = triggerBcr.top + crossOffset;
+    } else if(alignment === 'center') {
+      top = triggerBcr.top + triggerBcr.height / 2 - menuH / 2 + crossOffset;
+    } else {
+      top = triggerBcr.bottom - menuH - crossOffset;
+    }
+    top = clamp(top, margin, getAppWindow().innerHeight - menuH - margin);
+  } else {
+    if(side === 'bottom') {
+      top = triggerBcr.bottom + mainOffset;
+    } else {
+      top = triggerBcr.top - mainOffset - menuH;
+    }
+    top = clamp(top, margin, getAppWindow().innerHeight - menuH - margin);
+
+    // Cross axis: horizontal.
+    if(alignment === 'start') {
+      left = triggerBcr.left + crossOffset;
+    } else if(alignment === 'center') {
+      left = triggerBcr.left + triggerBcr.width / 2 - menuW / 2 + crossOffset;
+    } else {
+      left = triggerBcr.right - menuW - crossOffset;
+    }
+    left = clamp(left, margin, getAppWindow().innerWidth - menuW - margin);
+  }
+
+  // Transform origin: corner/edge closest to the trigger.
+  let originX: string;
+  let originY: string;
+  const alignmentToPercent = alignment === 'start' ? '0' : alignment === 'center' ? '50%' : '100%';
+
+  if(side === 'right' || side === 'left') {
+    originX = side === 'right' ? '0' : '100%';
+    originY = alignmentToPercent;
+  } else {
+    originY = side === 'bottom' ? '0' : '100%';
+    originX = alignmentToPercent;
+  }
+
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+  menu.style.transformOrigin = `${originX} ${originY}`;
+
+  return `${side}-${alignment}` as FloatingMenuDirection;
+}
 
 export function getMenuTopPositionForStartDirection(triggerBcr: DOMRect, menu: HTMLElement, offset: [number, number]) {
   let top = triggerBcr.top + offset[1];
   const bottom = top + menu.clientHeight;
-  if(bottom + DEFAULT_MENU_WINDOW_MARGIN > window.innerHeight) top -= bottom - window.innerHeight + DEFAULT_MENU_WINDOW_MARGIN;
+  if(bottom + DEFAULT_MENU_WINDOW_MARGIN > getAppWindow().innerHeight) top -= bottom - getAppWindow().innerHeight + DEFAULT_MENU_WINDOW_MARGIN;
   top = Math.max(top, DEFAULT_MENU_WINDOW_MARGIN);
 
   return top;
@@ -40,7 +160,7 @@ export function canMenuFitDirection(
 ) {
   if(direction === 'right') {
     const left = triggerBcr.right + offset[0];
-    return left + menu.clientWidth + DEFAULT_MENU_WINDOW_MARGIN <= window.innerWidth;
+    return left + menu.clientWidth + DEFAULT_MENU_WINDOW_MARGIN <= getAppWindow().innerWidth;
   }
 
   const right = triggerBcr.left - offset[0];
@@ -56,7 +176,7 @@ export function getMenuLeftPositionForDirection(
   if(direction === 'right') {
     let left = triggerBcr.right + offset[0];
     const right = left + menu.clientWidth;
-    if(right + DEFAULT_MENU_WINDOW_MARGIN > window.innerWidth) left -= right - window.innerWidth + DEFAULT_MENU_WINDOW_MARGIN;
+    if(right + DEFAULT_MENU_WINDOW_MARGIN > getAppWindow().innerWidth) left -= right - getAppWindow().innerWidth + DEFAULT_MENU_WINDOW_MARGIN;
     return left;
   }
 
@@ -81,7 +201,7 @@ export default function positionMenu(e: MouseEvent | Touch | TouchEvent, elem: H
   let {scrollWidth: menuWidth} = getScrollWidthFromElement;
   const {scrollHeight: menuHeight} = elem;
   // let {innerWidth: windowWidth, innerHeight: windowHeight} = window;
-  const rect = document.body.getBoundingClientRect();
+  const rect = getAppWindow().document.body.getBoundingClientRect();
   const windowWidth = rect.width;
   const windowHeight = rect.height;
 
@@ -201,7 +321,7 @@ export function positionMenuTrigger(trigger: HTMLElement, menu: HTMLElement, dir
     const top = triggerRect.top + triggerRect.height + (additionalPadding?.top ?? 0);
     menu.style.top = `${Math.max(top, additionalPadding?.top ?? 0)}px`
   } else {
-    const bottom = window.innerHeight - triggerRect.top - triggerRect.height - (additionalPadding?.bottom ?? 0)
+    const bottom = getAppWindow().innerHeight - triggerRect.top + (additionalPadding?.bottom ?? 0)
     menu.style.bottom = `${Math.max(bottom, additionalPadding?.bottom ?? 0)}px`
   }
 
@@ -209,7 +329,7 @@ export function positionMenuTrigger(trigger: HTMLElement, menu: HTMLElement, dir
     const left = triggerRect.left + (additionalPadding?.left ?? 0);
     menu.style.left = `${Math.max(left, additionalPadding?.left ?? 0)}px`
   } else {
-    const right = window.innerWidth - triggerRect.left - triggerRect.width - (additionalPadding?.right ?? 0)
+    const right = getAppWindow().innerWidth - triggerRect.left - triggerRect.width - (additionalPadding?.right ?? 0)
     menu.style.right = `${Math.max(right, additionalPadding?.right ?? 0)}px`
   }
 

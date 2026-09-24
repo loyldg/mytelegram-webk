@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type ChatInput from '@components/chat/input';
 import DropdownHover from '@helpers/dropdownHover';
 import {ReplyMarkup} from '@layer';
@@ -34,6 +28,7 @@ export default class ReplyKeyboard extends DropdownHover {
   private chatInput: ChatInput;
   private scrollable: Scrollable;
   private middlewareHelper: MiddlewareHelper;
+  private ephemeralMode = false;
 
   constructor(options: {
     listenerSetter: ListenerSetter,
@@ -97,7 +92,18 @@ export default class ReplyKeyboard extends DropdownHover {
 
   public async checkForceReply() {
     const replyMarkup = await this.getReplyMarkup();
-    if(replyMarkup._ === 'replyKeyboardForceReply' &&
+    if(this.ephemeralMode) {
+      return;
+    }
+
+    // layer 229 moved the force-reply bit onto the keyboard markups themselves, so a
+    // `replyKeyboardMarkup` / `replyInlineMarkup` carrying `force_reply` asks for a reply
+    // exactly like the standalone `replyKeyboardForceReply` does.
+    const forcesReply = replyMarkup._ === 'replyKeyboardForceReply' ||
+      ((replyMarkup._ === 'replyKeyboardMarkup' || replyMarkup._ === 'replyInlineMarkup') &&
+        !!replyMarkup.pFlags.force_reply);
+
+    if(forcesReply &&
       !replyMarkup.pFlags.hidden &&
       !replyMarkup.pFlags.used) {
       replyMarkup.pFlags.used = true;
@@ -154,7 +160,12 @@ export default class ReplyKeyboard extends DropdownHover {
       replyMarkup = await this.getReplyMarkup();
     }
 
-    const hide = replyMarkup._ === 'replyKeyboardHide' || !(replyMarkup as ReplyMarkup.replyInlineMarkup).rows?.length;
+    const hide = this.ephemeralMode ||
+      replyMarkup._ === 'replyKeyboardHide' ||
+      // a force-reply inline markup is tracked as the last keyboard, but it is drawn in
+      // its own bubble — there is no panel to open for it
+      replyMarkup._ === 'replyInlineMarkup' ||
+      !(replyMarkup as ReplyMarkup.replyKeyboardMarkup).rows?.length;
     this.btnHover.classList.toggle('hide', hide);
 
     if(hide) {
@@ -162,6 +173,11 @@ export default class ReplyKeyboard extends DropdownHover {
     }
 
     return !hide;
+  }
+
+  public setEphemeralMode(ephemeralMode: boolean) {
+    this.ephemeralMode = ephemeralMode;
+    this.checkAvailability();
   }
 
   public setPeer(peerId: PeerId) {

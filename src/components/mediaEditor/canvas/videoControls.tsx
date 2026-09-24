@@ -1,4 +1,4 @@
-import {batch, Component, createMemo, createSignal} from 'solid-js';
+import {batch, Component, createEffect, createMemo, createSignal} from 'solid-js';
 
 import clamp from '@helpers/number/clamp';
 import swipe, {SwipeDirectiveArgs} from '@helpers/useSwipe'; swipe; // keep
@@ -18,9 +18,10 @@ import styles from '@components/mediaEditor/canvas/videoControls.module.scss';
 
 const HANDLE_WIDTH_PX = 9;
 const MOVE_ACTIVATION_THRESHOLD_PX = 2;
+const VIDEO_AVATAR_MAX_DURATION_SEC = 10;
 
 const VideoControls: Component<{}> = () => {
-  const {editorState, mediaState, actions} = useMediaEditorContext();
+  const {editorState, mediaState, actions, isVideoAvatarMode} = useMediaEditorContext();
 
   const [cropper, setCropper] = createSignal<HTMLDivElement>();
   const [isDraggingSomething, setIsDraggingSomething] = createSignal(false);
@@ -55,6 +56,34 @@ const VideoControls: Component<{}> = () => {
     return Math.min(1, 0.5 / duration);
   });
 
+  // In video-avatar mode the trimmed clip cannot exceed 10 seconds.
+  const maxLengthCap = createMemo(() => {
+    if(!isVideoAvatarMode) return 1;
+    const duration = editorState.renderingPayload?.media?.video?.duration;
+    if(!duration) return 1;
+    return Math.min(1, VIDEO_AVATAR_MAX_DURATION_SEC / duration);
+  });
+
+  // Once the video duration is known, clamp the initial trim length to the cap.
+  createEffect(() => {
+    if(!isVideoAvatarMode) return;
+    const cap = maxLengthCap();
+    if(cap < 1 && mediaState.videoCropLength > cap) {
+      mediaState.videoCropLength = cap;
+    }
+  });
+
+  // Keep the avatar cover frame (→ video_start_ts) inside the trim if the crop
+  // range is moved under it.
+  createEffect(() => {
+    if(!isVideoAvatarMode) return;
+    const lo = mediaState.videoCropStart;
+    const hi = mediaState.videoCropStart + mediaState.videoCropLength;
+    if(mediaState.videoThumbnailPosition < lo || mediaState.videoThumbnailPosition > hi) {
+      mediaState.videoThumbnailPosition = clamp(mediaState.videoThumbnailPosition, lo, hi);
+    }
+  });
+
   let
     canvas: HTMLCanvasElement,
     initialStart: number,
@@ -83,8 +112,10 @@ const VideoControls: Component<{}> = () => {
       if(swiping !== 'left') return;
       const diff = clamp(initialStart + xDiff / strippedWidth(), 0, Math.max(0, initialStart + initialLength - minLength())) - initialStart;
       batch(() => {
-        mediaState.videoCropStart = (initialStart + diff);
-        mediaState.videoCropLength = (initialLength - diff);
+        const newStart = initialStart + diff;
+        const newLength = Math.min(maxLengthCap(), initialLength - diff);
+        mediaState.videoCropStart = newStart;
+        mediaState.videoCropLength = newLength;
         actions.setVideoTime(mediaState.videoCropStart);
       });
     }),
@@ -104,7 +135,7 @@ const VideoControls: Component<{}> = () => {
     },
     onMove: (xDiff) => void batch(() => {
       if(swiping !== 'right') return;
-      const maxLength = 1 - mediaState.videoCropStart;
+      const maxLength = Math.min(maxLengthCap(), 1 - mediaState.videoCropStart);
       mediaState.videoCropLength = (clamp(initialLength + xDiff / strippedWidth(), Math.min(minLength(), maxLength), maxLength));
       actions.setVideoTime(mediaState.videoCropStart + mediaState.videoCropLength);
     }),
@@ -203,25 +234,27 @@ const VideoControls: Component<{}> = () => {
       }}
     >
       <div class={styles.InnerContainer}>
-        <button
-          use:ripple
-          class={`btn-icon ${styles.IconButton} ${styles.MuteButton}`}
-          classList={{
-            [styles.muted]: mediaState.videoMuted
-          }}
-          onClick={(e) => {
-            mediaState.videoMuted = !mediaState.videoMuted;
-            closeTooltip?.();
-            if(mediaState.videoMuted) closeTooltip = showMutedTooltip(e.currentTarget).close;
-          }}
-          tabIndex={-1}
-        >
-          <IconTsx icon={mediaState.videoMuted ? 'volume_off' : 'volume_up'} />
-        </button>
+        {!isVideoAvatarMode && (
+          <button
+            use:ripple
+            class={`btn-icon ${styles.IconButton} ${styles.MuteButton}`}
+            classList={{
+              [styles.muted]: mediaState.videoMuted
+            }}
+            onClick={(e) => {
+              mediaState.videoMuted = !mediaState.videoMuted;
+              closeTooltip?.();
+              if(mediaState.videoMuted) closeTooltip = showMutedTooltip(e.currentTarget).close;
+            }}
+            tabIndex={-1}
+          >
+            <IconTsx icon={mediaState.videoMuted ? 'volume_off_filled' : 'volume_up_filled'} />
+          </button>
+        )}
 
         <div class={styles.Frames}>
           <div ref={setCropper} class={styles.Cropper}>
-            <canvas ref={canvas} class={styles.Images} width={cropperSize.width} height={cropperSize.height} />
+            <canvas ref={canvas} width={cropperSize.width} height={cropperSize.height} />
 
             <div class={`${styles.CropperBg} ${styles.CropperBgLeft}`} />
             <div class={`${styles.CropperBg} ${styles.CropperBgRight}`} />
@@ -273,7 +306,7 @@ const ThumbnailTrack: Component<{
   isDraggingSomething: boolean;
   hidden: boolean;
 }> = (props) => {
-  const {actions, editorState, mediaState} = useMediaEditorContext();
+  const {actions, editorState, mediaState, isVideoAvatarMode} = useMediaEditorContext();
 
   const [ghostThumbnailPosition, setGhostThumbnailPosition] = createSignal<number>();
 
@@ -281,10 +314,19 @@ const ThumbnailTrack: Component<{
 
   const isGhostThumbnailVisible = createMemo(() => !props.isDraggingSomething && !isDragging() && !isNaN(ghostThumbnailPosition()));
 
+  // Video avatars: the cover frame becomes video_start_ts, so it must stay
+  // inside the trimmed clip — clamp the placed position to the crop range.
+  const coverPosition = (e: PointerEvent | MouseEvent | TouchEvent) => {
+    const pos = getPositionInCropper(e, props.cropper);
+    return isVideoAvatarMode ?
+      clamp(pos, mediaState.videoCropStart, mediaState.videoCropStart + mediaState.videoCropLength) :
+      pos;
+  };
+
   const onClick = (e: MouseEvent) => {
     if(!props.cropper) return;
 
-    mediaState.videoThumbnailPosition = getPositionInCropper(e, props.cropper);
+    mediaState.videoThumbnailPosition = coverPosition(e);
   };
 
   let canPreviewFrame = false, previewFrameTimeout: number;
@@ -317,11 +359,11 @@ const ThumbnailTrack: Component<{
     onStart: (e) => {
       void setIsDragging(true);
       if(!props.cropper) return;
-      mediaState.videoThumbnailPosition = getPositionInCropper(e, props.cropper);
+      mediaState.videoThumbnailPosition = coverPosition(e);
     },
     onMove: (_, __, e) => {
       if(!props.cropper) return;
-      mediaState.videoThumbnailPosition = getPositionInCropper(e, props.cropper);
+      mediaState.videoThumbnailPosition = coverPosition(e);
     },
     onEnd: () => void setIsDragging(false)
   };
@@ -403,7 +445,7 @@ export const PausePlay: Component<{
         <path class={styles.PausePlaySvgPlay} d="M5 19.9138V4.0862C5 2.83455 6.44254 2.13342 7.42673 2.90672L17.4988 10.8205C18.2632 11.4211 18.2632 12.5789 17.4988 13.1795L7.42673 21.0933C6.44254 21.8666 5 21.1655 5 19.9138Z" fill="black" /* transform="translate(8, 12) scale(1.4) translate(-8, -12)" */ />
       </clipPath>
 
-      <g class={styles.PausePlaySvgPause} id="pauseSymbol" clip-path='url(#playSymbolClipPath)'>
+      <g id="pauseSymbol" clip-path='url(#playSymbolClipPath)'>
         <path class={styles.PausePlaySvgPauseLeft} d="M8.5 3H5C4.44772 3 4 3.44772 4 4V20C4 20.5523 4.44772 21 5 21H8.5C9.05228 21 9.5 20.5523 9.5 20V4C9.5 3.44772 9.05228 3 8.5 3Z" fill="white" />
         <path class={styles.PausePlaySvgPauseRight} d="M19 3H15.5C14.9477 3 14.5 3.44772 14.5 4V20C14.5 20.5523 14.9477 21 15.5 21H19C19.5523 21 20 20.5523 20 20V4C20 3.44772 19.5523 3 19 3Z" fill="white" />
       </g>

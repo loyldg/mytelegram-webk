@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import ButtonIcon from '@components/buttonIcon';
 import FeaturesCarousel from '@components/premium/featuresCarousel';
 import {PopupPremiumProps} from '@components/popups/premium';
@@ -11,8 +5,7 @@ import TransitionSlider from '@components/transition';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 
 type FeatureSlideTabOptions = PopupPremiumProps & {
-  header: HTMLElement,
-  actionButtonContainer: HTMLElement
+  header: HTMLElement
 };
 
 export default class FeatureSlideTab {

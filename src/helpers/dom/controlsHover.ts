@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import EventListenerBase from '@helpers/eventListenerBase';
 import ListenerSetter from '@helpers/listenerSetter';
@@ -20,7 +14,7 @@ export default class ControlsHover extends EventListenerBase<{
   protected canShowControls: () => boolean;
   protected element: HTMLElement;
   protected listenerSetter: ListenerSetter;
-  protected showOnLeaveToClassName: string;
+  protected showOnLeaveToClassName: string | string[];
   protected ignoreClickClassName: string;
 
   constructor() {
@@ -33,7 +27,7 @@ export default class ControlsHover extends EventListenerBase<{
     listenerSetter: ListenerSetter,
     canHideControls?: () => boolean,
     canShowControls?: () => boolean,
-    showOnLeaveToClassName?: string,
+    showOnLeaveToClassName?: string | string[],
     ignoreClickClassName?: string
   }) {
     safeAssign(this, options);
@@ -68,7 +62,11 @@ export default class ControlsHover extends EventListenerBase<{
       });
 
       listenerSetter.add(element)('mouseleave', (e) => {
-        if(e.relatedTarget && this.showOnLeaveToClassName && findUpClassName(e.relatedTarget, this.showOnLeaveToClassName)) {
+        // Leaving onto floating chrome (caption / topbar) must not start the hide —
+        // those elements live outside the player, so hiding here would yank them from
+        // under the cursor and bounce mouseenter↔mouseleave forever.
+        const showOnLeaveClassNames = Array.isArray(this.showOnLeaveToClassName) ? this.showOnLeaveToClassName : [this.showOnLeaveToClassName];
+        if(e.relatedTarget && showOnLeaveClassNames.some((className) => className && findUpClassName(e.relatedTarget, className))) {
           this.showControls(false);
           return;
         }

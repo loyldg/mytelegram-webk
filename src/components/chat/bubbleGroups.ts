@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import rootScope from '@lib/rootScope';
 // import { generatePathData } from '@helpers/dom';
 import {MyMessage} from '@appManagers/appMessagesManager';
@@ -21,13 +15,16 @@ import {avatarNew} from '@components/avatarNew';
 import {MiddlewareHelper} from '@helpers/middleware';
 import {ChatType} from './chatType';
 import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
-import {getMid, isMessage, isMessageForVerificationBot} from '@components/chat/utils';
+import {getGuestChatViaFromId, getMid, isMessage, isMessageForVerificationBot} from '@components/chat/utils';
 import {canHaveSuggestedPostReplyMarkup} from '@components/chat/bubbleParts/suggestedPostReplyMarkup';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
-import {BubbleElementAddons} from '@components/chat/types';
-import ChatThreadSeparator from '@components/chat/bubbleParts/chatThreadSeparator';
-import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
+import type {BubbleElementAddons} from '@components/chat/types';
 import {AdminLog} from '@appManagers/appChatsManager';
+import isEphemeralMessage from '@appManagers/utils/messages/isEphemeralMessage';
+import isAnchoredEphemeralMessage from '@appManagers/utils/messages/isAnchoredEphemeralMessage';
+import compareBubbleTimelineMessages from '@components/chat/compareBubbleTimelineMessages';
+import filterReplyMarkupRows from '@components/chat/bubbleParts/filterReplyMarkupRows';
+import updateChatThreadSeparators from '@components/chat/bubbleParts/updateChatThreadSeparators';
 
 
 type GroupItem = {
@@ -44,21 +41,45 @@ type GroupItem = {
   reverse?: boolean
 };
 
-function insertSomething<T>(to: Array<T>, what: T, sortKey: keyof T, reverse: boolean) {
+function insertSomething<T>(
+  to: Array<T>,
+  what: T,
+  sortKey: keyof T,
+  reverse: boolean,
+  compare?: (item1: T, item2: T) => number
+) {
   if(!sortKey) {
     indexOfAndSplice(to, what);
     return (reverse ? to.push(what) : to.unshift(what)) - 1;
+  } else if(compare) {
+    indexOfAndSplice(to, what);
+
+    let left = 0;
+    let right = to.length;
+    while(left < right) {
+      const middle = (left + right) >> 1;
+      if(compare(what, to[middle]) > 0) {
+        right = middle;
+      } else {
+        left = middle + 1;
+      }
+    }
+
+    to.splice(left, 0, what);
+    return left;
   } else {
     // @ts-ignore
     return insertInDescendSortedArray(to, what, sortKey);
   }
 }
 
-function canHaveReplyMarkup(message: Message.message) {
+function compareTimelineItems(item1: GroupItem, item2: GroupItem) {
+  return compareBubbleTimelineMessages(item1.message, item2.message);
+}
+
+function getReplyMarkupRows(message: Message.message) {
   const replyMarkup = message.reply_markup;
-  let replyMarkupRows = replyMarkup?._ === 'replyInlineMarkup' && replyMarkup.rows;
-  replyMarkupRows = replyMarkupRows?.filter?.((row) => row.buttons.length);
-  return !!replyMarkupRows?.length;
+  return replyMarkup?._ === 'replyInlineMarkup' ? filterReplyMarkupRows(replyMarkup.rows) : [];
 }
 
 export class BubbleGroup {
@@ -176,7 +197,14 @@ export class BubbleGroup {
       return;
     }
 
-    this.avatar.node.classList.toggle('avatar-for-reply-markup', canHaveReplyMarkup(message));
+    const replyMarkupRows = getReplyMarkupRows(message);
+    this.avatarContainer.classList.toggle('avatar-for-reply-markup', !!replyMarkupRows.length);
+    if(replyMarkupRows.length) {
+      this.avatarContainer.style.setProperty('--reply-markup-row-count', replyMarkupRows.length.toString());
+    } else {
+      this.avatarContainer.style.removeProperty('--reply-markup-row-count');
+    }
+
     this.avatar.node.classList.toggle('avatar-for-suggested-reply-markup', canHaveSuggestedPostReplyMarkup(message));
   }
 
@@ -247,7 +275,13 @@ export class BubbleGroup {
 
   insertItem(item: GroupItem) {
     const {items} = this;
-    insertSomething(items, item, this.groups.sortGroupItemsKey, this.groups.reverse = item.reverse);
+    insertSomething(
+      items,
+      item,
+      this.groups.sortGroupItemsKey,
+      this.groups.reverse = item.reverse,
+      this.groups.compareGroupItems
+    );
 
     item.group = this;
     if(items.length === 1) {
@@ -367,6 +401,9 @@ export default class BubbleGroups {
   private sortItemsKey: Extract<keyof GroupItem, 'timestamp' | 'mid'>;
   private sortGroupsKey: Extract<keyof BubbleGroup, 'lastMid' | 'lastTimestamp'>;
   public sortGroupItemsKey: Extract<keyof GroupItem, 'groupMid' | 'timestamp'>;
+  public compareGroupItems?: typeof compareTimelineItems;
+  private compareItems?: typeof compareTimelineItems;
+  private compareGroups?: (group1: BubbleGroup, group2: BubbleGroup) => number;
   public reverse: boolean; // * used for search
 
   constructor(private chat: Chat) {
@@ -374,6 +411,11 @@ export default class BubbleGroups {
       this.sortItemsKey = chat.type === ChatType.Scheduled ? 'timestamp' : 'mid';
       this.sortGroupsKey = chat.type === ChatType.Scheduled ? 'lastTimestamp' : 'lastMid';
       this.sortGroupItemsKey = /* chat.type === 'scheduled' ? 'timestamp' :  */'groupMid';
+
+      if(chat.type === ChatType.Chat || chat.type === ChatType.Discussion) {
+        this.compareItems = this.compareGroupItems = compareTimelineItems;
+        this.compareGroups = (group1, group2) => compareTimelineItems(group1.lastItem, group2.lastItem);
+      }
     }
   }
 
@@ -382,7 +424,7 @@ export default class BubbleGroups {
     this.removeItemFromCache(item);
   }
 
-  removeAndUnmountBubble(bubble: HTMLElement) {
+  removeAndUnmountBubble(bubble: HTMLElement, deferredGroups?: Set<BubbleGroup>) {
     const item = this.getItemByBubble(bubble);
     if(!item) { // * can be a placeholder
       const parentElement = bubble.parentElement;
@@ -421,10 +463,17 @@ export default class BubbleGroups {
       this.f(nextSibling.group.items);
       group.onItemUnmount();
       modifiedGroups.add(previousSibling.group);
-      this.groupUngrouped();
+      const regrouped = this.groupUngrouped();
+      if(deferredGroups) {
+        for(const group of regrouped) deferredGroups.add(group);
+      }
     }
 
-    this.mountUnmountGroups(Array.from(modifiedGroups));
+    if(deferredGroups) {
+      for(const group of modifiedGroups) deferredGroups.add(group);
+    } else {
+      this.mountUnmountGroups(Array.from(modifiedGroups));
+    }
 
     return true;
   }
@@ -446,55 +495,7 @@ export default class BubbleGroups {
   }
 
   private addChatThreadSeparators() {
-    const isMonoforum = this.chat.isMonoforum && this.chat.canManageDirectMessages && !this.chat.monoforumThreadId;
-    const isBotforum = this.chat.isBotforum && !this.chat.threadId;
-
-    const canHaveSeparators = isMonoforum || isBotforum;
-
-    if(!canHaveSeparators) return;
-
-    let prevKey: number;
-
-    forEachReverse(this.itemsArr, (item, i) => {
-      const message = item.message;
-      if(message._ === 'channelAdminLogEvent') return;
-
-      const savedPeerId = isMonoforum ? getPeerId(message?.saved_peer_id) : undefined;
-      const threadId = isBotforum ? getMessageThreadId(message, {isBotforum: true}) : undefined;
-
-      const key = savedPeerId || threadId;
-      if(!key) return;
-
-      const bubbleAddons = item.bubble as BubbleElementAddons;
-
-      if(prevKey === key) {
-        item.bubble.classList.remove('has-chat-thread-separator');
-        bubbleAddons.chatThreadSeparator?.remove();
-        return;
-      }
-
-      prevKey = key;
-
-      if(bubbleAddons.chatThreadSeparator) {
-        bubbleAddons.chatThreadSeparator.feedProps<false>({
-          index: -i
-        });
-        return;
-      }
-
-      bubbleAddons.chatThreadSeparator = new ChatThreadSeparator;
-      bubbleAddons.chatThreadSeparator.HotReloadGuard = SolidJSHotReloadGuardProvider;
-      bubbleAddons.chatThreadSeparator.feedProps({
-        chat: this.chat,
-        bubbles: this.chat.bubbles,
-        peerId: savedPeerId || this.chat.peerId,
-        threadId: savedPeerId ? undefined : threadId,
-        lastMsgId: message?.mid,
-        index: -i
-      });
-      item.bubble.classList.add('has-chat-thread-separator');
-      item.bubble.prepend(bubbleAddons.chatThreadSeparator);
-    });
+    updateChatThreadSeparators(this.itemsArr, this.chat);
   }
 
   /**
@@ -581,6 +582,12 @@ export default class BubbleGroups {
 
     if(isMessageForVerificationBot(item1.message)) return false;
 
+    if(isEphemeralMessage(item1.message) !== isEphemeralMessage(item2.message)) return false;
+
+    // a message an ephemeral one stands in for shows content of its own — desktop keeps it
+    // out of its neighbours' group for the same reason (`sameAnchored`)
+    if(isAnchoredEphemeralMessage(item1.message) !== isAnchoredEphemeralMessage(item2.message)) return false;
+
     if(
       item1.message?._ === 'message' && item1.message?.suggested_post ||
       item2.message?._ === 'message' && item2.message?.suggested_post
@@ -588,6 +595,8 @@ export default class BubbleGroups {
 
     const isOut1 = this.chat.isOutMessage(item1.message);
     return item2.fromId === item1.fromId &&
+      // * keep guest-chat messages from different visitors in separate groups (own avatar + "for <visitor>")
+      getGuestChatViaFromId(item1.message) === getGuestChatViaFromId(item2.message) &&
       item1.dateTimestamp === item2.dateTimestamp &&
       Math.abs(item2.timestamp - item1.timestamp) <= this.newGroupDiff &&
       !item1.single &&
@@ -643,11 +652,23 @@ export default class BubbleGroups {
   }
 
   insertItemToArray(item: GroupItem, array: GroupItem[]) {
-    return insertSomething(array, item, this.sortItemsKey, this.reverse = item.reverse);
+    return insertSomething(
+      array,
+      item,
+      this.sortItemsKey,
+      this.reverse = item.reverse,
+      this.compareItems
+    );
   }
 
   insertGroup(group: BubbleGroup) {
-    const idx = insertSomething(this.groups, group, this.sortGroupsKey, this.reverse);
+    const idx = insertSomething(
+      this.groups,
+      group,
+      this.sortGroupsKey,
+      this.reverse,
+      this.compareGroups
+    );
     // this.updateGroupsClassNames();
     return idx;
   }

@@ -1,13 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import findUpAsChild from '@helpers/dom/findUpAsChild';
 
 export default function getCaretPosNew(input: HTMLElement, anchor?: boolean): ReturnType<typeof getCaretPosF> & {selection: Selection} {
-  const selection = document.getSelection();
+  const selection = input.ownerDocument.defaultView.getSelection();
   // let {focusNode: node, focusOffset: offset} = selection;
   const node = selection[anchor ? 'anchorNode' : 'focusNode'];
   const offset = selection[anchor ? 'anchorOffset' : 'focusOffset'];

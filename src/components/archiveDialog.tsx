@@ -12,12 +12,17 @@ import defineSolidElement, {PassedProps} from '@lib/solidjs/defineSolidElement';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import {AckedResult} from '@lib/superMessagePort';
 import {useAppSettings} from '@stores/appSettings';
+import {
+  useCollapsedCommunityDialogsKey
+} from '@stores/communities';
+import {usePeers} from '@stores/peers';
 import {Accessor, createComputed, createEffect, createMemo, createResource, createRoot, createSignal, For, onCleanup, Ref, Setter, Show} from 'solid-js';
 import {createStore, unwrap} from 'solid-js/store';
+import getLinkedCommunityId from '@appManagers/utils/communities/getLinkedCommunityId';
+import isCollapsedCommunity from '@appManagers/utils/communities/isCollapsedCommunity';
 import styles from './archiveDialog.module.scss';
 import Badge from './badge';
 import {IconTsx} from './iconTsx';
-import ripple from './ripple';
 import {createStoriesStore, StoriesContextValue} from './stories/store';
 import {createStoriesViewerWithProvider} from './stories/viewer';
 
@@ -40,7 +45,7 @@ export const archiveDialogTagName = 'archive-dialog';
 const ArchiveDialog = defineSolidElement({
   name: archiveDialogTagName,
   component: (props: PassedProps<ArchiveDialogProps>, _, controls: Controls) => {
-    props.element.classList.add('row', 'no-wrap', 'row-with-padding', 'row-clickable', 'hover-effect', 'rp', 'chatlist-chat', 'chatlist-chat-bigger', 'row-big');
+    props.element.classList.add('row', 'no-wrap', 'row-with-padding', 'row-clickable', 'hover-effect', 'chatlist-chat', 'chatlist-chat-bigger', 'row-big');
 
     const [openStoriesTarget, setOpenStoriesTarget] = createSignal<HTMLElement>();
 
@@ -51,8 +56,6 @@ const ArchiveDialog = defineSolidElement({
     // Note: we cannot use createStore on dialogs, because it requires reacting to the whole object change and then sending it into
     // the shared worker thread to compute whether it is unread or not
     const [cachedDialogUnread, setCachedDialogUnread] = createStore<Record<PeerId, boolean>>({});
-
-    ripple(props.element, () => true);
 
     controls.openStory = () => {
       props.state.openArchiveStories(openStoriesTarget());
@@ -121,6 +124,7 @@ export const createArchiveDialogState = ({onHasArchiveDialogChanged}: CreateArch
 
 function useArchivedDialogsState() {
   const {rootScope} = useHotReloadGuard();
+  const peers = usePeers();
 
   let initialPromise: Promise<AckedResult<unknown>>;
 
@@ -145,7 +149,12 @@ function useArchivedDialogsState() {
   const fetchedDialogsLength = createMemo(() => isReady() ? fetchedDialogs().dialogs.length : 0);
   const isEnd = createMemo(() => isReady() && fetchedDialogs().isEnd);
 
-  const sortedDialogs = createMemo(() => [...dialogs()].sort((a, b) => getArchivedDialogIndex(b) - getArchivedDialogIndex(a)));
+  const sortedDialogs = createMemo(() => dialogs()
+  .filter((dialog) => {
+    const communityId = getLinkedCommunityId(peers[dialog.peerId]);
+    return !isCollapsedCommunity(peers[communityId?.toPeerId(true)]);
+  })
+  .sort((a, b) => getArchivedDialogIndex(b) - getArchivedDialogIndex(a)));
 
   createComputed(() => {
     if(fetchedDialogs.state === 'ready') {
@@ -269,20 +278,20 @@ function useDialogEvents({sortedDialogs, setDialogs, isEnd}: UseDialogEventsArgs
 
 function useTotalUnreadCount() {
   const {rootScope} = useHotReloadGuard();
-
-  const [totalUnreadCount, {mutate}] = createResource(
-    () => rootScope.managers.dialogsStorage.getFolderUnreadCount(FOLDER_ID_ARCHIVE).then(result => result.unreadCount),
-    {
-      initialValue: 0
-    }
+  const projectionKey = useCollapsedCommunityDialogsKey();
+  const [totalUnreadCount, {refetch}] = createResource(
+    projectionKey,
+    () => rootScope.managers.dialogsStorage
+    .getFolderUnreadCount(FOLDER_ID_ARCHIVE, true)
+    .then((result) => result.unreadCount),
+    {initialValue: 0}
   );
 
   const listenerSetter = new ListenerSetter;
 
   listenerSetter.add(rootScope)('folder_unread', (folder) => {
     if(folder.id === FOLDER_ID_ARCHIVE) {
-      const count = folder.unreadPeerIds.size;
-      mutate(count);
+      void refetch();
     }
   });
 
@@ -316,7 +325,7 @@ function useStoriesSegments(storiesContextValue: StoriesContextValue) {
   listenerSetter.add(rootScope)('story_new', refetchStoriesSegments);
   listenerSetter.add(rootScope)('story_update', refetchStoriesSegments);
 
-  function refetchStoriesSegments({peerId}: { peerId: PeerId }) {
+  function refetchStoriesSegments({peerId}: {peerId: PeerId}) {
     if(!storiesPeerIds()?.includes(peerId)) return;
     refetch();
   }

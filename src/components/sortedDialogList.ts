@@ -1,5 +1,6 @@
 import {batch, onCleanup} from 'solid-js';
 import namedPromises from '@helpers/namedPromises';
+import reorderIndexes from '@helpers/array/reorderIndexes';
 import pickKeys from '@helpers/object/pickKeys';
 import safeAssign from '@helpers/object/safeAssign';
 import {default as appDialogsManager, DialogElement} from '@lib/appDialogsManager';
@@ -10,8 +11,8 @@ import {logger} from '@lib/logger';
 import {createDeferredSortedVirtualList, DeferredSortedVirtualListItem} from '@components/deferredSortedVirtualList';
 import {LoadingDialogSkeletonSize} from '@components/loadingDialogSkeleton';
 import Scrollable from '@components/scrollable';
+import {attachCommunityChildBadge} from '@components/communities/communityDialog';
 import rootScope from '@lib/rootScope';
-
 
 export default class SortedDialogList {
   private appDialogsManager: typeof appDialogsManager;
@@ -24,6 +25,8 @@ export default class SortedDialogList {
   public monoforumParentPeerId: PeerId;
 
   private virtualList: ReturnType<typeof createDeferredSortedVirtualList<SortedDialogListItem>>;
+  private totalCount = 0;
+  private totalCountOffset = 0;
 
   /**
    * The custom emoji from the last message gets destroyed completely when removing the dialog
@@ -45,7 +48,8 @@ export default class SortedDialogList {
     requestItemForIdx: (idx: number, itemsLength: number) => void,
     onListShrinked: () => void,
     itemSize: LoadingDialogSkeletonSize,
-    noAvatar?: boolean // For the loading skeleton placeholder
+    noAvatar?: boolean // For the loading skeleton placeholder,
+    extraPaddingBottom?: number
   }) {
     safeAssign(this, pickKeys(options, [
       'appDialogsManager',
@@ -61,6 +65,10 @@ export default class SortedDialogList {
       scrollable: options.scrollable.container,
       getItemElement: (item, key) => {
         if(item.type === 'custom-pinned-dialog') {
+          return item.value.render();
+        }
+
+        if(item.type === 'custom-sorted-dialog') {
           return item.value.render();
         }
 
@@ -91,9 +99,26 @@ export default class SortedDialogList {
 
         return dialogElement.dom.listEl;
       },
+      // * A dropped DialogElement owns a middlewareHelper (getDialogOptions passes controlled: true),
+      // * and everything wrapped under it - the emoji status renderer, its lottie/video players, the
+      // * subtitle's custom emoji - is released only by that helper's destroy. The list used to drop
+      // * elements without it (removeItem, checkShrink's trimmed tail, clear, dispose), so every
+      // * trimmed row leaked its renderer, and the compositor worker kept its OffscreenCanvas forever.
+      // * Only 'dialog' items are ours to destroy: the custom ones are the caller's own objects,
+      // * handed in as the key, and may be re-added later.
+      onItemDiscard: (item) => {
+        if(item.type === 'dialog') {
+          this.unmountedDialogElements.delete(item.value);
+          item.value.destroy();
+        }
+      },
       onItemUnmount: (item) => {
         if(item.type === 'dialog') {
           this.unmountedDialogElements.set(item.value, true);
+          // the nodes survive the unmount but their custom emoji do not, so the
+          // re-init below must rebuild the subtitle rather than recognize it as
+          // already rendered
+          delete item.value.dom.lastMessageRenderKey;
         }
       },
       onListShrinked: options.onListShrinked,
@@ -101,7 +126,8 @@ export default class SortedDialogList {
       sortWith: (a, b) => b - a,
       itemSize: options.itemSize,
       noAvatar: options.noAvatar,
-      onListLengthChange: options.onListLengthChange
+      onListLengthChange: options.onListLengthChange,
+      extraPaddingBottom: options.extraPaddingBottom
     });
 
     this.list = this.virtualList.list;
@@ -112,6 +138,12 @@ export default class SortedDialogList {
 
   public async getIndexForKey(key: any) {
     if(key instanceof CustomPinnedDialog) return 0;
+    if(key instanceof CustomSortedDialog) {
+      return key.getIndex({
+        managers: this.managers,
+        indexKey: this.indexKey
+      });
+    }
     if(key === this.monoforumParentPeerId) return 0;
     if(key === this.virtualFilterId && key !== rootScope.myId) return 0;
 
@@ -156,7 +188,10 @@ export default class SortedDialogList {
   }
 
   private getAsAllChats(key: any) {
-    if(key instanceof CustomPinnedDialog) return;
+    if(
+      key instanceof CustomPinnedDialog ||
+      key instanceof CustomSortedDialog
+    ) return;
     if(this.virtualFilterId === rootScope.myId) return;
     return key === this.monoforumParentPeerId ? 'monoforum' : key === this.virtualFilterId ? 'topics' : undefined;
   }
@@ -167,12 +202,23 @@ export default class SortedDialogList {
       value: key
     };
 
+    if(key instanceof CustomSortedDialog) return {
+      type: 'custom-sorted-dialog',
+      value: key
+    };
+
     const {options, loadPromises} = this.getDialogOptions(key);
 
     const autoDeletePeriod = await this.getDialogAutoDeletePeriod(key);
     options.autoDeletePeriod = autoDeletePeriod;
 
     const dialogElement = this.appDialogsManager.addListDialog(options);
+    if(
+      !this.virtualFilterId &&
+      !this.monoforumParentPeerId
+    ) {
+      attachCommunityChildBadge(dialogElement, key);
+    }
 
     await Promise.all(loadPromises);
 
@@ -185,6 +231,7 @@ export default class SortedDialogList {
   private async getDialogAutoDeletePeriod(key: any) {
     if(
       key instanceof CustomPinnedDialog ||
+      key instanceof CustomSortedDialog ||
       this.virtualFilterId ||
       this.monoforumParentPeerId
     ) return;
@@ -197,14 +244,19 @@ export default class SortedDialogList {
 
   public addDeferredItems(items: DeferredSortedVirtualListItem<SortedDialogListItem>[], totalCount: number) {
     batch(() => {
+      this.totalCount = totalCount;
       this.virtualList.setWasAtLeastOnceFetched(true);
       this.virtualList.addItems(items);
-      this.virtualList.setTotalCount(totalCount);
+      this.updateTotalCount();
     });
   }
 
-  public async add(key: any) {
+  public async add(key: any, canFinish: () => boolean = () => true) {
     const item = await this.createItemForKey(key);
+    if(!canFinish()) {
+      return;
+    }
+
     this.virtualList.addItems([item]);
     // this.virtualList.setTotalCount(prev => prev + 1);
   }
@@ -227,11 +279,38 @@ export default class SortedDialogList {
     return this.virtualList.blockAnimation();
   }
 
-  public delete(key: any) {
+  public delete(key: any, adjustTotalCount = true) {
     batch(() => {
-      this.virtualList.removeItem(key) &&
-      this.virtualList.setTotalCount(prev => Math.max(0, prev - 1));
+      // * Pinned entries live in their own collection, but every read API merges both - has(),
+      // * getDialogElement() and getAllDialogElementsMap() all see them - so callers routinely
+      // * discover a pinned key and delete it through here (validateListForFilter walks the merged
+      // * map; updateDialog gates on has()). Removing only from the unpinned side left the row on
+      // * screen, took the total count down for a row that never went away, and never reached
+      // * onItemDiscard, so the DialogElement kept its middlewareHelper - and everything under it -
+      // * until the tab was closed. Both sides, so delete means delete.
+      const removedPinned = this.virtualList.removePinnedItem(key);
+      const removedItem = this.virtualList.removeItem(key);
+      if((removedPinned || removedItem) && adjustTotalCount) {
+        this.adjustTotalCount(-1);
+      }
     });
+  }
+
+  public adjustTotalCount(delta: number) {
+    this.totalCount = Math.max(0, this.totalCount + delta);
+    this.updateTotalCount();
+  }
+
+  public setTotalCountOffset(offset: number, totalCountDelta = 0) {
+    this.totalCount = Math.max(0, this.totalCount + totalCountDelta);
+    this.totalCountOffset = offset;
+    this.updateTotalCount();
+  }
+
+  private updateTotalCount() {
+    this.virtualList.setTotalCount(
+      Math.max(0, this.totalCount + this.totalCountOffset)
+    );
   }
 
   public has(key: any) {
@@ -257,8 +336,36 @@ export default class SortedDialogList {
     return this.virtualList.sortedItems();
   }
 
-  public async update(key: any) {
+  /**
+   * Reorders rows the list already holds by handing them each other's indexes, without asking the
+   * managers for fresh ones - so a reorder the user just performed by hand is on screen in the same
+   * task, before any round trip. The managers regenerate the very same order right after (see
+   * `appMessagesManager.reorderPinnedDialogs`), so this is the optimistic half of one reorder, not
+   * a second source of truth.
+   *
+   * @param keys the keys to reorder, in the order they have to end up in
+   * @returns whether every key was in the list, i.e. whether the new order was applied
+   */
+  public reorderItems(keys: any[]) {
+    // the list puts the greatest index first, so the indexes come back top to bottom
+    const indexes = reorderIndexes(this.getSortedItems(), keys, true);
+    if(!indexes) {
+      return false;
+    }
+
+    batch(() => {
+      keys.forEach((key, idx) => this.virtualList.updateItem(key, indexes[idx]));
+    });
+
+    return true;
+  }
+
+  public async update(key: any, canFinish: () => boolean = () => true) {
     const index = await this.getIndexForKey(key);
+    if(!canFinish()) {
+      return;
+    }
+
     this.virtualList.updateItem(key, index);
   }
 
@@ -267,6 +374,8 @@ export default class SortedDialogList {
   }
 
   public clear() {
+    this.totalCount = 0;
+    this.totalCountOffset = 0;
     this.virtualList?.clear();
   }
 
@@ -287,9 +396,50 @@ export class CustomPinnedDialog {
   }
 }
 
+interface CustomSortedDialogCtorArgs {
+  render: () => HTMLElement;
+  destroy?: () => void;
+  getIndex: (context: {
+    managers: AppManagers,
+    indexKey: ReturnType<typeof getDialogIndexKey>
+  }) => MaybePromise<number>;
+};
+
+// Unlike CustomPinnedDialog, this row takes part in the regular sorting, so it
+// has to keep the same element across virtual-list remounts.
+export class CustomSortedDialog {
+  private element?: HTMLElement;
+  private destroyCallback?: () => void;
+  private renderCallback: () => HTMLElement;
+  getIndex: CustomSortedDialogCtorArgs['getIndex'];
+
+  constructor({render, destroy, getIndex}: CustomSortedDialogCtorArgs) {
+    this.renderCallback = render;
+    this.destroyCallback = destroy;
+    this.getIndex = getIndex;
+  }
+
+  public render = () => {
+    return this.element ||= this.renderCallback();
+  };
+
+  public getElement() {
+    return this.element;
+  }
+
+  public destroy() {
+    this.destroyCallback?.();
+    this.destroyCallback = undefined;
+    this.element = undefined;
+  }
+}
+
 type SortedDialogListItem = {
   type: 'custom-pinned-dialog',
   value: CustomPinnedDialog;
+} | {
+  type: 'custom-sorted-dialog',
+  value: CustomSortedDialog;
 } | {
   type: 'dialog',
   value: DialogElement;

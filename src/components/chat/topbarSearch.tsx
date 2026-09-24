@@ -1,23 +1,15 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {ReactionsContext} from '@appManagers/appReactionsManager';
 import type {RequestHistoryOptions} from '@appManagers/appMessagesManager';
-import {createEffect, createSignal, onCleanup, JSX, createMemo, onMount, splitProps, on, untrack, batch, Accessor} from 'solid-js';
+import {createEffect, createSignal, onCleanup, JSX, createMemo, onMount, on, untrack, batch, Accessor} from 'solid-js';
 import InputSearch from '@components/inputSearch';
 import {ButtonIconTsx} from '@components/buttonIconTsx';
 import classNames from '@helpers/string/classNames';
-import PopupElement from '@components/popups';
-import PopupDatePicker from '@components/popups/datePicker';
+import showDatePickerPopup from '@components/popups/datePicker';
 import rootScope, {BroadcastEvents} from '@lib/rootScope';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import appDialogsManager from '@lib/appDialogsManager';
 import {ChannelsChannelParticipants, Message, MessageReactions, Reaction, ReactionCount, SavedReactionTag} from '@layer';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
-import Scrollable from '@components/scrollable';
 import placeCaretAtEnd from '@helpers/dom/placeCaretAtEnd';
 import {createLoadableList} from '@components/sidebarRight/tabs/statistics';
 import {Middleware, getMiddleware} from '@helpers/middleware';
@@ -32,7 +24,8 @@ import stringMiddleOverflow from '@helpers/string/stringMiddleOverflow';
 import appNavigationController, {NavigationItem} from '@components/appNavigationController';
 import getTextWidth from '@helpers/canvas/getTextWidth';
 import {FontFull} from '@config/font';
-import Row from '@components/row';
+import RowTsx from '@components/rowTsx';
+import {wrapSolidComponent} from '@helpers/solid/wrapSolidComponent';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
 import {avatarNew} from '@components/avatarNew';
@@ -43,12 +36,12 @@ import AppSelectPeers from '@components/appSelectPeers';
 import PeerTitle from '@components/peerTitle';
 import ReactionsElement from '@components/chat/reactions';
 import ReactionElement, {ReactionLayoutType} from '@components/chat/reaction';
-import {ScrollableXTsx} from '@components/stories/list';
+import Scrollable from '@components/scrollable2';
 import reactionsEqual from '@appManagers/utils/reactions/reactionsEqual';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import fastSmoothScroll from '@helpers/fastSmoothScroll';
 import Icon from '@components/icon';
-import PopupPremium from '@components/popups/premium';
+import showPremiumPopup from '@components/popups/premium';
 import usePremium from '@stores/premium';
 import createMiddleware from '@helpers/solid/createMiddleware';
 import Animated from '@helpers/solid/animations';
@@ -59,30 +52,6 @@ import getHistoryStorageKey, {getHistoryStorageType} from '@appManagers/utils/me
 import {ScreenSize, useMediaSizes} from '@helpers/mediaSizes';
 import ButtonCorner from '@components/buttonCorner';
 import deferSideEffect from '@helpers/solid/deferSideEffect';
-
-export const ScrollableYTsx = (props: {
-  children: JSX.Element,
-  onScrolledBottom?: () => void,
-  onScrolledTop?: () => void,
-} & JSX.HTMLAttributes<HTMLDivElement>) => {
-  const [, rest] = splitProps(props, ['onScrolledBottom', 'onScrolledTop']);
-  let container: HTMLDivElement;
-  const ret = (
-    <div ref={container} {...rest}>
-      {props.children}
-    </div>
-  );
-
-  const scrollable = new Scrollable(undefined, undefined, undefined, undefined, container);
-  scrollable.onScrolledBottom = props.onScrolledBottom;
-  scrollable.onScrolledTop = props.onScrolledTop;
-
-  onCleanup(() => {
-    scrollable.destroy();
-  });
-
-  return ret;
-};
 
 type SearchType = RequestHistoryOptions['hashtagType'];
 const SEARCH_TYPES: SearchType[] = ['this', 'my', 'public'];
@@ -174,6 +143,9 @@ const createSearchLoader = (options: LoadOptions) => {
       messages = result.history.map((mid) => apiManagerProxy.getMessageByPeer(peerId, mid)) as Message.message[];
     }
 
+    // * a mid can have no message behind it (deleted, or a synthetic bound), skip such holes
+    messages = messages.filter(Boolean);
+
     const rendered = await renderHistoryResult({...options, fromSavedDialog, messages});
     if(!middleware()) {
       return;
@@ -222,23 +194,21 @@ const createParticipantsLoader = (options: LoadOptions) => {
       const title = await wrapPeerTitle({peerId});
       const peer = apiManagerProxy.getPeer(peerId);
       const username = getPeerActiveUsernames(peer)[0];
-      const row = new Row({
-        title: (
+      const size = 40;
+      const avatar = avatarNew({peerId, size, middleware});
+      const row = wrapSolidComponent(() => (
+        <RowTsx clickable class="topbar-search-left-sender">
+          <RowTsx.Title>
           <span>
             <b>{title}</b> {username && <span class="secondary">{`@${username}`}</span>}
           </span>
-        ) as HTMLElement,
-        clickable: true
-      });
-
-      row.container.classList.add('topbar-search-left-sender');
-
-      const size = 40;
-      const avatar = avatarNew({peerId, size, middleware});
-      row.createMedia(`${size}`).append(avatar.node);
+          </RowTsx.Title>
+          <RowTsx.Media size="40">{avatar.node}</RowTsx.Media>
+        </RowTsx>
+      ), middleware);
       await avatar.readyThumbPromise;
 
-      return row.container;
+      return row;
     });
 
     const rendered = await Promise.all(promises);
@@ -903,10 +873,12 @@ export default function TopbarSearch(props: {
         setShowingSmallResults(false);
 
         const message = messages()[idx];
+        const query = value().trim();
         deferSideEffect(() => {
           appImManager.chat.setMessageId({
             lastMsgId: message.mid,
-            lastMsgPeerId: message.peerId
+            lastMsgPeerId: message.peerId,
+            highlight: query ? {type: 'search', query} : undefined
           });
         });
       },
@@ -1034,7 +1006,7 @@ export default function TopbarSearch(props: {
       }
 
       if(!isPremium()) {
-        PopupPremium.show({feature: 'saved_tags'});
+        showPremiumPopup({feature: 'saved_tags'});
         return;
       }
 
@@ -1158,6 +1130,7 @@ export default function TopbarSearch(props: {
 
     const onShowingSmallResultsChange = (value = showingSmallResults()) => {
       props.chat.bubbles.container.classList.toggle('search-results-active', value);
+      props.chat.bubbles.updateGoDownVisibility();
       resultsElement.classList.toggle('active', value);
     };
 
@@ -1253,23 +1226,20 @@ export default function TopbarSearch(props: {
     <ButtonIconTsx
       icon="calendar"
       onClick={() => {
-        PopupElement.createPopup(
-          PopupDatePicker,
-          new Date(),
-          props.onDatePick
-        ).show();
+        showDatePickerPopup({
+          initDate: new Date(),
+          onPick: props.onDatePick
+        });
       }}
     />
   );
 
   let scrollableDiv: HTMLDivElement;
   const scrollable = (
-    <ScrollableYTsx
+    <Scrollable
       ref={scrollableDiv}
-      {...(!isSmallScreen() && {
-        class: 'topbar-search-left-results topbar-search-left-collapsable',
-        style: calculateResultsHeight() ? {height: calculateResultsHeight() + 'px'} : undefined
-      })}
+      class={!isSmallScreen() ? 'topbar-search-left-results topbar-search-left-collapsable' : undefined}
+      style={!isSmallScreen() && calculateResultsHeight() ? {height: calculateResultsHeight() + 'px'} : undefined}
       onScrolledBottom={() => {
         loadMore()?.();
       }}
@@ -1278,27 +1248,27 @@ export default function TopbarSearch(props: {
       <Animated type="cross-fade">
         {list()?.element}
       </Animated>
-    </ScrollableYTsx>
+    </Scrollable>
   );
 
   let reactionsScrollableDiv: HTMLDivElement;
   const reactionsScrollable = (
-    <ScrollableXTsx ref={reactionsScrollableDiv} class="topbar-search-left-reactions-scrollable">
+    <Scrollable axis="x" ref={reactionsScrollableDiv} class="topbar-search-left-reactions-scrollable">
       <div class="topbar-search-left-reactions-padding"></div>
       {reactionsElement()}
       <div class="topbar-search-left-reactions-padding"></div>
-    </ScrollableXTsx>
+    </Scrollable>
   );
 
   let searchTypesScrollableDiv: HTMLDivElement;
   const searchTypesScrollable = (
-    <ScrollableXTsx ref={searchTypesScrollableDiv} class="topbar-search-left-reactions-scrollable">
+    <Scrollable axis="x" ref={searchTypesScrollableDiv} class="topbar-search-left-reactions-scrollable">
       <div class="topbar-search-left-reactions-padding"></div>
       <div class="topbar-search-left-search-types">
         {SEARCH_TYPES.map((type) => (<SearchTypeEntity type={type} />))}
       </div>
       <div class="topbar-search-left-reactions-padding"></div>
-    </ScrollableXTsx>
+    </Scrollable>
   );
 
   let container: HTMLDivElement;

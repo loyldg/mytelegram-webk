@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import App from '@config/app';
 import DEBUG from '@config/debug';
 import {LangPackKey, i18n} from '@lib/langPack';
@@ -24,9 +18,6 @@ export default class ConnectionStatusComponent {
   public static CHANGE_STATE_DELAY = 400;
   public static INITIAL_DELAY = 2000;
   public static ANIMATION_DURATION = 250;
-
-  // private statusContainer: HTMLElement;
-  // private statusEl: HTMLElement;
 
   private hadConnect = false;
   private retryAt: number;
@@ -51,14 +42,7 @@ export default class ConnectionStatusComponent {
     this.managers = managers;
     this.inputSearch = inputSearch;
     this.log = logger('CS', undefined, undefined);
-    // this.statusContainer = document.createElement('div');
-    // this.statusContainer.classList.add('connection-status'/* , 'hide' */);
-
-    // this.statusEl = Button('btn-primary bg-warning connection-status-button', {noRipple: true});
-    // this.statusContainer.append(this.statusEl);
     this.inputSearch.setPlaceholder('Search');
-
-    // chatsContainer.prepend(this.statusContainer);
 
     rootScope.addEventListener('connection_status_change', (status) => {
       // console.log(status);

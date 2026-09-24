@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import deferredPromise from '@helpers/cancellablePromise';
 import {Middleware} from '@helpers/middleware';
 import {modifyAckedPromise} from '@helpers/modifyAckedResult';
@@ -40,6 +34,7 @@ export function TranslatableMessageTsx(props: {
   const [textWithEntities, setTextWithEntities] = createSignal<TextWithEntities>();
   const translation = usePeerTranslation(props.peerId);
   const deferred = deferredPromise<void>();
+  onCleanup(() => deferred.resolve());
   let originalText: TextWithEntities = props.textWithEntities;
   let first = true, hadText = false;
 

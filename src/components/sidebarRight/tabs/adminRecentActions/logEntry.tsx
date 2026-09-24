@@ -1,8 +1,8 @@
-import {createSignal, JSX, Show} from 'solid-js';
-import {formatDate} from '@helpers/date';
 import {IconTsx} from '@components/iconTsx';
-import {HeightTransition} from '@components/sidebarRight/tabs/adminRecentActions/heightTransition';
 import styles from '@components/sidebarRight/tabs/adminRecentActions/logEntry.module.scss';
+import {formatDate} from '@helpers/date';
+import {HeightTransition} from '@helpers/solid/heightTransition';
+import {createSignal, JSX, Show} from 'solid-js';
 
 
 type LogEntryProps = {
@@ -52,9 +52,7 @@ export const LogEntry = (props: LogEntryProps) => {
         <Show when={props.expanded}>
           <div class={styles.ExpandableContentWrapper}>
             <div class={styles.ExpandableContent}>
-              <div class={styles.ExpandableContentTitle} classList={{
-                [styles.offset]: props.offsetTitle
-              }}>
+              <div class={styles.ExpandableContentTitle}>
                 {props.message}
               </div>
               <Show when={props.expandableContent}>

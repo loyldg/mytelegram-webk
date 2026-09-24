@@ -7,6 +7,7 @@ export interface MTAppConfig {
   stickers_emoji_suggest_only_api?:          boolean;
   stickers_emoji_cache_time?:                number;
   groupcall_video_participants_max?:         number;
+  conference_call_size_limit?:               number;
   youtube_pip?:                              string;
   qr_login_camera?:                          boolean;
   qr_login_code?:                            string;
@@ -14,6 +15,7 @@ export interface MTAppConfig {
   dialog_filters_tooltip?:                   boolean;
   autoarchive_setting_available?:            boolean;
   pending_suggestions?:                      string[];
+  authorization_autoconfirm_period?:         number;
   autologin_domains?:                        string[];
   url_auth_domains?:                         string[];
   round_video_encoding?:                     RoundVideoEncoding;
@@ -107,11 +109,13 @@ export interface MTAppConfig {
   new_noncontact_peers_require_premium_without_ownpremium?: boolean;
   stars_purchase_blocked?:                   boolean;
   can_edit_factcheck?:                       boolean;
+  message_primary_edited_date?:              boolean;
+  message_typing_draft_ttl?:                 number;
   stories_pinned_to_top_count_max?:          number;
   stars_paid_post_amount_max?:               number;
   stars_gifts_enabled?:                      boolean;
   stars_paid_reaction_amount_max?:           number;
-  stars_purchase_blocked?:                   boolean;
+  stars_spend_topup_invoice_disabled?:       boolean;
   stars_revenue_withdrawal_min?:             number;
   stars_subscription_amount_max?:            number;
   stars_usd_sell_rate_x1000?:                number;
@@ -144,6 +148,7 @@ export interface MTAppConfig {
   stars_stargift_resale_amount_min?:          number;
   stars_stargift_resale_commission_permille?: number;
   channel_autotranslation_level_min?:         number;
+  group_emoji_stickers_level_min?:            number;
   translations_auto_enabled?:                 'enabled' | 'disabled';
   translations_manual_enabled?:               'enabled' | 'disabled';
   freeze_since_date?:                         number;
@@ -151,7 +156,20 @@ export interface MTAppConfig {
   freeze_appeal_url?:                         string;
   settings_display_passkeys?:                 boolean;
   passkeys_account_passkeys_max?:             number;
+  poll_answer_delete_period?:                 number;
+  poll_answers_max?:                          number;
+  poll_close_period_max?:                     number;
+  poll_countries_max?:                        number;
+  phone_country_iso2?:                        string;
   no_forwards_request_expire_period?:         number;
+  music_search_username?:                     string;
+  aicompose_tone_title_length_max?:           number;
+  aicompose_tone_prompt_length_max?:          number;
+  aicompose_tone_examples_num?:               number;
+  aicompose_tone_saved_limit_default?:        number;
+  aicompose_tone_saved_limit_premium?:        number;
+  community_peers_limit?:                     number;
+  community_bot_peers_limit?:                 number;
 }
 
 export interface EmojiesSendDiceSuccess {

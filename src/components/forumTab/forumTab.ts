@@ -8,10 +8,11 @@ import appDialogsManager from '@lib/appDialogsManager';
 import {AppManagers} from '@lib/managers';
 import {logger} from '@lib/logger';
 import {AutonomousDialogListBase} from '@components/autonomousDialogList/base';
+import type {DialogsSelectionBase} from '@components/dialogsSelectionBase';
 import ButtonIcon from '@components/buttonIcon';
 import Icon from '@components/icon';
 import appSidebarLeft from '@components/sidebarLeft';
-import {MAX_SIDEBAR_WIDTH} from '@components/sidebarLeft/constants';
+import {MAX_SIDEBAR_WIDTH} from '@helpers/updateColumnWidths';
 import SetTransition from '@components/singleTransition';
 import {SliderSuperTabEventable} from '@components/sliderTab';
 import {Register} from '@components/forumTab/register';
@@ -23,15 +24,19 @@ export class ForumTab extends SliderSuperTabEventable {
   public static register: Register<PeerId, typeof ForumTab> = new Register;
 
 
-  protected rows: HTMLElement;
-  protected subtitle: HTMLElement;
+  public rows: HTMLElement;
+  public subtitle: HTMLElement;
+  public headerAvatar: HTMLElement;
 
   public peerId: PeerId;
   private firstTime: boolean;
 
   protected log: ReturnType<typeof logger>;
 
-  public xd: AutonomousDialogListBase;
+  public xd?: AutonomousDialogListBase;
+
+  /** What selecting the rows of this tab means, when the tab has rows that can be selected */
+  protected selection?: DialogsSelectionBase;
 
   public async toggle(value: boolean) {
     if(this.triggerAsyncInit) {
@@ -67,7 +72,13 @@ export class ForumTab extends SliderSuperTabEventable {
   }
 
   protected async asyncInit(): Promise<void> {
-    this.xd.onChatsScroll();
+    this.xd?.onChatsScroll();
+  }
+
+  protected async onSearchClick() {
+    appSidebarLeft.closeEverythingInside();
+    if(liteMode.isAvailable('animations')) await pause(400);
+    appSidebarLeft.initSearch().openWithPeerId(this.peerId);
   }
 
   public init(options: {
@@ -100,29 +111,33 @@ export class ForumTab extends SliderSuperTabEventable {
     if(IS_TOUCH_SUPPORTED) {
       handleTabSwipe({
         element: this.container,
-        onSwipe: () => {
-          appDialogsManager.toggleForumTab(undefined, this);
-        },
+        onSwipe: this._close,
         middleware: this.middlewareHelper.get()
       });
     }
 
     const searchButton = ButtonIcon('search');
-    attachClickEvent(searchButton, async() => {
-      appSidebarLeft.closeEverythingInside();
-      if(liteMode.isAvailable('animations')) await pause(400);
-      appSidebarLeft.initSearch().openWithPeerId(this.peerId);
-    });
+    attachClickEvent(searchButton, () => this.onSearchClick());
 
     this.header.append(searchButton);
 
     this.syncInit();
 
-    this.xd.getRectFromForPlaceholder = this.getRectFromForPlaceholder;
+    if(this.xd) {
+      this.xd.getRectFromForPlaceholder = this.getRectFromForPlaceholder;
+    }
 
     if(!isFloating) {
       return this.triggerAsyncInit();
     }
+  }
+
+  // an avatar slot in front of the header rows, for tabs that want one
+  protected createHeaderAvatar() {
+    const avatar = document.createElement('div');
+    avatar.classList.add('sidebar-header__avatar');
+    this.rows.before(avatar);
+    return this.headerAvatar = avatar;
   }
 
   protected getRectFromForPlaceholder = () => {
@@ -155,6 +170,8 @@ export class ForumTab extends SliderSuperTabEventable {
 
   public onCloseAfterTimeout() {
     super.onCloseAfterTimeout();
-    this.xd.destroy();
+    // the bar lives in this tab's header, so whatever is selected goes out with the tab
+    this.selection?.cleanup();
+    this.xd?.destroy();
   }
 }

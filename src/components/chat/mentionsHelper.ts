@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type ChatInput from '@components/chat/input';
 import AutocompleteHelperController from '@components/chat/autocompleteHelperController';
 import AutocompletePeerHelper from '@components/chat/autocompletePeerHelper';
@@ -33,7 +27,8 @@ export default class MentionsHelper extends AutocompletePeerHelper {
     query: string,
     peerId: PeerId,
     topMsgId: number,
-    global?: boolean
+    global?: boolean,
+    includeGuestBots?: boolean
   ) {
     const trimmed = query.trim(); // check that there is no whitespace
     if(query.length !== trimmed.length) return false;
@@ -43,7 +38,8 @@ export default class MentionsHelper extends AutocompletePeerHelper {
       peerId && peerId.toChatId(),
       trimmed,
       topMsgId,
-      global
+      global,
+      includeGuestBots
     ).then(async(peerIds) => {
       if(!middleware()) return;
 

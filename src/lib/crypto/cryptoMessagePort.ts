@@ -1,21 +1,17 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {CryptoMethods} from '@lib/crypto/crypto_methods';
 import SuperMessagePort from '@lib/superMessagePort';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import {IS_WORKER} from '@helpers/context';
 import type {ThreadedWorkerEvents} from '@lib/mainWorker/mainMessagePort';
+import type {ThreadMemoryStats} from '@lib/debug/memoryStats';
 
 
 type CryptoEvent = {
   invoke: <T extends keyof CryptoMethods>(payload: {method: T, args: Parameters<CryptoMethods[T]>}) =>
     SuperMessagePort.TransferableResultValue<ReturnType<CryptoMethods[T]>>,
   port: (payload: void, source: MessageEventSource, event: MessageEvent) => void,
-  terminate: () => void
+  terminate: () => void,
+  memoryStats: (payload: void) => ThreadMemoryStats // see @lib/debug/memoryStats
 } & ThreadedWorkerEvents;
 
 export class CryptoMessagePort<Master extends boolean = false> extends SuperMessagePort<CryptoEvent, CryptoEvent, Master> {

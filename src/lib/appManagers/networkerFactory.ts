@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -20,6 +16,7 @@ import {getEnvironment} from '@environment/utils';
 export class NetworkerFactory extends AppManager {
   private networkers: MTPNetworker[] = [];
   public language = navigator.language || App.langPackCode;
+  private customDeviceModel = '';
   public updatesProcessor: (obj: any) => void = null;
   // public onConnectionStatusChange: (status: ConnectionStatusChange) => void = null;
   public akStopped = false;
@@ -27,6 +24,18 @@ export class NetworkerFactory extends AppManager {
   constructor() {
     super();
     this.name = 'NET-FACTORY';
+  }
+
+  protected after() {
+    this.rootScope.addEventListener('settings_updated', ({key, settings}) => {
+      if(key === 'settings.customDeviceModel') {
+        this.setDeviceModel(settings.customDeviceModel);
+      }
+    });
+
+    return this.appStateManager.getState().then((state) => {
+      this.setDeviceModel(state.settings?.customDeviceModel);
+    });
   }
 
   public removeNetworker(networker: MTPNetworker) {
@@ -37,16 +46,13 @@ export class NetworkerFactory extends AppManager {
     this.updatesProcessor = callback;
   }
 
-  public getNetworker(options: Omit<
-    ConstructorParameters<typeof MTPNetworker>[0],
-    'networkerFactory' | 'timeManager' | 'getBaseDcId' | 'updatesProcessor' | 'getInitConnectionParams'
-  >) {
-    const networker = new MTPNetworker({
-      ...options,
+  // * what every networker is made with
+  private getCommonOptions() {
+    return {
       timeManager: this.timeManager,
       getInitConnectionParams: () => ({
         id: App.id,
-        deviceModel: getEnvironment().USER_AGENT || 'Unknown UserAgent',
+        deviceModel: this.customDeviceModel || getEnvironment().USER_AGENT || 'Unknown UserAgent',
         systemVersion: navigator.platform || 'Unknown Platform',
         version: App.version + (App.isMainDomain ? ' ' + App.suffix : ''),
         systemLangCode: navigator.language || 'en',
@@ -54,7 +60,17 @@ export class NetworkerFactory extends AppManager {
         langCode: this.language
       }),
       getBaseDcId: () => this.apiManager.getBaseDcId(),
-      createLogger: this.createLogger.bind(this),
+      createLogger: this.createLogger.bind(this)
+    };
+  }
+
+  public getNetworker(options: Omit<
+    ConstructorParameters<typeof MTPNetworker>[0],
+    'networkerFactory' | 'timeManager' | 'getBaseDcId' | 'updatesProcessor' | 'getInitConnectionParams'
+  >) {
+    const networker = new MTPNetworker({
+      ...options,
+      ...this.getCommonOptions(),
       isForcedStopped: () => this.akStopped,
       updatesProcessor: (obj) => this.updatesProcessor?.(obj),
       onConnectionStatus: (status) => {
@@ -68,6 +84,23 @@ export class NetworkerFactory extends AppManager {
     });
     this.networkers.push(networker);
     return networker;
+  }
+
+  /**
+   * A networker for a single job over a connection of its own — binding a
+   * temporary key. It stays out of the pool: no connection status, no
+   * updates, no salt to keep.
+   */
+  public getHelperNetworker(options: Pick<
+    ConstructorParameters<typeof MTPNetworker>[0],
+    'dcId' | 'permAuthKey' | 'authKey' | 'serverSalt'
+  >) {
+    return new MTPNetworker({
+      ...options,
+      ...this.getCommonOptions(),
+      isFileDownload: false,
+      isFileUpload: false
+    });
   }
 
   public startAll() {
@@ -94,6 +127,24 @@ export class NetworkerFactory extends AppManager {
     }
 
     this.language = langCode;
+    this.resetConnectionInited();
+  }
+
+  /**
+   * The name this device shows up under in everyone's Active Sessions. Only
+   * initConnection carries it, so re-init the client networkers to push it.
+   */
+  public setDeviceModel(deviceModel: string) {
+    deviceModel ||= '';
+    if(this.customDeviceModel === deviceModel) {
+      return;
+    }
+
+    this.customDeviceModel = deviceModel;
+    this.resetConnectionInited();
+  }
+
+  private resetConnectionInited() {
     for(const networker of this.networkers) {
       if(!networker.isFileNetworker) {
         networker.connectionInited = false;

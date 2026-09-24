@@ -1,0 +1,16 @@
+@use "../../scss/mixins" as *;
+
+.popup {
+  --popup-max-width: 360px;
+}
+
+.header {
+  position: absolute;
+}
+
+.info {
+  @include text-overflow(false);
+
+  padding: 0 1rem;
+  text-align: center;
+}

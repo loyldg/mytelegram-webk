@@ -1,25 +1,21 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {MOUNT_CLASS_TO} from '@config/debug';
-import rootScope from '@lib/rootScope';
+import {useAppSettings} from '@stores/appSettings';
 
 export type LiteModeKey = 'all' | 'gif' | 'video' |
-  'emoji' | 'emoji_panel' | 'emoji_messages' |
+  'emoji' | 'emoji_panel' | 'emoji_messages' | 'emoji_appear' |
   'effects' | 'effects_reactions' | 'effects_premiumstickers' | 'effects_emoji' |
   'stickers' | 'stickers_panel' | 'stickers_chat' |
-  'chat' | 'chat_background' | 'chat_spoilers' | 'animations';
+  'chat' | 'chat_background' | 'chat_spoilers' | 'animations' | 'blur';
 
 export class LiteMode {
   public isEnabled() {
-    return !!(rootScope.settings && rootScope.settings.liteMode.all);
+    const [appSettings] = useAppSettings();
+    return !!appSettings.liteMode?.all;
   }
 
   public isAvailable(key: LiteModeKey) {
-    return !!(rootScope.settings && !rootScope.settings.liteMode.all && !rootScope.settings.liteMode[key]);
+    const [appSettings] = useAppSettings();
+    return !!(appSettings.liteMode && !appSettings.liteMode.all && !appSettings.liteMode[key]);
   }
 }
 

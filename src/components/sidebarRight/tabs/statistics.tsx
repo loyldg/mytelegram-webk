@@ -1,12 +1,6 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type TChart from '@lib/tchart/chart';
 import type {TChartData, TChatOriginalData} from '@lib/tchart/types';
-import {Message, MessagesMessages, PostInteractionCounters, PublicForward, StatsAbsValueAndPrev, StatsBroadcastStats, StatsGraph, StatsGroupTopAdmin, StatsGroupTopInviter, StatsGroupTopPoster, StatsMegagroupStats, StatsMessageStats, StatsPercentValue, StatsPublicForwards, StatsStoryStats, StoryItem} from '@layer';
+import {Message, MessagesMessages, PostInteractionCounters, PublicForward, StatsAbsValueAndPrev, StatsBroadcastStats, StatsGraph, StatsGroupTopAdmin, StatsGroupTopInviter, StatsGroupTopPoster, StatsMegagroupStats, StatsMessageStats, StatsPercentValue, StatsPollStats, StatsPublicForwards, StatsStoryStats, StoryItem} from '@layer';
 import I18n, {LangPackKey, i18n, join, joinElementsWith} from '@lib/langPack';
 import Section from '@components/section';
 import {SliderSuperTabEventable} from '@components/sliderTab';
@@ -24,7 +18,7 @@ import liteMode from '@helpers/liteMode';
 import classNames from '@helpers/string/classNames';
 import Icon from '@components/icon';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
-import Row from '@components/row';
+import RowTsx from '@components/rowTsx';
 import {wrapReplyDivAndCaption} from '@components/chat/replyContainer';
 import {formatFullSentTime} from '@helpers/date';
 import numberThousandSplitter from '@helpers/number/numberThousandSplitter';
@@ -42,6 +36,7 @@ import {createStoriesViewerWithPeer} from '@components/stories/viewer';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import {avatarNew} from '@components/avatarNew';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
+import {wrapSolidComponent} from '@helpers/solid/wrapSolidComponent';
 
 const CHANNEL_GRAPHS_TITLES: {[key in keyof PickByType<StatsBroadcastStats, StatsGraph>]: LangPackKey} = {
   growth_graph: 'GrowthChartTitle',
@@ -69,12 +64,33 @@ const GROUP_GRAPH_TITLES: {[key in keyof PickByType<StatsMegagroupStats, StatsGr
   weekdays_graph: 'TopDaysOfWeekChartTitle'
 };
 
-const MESSAGE_GRAPH_TITLES: {[key in keyof PickByType<StatsMessageStats, StatsGraph>]: LangPackKey} = {
+type StatsMessageStatsWithPoll = StatsMessageStats & Partial<Pick<StatsPollStats, 'votes_graph'>>;
+
+const MESSAGE_GRAPH_TITLES: {[key in keyof PickByType<StatsMessageStatsWithPoll, StatsGraph>]: LangPackKey} = {
+  views_graph: 'ViewsAndSharesChartTitle',
+  reactions_by_emotion_graph: 'ReactionsByEmotionChartTitle',
+  votes_graph: 'PollStats.Votes'
+};
+
+const STORY_GRAPH_TITLES: {[key in keyof PickByType<StatsStoryStats, StatsGraph>]: LangPackKey} = {
   views_graph: 'ViewsAndSharesChartTitle',
   reactions_by_emotion_graph: 'ReactionsByEmotionChartTitle'
 };
 
-const STORY_GRAPH_TITLES = MESSAGE_GRAPH_TITLES;
+const POLL_GRAPH_TITLES: {[key in keyof PickByType<StatsPollStats, StatsGraph>]: LangPackKey} = {
+  votes_graph: 'PollStats.Votes'
+};
+
+const getStatisticsErrorText = (error: unknown) => {
+  if(typeof(error) === 'string') return error;
+  if(!error || typeof(error) !== 'object') return;
+
+  const apiErrorType = (error as Partial<ApiError>).type;
+  if(apiErrorType) return apiErrorType;
+
+  const message = (error as Partial<Error>).message;
+  if(typeof(message) === 'string') return message;
+};
 
 const CHANNEL_OVERVIEW_ITEMS: {[key in keyof PickByType<StatsBroadcastStats, StatsAbsValueAndPrev | StatsPercentValue>]: LangPackKey} = {
   followers: 'FollowersChartTitle',
@@ -232,17 +248,20 @@ export const StatisticsOverviewItems = (props: {
 
 export default class AppStatisticsTab extends SliderSuperTabEventable {
   private chatId: ChatId;
+  private peerId: PeerId;
   private mid: number;
   private storyId: number;
-  private stats: StatsBroadcastStats | StatsMegagroupStats | StatsMessageStats | StatsStoryStats;
+  private stats: StatsBroadcastStats | StatsMegagroupStats | StatsMessageStatsWithPoll | StatsStoryStats | StatsPollStats;
   private messages: Map<number, Message.message>;
   private stories: Map<number, StoryItem.storyItem>;
   private dcId: DcId;
+  private graphDcIds: Map<string, DcId>;
   private openPromise: CancellablePromise<void>;
   private isBroadcast: boolean;
   private isMegagroup: boolean;
   private isMessage: boolean;
   private isStory: boolean;
+  private isPoll: boolean;
 
   protected onOpenAfterTimeout(): void {
     this.openPromise.resolve();
@@ -340,16 +359,17 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
       colors = makeColors();
     });
 
-    const titles = this.isBroadcast ? CHANNEL_GRAPHS_TITLES : (this.isMegagroup ? GROUP_GRAPH_TITLES : (this.isStory ? STORY_GRAPH_TITLES : MESSAGE_GRAPH_TITLES));
-    const graphs: {statsGraph: StatsGraph.statsGraph, title: LangPackKey, percentage: boolean}[] = Object.keys(titles).map((key) => {
+    const titles = this.isPoll ? POLL_GRAPH_TITLES : (this.isBroadcast ? CHANNEL_GRAPHS_TITLES : (this.isMegagroup ? GROUP_GRAPH_TITLES : (this.isStory ? STORY_GRAPH_TITLES : MESSAGE_GRAPH_TITLES)));
+    const graphs: {statsGraph: StatsGraph.statsGraph, title: LangPackKey, percentage: boolean, dcId: DcId}[] = Object.keys(titles).map((key) => {
       const statsGraph = this.stats[key as keyof typeof titles];
       return statsGraph && {
         statsGraph,
         title: titles[key as keyof typeof titles],
-        percentage: (key as keyof typeof titles) === 'languages_graph'
+        percentage: (key as keyof typeof titles) === 'languages_graph',
+        dcId: this.graphDcIds.get(key) ?? this.dcId
       };
     }).filter(Boolean);
-    const renderGraph = ({statsGraph, title, percentage}: typeof graphs[0]) => {
+    const renderGraph = ({statsGraph, title, percentage, dcId}: typeof graphs[0]) => {
       onMount(() => {
         let data: TChatOriginalData = JSON.parse(statsGraph.json.data);
         // console.log('data', JSON.parse(statsGraph.json.data));
@@ -385,7 +405,7 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
             ...data,
             ...addOptions,
             x_on_zoom: zoomToken ? async(x) => {
-              const statsGraph = await this.managers.appStatisticsManager.loadAsyncGraph(zoomToken, x, this.dcId);
+              const statsGraph = await this.managers.appStatisticsManager.loadAsyncGraph(zoomToken, x, dcId);
               if(statsGraph._ === 'statsGraphError') {
                 return;
               }
@@ -458,8 +478,8 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
       );
     };
 
-    const overviewTitles = this.stats._ === 'stats.broadcastStats' ? CHANNEL_OVERVIEW_ITEMS : (this.isMegagroup ? GROUP_OVERVIEW_ITEMS : (this.isStory ? STORY_OVERVIEW_ITEMS : MESSAGE_OVERVIEW_ITEMS));
-    const overviewItems: {value: StatsAbsValueAndPrev | StatsPercentValue, title: LangPackKey}[] = Object.keys(overviewTitles).map((key) => {
+    const overviewTitles = this.isPoll ? undefined : (this.stats._ === 'stats.broadcastStats' ? CHANNEL_OVERVIEW_ITEMS : (this.isMegagroup ? GROUP_OVERVIEW_ITEMS : (this.isStory ? STORY_OVERVIEW_ITEMS : MESSAGE_OVERVIEW_ITEMS)));
+    const overviewItems: {value: StatsAbsValueAndPrev | StatsPercentValue, title: LangPackKey}[] = Object.keys(overviewTitles || {}).map((key) => {
       const value = this.stats[key as keyof typeof overviewTitles];
       return value && {
         value,
@@ -486,11 +506,11 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
     const ret = (
       <>
         {currentPost && <Section>{currentPost.container}</Section>}
-        <Section name="StatisticOverview" nameRight={period && formatDateRange(period.min_date, period.max_date)}>
+        {!!overviewItems.length && <Section name="StatisticOverview" nameRight={period && formatDateRange(period.min_date, period.max_date)}>
           <StatisticsOverviewItems items={overviewItems} />
-        </Section>
+        </Section>}
         <For each={graphs}>{renderGraph}</For>
-        {recentPosts.length && <Section ref={postsContainer} name="RecentPosts">
+        {!!recentPosts.length && <Section ref={postsContainer} name="RecentPosts">
           {recentPosts.map(({container}) => container)}
         </Section>}
         <For each={[topPosters, topAdmins, topInviters]}>{(topPeers, idx) => {
@@ -502,7 +522,7 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
 
           const chatlist = appDialogsManager.createChatList();
           chatlist.append(...topPeers.splice(0, 10).map(({container}) => container));
-          const [moreButton, setMoreButton] = createSignal<JSX.Element>(topPeers.length && MoreButton({
+          const [moreButton, setMoreButton] = createSignal<JSX.Element>(!!topPeers.length && MoreButton({
             count: topPeers.length,
             callback: () => {
               setMoreButton(undefined);
@@ -516,7 +536,7 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
             </Section>
           );
         }}</For>
-        {publicForwards().count && <Section name="PublicSharesCount" nameArgs={[publicForwards().count]}>
+        {!!publicForwards().count && <Section name="PublicSharesCount" nameArgs={[publicForwards().count]}>
           <div
             ref={(el) => {
               appDialogsManager.setListClickListener({
@@ -578,7 +598,7 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
 
       createContextMenu({
         buttons: [{
-          icon: 'statistics',
+          icon: 'statistics_filled',
           text: 'ViewStatistics',
           onClick: onOpenClick
         }, {
@@ -645,24 +665,31 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
       subtitleRightFragment.append(e);
     });
 
-    const row = new Row({
-      title: true,
-      titleRight: noLabels ? undefined : i18n('Views', [numberThousandSplitter(postInteractionCounters.views)]),
-      subtitle: true,
-      subtitleRight: noLabels ? undefined : subtitleRightFragment,
-      clickable: true,
-      noWrap: true,
-      asLink: !!(message || storyItem)
-    });
-
-    const {container} = row;
-    container.classList.add('statistics-post');
-
-    row.title.classList.add('statistics-post-title');
-
     const middleware = this.middlewareHelper.get();
     const mediaEl = document.createElement('div');
     mediaEl.classList.add('statistics-post-media');
+    let titleElement: HTMLDivElement;
+    let subtitleElement: HTMLDivElement;
+    const container = wrapSolidComponent(() => (
+      <RowTsx
+        clickable
+        noWrap
+        as={message || storyItem ? 'a' : undefined}
+        class="statistics-post"
+      >
+        <RowTsx.Title
+          ref={titleElement}
+          class="statistics-post-title"
+          titleRight={noLabels ? undefined : i18n('Views', [numberThousandSplitter(postInteractionCounters.views)])}
+        />
+        <RowTsx.Subtitle
+          ref={subtitleElement}
+          subtitleRight={noLabels ? undefined : subtitleRightFragment}
+        />
+        <RowTsx.Media element={mediaEl} size="abitbigger" />
+      </RowTsx>
+    ), middleware);
+
     if(message || storyItem) {
       const {node, readyThumbPromise, setStoriesSegments} = avatarNew({
         middleware,
@@ -671,26 +698,25 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
         peerId
       });
 
-      row.container.dataset.peerId = '' + peerId;
+      container.dataset.peerId = '' + peerId;
       if(storyItem) {
         setStoriesSegments([{length: 1, type: 'unread'}]);
-        row.container.dataset.storyId = '' + storyItem.id;
+        container.dataset.storyId = '' + storyItem.id;
       } else {
-        row.container.dataset.mid = '' + message.mid;
+        container.dataset.mid = '' + message.mid;
       }
 
       mediaEl.append(node);
       await readyThumbPromise;
-      row.title.append(await wrapPeerTitle({peerId}));
-      row.subtitle.append(formatFullSentTime(message?.date || storyItem?.date));
-      row.applyMediaElement(mediaEl, 'abitbigger');
+      titleElement.append(await wrapPeerTitle({peerId}));
+      subtitleElement.append(formatFullSentTime(message?.date || storyItem?.date));
     } else if(postInteractionCounters._ === 'postInteractionCountersMessage') {
       container.classList.add('statistics-post-message');
       message ||= this.messages.get(postInteractionCounters.msg_id);
       const isMediaSet = await wrapReplyDivAndCaption({
-        titleEl: row.subtitle,
+        titleEl: subtitleElement,
         title: formatFullSentTime(message.date),
-        subtitleEl: row.title,
+        subtitleEl: titleElement,
         message,
         mediaEl,
         middleware,
@@ -702,13 +728,11 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
         mediaEl.append(node);
         await readyThumbPromise;
       }
-
-      row.applyMediaElement(mediaEl, 'abitbigger');
     } else {
       container.classList.add('statistics-post-story');
       storyItem ||= this.stories.get(postInteractionCounters.story_id);
-      row.title.append(i18n('Story'));
-      row.subtitle.append(formatFullSentTime(storyItem.date));
+      titleElement.append(i18n('Story'));
+      subtitleElement.append(formatFullSentTime(storyItem.date));
 
       const border = document.createElement('div');
       border.classList.add('avatar-stories-simple', 'is-unread');
@@ -736,8 +760,6 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
 
         return deferred;
       });
-
-      row.applyMediaElement(mediaEl, 'abitbigger');
     }
 
     return {container, postInteractionCounters};
@@ -819,20 +841,43 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
   };
 
   private async loadStats() {
-    const peerId = this.chatId.toPeerId(true);
+    const peerId = this.peerId;
     const manager = this.managers.appStatisticsManager;
     const loadLimit = 100;
-    const func = this.isBroadcast ? manager.getBroadcastStats : (this.isMegagroup ? manager.getMegagroupStats : (this.isStory ? manager.getStoryStats : manager.getMessageStats));
+    const func = this.isPoll ? manager.getPollStats : (this.isBroadcast ? manager.getBroadcastStats : (this.isMegagroup ? manager.getMegagroupStats : (this.isStory ? manager.getStoryStats : manager.getMessageStats)));
     const postPromise = this.isMessage ? this.managers.appMessagesManager.reloadMessage(peerId, this.mid) : undefined;
     const postPublicForwardsPromise = this.isMessage ? manager.getMessagePublicForwards({peerId, mid: this.mid, limit: loadLimit}) : undefined;
     const storyPromise = this.isStory ? this.managers.appStoriesManager.getStoryById(peerId, this.storyId) : undefined;
     const storyPublicForwardsPromise = this.isStory ? manager.getStoryPublicForwards({peerId, id: this.storyId, limit: loadLimit}) : undefined;
-    const {stats, dcId} = await func({
+    const statsPromise = func({
       peerId,
       dark: themeController.isNight(),
       storyId: this.storyId,
       mid: this.mid
     });
+    const loadPollStats = (message: Message) => {
+      if(message?._ !== 'message' || message.media?._ !== 'messageMediaPoll' || !message.media.results.pFlags.can_view_stats) {
+        return;
+      }
+
+      return manager.getPollStats({
+        peerId,
+        mid: this.mid,
+        dark: themeController.isNight()
+      });
+    };
+    const pollStatsPromise = this.isMessage ?
+      this.managers.appMessagesManager.getMessageByPeer(peerId, this.mid).then((message) => {
+        return loadPollStats(message) || postPromise.then(loadPollStats);
+      }).catch((): undefined => undefined) :
+      undefined;
+    const [{stats, dcId}, pollStatsResult] = await Promise.all([statsPromise, pollStatsPromise]);
+    this.graphDcIds = new Map();
+    if(this.isMessage && pollStatsResult) {
+      (stats as StatsMessageStatsWithPoll).votes_graph = pollStatsResult.stats.votes_graph;
+      this.graphDcIds.set('votes_graph', pollStatsResult.dcId);
+    }
+
     this.stats = stats;
     this.dcId = dcId;
 
@@ -840,20 +885,36 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
     for(const key in stats) {
       const value = stats[key as keyof typeof stats] as any as StatsGraph;
       if(value._ === 'statsGraphAsync') {
+        const isOptionalPollGraph = this.isMessage && key === 'votes_graph';
         const promise = manager.loadAsyncGraph(
           value.token,
           undefined,
-          dcId
+          this.graphDcIds.get(key) ?? dcId
         ).then((statsGraph) => {
           if(statsGraph._ === 'statsGraphError') {
+            if(this.isPoll && statsGraph.error) {
+              throw new Error(statsGraph.error);
+            }
+
             delete stats[key as keyof typeof stats];
             return;
           }
 
           stats[key as keyof typeof stats] = statsGraph as any;
+        }, (err) => {
+          if(isOptionalPollGraph) {
+            delete stats[key as keyof typeof stats];
+            return;
+          }
+
+          throw err;
         });
         promises.push(promise);
       } else if(value._ === 'statsGraphError') {
+        if(this.isPoll && value.error) {
+          throw new Error(value.error);
+        }
+
         delete stats[key as keyof typeof stats];
       }
     }
@@ -1001,47 +1062,71 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
     });
   }
 
-  public async init(chatId: ChatId, mid?: number, storyId?: number) {
+  public async init(chatIdOrPeerId: ChatId | PeerId, mid?: number, storyId?: number, mode?: 'poll') {
     this.container.classList.add('statistics-container');
 
-    this.chatId = chatId;
+    this.isPoll = mode === 'poll';
+    this.chatId = this.isPoll ? chatIdOrPeerId.toChatId() : chatIdOrPeerId as ChatId;
+    this.peerId = this.isPoll ? chatIdOrPeerId as PeerId : this.chatId.toPeerId(true);
     this.mid = mid;
     this.storyId = storyId;
     this.messages = new Map();
     this.stories = new Map();
+    this.graphDcIds = new Map();
     this.openPromise = deferredPromise<void>();
 
-    if(mid) {
+    if(!this.isPoll && mid) {
       this.isMessage = true;
-    } else if(storyId) {
+    } else if(!this.isPoll && storyId) {
       this.isStory = true;
-    } else {
-      this.isBroadcast = await this.managers.appChatsManager.isBroadcast(chatId);
-      this.isMegagroup = await this.managers.appChatsManager.isMegagroup(chatId);
+    } else if(!this.isPoll) {
+      this.isBroadcast = await this.managers.appChatsManager.isBroadcast(this.chatId);
+      this.isMegagroup = await this.managers.appChatsManager.isMegagroup(this.chatId);
     }
 
-    this.setTitle(this.isBroadcast ? 'Statistics' : (this.isMegagroup ? 'GroupStats.Title' : (this.isStory ? 'StoryStatistics' : 'PostStatistics')));
+    this.setTitle(this.isPoll ? 'PollStats.Title' : (this.isBroadcast ? 'Statistics' : (this.isMegagroup ? 'GroupStats.Title' : (this.isStory ? 'StoryStatistics' : 'PostStatistics'))));
 
     const promise = Promise.all([
       ensureTChart(),
       this.openPromise,
       this.loadStats()
     ]);
+    promise.catch((): undefined => undefined);
 
     const [hide, setHide] = createSignal(false);
+    const [placeholderState, setPlaceholderState] = createSignal<'loading' | 'empty' | 'error'>('loading');
+    const [statisticsError, setStatisticsError] = createSignal<string>();
+    const middleware = this.middlewareHelper.get();
 
     const element = await emptyPlaceholder({
-      title: () => i18n('LoadingStats'),
-      description: () => i18n('LoadingStatsDescription'),
+      title: () => placeholderState() === 'error' ? (statisticsError() || i18n('Error.AnError')) : i18n(placeholderState() === 'empty' ? 'PollStats.NoVotes' : 'LoadingStats'),
+      description: () => placeholderState() === 'loading' ? i18n('LoadingStatsDescription') : undefined,
       assetName: 'StatsEmoji',
-      middleware: this.middlewareHelper.get(),
+      middleware,
       hide,
       isFullSize: true
     });
 
+    if(!middleware() || !element) {
+      return;
+    }
+
     this.scrollable.append(element);
     promise.then(async([_, __, loaded]) => {
+      if(!middleware()) {
+        return;
+      }
+
+      if(this.isPoll && (this.stats as StatsPollStats).votes_graph?._ !== 'statsGraph') {
+        setPlaceholderState('empty');
+        return;
+      }
+
       const div = document.createElement('div');
+      if(!middleware()) {
+        return;
+      }
+
       this.scrollable.append(div);
       const dispose = render(() => this._construct(...loaded), div);
       this.eventListener.addEventListener('destroy', dispose);
@@ -1054,10 +1139,18 @@ export default class AppStatisticsTab extends SliderSuperTabEventable {
           div.animate(keyframes.slice().reverse(), options)
         ];
 
-        await Promise.all(animations.map((animation) => animation.finished));
+        await Promise.all(animations.map((animation) => animation.finished)).catch((): undefined => undefined);
+        if(!middleware()) {
+          return;
+        }
       }
 
       setHide(true);
+    }, (error) => {
+      if(middleware() && this.isPoll) {
+        setStatisticsError(getStatisticsErrorText(error));
+        setPlaceholderState('error');
+      }
     });
   }
 }

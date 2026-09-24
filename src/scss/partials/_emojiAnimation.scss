@@ -1,16 +1,8 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../shared" as *;
 
 .emoji-animation {
   position: absolute;
   pointer-events: none;
-
-  // @include sidebar-transform(true);
 
   &-container {
     position: absolute; 

@@ -1,18 +1,31 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "sass:string";
 @use "../../shared" as *;
 @use "popupVariables" as *;
 
 .popup {
-  --popup-min-width: auto;
-  --popup-max-width: auto;
+  --popup-width: auto;
+  --popup-height: auto;
+  --popup-min-width: var(--popup-width);
+  --popup-max-width: var(--popup-width);
+  --popup-min-height: var(--popup-height);
+  --popup-max-height: auto;
+  --popup-border-radius: 2.5rem;
+  --popup-background-color: var(--background-color);
+
+  // --popup-footer-padding: #{$popup-footer-padding};
+  // --popup-footer-button-height: #{$popup-footer-button-size};
+  --popup-footer-padding: #{$popup-footer-abitlarger-padding};
+  --popup-footer-button-height: #{$popup-footer-abitlarger-button-size};
+  // A footer with one button in it, which is what every popup in the app has today. Two things
+  // read it: the height an empty footer still holds (`forward` shows its footer before there is
+  // a button to put in it), and the room a floating footer asks of the content it covers.
+  // Anything more in a footer — a second button, a caption — makes it taller, and CSS cannot
+  // measure that: a popup that floats such a footer reserves the difference itself.
+  --popup-footer-height: calc(var(--popup-footer-padding) * 2 + var(--popup-footer-button-height));
+  --popup-footer-gradient-start: 50%;
+
   --link-color: var(--primary-color);
-  position: fixed!important;
+  position: fixed !important;
   top: 0;
   right: 0;
   bottom: 0;
@@ -31,7 +44,6 @@
   transition-timing-function: var(--popup-transition-function);
   overflow: auto;
   display: flex;
-  user-select: none;
   color: var(--primary-text-color);
   font-size: 1rem;
 
@@ -74,10 +86,8 @@
   &-container {
     --translateX: 0;
     position: relative;
-    /* max-width: 400px; */
-    border-radius: $border-radius-medium;
-    background-color: var(--surface-color);
-    padding: 1rem;
+    border-radius: var(--popup-border-radius);
+    background-color: var(--popup-background-color);
     transform: translate3d(var(--translateX), 3rem, 0);
     backface-visibility: hidden;
     transition: transform var(--popup-transition-time) var(--popup-transition-function);
@@ -85,8 +95,12 @@
     flex-direction: column;
     overflow: hidden;
     margin: auto;
+    width: var(--popup-width);
+    height: var(--popup-height);
     min-width: string.unquote('min(100%, var(--popup-min-width))');
     max-width: string.unquote('min(100%, var(--popup-max-width))');
+    min-height: string.unquote('min(100%, var(--popup-min-height))');
+    max-height: string.unquote('min(100%, var(--popup-max-height))');
 
     body.animation-level-0 & {
       transition: none;
@@ -123,15 +137,16 @@
     flex: 0 0 auto;
     width: 2.5rem;
     height: 2.5rem;
-    margin-inline-end: 1.5rem;
+    margin-inline-end: 1rem;
   }
 
   &-header {
     display: flex;
-    margin-bottom: 2rem;
     align-items: center;
     flex: 0 0 auto;
     position: relative;
+    height: 3.5rem;
+    padding: 0 1rem;
 
     &.is-floating {
       position: absolute;
@@ -193,28 +208,87 @@
     // }
   }
 
+  // The scroll is the container's own flex child — a scroll is absolutely positioned by default.
+  #{&}-container > #{&}-scrollable {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  // The body inside a scroll is sized by its content — and fills the scrollport when there is
+  // less of it than that. It clips nothing: the shadows the cards paint below themselves are
+  // the scroll's business, not the body's.
+  #{&}-scrollable > #{&}-body {
+    // `min-height` fills the scrollport where the scroll lays out as a block, `flex` where a
+    // popup has made it a column — and never shrinks below what the body actually holds
+    min-height: 100%;
+    flex: 1 0 auto;
+    overflow: visible;
+  }
+
+  // The last card ends flush with the scroll, so its shadow would be cut off at that edge. The
+  // clip box reaches into the footer's padding just far enough to keep it, and the negative
+  // margin hands those pixels straight back — the footer, and everything in it, stays put.
+  // Only against a footer that is right below it in the flow: the pixels have to land in
+  // something that can spare them, and a floating footer is not part of that column at all.
+  &-scrollable:has(+ #{&}-footer-shaded) {
+    padding-bottom: $popup-scroll-bleed;
+    margin-bottom: -$popup-scroll-bleed;
+  }
+
+  // The flow footer draws the line the scroll used to: it lands on the junction itself rather
+  // than inside the bleed, and it is there only while content actually runs behind that edge.
+  #{&}-footer-shaded {
+    // the scroll is positioned, so the footer has to be as well to paint over the bleed
+    position: relative;
+    z-index: 1;
+    border-top: 1px solid transparent;
+    background-color: transparent;
+
+    @include animation-level(2) {
+      transition: background-color var(--transition-standard-in), border-top-color var(--transition-standard-in);
+    }
+
+    &:not(.scrolled-end) {
+      border-top-color: var(--border-color);
+      background-color: var(--popup-background-color);
+    }
+  }
+
+  // A section's trailing gap is the distance to the *next* section; after the last one the
+  // footer's own padding is that distance, so the content stops there.
+  &-body:has(+ #{&}-footer),
+  &-scrollable:has(+ #{&}-footer) {
+    .sidebar-left-section-container:last-child {
+      padding-bottom: 0;
+    }
+  }
+
   &-footer {
     flex: 0 0 auto;
-    padding: #{$popup-footer-padding};
-    text-align: center;
+    padding: var(--popup-footer-padding);
+    // a footer with nothing in it yet still stands a button tall
+    min-height: var(--popup-footer-height);
 
-    .btn-primary {
+    &-placeholder {
+      // the room a floating footer takes out of the content behind it
+      height: var(--popup-footer-height);
+    }
+
+    &-button.btn-primary {
       display: block;
-      text-transform: uppercase;
       padding: 0 1.0625rem;
-      height: #{$popup-footer-button-size};
-      line-height: #{$popup-footer-button-size};
+      height: var(--popup-footer-button-height);
+      line-height: var(--popup-footer-button-height);
+      border-radius: calc(var(--popup-footer-button-height) / 2);
+      text-transform: uppercase;
     }
 
-    &.abitlarger,
-    &-abitlarger {
-      padding: #{$popup-footer-abitlarger-padding};
-
-      .btn-primary {
-        height: #{$popup-footer-abitlarger-button-size};
-        line-height: #{$popup-footer-abitlarger-button-size};
-      }
-    }
+    // &.abitlarger,
+    // &-abitlarger {
+    //   --popup-footer-padding: #{$popup-footer-abitlarger-padding};
+    //   --popup-footer-button-height: #{$popup-footer-abitlarger-button-size};
+    // }
 
     &-caption {
       display: block;
@@ -229,16 +303,43 @@
         margin-top: .625rem;
       }
     }
+
+    &-floating {
+      position: absolute;
+      bottom: 0;
+      inset-inline: 0;
+      background: linear-gradient(
+        0deg,
+        var(--popup-background-color) var(--popup-footer-gradient-start),
+        transparent 100%
+      );
+      z-index: 1;
+
+      .btn-primary-transparent.danger {
+        background: #fff;
+        box-shadow: 0px 0px 12px 4px var(--section-box-shadow-color) !important;
+
+        @include hover() {
+          background-color: var(--danger-color) !important;
+          color: #fff !important;
+        }
+      }
+    }
+
+    &-sticky {
+      position: sticky;
+    }
   }
 
   &-button {
+    --height: 2.5rem;
     font-weight: var(--font-weight-bold);
     padding: 0 1rem;
     text-transform: uppercase;
     border-radius: $border-radius-medium;
     position: relative;
     max-width: 100%;
-    height: 2.5rem;
+    height: var(--height);
     @include text-overflow();
 
     & + & {
@@ -251,14 +352,14 @@
     }
 
     &-icon {
+      font-size: 1.25rem;
+
       &.left {
-        font-size: 1.25rem;
         margin-inline: -.1875rem .1875rem;
       }
 
       &.right {
-        font-size: 1.5rem;
-        margin-inline-start: .625rem;
+        margin-inline: .1875rem -.1875rem;
       }
     }
   }
@@ -281,6 +382,10 @@
         margin: 0 !important;
       }
     }
+  }
+
+  &.old {
+    --popup-background-color: var(--surface-color);
   }
 }
 

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import mediaSizes from '@helpers/mediaSizes';
@@ -20,6 +14,7 @@ type AdditionalMenuItem = {
 
 class ContextMenuController extends OverlayClickHandler {
   protected additionalMenus: AdditionalMenuItem[] = [];
+  protected menuOpenTarget: HTMLElement;
 
   constructor() {
     super('menu', true);
@@ -40,6 +35,24 @@ class ContextMenuController extends OverlayClickHandler {
 
   public isOpened() {
     return !!this.element;
+  }
+
+  /** Set for one open: see {@link keepNextOpenOnMouseMove}. */
+  private keepOpenOnMouseMove = false;
+  private keepOpenTimeout: number;
+
+  /**
+   * The next menu is opened away from the pointer — from a deep link rather than
+   * a click — so the first mouse move must not close it: there is nothing for the
+   * pointer to be moving away from yet.
+   */
+  public keepNextOpenOnMouseMove() {
+    this.keepOpenOnMouseMove = true;
+
+    // a click that opens nothing (a hidden trigger, a move since mousedown) would
+    // otherwise leave the flag for the next menu the user opens themselves
+    clearTimeout(this.keepOpenTimeout);
+    this.keepOpenTimeout = window.setTimeout(() => this.keepOpenOnMouseMove = false, 1000);
   }
 
   private onMouseMove = (e: MouseEvent) => {
@@ -100,9 +113,9 @@ class ContextMenuController extends OverlayClickHandler {
     }
 
     if(this.element) {
-      const {parentElement} = this.element;
       this.element.classList.remove('active');
-      parentElement && parentElement.classList.remove('menu-open');
+      this.menuOpenTarget?.classList.remove('menu-open');
+      this.menuOpenTarget = undefined;
 
       if(this.element.classList.contains('night')) {
         const element = this.element;
@@ -125,27 +138,37 @@ class ContextMenuController extends OverlayClickHandler {
     super.close();
 
     if(!IS_TOUCH_SUPPORTED) {
-      window.removeEventListener('mousemove', this.onMouseMove);
+      this.realmWindow.removeEventListener('mousemove', this.onMouseMove);
     }
   }
 
-  public openBtnMenu(element: HTMLElement, onClose?: () => void) {
-    if(overlayCounter.isDarkOverlayActive) {
+  protected shouldApplyNight(triggerElement?: HTMLElement) {
+    if(overlayCounter.isDarkOverlayActive) return true;
+    const nightAncestor = triggerElement && findUpClassName(triggerElement, 'night');
+    return !!nightAncestor && nightAncestor !== document.documentElement;
+  }
+
+  public openBtnMenu(element: HTMLElement, onClose?: () => void, triggerElement?: HTMLElement) {
+    if(this.shouldApplyNight(triggerElement)) {
       element.classList.add('night');
     }
 
     super.open(element);
 
-    const {parentElement} = this.element;
     this.element.classList.add('active', 'was-open');
-    parentElement.classList.add('menu-open');
+    this.menuOpenTarget = triggerElement ?? this.element.parentElement;
+    this.menuOpenTarget?.classList.add('menu-open');
 
     if(onClose) {
       this.addEventListener('toggle', onClose, {once: true});
     }
 
-    if(!IS_TOUCH_SUPPORTED) {
-      window.addEventListener('mousemove', this.onMouseMove);
+    const keepOpen = this.keepOpenOnMouseMove;
+    this.keepOpenOnMouseMove = false;
+    clearTimeout(this.keepOpenTimeout);
+
+    if(!IS_TOUCH_SUPPORTED && !keepOpen) {
+      this.realmWindow.addEventListener('mousemove', this.onMouseMove);
     }
   }
 
@@ -164,6 +187,9 @@ class ContextMenuController extends OverlayClickHandler {
         onClose();
       }
     });
+    if(this.shouldApplyNight(triggerElement)) {
+      element.classList.add('night');
+    }
     element.classList.add('active', 'was-open');
 
     if(onClose) {

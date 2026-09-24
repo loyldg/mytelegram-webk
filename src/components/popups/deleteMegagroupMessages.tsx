@@ -1,283 +1,395 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import PopupElement, {addCancelButton} from '.';
+import PopupElement, {addCancelButton, createPopup} from '@components/popups/indexTsx';
+import {ScrollableContextValue} from '@components/scrollable2';
 import filterUnique from '@helpers/array/filterUnique';
-import {Message} from '@layer';
+import {Chat, ChatFull, Message, Reaction} from '@layer';
 import I18n, {FormatterArguments, i18n, LangPackKey} from '@lib/langPack';
 import Section from '@components/section';
 import StackedAvatars from '@components/stackedAvatars';
-import {createEffect, createSignal} from 'solid-js';
+import {createEffect, createSignal, JSX, onCleanup, Show} from 'solid-js';
 import CheckboxFields, {CheckboxFieldsField} from '@components/checkboxFields';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
+import getPeerTitle from '@components/wrappers/getPeerTitle';
 import flatten from '@helpers/array/flatten';
 import {avatarNew} from '@components/avatarNew';
 import PeerTitle from '@components/peerTitle';
-import Row from '@components/rowTsx';
+import Row, {createRowTitle} from '@components/rowTsx';
 import {IconTsx} from '@components/iconTsx';
 import classNames from '@helpers/string/classNames';
-import {ChatPermissions} from '@components/sidebarRight/tabs/groupPermissions';
+import {ChatPermissions} from '@components/sidebarRight/tabs/groupPermissions/sharedPermissions';
 import {animate} from '@helpers/animation';
+import canEditAdmin from '@appManagers/utils/chats/canEditAdmin';
+import rootScope from '@lib/rootScope';
+import confirmationPopup from '@components/confirmationPopup';
+import {toastNew} from '@components/toast';
+import type {AppManagers} from '@lib/managers';
+import {
+  DeleteAction,
+  DeleteCheckboxFieldsField,
+  ModerateMessage,
+  ModerateOptions,
+  ModerateReactionEntry,
+  getCommunityId,
+  getCommunityModerateOptions,
+  getNoModerateOptions
+} from '@components/popups/deleteMegagroupMessagesShared';
+import {
+  DeleteMegagroupContext,
+  banParticipantFromCommunity,
+  confirmDeleteMegagroupMessages,
+  getModerateOptionsFor
+} from '@components/popups/deleteMegagroupMessagesActions';
 
 const className = 'popup-delete-megagroup-messages';
 
-type DeleteCheckboxFieldsField = CheckboxFieldsField & {
-  peerId?: PeerId,
-  action: 'report' | 'delete' | 'ban'
+export type {ModerateReactionEntry};
+
+export type PopupDeleteMegagroupMessagesOptions = ({
+  messages: ModerateMessage[],
+  reaction?: never
+} | {
+  messages?: never,
+  reaction: ModerateReactionEntry
+}) & {
+  onConfirm?: () => void
 };
 
-export default class PopupDeleteMegagroupMessages extends PopupElement {
-  private messages: (Message.message | Message.messageService)[];
-  private fields: DeleteCheckboxFieldsField[];
-  private restricting: boolean;
-  private chatPermissions: ChatPermissions;
-  private onConfirm: () => void;
+import {getMiddleware} from '@helpers/middleware';
+import ListenerSetter from '@helpers/listenerSetter';
 
-  constructor(options: {
-    messages: (Message.message | Message.messageService)[],
-    onConfirm?: () => void
-  }) {
-    super(className, {
-      body: true,
-      scrollable: true,
-      title: i18n('DeleteOptionsTitle', [options.messages.length]),
-      overlayClosable: true,
-      buttons: addCancelButton([{
-        langKey: 'DeleteProceedBtn',
-        isDanger: true,
-        callback: () => this.onConfirmClick(),
-        iconLeft: 'delete_filled'
-      }])
-    });
+export default async function showDeleteMegagroupMessagesPopup(options: PopupDeleteMegagroupMessagesOptions) {
+  const reaction = 'reaction' in options ? options.reaction : undefined;
+  const messages = 'messages' in options ? options.messages : [];
+  const managers = rootScope.managers;
+  const middlewareHelper = getMiddleware();
+  const middleware = middlewareHelper.get();
+  const listenerSetter = new ListenerSetter();
 
-    this.messages = options.messages;
-    this.onConfirm = options.onConfirm;
+  const [show, setShow] = createSignal(false);
+  const [title, setTitle] = createSignal<JSX.Element>(
+    reaction ? i18n('DeleteReaction') : i18n('DeleteOptionsTitle', [messages.length])
+  );
 
-    this.construct();
+  const ctx: DeleteMegagroupContext = {
+    fields: undefined,
+    messages,
+    reaction,
+    managers,
+    onConfirm: options.onConfirm,
+    banFromCommunity: (communityId, participantId) => banParticipantFromCommunity(managers, communityId, participantId)
+  };
+
+  const [scrollableRef, setScrollableRef] = createSignal<ScrollableContextValue>();
+
+function updateReactionTitle() {
+  if(!reaction || !ctx.fields) {
+    return;
   }
 
-  private async onConfirmClick() {
-    const byPeers = this.fields.reduce((acc, field) => {
-      let set = acc.get(field.peerId);
-      if(!set) {
-        acc.set(field.peerId, set = new Set());
-      }
+  const isChecked = (action: DeleteAction) => ctx.fields.some((field) =>
+    field.peerId === reaction.participantPeerId &&
+    field.action === action &&
+    field.checkboxField?.checked
+  );
+  const key: LangPackKey = isChecked('delete') ?
+    'DeleteAllMessages' :
+    (isChecked('deleteReactions') ? 'DeleteAllReactions' : 'DeleteReaction');
+  setTitle(i18n(key));
+}
 
-      if(field.checkboxField.checked) {
-        set.add(field.action);
-      }
-      return acc;
-    }, new Map<PeerId, Set<DeleteCheckboxFieldsField['action']>>());
+  const fromPeerIds = reaction ?
+    [reaction.participantPeerId] :
+    filterUnique(messages.map(({fromId}) => fromId));
+  const peerId = reaction?.message.peerId ?? messages[0].peerId;
 
-    const mids = this.messages.map(({mid}) => mid);
-    const peerId = this.messages[0].peerId;
-    const {restricting, managers} = this;
-    for(const [fromId, actions] of byPeers) {
-      const promises: Promise<any>[] = [];
-      if(actions.has('ban') && restricting) {
-        const rights = this.chatPermissions.takeOut();
-        promises.push(managers.appChatsManager.editBanned(peerId.toChatId(), fromId, rights));
-      } else if(actions.has('ban')) {
-        promises.push(managers.appChatsManager.kickFromChannel(peerId.toChatId(), fromId));
-      }
+  const stackedAvatars = new StackedAvatars({
+    middleware: middleware,
+    avatarSize: 32
+  });
 
-      if(actions.has('report')) {
-        promises.push(managers.appMessagesManager.reportSpamMessages(peerId, fromId, mids));
-      }
+  const loadPromises: Promise<any>[] = [];
+  stackedAvatars.render(fromPeerIds.slice(0, 3), loadPromises);
+  stackedAvatars.container.classList.add(`${className}-avatars`);
+  const avatarsContainer = stackedAvatars.container;
 
-      if(actions.has('delete')) {
-        promises.push(managers.appMessagesManager.doFlushHistory({peerId, justClear: false, revoke: true, participantPeerId: fromId}));
-      }
-    }
+  const isSinglePeer = fromPeerIds.length === 1;
+  const moderateOptions = await getModerateOptionsFor(ctx, peerId);
+  ctx.reportReaction = moderateOptions.reportReaction;
+  const deletePeerTitle = isSinglePeer ?
+    await wrapPeerTitle({peerId: fromPeerIds[0], onlyFirstName: true}) :
+    undefined;
 
-    managers.appMessagesManager.deleteMessages(peerId, mids, true);
+  const actions: {
+    action: DeleteAction,
+    peerIds: PeerId[],
+    langKey: LangPackKey,
+    langArgs?: FormatterArguments,
+    callback?: () => void
+  }[] = [];
 
-    this.onConfirm?.();
-    return true;
-  }
-
-  private async construct() {
-    const fromPeerIds = filterUnique(this.messages.map(({fromId}) => fromId));
-    const peerId = this.messages[0].peerId;
-
-    const stackedAvatars = new StackedAvatars({
-      middleware: this.middlewareHelper.get(),
-      avatarSize: 32
-    });
-
-    const loadPromises: Promise<any>[] = [];
-    stackedAvatars.render(fromPeerIds.slice(0, 3), loadPromises);
-    stackedAvatars.container.classList.add(`${className}-avatars`);
-    this.header.prepend(stackedAvatars.container);
-
-    const isSinglePeer = fromPeerIds.length === 1;
-
-    const actions: {
-      action: DeleteCheckboxFieldsField['action'],
-      peerIds: PeerId[],
-      langKey: LangPackKey,
-      langArgs?: FormatterArguments,
-      callback?: () => void
-    }[] = [{
+  if(moderateOptions.reportSpam) {
+    actions.push({
       action: 'report',
       peerIds: fromPeerIds,
       langKey: 'DeleteReportSpam'
-    }, {
-      action: 'delete',
-      peerIds: fromPeerIds,
-      langKey: isSinglePeer ? 'DeleteAllFrom' : 'DeleteAllFromUsers',
-      langArgs: isSinglePeer ? [await wrapPeerTitle({peerId: fromPeerIds[0], onlyFirstName: true})] : undefined
-    }, {
+    });
+  }
+
+  if(!isSinglePeer) {
+    if(moderateOptions.deleteAllMessages) {
+      actions.push({
+        action: 'delete',
+        peerIds: fromPeerIds,
+        langKey: 'DeleteAllMessages'
+      });
+    }
+
+    if(moderateOptions.deleteAllReactions) {
+      actions.push({
+        action: 'deleteReactions',
+        peerIds: fromPeerIds,
+        langKey: 'DeleteAllReactions'
+      });
+    }
+  }
+
+  if(moderateOptions.banOrRestrict) {
+    actions.push({
       action: 'ban',
       peerIds: fromPeerIds,
       langKey: isSinglePeer ? 'DeleteBan' : 'DeleteBanUsers',
       langArgs: isSinglePeer ? [await wrapPeerTitle({peerId: fromPeerIds[0], onlyFirstName: true})] : undefined
-    }];
+    });
+  }
 
-    const nameStart = 'delete-fields';
+  if(
+    isSinglePeer &&
+    fromPeerIds[0].isUser() &&
+    fromPeerIds[0] !== rootScope.myId &&
+    moderateOptions.communityId
+  ) {
+    actions.push({
+      action: 'communityBan',
+      peerIds: fromPeerIds,
+      langKey: 'Community.BanFromCommunity'
+    });
+  }
 
-    const join = (...args: string[]) => [nameStart, ...args].join('-');
+  const nameStart = 'delete-fields';
 
-    const wrap = (item: typeof actions[number]): DeleteCheckboxFieldsField[] => {
-      const nested = isSinglePeer ? [] : item.peerIds.map((peerId) => {
-        const name = join(item.action, '' + peerId);
-        const field: DeleteCheckboxFieldsField = {
-          action: item.action,
-          name,
-          peerId
+  const join = (...args: string[]) => [nameStart, ...args].join('-');
+
+  const wrap = (item: typeof actions[number]): DeleteCheckboxFieldsField[] => {
+    const nested = isSinglePeer ? [] : item.peerIds.map((peerId) => {
+      const name = join(item.action, '' + peerId);
+      const field: DeleteCheckboxFieldsField = {
+        action: item.action,
+        name,
+        peerId,
+        peerRow: true
+      };
+
+      return field;
+    });
+
+    return [{
+      action: item.action,
+      text: item.langKey,
+      textArgs: item.langArgs,
+      nested: isSinglePeer ? undefined : nested,
+      name: isSinglePeer ? join(item.action, '' + peerId) : join(item.action),
+      peerId: isSinglePeer ? item.peerIds[0] : undefined
+    }, ...nested];
+  };
+
+  const fields = flatten(actions.map(wrap));
+  if(isSinglePeer) {
+    const nested: DeleteCheckboxFieldsField[] = [];
+    if(moderateOptions.deleteAllMessages) {
+      nested.push({
+        action: 'delete',
+        text: 'DeleteAllMessages',
+        name: join('delete', '' + fromPeerIds[0]),
+        peerId: fromPeerIds[0]
+      });
+    }
+
+    if(moderateOptions.deleteAllReactions) {
+      nested.push({
+        action: 'deleteReactions',
+        text: 'DeleteAllReactions',
+        name: join('deleteReactions', '' + fromPeerIds[0]),
+        peerId: fromPeerIds[0]
+      });
+    }
+
+    if(nested.length) {
+      const useDeleteOptions = nested.length > 1;
+      const deleteOptionsField: DeleteCheckboxFieldsField = useDeleteOptions ? {
+        action: 'deleteOptions',
+        text: 'DeleteAllFrom',
+        textArgs: [deletePeerTitle],
+        nested,
+        name: join('deleteOptions'),
+        nestedRightButtonIcon: false
+      } : nested[0];
+      if(useDeleteOptions) {
+        deleteOptionsField.setNestedCounter = (count) => {
+          deleteOptionsField.nestedCounter.textContent = `${count}/${nested.length}`;
         };
+      }
 
-        return field;
+      const reportIndex = fields.findIndex((field) => field.action === 'report');
+      fields.splice(reportIndex + 1, 0, deleteOptionsField, ...(useDeleteOptions ? nested : []));
+    }
+  }
+  ctx.fields = fields;
+
+  const checkboxFields = new CheckboxFields({
+    fields,
+    listenerSetter: listenerSetter,
+    middleware: middleware,
+    round: true,
+    onRowCreation: (row, info) => {
+      if(!info.nestedTo || !info.peerRow) {
+        return;
+      }
+
+      row.container.classList.add(`${className}-row`);
+
+      const div = document.createElement('div');
+      div.classList.add(`${className}-row-title`);
+      const title = createRowTitle();
+
+      const avatar = avatarNew({
+        peerId: info.peerId,
+        middleware: middleware,
+        size: 32
       });
 
-      return [{
-        action: item.action,
-        text: item.langKey,
-        textArgs: item.langArgs,
-        nested: isSinglePeer ? undefined : nested,
-        name: isSinglePeer ? join(item.action, '' + peerId) : join(item.action),
-        peerId: isSinglePeer ? item.peerIds[0] : undefined
-      }, ...nested];
+      const peerTitle = new PeerTitle();
+      const peerTitlePromise = peerTitle.update({
+        peerId: info.peerId,
+        onlyFirstName: true
+      });
+
+      title.append(peerTitle.element);
+
+      loadPromises.push(avatar.readyThumbPromise, peerTitlePromise);
+      div.append(avatar.node, title);
+      row.container.append(div);
+    },
+    rightButtonIcon: 'group_filled',
+    onAnyChange: () => {
+      updateReactionTitle();
+      onAnyChange();
+    },
+    onExpand: () => {
+      const duration = 300;
+      const startTime = Date.now();
+      animate(() => {
+        scrollableRef()?.onSizeChange();
+        const progress = Math.min((Date.now() - startTime) / duration, 1);
+        return progress < 1;
+      });
+    }
+  });
+
+  const createdFields = fields.map((field) => {
+    const created = checkboxFields.createField(field);
+    return created?.nodes;
+  }).filter(Boolean);
+
+  const hasBanAction = fields.some((field) => field.action === 'ban');
+  let chatPermissionsContainer: HTMLElement;
+  if(hasBanAction) {
+    chatPermissionsContainer = document.createElement('div');
+    ctx.chatPermissions = new ChatPermissions({
+      appendTo: chatPermissionsContainer,
+      chatId: peerId.toChatId(),
+      listenerSetter: listenerSetter
+    }, managers);
+  }
+
+  let onAnyChange: () => void;
+  const Content = () => {
+    const [banning, setBanning] = createSignal<PeerId[]>([]);
+    const [communityBanning, setCommunityBanning] = createSignal(false);
+    const [collapsed, setCollapsed] = createSignal(true);
+    const collapsedName = () => collapsed() ?
+      (banning().length === 1 ? 'DeleteToggleRestrictUser' : 'DeleteToggleRestrictUsers') :
+      (banning().length === 1 ? 'DeleteToggleBanUser' : 'DeleteToggleBanUsers');
+
+    onAnyChange = () => {
+      const peerIds = fields
+      .filter((field) => field.action === 'ban' && field.checkboxField.checked && field.peerId)
+      .map(({peerId}) => peerId);
+      setBanning(peerIds);
+      setCommunityBanning(fields.some((field) => {
+        return field.action === 'communityBan' &&
+          field.checkboxField.checked;
+      }));
     };
 
-    const fields = this.fields = flatten(actions.map(wrap));
-    const checkboxFields = new CheckboxFields({
-      fields,
-      listenerSetter: this.listenerSetter,
-      round: true,
-      onRowCreation: (row, info) => {
-        if(!info.nestedTo) {
-          return;
-        }
+    createEffect(() => {
+      if(!banning().length) {
+        setCollapsed(true);
+      }
+    });
 
-        row.container.classList.add(`${className}-row`);
+    createEffect(() => {
+      if(!hasBanAction) {
+        return;
+      }
 
-        const div = document.createElement('div');
-        div.classList.add(`${className}-row-title`);
-        const title = row.createTitle();
+      const field = fields.find((field) => field.action === 'ban' && (isSinglePeer ? true : !field.peerId));
+      const i18nElement = I18n.weakMap.get(field.row.title.firstElementChild as HTMLElement) as I18n.IntlElement;
+      ctx.restricting = !collapsed();
+      i18nElement.compareAndUpdate({
+        key: collapsed() ?
+          (isSinglePeer ? 'DeleteBan' : 'DeleteBanUsers') :
+          (isSinglePeer ? 'DeleteRestrict' : 'DeleteRestrictUsers')
+      });
+    });
 
-        const avatar = avatarNew({
-          peerId: info.peerId,
-          middleware: this.middlewareHelper.get(),
-          size: 32
-        });
-
-        const peerTitle = new PeerTitle();
-        const peerTitlePromise = peerTitle.update({
-          peerId: info.peerId,
-          onlyFirstName: true
-        });
-
-        title.append(peerTitle.element);
-
-        loadPromises.push(avatar.readyThumbPromise, peerTitlePromise);
-        div.append(avatar.node, title);
-        row.container.append(div);
-      },
-      rightButtonIcon: 'group_filled',
-      onAnyChange: () => {
-        onAnyChange();
-      },
-      onExpand: () => {
+    createEffect(() => {
+      if(!collapsed()) {
         const duration = 300;
         const startTime = Date.now();
+        const scrollPosition = scrollableRef().container.scrollTop + scrollableRef().container.clientHeight;
+        const scrollHeight = scrollableRef().container.scrollHeight;
+        const path = 712 + scrollHeight - scrollPosition;
         animate(() => {
-          this.scrollable.onScroll();
           const progress = Math.min((Date.now() - startTime) / duration, 1);
+          const newScrollPosition = scrollPosition + path * progress;
+          scrollableRef().container.scrollTop = newScrollPosition;
           return progress < 1;
         });
       }
     });
 
-    const createdFields = fields.map((field) => {
-      const created = checkboxFields.createField(field);
-      return created?.nodes;
-    }).filter(Boolean);
-
-    const chatPermissionsContainer = document.createElement('div');
-    this.chatPermissions = new ChatPermissions({
-      appendTo: chatPermissionsContainer,
-      chatId: peerId.toChatId(),
-      listenerSetter: this.listenerSetter
-    }, this.managers);
-
-    let onAnyChange: () => void;
-    this.appendSolid(() => {
-      const [banning, setBanning] = createSignal<PeerId[]>([]);
-      const [collapsed, setCollapsed] = createSignal(true);
-      const collapsedName = () => collapsed() ?
-        (banning().length === 1 ? 'DeleteToggleRestrictUser' : 'DeleteToggleRestrictUsers') :
-        (banning().length === 1 ? 'DeleteToggleBanUser' : 'DeleteToggleBanUsers');
-
-      onAnyChange = () => {
-        const peerIds = fields
-        .filter((field) => field.action === 'ban' && field.checkboxField.checked && field.peerId)
-        .map(({peerId}) => peerId);
-        setBanning(peerIds);
-      };
-
-      createEffect(() => {
-        if(!banning().length) {
-          setCollapsed(true);
-        }
-      });
-
-      createEffect(() => {
-        const field = fields.find((field) => field.action === 'ban' && (isSinglePeer ? true : !field.peerId));
-        const i18nElement = I18n.weakMap.get(field.row.title.firstElementChild as HTMLElement) as I18n.IntlElement;
-        this.restricting = !collapsed();
-        i18nElement.compareAndUpdate({
-          key: collapsed() ?
-            (isSinglePeer ? 'DeleteBan' : 'DeleteBanUsers') :
-            (isSinglePeer ? 'DeleteRestrict' : 'DeleteRestrictUsers')
-        });
-      });
-
-      createEffect(() => {
-        if(!collapsed()) {
-          const duration = 300;
-          const startTime = Date.now();
-          const scrollPosition = this.scrollable.scrollPosition + this.scrollable.clientSize;
-          const scrollHeight = this.scrollable.scrollSize;
-          const path = 712 + scrollHeight - scrollPosition;
-          animate(() => {
-            const progress = Math.min((Date.now() - startTime) / duration, 1);
-            const newScrollPosition = scrollPosition + path * progress;
-            this.scrollable.scrollPosition = newScrollPosition;
-            return progress < 1;
-          });
-        }
-      });
-
-      // let lastRowRef: HTMLElement;
-      return (
-        <>
+    // let lastRowRef: HTMLElement;
+    return (
+      <>
+        {!!createdFields.length &&
           <Section name="DeleteAdditionalActions" noShadow noDelimiter>
             {flatten(createdFields)}
           </Section>
+        }
+        <Show when={
+          communityBanning() &&
+          moderateOptions.communityChatsCount
+        }>
+          <Section noShadow noDelimiter>
+            <Row>
+              <Row.Subtitle>
+                {i18n('Community.BanFromCommunityInfo', [
+                  moderateOptions.communityChatsCount
+                ])}
+              </Row.Subtitle>
+            </Row>
+          </Section>
+        </Show>
+        {hasBanAction && <>
           <Section
             class={`${className}-permissions`}
             name="UserRestrictionsCanDoUsers"
@@ -311,12 +423,42 @@ export default class PopupDeleteMegagroupMessages extends PopupElement {
               </Row.Title>
             </Row>
           </Section>
-        </>
-      );
+        </>}
+      </>
+    );
+  };
+
+  await Promise.all(loadPromises);
+
+  createPopup(() => {
+    onCleanup(() => {
+      listenerSetter.removeAll();
+      middlewareHelper.destroy();
     });
 
-    await Promise.all(loadPromises);
+    return (
+      <PopupElement class={className} closable show={show()}>
+        <PopupElement.Header>
+          {avatarsContainer}
+          <PopupElement.Title>{title()}</PopupElement.Title>
+        </PopupElement.Header>
+        <PopupElement.Scrollable contextRef={setScrollableRef}>
+          <PopupElement.Body>
+            <Content />
+          </PopupElement.Body>
+        </PopupElement.Scrollable>
+        <PopupElement.Buttons>
+          <PopupElement.Button
+            langKey="DeleteProceedBtn"
+            danger
+            iconLeft="delete_filled"
+            callback={() => confirmDeleteMegagroupMessages(ctx)}
+          />
+          <PopupElement.Button langKey="Cancel" cancel />
+        </PopupElement.Buttons>
+      </PopupElement>
+    );
+  });
 
-    this.show();
-  }
+  setShow(true);
 }

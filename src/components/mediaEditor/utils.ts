@@ -4,21 +4,25 @@ import StickerType from '@config/stickerType';
 import {IS_FIREFOX} from '@environment/userAgent';
 import {hexaToHsla} from '@helpers/color';
 import {logger} from '@lib/logger';
-import {getOwner, runWithOwner} from 'solid-js';
 
 export const log = logger('Media editor');
 
 export const delay = (timeout: number) => new Promise((resolve) => setTimeout(resolve, timeout));
 
-export function withCurrentOwner<Args extends Array<unknown>, Result>(fn: (...args: Args) => Result) {
-  const owner = getOwner();
-  return (...args: Args) => {
-    return runWithOwner(owner, () => fn(...args));
-  };
-}
-
 export function distance(p1: NumberPair, p2: NumberPair) {
   return Math.hypot(p1[0] - p2[0], p1[1] - p2[1]);
+}
+
+/**
+ * Projects `to` onto the closest ray leaving `from` at a multiple of `step` radians — the angle
+ * snapping other graphic editors do while a straight line is being drawn with Shift
+ */
+export function snapToAngle(from: NumberPair, to: NumberPair, step = Math.PI / 4): NumberPair {
+  const dx = to[0] - from[0], dy = to[1] - from[1];
+  const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+  const projection = dx * Math.cos(angle) + dy * Math.sin(angle);
+
+  return [from[0] + Math.cos(angle) * projection, from[1] + Math.sin(angle) * projection];
 }
 
 export function snapToViewport(ratio: number, vw: number, vh: number) {
@@ -183,5 +187,5 @@ export const textLayerInfoDefaults: TextLayerInfo = {
 export const brushDefaults: MediaEditorState['currentBrush'] = {
   brush: 'pen',
   color: '#fe4438',
-  size: 18
+  size: 12
 };

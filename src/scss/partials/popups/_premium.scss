@@ -1,25 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../../shared" as *;
 
 .popup-premium {
-  border-bottom: 0.0625rem solid transparent;
-
-  .popup-container {
-    padding: 0;
-    height: 660px;
-    border-radius: 16px;
-    display: flex;
-    flex-direction: column;
-
-    &.no-button {
-      height: 580px;
-    }
-  }
+  --popup-height: 41.25rem;
 
   .popup-close {
     visibility: visible;
@@ -31,7 +13,6 @@
     left: 0;
     position: sticky;
     margin-bottom: 0;
-    padding: .5rem;
     z-index: 1;
     visibility: hidden;
     transition-delay: var(--popup-transition-time);
@@ -88,20 +69,24 @@
     margin: .5rem 0 -.5rem;
   }
 
+  // The tabs paint themselves on the surface color, so the strip under them has to as well —
+  // the popup's own background is a shade darker. Redefining what the footer reads covers both
+  // of the shaded footer's states, so it stays opaque whatever the scroll is doing.
+  .popup-footer {
+    --popup-background-color: var(--surface-color);
+    background-color: var(--popup-background-color);
+  }
+
   .action-button {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 3rem;
+    // the label can carry a trailing icon, which the block footer button would not center
+    &.popup-footer-button.btn-primary {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
 
     @include respond-to(handhelds) {
       font-size: .875rem;
-    }
-
-    &-container {
-      padding: 1rem;
-      background-color: var(--surface-color);
-      flex: 0 0 auto;
     }
 
     &-icon {
@@ -111,26 +96,6 @@
   }
 
   &-heading {
-    &-text-title {
-      text-align: center;
-      font-size: 1.5rem;
-      font-weight: var(--font-weight-bold);
-      line-height: 32px;
-      margin: .375rem 0;
-
-      &.smaller-text {
-        font-size: var(--font-size-18);
-        line-height: var(--line-height-18);
-        margin-top: .625rem;
-      }
-    }
-
-    &-text-description {
-      text-align: center;
-      font-size: var(--font-size-16);
-      line-height: 22px;
-    }
-
     &-text-container {
       margin-top: calc(100px - 0.75rem);
       padding: 0 .625rem;
@@ -179,7 +144,7 @@
 
     &-icon {
       color: #fff;
-      border-radius: #{$border-radius-medium};
+      border-radius: .625rem;
       font-size: 1.5rem;
     }
   }
@@ -563,13 +528,4 @@
   .invite-link-container {
     margin: .5rem -.625rem -.5rem;
   }
-
-  // * commented, was by design but looks odd
-  // .row {
-  //   padding-inline-start: 5.5rem !important;
-
-  //   &-media {
-  //     inset-inline-start: 1.75rem !important;
-  //   }
-  // }
 }

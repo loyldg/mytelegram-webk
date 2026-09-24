@@ -1,10 +1,11 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../../shared" as *;
+
+// The shared call-button factory is used by both private calls and group calls.
+// Native buttons need a visible keyboard focus indicator in either popup.
+.call-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
 
 .popup-group-call {
   $parent: ".popup";
@@ -66,6 +67,11 @@
     .btn-icon {
       flex: 0 0 auto;
       color: inherit;
+
+      &:focus-visible {
+        outline: 2px solid currentColor;
+        outline-offset: 2px;
+      }
     }
 
     &-info {
@@ -90,6 +96,12 @@
       font-size: .875rem;
       color: var(--gc-secondary-text-color);
     }
+
+    &-fingerprint {
+      flex: 0 1 auto;
+      min-width: 0;
+      margin-inline: .5rem;
+    }
   }
 
   &-buttons {
@@ -110,6 +122,10 @@
     opacity: 1;
     color: var(--gc-primary-text-color);
     background-color: var(--gc-button-unmuted-color);
+
+    &:disabled {
+      cursor: default;
+    }
 
     .group-call[data-mic-state="muted"] & {
       background-color: var(--gc-button-muted-color);
@@ -162,6 +178,15 @@
   &-participant {
     // border-radius: 0;
     padding-right: .5rem;
+
+    // On the e2e blockchain (so it holds the current call key) but absent from
+    // the SFU roster — visible, but not connected to the media and not
+    // actionable. Mirrors tdesktop's inert `State::WithAccess` row.
+    &.is-with-access {
+      .group-call-participant-muted-icon-container {
+        opacity: .5;
+      }
+    }
 
     &-status {
       &-icon {
@@ -550,7 +575,7 @@
         right: 0;
         bottom: 0;
         left: 0;
-        backdrop-filter: blur(100px);
+        backdrop-filter: var(--blur-off, blur(100px));
         background: rgba(0, 0, 0, .5);
         border-radius: 1.25rem;
       }

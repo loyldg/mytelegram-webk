@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -23,6 +19,8 @@ import tsNow from '@helpers/tsNow';
 import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
 import debounce from '@helpers/schedulers/debounce';
 import copy from '@helpers/object/copy';
+import noop from '@helpers/noop';
+import pause from '@helpers/schedulers/pause';
 
 type UpdatesState = {
   pendingPtsUpdates: (Update & {pts: number, pts_count: number})[],
@@ -33,6 +31,8 @@ type UpdatesState = {
     timeout: number
   },
   syncLoading: Promise<void>,
+  /** when the running difference last showed a sign of life: it started, or a page of it arrived */
+  syncProgressTime?: number,
 
   seq?: number,
   pts?: number,
@@ -41,7 +41,24 @@ type UpdatesState = {
   lastDifferenceTime?: number
 };
 
+type StreamedMessageDraftTypingUpdate =
+  Update.updateUserTyping |
+  Update.updateChatUserTyping |
+  Update.updateChannelUserTyping;
+
+type StreamedMessageDraftDifferenceState = {
+  updates: StreamedMessageDraftTypingUpdate[],
+  reconciled: boolean
+};
+
 const SYNC_DELAY = 6;
+
+/**
+ * How long a difference may stay SILENT before whatever waits for it gives up. Spent by silence,
+ * not by total time: a long catch-up that keeps delivering pages keeps extending the wait, while
+ * a request hanging on a dead connection runs the budget out and stops holding anything back.
+ */
+const SYNC_MAX_SILENCE = 10e3;
 
 class ApiUpdatesManager {
   public updatesState: UpdatesState = {
@@ -53,6 +70,7 @@ class ApiUpdatesManager {
 
   private channelStates: {[channelId: ChatId]: UpdatesState} = {};
   private attached = false;
+  private initialSync = true;
 
   private subscriptions: {[channelId: ChatId]: {count: number, interval?: number}} = {};
 
@@ -142,7 +160,7 @@ class ApiUpdatesManager {
       return false;
     }
 
-    this.log.debug('pop pending pts updates', goodPts, curState.pendingPtsUpdates.slice(0, goodIndex + 1));
+    this.log('pop pending pts updates', goodPts, curState.pendingPtsUpdates.slice(0, goodIndex + 1));
 
     curState.pts = goodPts;
     for(let i = 0; i <= goodIndex; ++i) {
@@ -195,7 +213,7 @@ class ApiUpdatesManager {
       local: options.local
     };
 
-    log.debug('processUpdateMessage', updateMessage, options);
+    log('processUpdateMessage', updateMessage, options);
 
     switch(updateMessage._) {
       case 'updatesTooLong':
@@ -210,7 +228,7 @@ class ApiUpdatesManager {
       case 'updateShortMessage':
       case 'updateShortChatMessage': {
         assumeType<Updates.updateShortChatMessage | Updates.updateShortMessage>(updateMessage);
-        log.debug('updateShortMessage | updateShortChatMessage', {...updateMessage});
+        log('updateShortMessage | updateShortChatMessage', {...updateMessage});
         const isOut = updateMessage.pFlags.out;
         const fromId = (updateMessage as Updates.updateShortChatMessage).from_id || (isOut ? this.appPeersManager.peerId : (updateMessage as Updates.updateShortMessage).user_id);
         const toId = (updateMessage as Updates.updateShortChatMessage).chat_id ?
@@ -277,7 +295,12 @@ class ApiUpdatesManager {
     });
   }, 1_000, false, true);
 
-  private getDifference(first = false): Promise<void> {
+  private getDifference(
+    first = false,
+    streamedDraftState?: StreamedMessageDraftDifferenceState
+  ): Promise<void> {
+    const ownsStreamedDraftState = !streamedDraftState;
+    streamedDraftState ??= {updates: [], reconciled: false};
     const log = this.log.bindPrefix('getDifference');
     log('get', first);
 
@@ -299,11 +322,13 @@ class ApiUpdatesManager {
       timeout: 0x7fffffff
     }).then((differenceResult) => {
       log('result', differenceResult);
+      updatesState.syncProgressTime = Date.now();
 
       if(differenceResult._ === 'updates.differenceEmpty') {
         log('apply empty diff', differenceResult.seq);
         updatesState.date = differenceResult.date;
         updatesState.seq = differenceResult.seq;
+        this.reconcileStreamedMessageDraftState(streamedDraftState);
         return;
       }
 
@@ -320,6 +345,11 @@ class ApiUpdatesManager {
         log('applying', differenceResult.other_updates.length, 'other updates');
 
         differenceResult.other_updates.forEach((update) => {
+          if(this.isStreamedMessageDraftTypingUpdate(update)) {
+            streamedDraftState.updates.push(update);
+            return;
+          }
+
           switch(update._) {
             case 'updateChannelTooLong':
             case 'updateNewChannelMessage':
@@ -328,7 +358,7 @@ class ApiUpdatesManager {
               return;
           }
 
-          this.saveUpdate(update);
+          this.saveUpdate(update, {fromDifference: true});
         });
 
         log('applying', differenceResult.new_messages.length, 'new messages');
@@ -340,14 +370,13 @@ class ApiUpdatesManager {
             pts_count: 0
           });
         });
-
         const nextState = differenceResult._ === 'updates.difference' ? differenceResult.state : differenceResult.intermediate_state;
         updatesState.seq = nextState.seq;
         updatesState.pts = nextState.pts;
         updatesState.date = nextState.date;
       } else {
         updatesState.pts = differenceResult.pts;
-        updatesState.date = tsNow(true) + this.timeManager.getServerTimeOffset();
+        updatesState.date = this.timeManager.getServerTime();
         delete updatesState.seq;
 
         this.channelStates = {};
@@ -359,17 +388,24 @@ class ApiUpdatesManager {
       log('apply diff', updatesState.seq, updatesState.pts);
 
       if(differenceResult._ === 'updates.differenceSlice') {
-        return this.getDifference();
+        return this.getDifference(false, streamedDraftState);
       } else {
+        this.reconcileStreamedMessageDraftState(streamedDraftState);
         log('finish');
       }
     });
 
+    const guardedPromise = this.guardStreamedMessageDraftDifference(
+      promise,
+      streamedDraftState,
+      ownsStreamedDraftState
+    );
+
     if(!wasSyncing) {
-      this.setDifferencePromise(updatesState, promise);
+      this.setDifferencePromise(updatesState, guardedPromise);
     }
 
-    return promise;
+    return guardedPromise;
   }
 
   private clearStatePendingSync(state: UpdatesState) {
@@ -379,7 +415,12 @@ class ApiUpdatesManager {
     }
   }
 
-  private getChannelDifference(channelId: ChatId): Promise<void> {
+  private getChannelDifference(
+    channelId: ChatId,
+    streamedDraftState?: StreamedMessageDraftDifferenceState
+  ): Promise<void> {
+    const ownsStreamedDraftState = !streamedDraftState;
+    streamedDraftState ??= {updates: [], reconciled: false};
     const channelState = this.getChannelState(channelId);
     const wasSyncing = channelState.syncLoading;
     if(!wasSyncing) {
@@ -399,15 +440,17 @@ class ApiUpdatesManager {
     }, {timeout: 0x7fffffff}).then((differenceResult) => {
       log('diff result', differenceResult)
       channelState.pts = 'pts' in differenceResult ? differenceResult.pts : undefined;
-      channelState.lastDifferenceTime = Date.now();
+      channelState.lastDifferenceTime = channelState.syncProgressTime = Date.now();
 
       if(differenceResult._ === 'updates.channelDifferenceEmpty') {
         log('apply channel empty diff', differenceResult);
+        this.reconcileStreamedMessageDraftState(streamedDraftState);
         return;
       }
 
       if(differenceResult._ === 'updates.channelDifferenceTooLong') {
         log('channel diff too long', differenceResult);
+        this.reconcileStreamedMessageDraftState(streamedDraftState);
         delete this.channelStates[channelId];
 
         this.saveUpdate({_: 'updateChannelReload', channel_id: channelId});
@@ -420,7 +463,12 @@ class ApiUpdatesManager {
       // Should be first because of updateMessageID
       log('applying', differenceResult.other_updates.length, 'channel other updates');
       differenceResult.other_updates.forEach((update) => {
-        this.saveUpdate(update);
+        if(this.isStreamedMessageDraftTypingUpdate(update)) {
+          streamedDraftState.updates.push(update);
+          return;
+        }
+
+        this.saveUpdate(update, {fromDifference: true});
       });
 
       log('applying', differenceResult.new_messages.length, 'channel new messages');
@@ -432,22 +480,28 @@ class ApiUpdatesManager {
           pts_count: 0
         });
       });
-
       log('apply channel diff', channelState.pts);
 
       if(differenceResult._ === 'updates.channelDifference' &&
         !differenceResult.pFlags.final) {
-        return this.getChannelDifference(channelId);
+        return this.getChannelDifference(channelId, streamedDraftState);
       } else {
+        this.reconcileStreamedMessageDraftState(streamedDraftState);
         log('finished channel get diff');
       }
     });
 
+    const guardedPromise = this.guardStreamedMessageDraftDifference(
+      promise,
+      streamedDraftState,
+      ownsStreamedDraftState
+    );
+
     if(!wasSyncing) {
-      this.setDifferencePromise(channelState, promise, channelId);
+      this.setDifferencePromise(channelState, guardedPromise, channelId);
     }
 
-    return promise;
+    return guardedPromise;
   }
 
   private onDifferenceTooLong() {
@@ -463,6 +517,7 @@ class ApiUpdatesManager {
 
   private setDifferencePromise(state: UpdatesState, promise: UpdatesState['syncLoading'], channelId?: ChatId) {
     state.syncLoading = promise;
+    state.syncProgressTime = Date.now();
     !channelId && this.rootScope.dispatchEvent('state_synchronizing');
 
     promise.then(() => {
@@ -492,6 +547,72 @@ class ApiUpdatesManager {
     }
 
     return this.channelStates[channelId];
+  }
+
+  /** the states whose difference this peer's updates arrive in and can be cancelled by */
+  private getSyncingStates(peerId?: PeerId) {
+    const states: UpdatesState[] = [];
+    if(this.updatesState.syncLoading) {
+      states.push(this.updatesState);
+    }
+
+    const channelId = peerId?.isAnyChat() && this.appPeersManager.isChannel(peerId) ? peerId.toChatId() : undefined;
+    const channelState = channelId && this.channelStates[channelId];
+    if(channelState?.syncLoading) {
+      states.push(channelState);
+    }
+
+    return states;
+  }
+
+  /**
+   * How much longer we're willing to wait for these states to catch up, by the quietest of them.
+   * 0 when there is nothing to wait for, and when a difference has gone silent for
+   * {@link SYNC_MAX_SILENCE} — a request hanging on a dead connection must not hold things back
+   * forever, while a difference that keeps delivering pages gets the budget back every time.
+   */
+  private getSyncPatience(states: UpdatesState[], maxSilence: number) {
+    if(!states.length) {
+      return 0;
+    }
+
+    const quietest = Math.min(...states.map((state) => state.syncProgressTime || 0));
+    return Math.max(0, maxSilence - (Date.now() - quietest));
+  }
+
+  /**
+   * Whether it's worth holding something back for the difference this peer is waiting on — that
+   * difference can still cancel it (a message that turns out to be read, deleted or muted by an
+   * update from a later `updates.differenceSlice`, or from the channel's own difference).
+   */
+  public shouldWaitForSync(peerId?: PeerId, maxSilence = SYNC_MAX_SILENCE) {
+    return this.getSyncPatience(this.getSyncingStates(peerId), maxSilence) > 0;
+  }
+
+  /**
+   * Resolves once this peer has caught up: waits out the running difference AND any that follows
+   * it, since the app is still behind while they keep coming. Gives up on a difference that went
+   * silent (see {@link getSyncPatience}).
+   */
+  public async waitForSync(peerId?: PeerId, maxSilence = SYNC_MAX_SILENCE) {
+    for(;;) {
+      const states = this.getSyncingStates(peerId);
+      const patience = this.getSyncPatience(states, maxSilence);
+      if(!patience) {
+        break;
+      }
+
+      const syncPromise = states.length === 1 ?
+        states[0].syncLoading :
+        Promise.all(states.map((state) => state.syncLoading)).then(noop);
+
+      await Promise.race([syncPromise.catch(noop), pause(patience)]);
+    }
+  }
+
+  /** whether the first difference after the app start is still being applied */
+  public isInitialSync() {
+    return this.initialSync;
   }
 
   private processUpdate(update: Update, options: Partial<{
@@ -667,9 +788,63 @@ class ApiUpdatesManager {
     }
   }
 
-  public saveUpdate(update: Update) {
-    this.log.debug('update', update);
+  public saveUpdate(update: Update, options?: {fromDifference?: boolean}) {
+    this.log('saveUpdate', update);
+    if(
+      options?.fromDifference &&
+      (
+        update._ === 'updateUserTyping' ||
+        update._ === 'updateChatUserTyping' ||
+        update._ === 'updateChannelUserTyping'
+      ) &&
+      (
+        update.action._ === 'sendMessageTextDraftAction' ||
+        update.action._ === 'sendMessageRichMessageDraftAction'
+      )
+    ) {
+      this.appMessagesManager.handleStreamedMessageTypingUpdate(update, true);
+      return;
+    }
     this.dispatchEvent(update._, update as any);
+  }
+
+  private isStreamedMessageDraftTypingUpdate(
+    update: Update
+  ): update is StreamedMessageDraftTypingUpdate {
+    return (
+      update._ === 'updateUserTyping' ||
+      update._ === 'updateChatUserTyping' ||
+      update._ === 'updateChannelUserTyping'
+    ) && (
+      update.action._ === 'sendMessageTextDraftAction' ||
+      update.action._ === 'sendMessageRichMessageDraftAction' ||
+      update.action._ === 'sendMessageStopDraftAction'
+    );
+  }
+
+  private reconcileStreamedMessageDraftUpdates(updates: StreamedMessageDraftTypingUpdate[]) {
+    updates.forEach((update) => {
+      this.saveUpdate(update, {fromDifference: true});
+    });
+    updates.length = 0;
+  }
+
+  private reconcileStreamedMessageDraftState(state: StreamedMessageDraftDifferenceState) {
+    if(state.reconciled) return;
+    state.reconciled = true;
+    this.reconcileStreamedMessageDraftUpdates(state.updates);
+  }
+
+  private guardStreamedMessageDraftDifference(
+    promise: Promise<void>,
+    state: StreamedMessageDraftDifferenceState,
+    ownsState: boolean
+  ) {
+    if(!ownsState) return promise;
+    return promise.catch((error) => {
+      this.reconcileStreamedMessageDraftState(state);
+      throw error;
+    });
   }
 
   public subscribeToChannelUpdates(channelId: ChatId) {
@@ -756,6 +931,13 @@ class ApiUpdatesManager {
           }
         }) */;
       }
+
+      // * the first difference replays everything that piled up since the last session,
+      // * which notifications treat differently (see appNotificationsManager.routeNotification)
+      const onInitialSyncEnd = () => {
+        this.initialSync = false;
+      };
+      Promise.resolve(this.updatesState.syncLoading).then(onInitialSyncEnd, onInitialSyncEnd);
 
       this.apiManager.setUpdatesProcessor(this.processUpdateMessage);
 

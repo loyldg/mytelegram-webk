@@ -1,13 +1,8 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import DEBUG from '@config/debug';
 import {IS_FIREFOX, IS_SAFARI} from '@environment/userAgent';
 import {IS_SERVICE_WORKER, IS_WEB_WORKER} from '@helpers/context';
 import dT from '@helpers/dT';
+import {capture} from '@lib/debug/logsBuffer';
 
 export enum LogTypes {
   None = 0,
@@ -145,12 +140,21 @@ export function logger(
   // level = LogLevels.log | LogLevels.warn | LogLevels.error | LogLevels.debug
 
   const log: Logger = function(...args: any[]) {
+    capture(LogTypes.Log, prefix, args);
     return type & LogTypes.Log && console.log(style, dT(), prefix, /* getCallerFunctionName(), */ ...args);
   } as any;
 
   methods.forEach(([method, logType]) => {
+    // group/groupEnd are console-grouping markers, not data — don't buffer them.
+    const isGroup = method === 'group' || method === 'groupCollapsed' || method === 'groupEnd';
     log[method] = function(...args: any[]) {
-      return type & logType && console[method](style, dT(), prefix, /* getCallerFunctionName(), */ ...args);
+      // Buffer capture is decoupled from the console `type` gate on purpose: in
+      // production-with-?debug=1 the worker keeps `type` at Error-only (quiet
+      // console) yet we still want the full timeline recorded. capture() self-
+      // gates on its own DEBUG-backed flag.
+      if(!isGroup) capture(logType, prefix, args);
+      const consoleMethod = console[method] as (...data: any[]) => void;
+      return type & logType && consoleMethod(style, dT(), prefix, /* getCallerFunctionName(), */ ...args);
     };
   });
 

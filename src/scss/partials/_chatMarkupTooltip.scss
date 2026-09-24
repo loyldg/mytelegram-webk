@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../shared" as *;
 
 .markup-tooltip {
@@ -79,14 +73,14 @@
 	}
 
 	.btn-icon {
-		border-radius: $border-radius !important;
-		width: 30px;
-		height: 30px;
+		border-radius: .625rem !important;
+		width: 1.875rem;
+		height: 1.875rem;
 		padding: 0;
 
 		&.active {
-			color: #fff!important;
-			background-color: var(--primary-color)!important;
+			color: #fff !important;
+			background-color: var(--primary-color) !important;
 		}
 	}
 
@@ -132,6 +126,58 @@
 		&.is-valid + .markup-tooltip-link-apply-container {
 			opacity: 1;
 			pointer-events: all;
+		}
+	}
+}
+
+.emoji-tone-picker {
+	width: 203px;
+	background: var(--menu-background-color);
+	backdrop-filter: var(--menu-backdrop-filter);
+	box-shadow: var(--menu-box-shadow);
+
+	.markup-tooltip-wrapper,
+	.markup-tooltip-tools-regular {
+		width: 100%;
+	}
+
+	.markup-tooltip-delimiter {
+		margin: 0 .25rem;
+	}
+
+	&-button {
+		flex: 0 0 auto;
+	}
+
+	&-emoji {
+		--esg-emoji-size: 1.625rem;
+		--esg-emoji-total-size: 1.625rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: var(--esg-emoji-total-size);
+		height: var(--esg-emoji-total-size);
+		padding: 0;
+		font-size: var(--esg-emoji-size);
+		line-height: var(--esg-emoji-size);
+		cursor: inherit;
+		pointer-events: none;
+		overflow: visible;
+		background-color: transparent !important;
+
+		> .emoji-native {
+			display: flex !important;
+			align-items: center;
+			justify-content: center;
+			width: var(--esg-emoji-size);
+			height: var(--esg-emoji-size);
+			line-height: var(--esg-emoji-size) !important;
+		}
+
+		.emoji-placeholder {
+			inset: 0;
+			width: 100%;
+			height: 100%;
 		}
 	}
 }

@@ -1,11 +1,11 @@
-import {createStore, reconcile} from 'solid-js/store';
+import {createStore, reconcile, unwrap} from 'solid-js/store';
 import {ChatFull, UserFull} from '@layer';
 import rootScope from '@lib/rootScope';
 import useDynamicCachedValue from '@helpers/solid/useDynamicCachedValue';
 import {onCleanup} from 'solid-js';
 import {PEER_FULL_TTL} from '@appManagers/constants';
 
-type PeerFull = ChatFull | UserFull;
+export type PeerFull = ChatFull | UserFull;
 
 const [state, setState] = createStore<{[peerId: PeerId]: PeerFull}>({});
 const expirations = new Map<PeerId, number>();
@@ -55,4 +55,9 @@ export function useFullPeer(peerId: PeerId) {
     () => _useFullPeer.name + '-' + peerId,
     () => _useFullPeer(peerId)
   )();
+}
+
+/** Sync read of the cached fullPeer (no fetch, no reactive subscription). */
+export function getCachedFullPeer(peerId: PeerId): PeerFull | undefined {
+  return unwrap(state[peerId]);
 }

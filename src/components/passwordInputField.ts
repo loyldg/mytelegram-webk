@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import cancelEvent from '@helpers/dom/cancelEvent';
 import Icon from '@components/icon';
 import InputField, {InputFieldOptions} from '@components/inputField';
@@ -36,7 +30,7 @@ export class PasswordInputHelpers {
 
     const toggleVisible = this.toggleVisible = document.createElement('span');
     toggleVisible.classList.add('toggle-visible');
-    toggleVisible.append(Icon('eye1'));
+    toggleVisible.append(Icon('eye1_filled'));
 
     container.classList.add('input-field-password');
     container.append(toggleVisible);
@@ -49,7 +43,7 @@ export class PasswordInputHelpers {
     cancelEvent(e);
     this.passwordVisible = !this.passwordVisible;
 
-    this.toggleVisible.replaceChildren(Icon(this.passwordVisible ? 'eye2' : 'eye1'));
+    this.toggleVisible.replaceChildren(Icon(this.passwordVisible ? 'eye2_filled' : 'eye1_filled'));
     (this.input as HTMLInputElement).type = this.passwordVisible ? 'text' : 'password';
     this.onVisibilityClickAdditional?.();
   };

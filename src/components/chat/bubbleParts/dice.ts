@@ -3,9 +3,10 @@ import type {MessageMedia, Document} from '@layer';
 import type {MyDocument} from '@lib/appManagers/appDocsManager';
 import type ChatBubbles from '@components/chat/bubbles';
 import {makeMediaSize} from '@helpers/mediaSize';
-import RLottiePlayer from '@lib/rlottie/rlottiePlayer';
+import LottiePlayer from '@lib/lottie/lottiePlayer';
 import wrapSticker from '@components/wrappers/sticker';
-import lottieLoader from '@lib/rlottie/lottieLoader';
+import lottieLoader from '@lib/lottie/lottieLoader';
+import noop from '@helpers/noop';
 
 export default function wrapDice(context: BubbleContext) {
   const {emoticon, value} = context.messageMedia as MessageMedia.messageMediaDice;
@@ -23,6 +24,9 @@ export default function wrapDice(context: BubbleContext) {
     size,
     boxSize,
     initFrame: play ? undefined : Infinity,
+    // * a settled dice renders its final frame directly, so showing the silhouette while that
+    // * frame fades in would make the loading state appear after the result is already ready
+    noFadeIn: play ? undefined : true,
     ...(isSlot ? {
       loop: false,
       play: false,
@@ -78,8 +82,8 @@ export default function wrapDice(context: BubbleContext) {
         ...commonOptions,
         doc: promise as Promise<MyDocument>,
         container: div,
-        noFadeIn: shouldHide
-      }).then(({render}) => render as Promise<RLottiePlayer>);
+        noFadeIn: shouldHide || commonOptions.noFadeIn
+      }).then(({render}) => render as Promise<LottiePlayer>);
 
       // * keep frame the last child
       if(isSlotOption(index) || spinningIndexes.includes(index)) {
@@ -183,7 +187,7 @@ export default function wrapDice(context: BubbleContext) {
 
   if(unknown) {
     const loopedPlayerPromise = result.then(({render}) => {
-      return render as Promise<RLottiePlayer>;
+      return render as Promise<LottiePlayer>;
     });
 
     context.releaseDice = async(value) => {
@@ -199,18 +203,35 @@ export default function wrapDice(context: BubbleContext) {
         loop: false,
         withThumb: false,
         needFadeIn: false
-      }).then(({render}) => render as Promise<RLottiePlayer>);
-      await lottieLoader.waitForFirstFrame(player);
+      }).then(({render}) => render as Promise<LottiePlayer>);
+      const ready = await lottieLoader.waitForFirstFrame(player).then(() => true, () => false);
       if(!context.middleware()) return;
+      if(!ready) return; // * the result failed to load - keep rolling rather than swapping in a dead canvas
 
       const loopedPlayer = await loopedPlayerPromise;
       if(!context.middleware()) return;
+
+      // * the roll's last frame is only known once its own load ack lands, and the server
+      // * can answer sooner than that - playing to an undefined frame would leave the
+      // * bubble stuck on the roll, because the enterFrame callback never matches
+      await lottieLoader.waitForFirstFrame(loopedPlayer).catch(noop);
+      if(!context.middleware()) return;
+
+      const showResult = () => {
+        const rolling = loopedPlayer.canvas[0];
+        if(rolling?.parentNode) rolling.replaceWith(player.canvas[0]);
+        else context.attachmentDiv.append(player.canvas[0]);
+        player.play();
+      };
+
+      if(loopedPlayer.maxFrame === undefined) { // * the roll never loaded - cut straight to the result
+        showResult();
+        return;
+      }
+
       loopedPlayer.playToFrame({
         frame: loopedPlayer.maxFrame,
-        callback: () => {
-          loopedPlayer.canvas[0].replaceWith(player.canvas[0]);
-          player.play();
-        }
+        callback: showResult
       });
     };
   }

@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -10,7 +6,7 @@
  */
 
 import {MessageEntity} from '@layer';
-import matchUrlProtocol from '@lib/richTextProcessor/matchUrlProtocol';
+import {normalizeUrlProtocol} from '@lib/richTextProcessor/matchUrlProtocol';
 import {BOM_REG_EXP} from '@helpers/string/bom';
 import {ENTITY_ELEMENT_MAP} from '@lib/richTextProcessor/wrapRichText';
 
@@ -208,10 +204,7 @@ function checkElementForEntity(
             throw 1;
           }
 
-          let url2Before = value;
-          if(!matchUrlProtocol(url2Before)) {
-            url2Before = 'https://' + url2Before;
-          }
+          const url2Before = normalizeUrlProtocol(value);
 
           let url2: URL;
           let url2String: string;
@@ -236,11 +229,19 @@ function checkElementForEntity(
         entity.length += value.length;
       }
     } else if(tag.entityName === 'messageEntityMentionName') {
+      // `data-follow` also arrives with pasted HTML, so it is untrusted: only a
+      // numeric user id becomes an entity — a missing one used to throw here and
+      // any other value reached `getUserInput` as NaN, i.e. as `inputUserSelf`.
+      const follow = (closest as HTMLElement).dataset.follow;
+      if(!/^\d+$/.test(follow) || !+follow) {
+        continue;
+      }
+
       (currentEntities[tag.entityName] ||= pushEntity(entities, {
         _: tag.entityName,
         offset: offset.offset,
         length: 0,
-        user_id: (closest as HTMLElement).dataset.follow.toUserId()
+        user_id: follow.toUserId()
       })).length += value.length;
     } else if(tag.entityName === 'messageEntityBlockquote') {
       (currentEntities[tag.entityName] ||= pushEntity(entities, {
@@ -308,7 +309,7 @@ export default function getRichElementValue(
   selNode?: Node,
   selOffset?: number,
   entities?: MessageEntity[],
-  offset: {offset: number} = {offset: 0},
+  offset: {offset: number, contentEnd?: number} = {offset: 0},
   currentEntities: {[_ in MessageEntity['_']]?: MessageEntity} = {}
 ) {
   if(node.nodeType === node.TEXT_NODE) { // TEXT
@@ -339,6 +340,9 @@ export default function getRichElementValue(
     }
 
     offset.offset += nodeValue.length;
+    if(nodeValue.length) { // * track the last real-content offset (excludes trailing block line breaks)
+      offset.contentEnd = offset.offset;
+    }
     return;
   }
 
@@ -377,6 +381,7 @@ export default function getRichElementValue(
     if(alt) {
       line.push(alt);
       offset.offset += alt.length;
+      offset.contentEnd = offset.offset;
     }
   }
 
@@ -390,7 +395,7 @@ export default function getRichElementValue(
   let wasNodeEmpty = true;
 
   // * prefill currentEntities for current element
-  if(node.getAttribute('contenteditable') === null) {
+  if(node.getAttribute('contenteditable') === null && entities) {
     checkElementForEntity(node, '', entities, offset, line, currentEntities);
   }
 
@@ -418,6 +423,16 @@ export default function getRichElementValue(
     if(lastValue?.endsWith('\n')) { // slice last linebreak from quote
       line[line.length - 1] = lastValue.slice(0, -1);
       offset.offset -= 1;
+    }
+
+    // * inner line breaks of a quote can come from block children (<br>/<div>): their \n lands in the
+    // * value but never in the blockquote length (only text nodes feed checkElementForEntity), so the
+    // * last character would spill outside the quote. Re-span the entity up to the last content offset
+    // * (trailing block line breaks excluded).
+    const quoteEntity = currentEntities.messageEntityBlockquote;
+    if(quoteEntity) {
+      const contentEnd = Math.min(offset.contentEnd ?? offset.offset, offset.offset);
+      quoteEntity.length = Math.max(0, contentEnd - quoteEntity.offset);
     }
   }
 

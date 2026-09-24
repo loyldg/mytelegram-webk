@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import MarkupTooltip from '@components/chat/markupTooltip';
 import {FontFamilyName} from '@config/font';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
@@ -97,7 +91,7 @@ export function undoRedo(input: HTMLElement, e: Event, type: 'undo' | 'redo', ne
 
     let sameHTMLTimes = 0;
     do {
-      document.execCommand(type, false, null);
+      input.ownerDocument.execCommand(type, false, null);
       const currentHTML = input.innerHTML;
       if(html === currentHTML) {
         if(++sameHTMLTimes > 2) { // * unlink, removeFormat (а может и нет, случай: заболдить подчёркнутый текст (выделить ровно его), попробовать отменить)
@@ -128,7 +122,7 @@ export function applyMarkdown({input, type, href, dateSuffix}: {input: HTMLEleme
     // underline: 'Underline',
     // strikethrough: 'Strikethrough',
     // monospace: () => document.execCommand('fontName', false, MONOSPACE_FONT),
-    link: href ? () => document.execCommand('createLink', false, href) : resetLinkFormatting
+    link: href ? () => input.ownerDocument.execCommand('createLink', false, href) : () => resetLinkFormatting(input)
     // quote: () => document.execCommand('formatBlock', false, 'blockquote')
     // spoiler: () => document.execCommand('fontName', false, SPOILER_FONT)
   };
@@ -159,7 +153,7 @@ export function applyMarkdown({input, type, href, dateSuffix}: {input: HTMLEleme
     }
 
     if(type === 'quote') {
-      const selection = document.getSelection();
+      const selection = input.ownerDocument.defaultView.getSelection();
       if(selection.rangeCount && getCharAfterRange(selection.getRangeAt(0)) === '\n') {
         const toLeft = false;
         selection.modify(
@@ -171,9 +165,9 @@ export function applyMarkdown({input, type, href, dateSuffix}: {input: HTMLEleme
 
     let ret: boolean;
     if(k.length) {
-      ret = document.execCommand('fontName', false, joinMarkupNames(k));
+      ret = input.ownerDocument.execCommand('fontName', false, joinMarkupNames(k));
     } else {
-      ret = resetCurrentFontFormatting();
+      ret = resetCurrentFontFormatting(input);
     }
 
     // try {
@@ -261,7 +255,7 @@ export function applyMarkdown({input, type, href, dateSuffix}: {input: HTMLEleme
   const listenerOptions: AddEventListenerOptions = {capture: true, passive: false};
   input.addEventListener('input', cancelEvent, listenerOptions);
 
-  executed.push(document.execCommand('styleWithCSS', false, 'true'));
+  executed.push(input.ownerDocument.execCommand('styleWithCSS', false, 'true'));
 
   const commandsKeys = Object.keys(commandsMap) as (typeof type)[];
   const hasMarkup = getMarkupInSelection(commandsKeys);
@@ -284,15 +278,15 @@ export function applyMarkdown({input, type, href, dateSuffix}: {input: HTMLEleme
     }
   } else  */{
     if(cantCombine.some((type) => hasMarkup[type]?.partly) && type === 'link') {
-      executed.push(resetCurrentFormatting());
+      executed.push(resetCurrentFormatting(input));
     } else if(hasMarkup['link']?.partly && cantCombine.includes(type)) {
-      executed.push(resetLinkFormatting());
+      executed.push(resetLinkFormatting(input));
     }
 
-    executed.push(typeof(command) === 'function' ? command() : document.execCommand(command, false, null));
+    executed.push(typeof(command) === 'function' ? command() : input.ownerDocument.execCommand(command, false, null));
   }
 
-  executed.push(document.execCommand('styleWithCSS', false, 'false'));
+  executed.push(input.ownerDocument.execCommand('styleWithCSS', false, 'false'));
 
   restore();
 
@@ -488,16 +482,16 @@ export function processCurrentFormatting(
   // console.log('process formatting', performance.now() - perf);
 }
 
-export function resetCurrentFormatting() {
-  return document.execCommand('removeFormat', false, null);
+export function resetCurrentFormatting(input: HTMLElement) {
+  return input.ownerDocument.execCommand('removeFormat', false, null);
 }
 
-export function resetCurrentFontFormatting() {
-  return document.execCommand('fontName', false, FontFamilyName);
+export function resetCurrentFontFormatting(input: HTMLElement) {
+  return input.ownerDocument.execCommand('fontName', false, FontFamilyName);
 }
 
-export function resetLinkFormatting() {
-  return document.execCommand('unlink', false, null);
+export function resetLinkFormatting(input: HTMLElement) {
+  return input.ownerDocument.execCommand('unlink', false, null);
 }
 
 export function handleMarkdownShortcut(input: HTMLElement, e: KeyboardEvent) {
@@ -515,7 +509,7 @@ export function handleMarkdownShortcut(input: HTMLElement, e: KeyboardEvent) {
   const code = e.code;
   const markdownType = formatKeys[code];
 
-  const selection = document.getSelection();
+  const selection = input.ownerDocument.defaultView.getSelection();
   if(!isSelectionEmpty(selection) && markdownType) {
     // * костыльчик
     if(code === 'KeyK') {

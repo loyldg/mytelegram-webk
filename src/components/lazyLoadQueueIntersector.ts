@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import findAndSpliceAll from '@helpers/array/findAndSpliceAll';
 import LazyLoadQueueBase, {LazyLoadElementBase} from '@components/lazyLoadQueueBase';
 import VisibilityIntersector from '@components/visibilityIntersector';
@@ -52,6 +46,10 @@ export default class LazyLoadQueueIntersector extends LazyLoadQueueBase {
 
   protected loadItem(item: LazyLoadElement) {
     return item.load(item.div);
+  }
+
+  protected discardItem(item: LazyLoadElement) {
+    this.unobserve(item);
   }
 
   protected addElement(method: 'push' | 'unshift', el: LazyLoadElement) {

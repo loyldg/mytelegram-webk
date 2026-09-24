@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import replaceContent from '@helpers/dom/replaceContent';
 import setInnerHTML from '@helpers/dom/setInnerHTML';
 import {GroupCallParticipant} from '@layer';
@@ -22,16 +16,26 @@ export default class GroupCallParticipantStatusElement {
     this.container.classList.add(className + '-container');
   }
 
-  public setState(state: GROUP_CALL_PARTICIPANT_MUTED_STATE, participant: GroupCallParticipant) {
+  /**
+   * @param withAccess the participant is on the call's e2e blockchain but absent
+   * from the SFU roster — it holds the current shared key without being
+   * connected to the media. tdesktop renders the same row as a plain listener
+   * with no status icon (`lng_group_call_blockchain_only_status`,
+   * calls_group_members_row.cpp:702) and never shows `about` for it.
+   */
+  public setState(state: GROUP_CALL_PARTICIPANT_MUTED_STATE, participant: GroupCallParticipant, withAccess?: boolean) {
     const states = GROUP_CALL_PARTICIPANT_MUTED_STATE;
-    const icons = this.withIcons.filter((type) => !!participant[type]).map((type) => {
-      const iconClassName: Icon = `${type === 'presentation' ? 'listscreenshare' : 'videocamera_filled'}`;
+    const icons = withAccess ? [] : this.withIcons.filter((type) => !!participant[type]).map((type) => {
+      const iconClassName: Icon = `${type === 'presentation' ? 'listscreenshare_filled' : 'videocamera_filled'}`;
       const i = Icon(iconClassName, className + '-icon', className + '-icon-' + type);
       return i;
     });
 
     let element2: HTMLElement, actionClassName: string;
-    if(state === states.MUTED_FOR_ME) {
+    if(withAccess) {
+      element2 = i18n('VoiceChat.Status.Listening');
+      actionClassName = 'is-listening';
+    } else if(state === states.MUTED_FOR_ME) {
       element2 = i18n('VoiceChat.Status.MutedForYou');
       actionClassName = 'is-muted';
     } else if(state === states.UNMUTED) {

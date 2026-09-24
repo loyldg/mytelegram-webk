@@ -1,16 +1,9 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {MyDocument} from '@appManagers/appDocsManager';
-import PopupStickers from '@components/popups/stickers';
+import showStickersPopup from '@components/popups/stickers';
 import rootScope from '@lib/rootScope';
 import createContextMenu from '@helpers/dom/createContextMenu';
 import findUpClassName from '@helpers/dom/findUpClassName';
-import PopupElement from '@components/popups';
-import PopupNewMedia from '@components/popups/newMedia';
+import showNewMediaPopup from '@components/popups/newMedia';
 import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
 import ChatInput from '@components/chat/input';
 import {copyTextToClipboard} from '@helpers/clipboard';
@@ -29,6 +22,7 @@ export default function createStickersContextMenu({
   isGif,
   canHaveEmojiTimer,
   canViewPack,
+  onContextMenu,
   onOpen,
   onClose,
   onSend
@@ -42,11 +36,19 @@ export default function createStickersContextMenu({
   isGif?: boolean,
   canHaveEmojiTimer?: boolean,
   canViewPack?: boolean,
+  onContextMenu?: (event: MouseEvent | TouchEvent) => {
+    cleanup: () => void,
+    onMenuOpen?: (menu: HTMLElement) => void
+  } | void,
   onOpen?: () => any,
   onClose?: () => any,
   onSend?: () => any
 }) {
   let target: HTMLElement, doc: MyDocument;
+  let contextMenuAddon: {
+    cleanup: () => void,
+    onMenuOpen?: (menu: HTMLElement) => void
+  };
   const verifyFavoriteSticker = async(toAdd: boolean) => {
     const favedStickers = await (isGif ? rootScope.managers.acknowledged.appGifsManager.getGifs() : rootScope.managers.acknowledged.appStickersManager.getFavedStickersStickers());
     if(!favedStickers.cached) {
@@ -87,14 +89,9 @@ export default function createStickersContextMenu({
     onClick: () => {
       const attribute = doc.attributes.find((attr) => attr._ === 'documentAttributeCustomEmoji') as DocumentAttribute.documentAttributeCustomEmoji;
       const inputStickerSet = attribute.stickerset as InputStickerSet.inputStickerSetID;
-      PopupElement.createPopup(
-        PopupStickers,
-        inputStickerSet,
-        true,
-        chatInput
-      ).show();
+      showStickersPopup(inputStickerSet, true, chatInput);
     },
-    verify: () => canViewPack
+    verify: () => !!(canViewPack && doc)
   }, {
     icon: 'smile',
     text: 'SetAsEmojiStatus',
@@ -113,7 +110,7 @@ export default function createStickersContextMenu({
   }] : [{
     icon: 'stickers',
     text: 'Context.ViewStickerSet',
-    onClick: () => PopupElement.createPopup(PopupStickers, doc.stickerSetInput, false, chatInput).show(),
+    onClick: () => showStickersPopup(doc.stickerSetInput, false, chatInput),
     verify: () => !isPack && !isGif
   }, {
     icon: isGif ? 'gifs' : 'favourites',
@@ -135,7 +132,7 @@ export default function createStickersContextMenu({
     text: 'Chat.Send.WithCaption',
     onClick: () => {
       onSend?.();
-      PopupElement.createPopup(PopupNewMedia, chatInput.chat, [], 'media', false, doc);
+      showNewMediaPopup(chatInput.chat, [], 'media', false, doc);
     },
     verify: () => !!(isGif && chatInput && chatInput.chat.peerId)
   }, {
@@ -180,6 +177,8 @@ export default function createStickersContextMenu({
     listenTo: listenTo,
     appendTo,
     findElement: (e) => {
+      contextMenuAddon?.cleanup();
+      contextMenuAddon = onContextMenu?.(e) || undefined;
       target = e.target as HTMLElement;
       if(isEmojis) {
         const superEmoji = findUpClassName(target, 'super-emoji');
@@ -200,7 +199,14 @@ export default function createStickersContextMenu({
       doc = await rootScope.managers.appDocsManager.getDoc(target.dataset.docId);
       return onOpen?.();
     },
-    onClose,
+    onClose: () => {
+      contextMenuAddon?.cleanup();
+      contextMenuAddon = undefined;
+      onClose?.();
+    },
+    onOpenAfter: (element) => {
+      contextMenuAddon?.onMenuOpen?.(element);
+    },
     buttons
   });
 }

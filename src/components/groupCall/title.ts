@@ -1,15 +1,11 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import setInnerHTML from '@helpers/dom/setInnerHTML';
+import replaceContent from '@helpers/dom/replaceContent';
 import {GroupCall} from '@layer';
-import GroupCallInstance from '@lib/calls/groupCallInstance';
+import type GroupCallInstance from '@lib/calls/groupCallInstance';
 import {NULL_PEER_ID} from '@appManagers/constants';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
 import PeerTitle from '@components/peerTitle';
+import {i18n} from '@lib/langPack';
 
 export default class GroupCallTitleElement {
   private peerTitle: PeerTitle;
@@ -21,18 +17,26 @@ export default class GroupCallTitleElement {
   public update(instance: GroupCallInstance) {
     const {peerTitle, appendTo} = this;
     const groupCall = instance.groupCall as GroupCall.groupCall;
-    const peerId = instance.chatId.toPeerId(true);
-    if(groupCall.title) {
+    if(groupCall?.title) {
       setInnerHTML(appendTo, wrapEmojiText(groupCall.title));
-    } else {
-      if(peerTitle.options.peerId !== peerId) {
-        peerTitle.options.peerId = peerId;
-        peerTitle.update();
-      }
+      return;
+    }
 
-      if(peerTitle.element.parentElement !== appendTo) {
-        appendTo.append(peerTitle.element);
-      }
+    // TdE2E conferences don't have a backing chat — use a plain title.
+    // Eventually this can list participant names.
+    if(instance.e2e && (!instance.chatId || instance.chatId === NULL_PEER_ID)) {
+      replaceContent(appendTo, i18n('ConferenceCall.Title'));
+      return;
+    }
+
+    const peerId = instance.chatId.toPeerId(true);
+    if(peerTitle.options.peerId !== peerId) {
+      peerTitle.options.peerId = peerId;
+      peerTitle.update();
+    }
+
+    if(peerTitle.element.parentElement !== appendTo) {
+      appendTo.append(peerTitle.element);
     }
   }
 }

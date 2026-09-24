@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -19,8 +15,8 @@ export default function setRichFocus(field: HTMLElement, selectNode: Node, noCol
     selectNode = null;
   }
 
-  if(window.getSelection && document.createRange) {
-    const range = document.createRange();
+  if(field.ownerDocument.defaultView.getSelection && field.ownerDocument.createRange) {
+    const range = field.ownerDocument.createRange();
     if(selectNode) {
       range.selectNode(selectNode);
     } else {
@@ -31,7 +27,7 @@ export default function setRichFocus(field: HTMLElement, selectNode: Node, noCol
       range.collapse(false);
     }
 
-    const sel = window.getSelection();
+    const sel = field.ownerDocument.defaultView.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
   }

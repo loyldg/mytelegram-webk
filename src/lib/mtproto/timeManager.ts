@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -11,6 +7,7 @@
 
 import {nextRandomUint} from '@helpers/random';
 import ulongFromInts from '@helpers/long/ulongFromInts';
+import tsNow from '@helpers/tsNow';
 
 /*
 let lol: any = {};
@@ -54,6 +51,13 @@ export class TimeManager {
 
   public getServerTimeOffset() {
     return this.timeOffset;
+  }
+
+  /**
+   * Now by the server's clock, in seconds
+   */
+  public getServerTime() {
+    return tsNow(true) + this.timeOffset;
   }
 
   public generateId(): string {

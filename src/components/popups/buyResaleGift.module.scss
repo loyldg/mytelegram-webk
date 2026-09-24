@@ -21,6 +21,12 @@
     padding: 0.5rem;
     overflow: visible;
   }
+
+  // the heading and the copy read as a paragraph pair, further apart than a centred header
+  .confirmation {
+    gap: 1.125rem;
+    align-self: stretch;
+  }
 }
 
 .onlyTon {
@@ -32,23 +38,17 @@
 }
 
 .graph {
-  margin-top: 1.5rem;
+  margin-block: 1.5rem;
 }
 
-.title {
-  margin-top: 1.5rem;
-  font-size: 20px;
-  line-height: 24px;
-  font-weight: 500;
-  padding-inline: 1rem;
-  align-self: flex-start;
+// the popup body is a centering flex column, so a full-width control has to ask for it
+.messageInput {
+  align-self: stretch;
+  margin-block: 1rem 0.5rem;
 }
 
-.text {
-  margin-top: 1.125rem;
-  padding-inline: 1rem;
-  align-self: flex-start;
-  line-height: 20px;
+.hideNameRow {
+  align-self: stretch;
 }
 
 .starsBalance {

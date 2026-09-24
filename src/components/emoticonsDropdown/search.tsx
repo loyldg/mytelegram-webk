@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Accessor, createEffect, createSignal, onCleanup, For, on} from 'solid-js';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import placeCaretAtEnd from '@helpers/dom/placeCaretAtEnd';
@@ -14,7 +8,7 @@ import {AppEmojiManager} from '@appManagers/appEmojiManager';
 import {LangPackKey} from '@lib/langPack';
 import rootScope from '@lib/rootScope';
 import InputSearch from '@components/inputSearch';
-import {ScrollableXTsx} from '@components/stories/list';
+import Scrollable from '@components/scrollable2';
 import wrapSticker from '@components/wrappers/sticker';
 import {AnimationItemGroup} from '@components/animationIntersector';
 
@@ -77,16 +71,19 @@ function addSearchCategories(props: {
 
   let scrollableContainer: HTMLDivElement;
   const scrollable = (
-    <ScrollableXTsx
-      ref={scrollableContainer}
+    <Scrollable
+      axis="x"
+      ref={(el) => {
+        scrollableContainer = el;
+        el.addEventListener('click', (e) => {
+          if(e.target === inputSearch.currentPlaceholder) {
+            placeCaretAtEnd(inputSearch.input, true, true);
+          }
+        });
+      }}
       class="emoticons-search-input-scrollable"
       classList={{'is-searching': props.searching(), 'is-scrolled': scrolled()}}
-      onClick={(e) => {
-        if(e.target === inputSearch.currentPlaceholder) {
-          placeCaretAtEnd(inputSearch.input, true, true);
-        }
-      }}
-      onAdditionalScroll={() => {
+      onScroll={() => {
         setScrolled(scrollableContainer.scrollLeft > 0);
       }}
     >
@@ -94,7 +91,7 @@ function addSearchCategories(props: {
       <div class="emoticons-search-input-categories">
         <For each={emojiGroups()}>{EmojiGroup}</For>
       </div>
-    </ScrollableXTsx>
+    </Scrollable>
   );
 
   inputSearch.input.after(scrollableContainer);
@@ -135,6 +132,11 @@ function addSearchCategories(props: {
 export default function EmoticonsSearch(props: {
   type: 'emoji' | 'stickers' | 'gifs'
   placeholder?: LangPackKey,
+  // * defaults to 0 - local searches (emoji, stickers) can run on every keystroke,
+  // * server-backed ones must not or the API floods the client out
+  debounceTime?: number,
+  // * return false to answer a value right away, e.g. one the tab already has results for
+  verifyDebounce?: ConstructorParameters<typeof InputSearch>[0]['verifyDebounce'],
   loading?: Accessor<boolean>,
   onValue: (value: string) => void,
   onFocusChange?: ConstructorParameters<typeof InputSearch>[0]['onFocusChange'],
@@ -155,7 +157,8 @@ export default function EmoticonsSearch(props: {
     onDebounce: setDebounced,
     noBorder: true,
     noFocusEffect: true,
-    debounceTime: 0
+    debounceTime: props.debounceTime ?? 0,
+    verifyDebounce: props.verifyDebounce
   });
   inputSearch.container.classList.add('emoticons-search-input-container');
   inputSearch.input.classList.add('emoticons-search-input');

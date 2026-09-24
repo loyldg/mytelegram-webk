@@ -1,12 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import cancelEvent from '@helpers/dom/cancelEvent';
 import safePlay from '@helpers/dom/safePlay';
 import getImageFromStrippedThumb from '@helpers/getImageFromStrippedThumb';
+import withTimeout from '@helpers/schedulers/withTimeout';
 import {Document, Photo, PhotoSize} from '@layer';
 import {i18n} from '@lib/langPack';
 import rootScope from '@lib/rootScope';
@@ -14,9 +9,13 @@ import useContentSettings from '@stores/contentSettings';
 import confirmationPopup from '@components/confirmationPopup';
 import DotRenderer from '@components/dotRenderer';
 import Icon from '@components/icon';
-import {AgeVerificationPopup} from '@components/popups/ageVerification';
+import createAgeVerification from '@components/popups/ageVerification';
 import SetTransition from '@components/singleTransition';
 import {toastNew} from '@components/toast';
+
+// * the dot canvas is decoration on top of an already-covering blurred thumbnail; never let it
+// * hold up the message batch for longer than this
+const SPOILER_READY_TIMEOUT = 2000;
 
 const sensitiveSpoilers = new Set<HTMLElement>();
 
@@ -93,7 +92,7 @@ export function onMediaSpoilerClick(options: {
     }
 
     if(contentSettings.needAgeVerification() && !contentSettings.ageVerified()) {
-      AgeVerificationPopup.create().then((verified) => {
+      createAgeVerification().then((verified) => {
         if(verified) {
           clearSensitiveSpoilers();
         }
@@ -193,7 +192,7 @@ export default async function wrapMediaSpoiler(
   if(sensitive) {
     const div = document.createElement('div');
     div.classList.add('sensitive-content-warning');
-    div.replaceChildren(Icon('eyecross_outline'), i18n('18Plus'));
+    div.replaceChildren(Icon('eyecross'), i18n('18Plus'));
     container.prepend(div);
     container.dataset.isSensitive = 'true';
     sensitiveSpoilers.add(container);
@@ -203,7 +202,11 @@ export default async function wrapMediaSpoiler(
   }
 
   if(readyResult instanceof Promise) {
-    await readyResult;
+    // Waiting here only avoids a blank first frame of the dot canvas — the media is already covered
+    // by the blurred thumbnail underneath. The bubble's render promise is awaited by the message
+    // batch processor, so blocking on this indefinitely stalls the whole chat: bail out after a
+    // deadline and let the dots appear late if the renderer wakes up later.
+    await withTimeout<unknown>(readyResult, SPOILER_READY_TIMEOUT);
   }
 
   return container;

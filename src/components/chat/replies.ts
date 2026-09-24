@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Message} from '@layer';
 import rootScope from '@lib/rootScope';
 import ripple from '@components/ripple';
@@ -138,7 +132,7 @@ export default class RepliesElement extends HTMLElement {
     } else {
       this.classList.add('bubble-beside-button');
       this.innerHTML = `<span class="replies-beside-text">${replies?.replies ? formatNumber(replies.replies, 0) : ''}</span>`;
-      this.prepend(Icon('commentssticker'));
+      this.prepend(Icon('commentssticker_filled'));
     }
 
     if(replies && !this.updated && !this.message.pFlags.is_outgoing) {

@@ -1,17 +1,10 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {formatFullSentTime, formatMonthsDuration} from '@helpers/date';
 import liteMode from '@helpers/liteMode';
-import clamp from '@helpers/number/clamp';
+import getGiftAssetName from '@helpers/getGiftAssetName';
 import {Message, MessageMedia} from '@layer';
 import appImManager from '@lib/appImManager';
 import I18n, {FormatterArguments, LangPackKey, i18n, join} from '@lib/langPack';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
-import {LottieAssetName} from '@lib/rlottie/lottieLoader';
 import rootScope from '@lib/rootScope';
 import {getCountryEmoji} from '@vendor/emoji';
 import AppSelectPeers from '@components/appSelectPeers';
@@ -19,29 +12,24 @@ import confirmationPopup from '@components/confirmationPopup';
 import wrapLocalSticker from '@components/wrappers/localSticker';
 import {For, JSX} from 'solid-js';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
-import PopupElement from '@components/popups';
-import PopupGiftLink from '@components/popups/giftLink';
+import showGiftLinkPopup from '@components/popups/giftLink';
 import classNames from '@helpers/string/classNames';
 import createMiddleware from '@helpers/solid/createMiddleware';
 import {IconTsx} from '@components/iconTsx';
 import {setPeerColorToElement} from '@components/peerColors';
 
-export function getGiftAssetName(days?: number) {
-  const months = days === undefined ? days : Math.round(days / 30);
-  const durationAssetMap: {[key: number]: LottieAssetName} = {
-    3: 'Gift3',
-    6: 'Gift6',
-    12: 'Gift12'
-  };
+export {default as getGiftAssetName} from '@helpers/getGiftAssetName';
 
-  return durationAssetMap[clamp(months ?? 0, 3, 12)];
-}
-
-export function DelimiterWithText(props: {langKey: LangPackKey}) {
+export function DelimiterWithText(props: {
+  langKey: LangPackKey,
+  class?: string,
+  /** For a caller that dresses the label itself — the stars pill, say. */
+  textClass?: string
+}) {
   return (
-    <span class="delimiter-with-text">
+    <span class={classNames('delimiter-with-text', props.class)}>
       <span class="delimiter-with-text-stripe" />
-      {i18n(props.langKey)}
+      <span class={props.textClass}>{i18n(props.langKey)}</span>
       <span class="delimiter-with-text-stripe" />
     </span>
   );
@@ -195,7 +183,7 @@ export async function onGiveawayClick(message: Message.message) {
   });
 
   if(isWinner) {
-    PopupElement.createPopup(PopupGiftLink, giveawayInfo.gift_code_slug);
+    showGiftLinkPopup(giveawayInfo.gift_code_slug);
   }
 }
 
@@ -347,7 +335,7 @@ export default function Giveaway(props: {
   const promise = wrapLocalSticker({
     width: size,
     height: size,
-    assetName: isResults ? 'Congratulations' : getGiftAssetName(giveaway.months),
+    assetName: isResults ? 'Congratulations' : getGiftAssetName(giveaway.months * 30),
     middleware,
     loop: false,
     autoplay: liteMode.isAvailable('stickers_chat')

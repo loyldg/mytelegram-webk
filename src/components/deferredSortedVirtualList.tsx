@@ -19,25 +19,51 @@ import styles from '@components/deferredSortedVirtualList.module.scss';
 
 
 type CreateDeferredSortedVirtualListArgs<T> = {
-  scrollable: HTMLElement;
-  getItemElement: (item: T, id: any) => HTMLElement;
-  onItemUnmount?: (item: T) => void;
-  onListShrinked: () => void;
-  requestItemForIdx: (idx: number, itemsLength: number) => void;
-  sortWith: (a: number, b: number) => number;
-  itemSize: LoadingDialogSkeletonSize;
-  noAvatar?: boolean;
-  onListLengthChange?: () => void;
+  scrollable: HTMLElement,
+  getItemElement: (item: T, id: any) => HTMLElement,
+  onItemUnmount?: (item: T) => void,
+  // * Unlike onItemUnmount (the row merely left the rendered window and is kept for re-mounting),
+  // * this fires when the list drops the item for good - removed, trimmed by checkShrink, cleared or
+  // * disposed - and the owner will never see it again. Without it an owner that allocates per-item
+  // * resources (middleware, players, canvases) has no point at which to release them.
+  onItemDiscard?: (item: T) => void,
+  onListShrinked: () => void,
+  requestItemForIdx: (idx: number, itemsLength: number) => void,
+  sortWith: (a: number, b: number) => number,
+  itemSize: LoadingDialogSkeletonSize,
+  noAvatar?: boolean,
+  onListLengthChange?: () => void,
+  extraPaddingBottom?: number
 };
 
 export type DeferredSortedVirtualListItem<T> = {
-  id: any;
-  index: number;
-  value: T;
+  id: any,
+  index: number,
+  value: T
 };
 
 
 const EXTRA_ITEMS_TO_KEEP = 50;
+
+
+/**
+ * How far the reveal threshold jumps once a batch of loaded-but-hidden rows is ready.
+ *
+ * Reveal used to advance to (lowest queued index + 1), which let through exactly ONE row
+ * per timer: a window of N rows needed N serial ~8ms hops, and every hop is a `setTimeout`,
+ * so a main thread busy with scrolling stretches them and the tail of the window keeps
+ * showing skeletons for up to a second even though the dialogs are already in memory.
+ * The whole ready batch can go at once — the single tick still keeps rows from popping in
+ * on the same frame they arrive.
+ */
+export function getNextRevealIdx(queued: number[]) {
+  let max = -1;
+  for(const idx of queued) {
+    if(idx > max) max = idx;
+  }
+
+  return max < 0 ? null : max + 1;
+}
 
 
 export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedVirtualListArgs<T>) => createRoot(dispose => {
@@ -45,12 +71,14 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
     scrollable,
     getItemElement,
     onItemUnmount,
+    onItemDiscard,
     onListShrinked,
     requestItemForIdx,
     sortWith,
     itemSize,
     onListLengthChange,
-    noAvatar
+    noAvatar,
+    extraPaddingBottom = 8
   } = args;
 
   const [items, setItems] = createSignal<DeferredSortedVirtualListItem<T>[]>([]);
@@ -93,22 +121,36 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
     setRevealIdx(items().length);
   }));
 
+  // * Re-adding an id replaces the value behind it, so the previous one is dropped for good - unless
+  // * it is the very same object being re-added, which is the common no-op case
+  const replacedBy = (
+    previous: DeferredSortedVirtualListItem<T>[],
+    newItems: DeferredSortedVirtualListItem<T>[]
+  ) => {
+    const values = new Map(newItems.map(item => [item.id, item.value]));
+    return previous.filter(item => values.has(item.id) && values.get(item.id) !== item.value);
+  };
+
   const addItems = (newItems: DeferredSortedVirtualListItem<T>[]) => {
     if(!newItems.length) return;
     const ids = new Set(newItems.map(item => item.id));
+    const replaced = replacedBy(items(), newItems);
     setItems(prev => [
       ...prev.filter(item => !ids.has(item.id)),
       ...newItems
     ]);
+    discard(replaced);
   };
 
   const addPinnedItems = (newItems: DeferredSortedVirtualListItem<T>[]) => {
     if(!newItems.length) return;
     const ids = new Set(newItems.map(item => item.id));
+    const replaced = replacedBy(pinnedItems(), newItems);
     setPinnedItems(prev => [
       ...prev.filter(item => !ids.has(item.id)),
       ...newItems
     ]);
+    discard(replaced);
   };
 
   /**
@@ -126,14 +168,32 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
     });
   };
 
-  const removePinnedItem = (id: any) => {
-    setPinnedItems(prev => prev.filter(item => id !== item.id));
+  const discard = (discarded: DeferredSortedVirtualListItem<T>[]) => {
+    if(!onItemDiscard) return;
+    for(const item of discarded) onItemDiscard(item.value);
   };
 
+  // * Both bail before writing when the id is not theirs: the setter would hand back a fresh array
+  // * either way, invalidating the signal and every memo over it (itemsMap, the rendered list) for a
+  // * removal that did not happen. delete() calls both on every key, so one of them always misses.
+  const removePinnedItem = (id: any) => {
+    const discarded = pinnedItems().filter(item => id === item.id);
+    if(!discarded.length) return false;
+
+    setPinnedItems(prev => prev.filter(item => id !== item.id));
+    discard(discarded);
+    return true;
+  };
+
+  // * Reports what it actually removed. It used to answer from itemsMap(), which merges the pinned
+  // * collection in, so a pinned id got a truthy answer from a call that removed nothing.
   const removeItem = (id: any) => {
-    const hadItem = itemsMap().has(id);
+    const discarded = items().filter(item => id === item.id);
+    if(!discarded.length) return false;
+
     setItems(prev => prev.filter(item => id !== item.id));
-    return hadItem;
+    discard(discarded);
+    return true;
   };
 
   const updateItem = (id: any, index: number) => {
@@ -153,6 +213,7 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
   };
 
   const clear = () => {
+    const discarded = [...pinnedItems(), ...items()];
     batch(() => {
       setItems([]);
       setPinnedItems([]);
@@ -162,6 +223,7 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
       blockedAnimationCallbacks.clear();
       setBlockedAnimationCount(0);
     });
+    discard(discarded);
     // onListLengthChange?.();
   };
 
@@ -196,22 +258,18 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
 
   const [queuedToBeRevealed, setQueuedToBeRevealed] = createSignal<number[]>([]);
 
-  const minQueuedToBeRevealed = createMemo(() =>
-    !queuedToBeRevealed().length ?
-      null :
-      Math.min(...queuedToBeRevealed())
-  );
+  const nextRevealIdx = createMemo(() => getNextRevealIdx(queuedToBeRevealed()));
 
 
   createEffect(() => {
-    const mn = minQueuedToBeRevealed();
+    const next = nextRevealIdx();
 
-    if(mn === null) return;
+    if(next === null) return;
 
     const timeout = self.setTimeout(() => {
       batch(() => {
-        setRevealIdx(prev => Math.max(mn + 1, prev));
-        setQueuedToBeRevealed(prev => prev.filter(n => revealIdx() <= n))
+        setRevealIdx(prev => Math.max(next, prev));
+        setQueuedToBeRevealed(prev => prev.filter(n => next <= n));
       });
     }, 1000 / 60 / 2);
 
@@ -227,11 +285,14 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
     const toKeep = maxVisible - pinnedItems().length + EXTRA_ITEMS_TO_KEEP;
 
     if(itemsLength > toKeep) {
+      // The trimmed tail is dropped for good - hand it to the owner before it goes out of reach
+      const discarded = sortedItems().slice(toKeep);
       batch(() => {
         // Should be sortedItems() here, because the updated cursor is based on the last item from the list, and might skip a few dialogs if wasn't set the right cursor
         setItems(sortedItems().slice(0, toKeep));
         setRevealIdx(toKeep);
       });
+      discard(discarded);
       onListShrinked();
     }
   }
@@ -251,13 +312,34 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
   }
 
   let shrinkTimeout: number;
+  let shrinkMovedSinceScheduled = false;
 
-  createEffect(on(visibleItems, () => {
-    self.clearTimeout(shrinkTimeout);
-
+  // Wait for a tick in which nothing moved before shrinking, so the list is never cut
+  // out from under a scroll that is still running. `visibleItems` is written on EVERY
+  // row mount and unmount, though, and re-arming the timer on each of those churned a
+  // clearTimeout + setTimeout pair per row; one pending timer that re-checks on each
+  // tick debounces exactly the same way for a fraction of the timer traffic.
+  const scheduleShrink = () => {
     shrinkTimeout = self.setTimeout(() => {
+      if(shrinkMovedSinceScheduled) {
+        shrinkMovedSinceScheduled = false;
+        scheduleShrink();
+        return;
+      }
+
+      shrinkTimeout = undefined;
       checkShrink(visibleItems(), itemsLength());
     }, 0);
+  };
+
+  createEffect(on(visibleItems, () => {
+    if(shrinkTimeout !== undefined) {
+      shrinkMovedSinceScheduled = true;
+      return;
+    }
+
+    shrinkMovedSinceScheduled = false;
+    scheduleShrink();
   }));
 
   <VerticalVirtualList
@@ -324,11 +406,15 @@ export const createDeferredSortedVirtualList = <T, >(args: CreateDeferredSortedV
     }}
     scrollableHost={scrollable}
     thresholdPadding={72 * 4}
-    extraPaddingBottom={8} // 0.5rem
+    extraPaddingBottom={extraPaddingBottom} // 0.5rem
   />;
 
   return {
-    dispose,
+    dispose: () => {
+      const discarded = [...pinnedItems(), ...items()];
+      dispose();
+      discard(discarded);
+    },
 
     list,
 

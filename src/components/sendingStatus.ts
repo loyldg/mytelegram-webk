@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {_tgico} from '@helpers/tgico';
 import {Message} from '@layer';
 import Icon from '@components/icon';
@@ -27,7 +21,7 @@ export function getSendingStatus(message: Message.message | Message.messageServi
     );
 }
 
-type C = 'check' | 'checks' | 'sending' | 'sendingerror' | 'premium_lock';
+type C = 'check' | 'checks' | 'sending' | 'sendingerror_filled' | 'premium_lock';
 export function setSendingStatus(
   container: HTMLElement,
   message?: C | Message.message | Message.messageService,
@@ -38,7 +32,7 @@ export function setSendingStatus(
     className = message;
   } else if(message?.pFlags.out) {
     if(message.error) {
-      className = 'sendingerror';
+      className = 'sendingerror_filled';
     } else if(message.pFlags.is_outgoing) {
       className = 'sending';
     } else if(message.pFlags.unread) {
@@ -59,7 +53,8 @@ export function setSendingStatus(
     return;
   }
 
-  const element = Icon(className, 'sending-status-icon', 'sending-status-icon-' + className/* 'transition-item', */);
+  const statusClassName = className === 'sendingerror_filled' ? 'sendingerror' : className;
+  const element = Icon(className, 'sending-status-icon', 'sending-status-icon-' + statusClassName/* 'transition-item', */);
   container.append(element);
   container.classList.remove('hide');
 

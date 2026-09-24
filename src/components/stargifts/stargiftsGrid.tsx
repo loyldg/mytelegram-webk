@@ -17,7 +17,7 @@ import {IconTsx} from '@components/iconTsx';
 import formatNumber from '@helpers/number/formatNumber';
 import {changeBrightness, getRgbColorFromTelegramColor, rgbaToHexa, rgbIntToHex} from '@helpers/color';
 import createContextMenu from '@helpers/dom/createContextMenu';
-import PopupPickUser from '@components/popups/pickUser';
+import {showSharingPicker2Popup} from '@components/popups/pickUser';
 import appImManager from '@lib/appImManager';
 import {StarGift, StarGiftCollection} from '@layer';
 import {copyTextToClipboard} from '@helpers/clipboard';
@@ -26,7 +26,7 @@ import transferStarGift from '@components/popups/transferStarGift';
 import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import CheckboxFieldTsx from '@components/checkboxFieldTsx';
 import tsNow from '@helpers/tsNow';
-import PopupStarGiftWear from '@components/popups/starGiftWear';
+import {openStarGiftWear} from '@components/popups/starGiftWear';
 import createSubmenuTrigger from '@components/createSubmenuTrigger';
 import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
 import CheckboxField from '@components/checkboxField';
@@ -61,7 +61,7 @@ function StarGiftGridItem(props: {
           text: 'ShareFile',
           verify: () => raw._ === 'starGiftUnique',
           onClick: () => {
-            PopupPickUser.createSharingPicker2().then(({peerId, threadId, monoforumThreadId}) => {
+            showSharingPicker2Popup().then(({peerId, threadId, monoforumThreadId}) => {
               rootScope.managers.appMessagesManager.sendText({peerId, threadId, replyToMonoforumPeerId: monoforumThreadId, text: 'https://t.me/nft/' + (raw as StarGift.starGiftUnique).slug});
               appImManager.setInnerPeer({peerId, threadId, monoforumThreadId});
             });
@@ -85,7 +85,7 @@ function StarGiftGridItem(props: {
           }
         },
         {
-          icon: 'gem_transfer_outline',
+          icon: 'gem_transfer',
           text: 'StarGiftTransferFull',
           verify: () => isEditableUniqueGift,
           onClick: () => {
@@ -132,7 +132,7 @@ function StarGiftGridItem(props: {
           }
         }),
         {
-          icon: isWearing ? 'crownoff_outline' : 'crown_outline',
+          icon: isWearing ? 'crownoff' : 'crown',
           text: isWearing ? 'StarGiftWearStopFull' : 'StarGiftWearFull',
           verify: () => isEditableUniqueGift,
           onClick: async() => {
@@ -153,12 +153,12 @@ function StarGiftGridItem(props: {
                 });
               }
             } else {
-              PopupStarGiftWear.open(props.item, profilePeerId);
+              openStarGiftWear(props.item, profilePeerId);
             }
           }
         },
         {
-          icon: saved.pFlags.unsaved ? 'eye' : 'eyecross_outline',
+          icon: saved.pFlags.unsaved ? 'eye' : 'eyecross',
           text: saved.pFlags.unsaved ? 'Show' : 'Hide',
           verify: () => isIncoming || isEditableUniqueGift,
           onClick: () => {
@@ -221,11 +221,11 @@ function StarGiftGridItem(props: {
       )}
 
       {isPinned() && !props.item.resellOnlyTon && (
-        <IconTsx icon="pin2" class={/* @once */ styles.itemPin} />
+        <IconTsx icon="pin2_filled" class={/* @once */ styles.itemPin} />
       )}
 
       {isLocked() && (
-        <IconTsx icon="time_lock" class={/* @once */ styles.itemLock} />
+        <IconTsx icon="time_lock_filled" class={/* @once */ styles.itemLock} />
       )}
 
       {props.item.resellOnlyTon && props.view !== 'transfer' && (

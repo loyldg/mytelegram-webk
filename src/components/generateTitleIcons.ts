@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {Chat, User} from '@layer';
 import {i18n} from '@lib/langPack';
@@ -12,9 +6,8 @@ import rootScope from '@lib/rootScope';
 import generateFakeIcon from '@components/generateFakeIcon';
 import generatePremiumIcon from '@components/generatePremiumIcon';
 import generateVerifiedIcon from '@components/generateVerifiedIcon';
-import PopupElement from '@components/popups';
-import PopupPremium from '@components/popups/premium';
-import PopupStarGiftInfo from '@components/popups/starGiftInfo';
+import showPremiumPopup from '@components/popups/premium';
+import showStarGiftInfoPopup from '@components/popups/starGiftInfo';
 import {openEmojiStatusPicker} from '@components/sidebarLeft/emojiStatusPicker';
 import {wrapAdaptiveCustomEmoji} from '@components/wrappers/customEmojiSimple';
 import wrapEmojiStatus from '@components/wrappers/emojiStatus';
@@ -39,7 +32,7 @@ export default async function generateTitleIcons({
   noDirectMessagesBadge?: boolean,
   clickableEmojiStatus?: boolean,
   peer?: Chat | User
-}): Promise<{ elements: HTMLElement[]; botVerification?: HTMLElement; }> {
+}): Promise<{elements: HTMLElement[]; botVerification?: HTMLElement;}> {
   peer ??= apiManagerProxy.getPeer(peerId);
   const elements: HTMLElement[] = [];
   if(!peer) {
@@ -74,10 +67,10 @@ export default async function generateTitleIcons({
             if(busy) return;
             busy = true;
             const gift = await rootScope.managers.appGiftsManager.getGiftBySlug(emojiStatus.slug);
-            PopupElement.createPopup(PopupStarGiftInfo, {gift});
+            showStarGiftInfoPopup({gift});
             busy = false;
           } else {
-            PopupPremium.show({
+            showPremiumPopup({
               peerId,
               emojiStatusId: emojiStatus.document_id
             });
@@ -96,7 +89,7 @@ export default async function generateTitleIcons({
         premiumIcon.classList.add('clickable');
         const detach = attachClickEvent(premiumIcon, (e) => {
           e.stopPropagation();
-          PopupPremium.show({
+          showPremiumPopup({
             peerId
           });
         });
