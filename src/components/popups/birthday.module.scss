@@ -20,6 +20,13 @@
   color: var(--secondary-text-color);
 
   &Link {
+    :global(:where(.a11y)) & {
+      color: inherit;
+    }
+
+    :global(.high-contrast) & {
+      color: var(--link-color);
+    }
     display: inline-flex;
     align-items: center;
     cursor: pointer;

@@ -5,8 +5,11 @@
  */
 
 import noop from '@helpers/noop';
-import {defineStories} from '../registry';
+import browserStyles from '@components/browser.module.scss';
+import {defineStories, PopupStory} from '../registry';
+
 import {
+  EMBEDDED_PAGE_URL,
   channelChat,
   checkedGiftCode,
   myBoosts,
@@ -18,6 +21,24 @@ import {
   storyItem,
   userFullWithRating
 } from '../fixtures';
+
+defineStories('Live streams', [false, true].map((active) => ({
+  id: `rtmp/${active ? 'active' : 'start'}`,
+  fixtureOnly: true,
+  title: active ? 'Live stream settings' : 'Start a live stream',
+  managers: {
+    appGroupCallsManager: {
+      fetchRtmpUrl: (_peerId: PeerId, revoke: boolean) => ({
+        url: 'rtmp://localhost/sandbox',
+        key: revoke ? 'sandbox-revoked-key' : 'sandbox-stream-key'
+      })
+    }
+  },
+  open: async(ctx) => {
+    const {showRtmpStartStreamPopup} = await import('@components/rtmp/adminPopup');
+    showRtmpStartStreamPopup({peerId: ctx.peer('channel'), active, onEndStream: noop});
+  }
+})));
 
 defineStories('Composer & bots', [
   {
@@ -41,44 +62,60 @@ defineStories('Composer & bots', [
   },
   {
     id: 'newMedia',
+    fixtureOnly: true,
     title: 'Attach media',
     open: async(ctx) => {
       const {default: showNewMediaPopup} = await import('@components/popups/newMedia');
-      // A 1×1 PNG is enough to drive the whole attach flow without shipping a binary fixture.
-      const bytes = Uint8Array.from(atob(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
-      ), (c) => c.charCodeAt(0));
-      const file = new File([bytes], 'sandbox.png', {type: 'image/png'});
+      // a real photo: a real preview size also exercises the edit/spoiler/delete controls
+      const {CHAT_INPUT_EDITOR_TEST_MEDIA_URL} = await import('@components/chat/inputEditor/testData');
+      const response = await fetch(CHAT_INPUT_EDITOR_TEST_MEDIA_URL);
+      if(!response.ok) throw new Error('Sandbox media fixture could not be loaded');
+      const file = new File([await response.blob()], 'sandbox-photo.jpg', {type: 'image/jpeg'});
       showNewMediaPopup(ctx.chat(), [file], 'media');
     }
   },
   {
-    id: 'stickers',
+    id: 'newMedia/video',
     fixtureOnly: true,
-    title: 'Sticker set preview',
+    title: 'Attach video',
+    open: async(ctx) => {
+      const {default: showNewMediaPopup} = await import('@components/popups/newMedia');
+      const {default: url} = await import('@/tests/fixtures/ephemeralBot/media/video.mp4?url');
+      const blob = await (await fetch(url)).blob();
+      const file = new File([blob], 'sandbox-video.mp4', {type: 'video/mp4'});
+      showNewMediaPopup(ctx.chat(), [file], 'media');
+    }
+  },
+  // the ⋮ menu offers Archive for an added set; an archived one is offered to be added back
+  ...(['new', 'added', 'archived'] as const).map((state): Omit<PopupStory, 'group'> => ({
+    id: state === 'new' ? 'stickers' : `stickers/${state}`,
+    fixtureOnly: true,
+    title: {new: 'Sticker set preview', added: 'Added sticker set', archived: 'Archived sticker set'}[state],
     managers: {
       appStickersManager: {
         getStickerSet: () => ({
           set: {
             _: 'stickerSet',
-            pFlags: {},
+            pFlags: state === 'archived' ? {archived: true} : {},
             id: '8001',
             access_hash: '8001',
             title: 'Sandbox Stickers',
             short_name: 'sandbox_stickers',
             count: 1,
-            hash: 0
+            hash: 0,
+            // an archived set keeps its installed_date
+            installed_date: state === 'new' ? undefined : 1700000000
           },
           documents: [stickerDocument],
           packs: []
         })
       }
     },
-    open: async(ctx) => {
+    open: async() => {
       const {default: showStickersPopup} = await import('@components/popups/stickers');
       showStickersPopup({_: 'inputStickerSetShortName', short_name: 'sandbox_stickers'});
     }
-  },
+  })),
   {
     id: 'translate',
     title: 'Translate a message',
@@ -101,6 +138,84 @@ defineStories('Composer & bots', [
     }
   },
   {
+    // layer 229 in a page: rows of buttons, buttons inside the text, a folded quote, a compact
+    // table. Read outside a message, only links, copying and profiles act; a callback is inert.
+    id: 'instantView/layer229',
+    title: 'Instant View — buttons and folded quotes',
+    // a page opens in the in-app browser, not in a popup; the page itself is made up
+    surface: `.${browserStyles.Browser}`,
+    fixtureOnly: true,
+    open: async() => {
+      const [{openInstantViewInAppBrowser, closeInAppBrowser}, {default: HotReloadGuard}] = await Promise.all([
+        import('@components/browser'),
+        import('@lib/solidjs/hotReloadGuardProvider')
+      ]);
+      const text = (value: string) => ({_: 'textPlain' as const, text: value});
+      const cell = (value: string) => ({_: 'pageTableCell' as const, pFlags: {}, text: text(value)});
+      openInstantViewInAppBrowser({
+        cachedPage: {
+          _: 'page',
+          pFlags: {},
+          url: 'https://telegram.org/sandbox',
+          photos: [],
+          documents: [],
+          views: 0,
+          blocks: [
+            {_: 'pageBlockTitle', text: text('Buttons in a page')},
+            {_: 'pageBlockParagraph', text: {_: 'textConcat', texts: [
+              text('Read '),
+              {_: 'textButton', text: text('the docs'), type: {_: 'inlineButtonTypeUrl', url: 'https://core.telegram.org'}},
+              text(' or '),
+              {
+                _: 'textButton',
+                text: text('copy the code'),
+                type: {_: 'inlineButtonTypeCopy', copy_text: 'TELEGRAM'},
+                style: {_: 'richButtonStyle', pFlags: {link: true}}
+              },
+              text(' — both work anywhere.')
+            ]}},
+            {_: 'pageBlockButtonRow', pFlags: {}, buttons: [
+              {
+                _: 'pageButton',
+                text: text('Open site'),
+                type: {_: 'inlineButtonTypeUrl', url: 'https://telegram.org'},
+                style: {_: 'richButtonStyle', pFlags: {bg_primary: true}}
+              },
+              {_: 'pageButton', text: text('Copy'), type: {_: 'inlineButtonTypeCopy', copy_text: 'TELEGRAM'}},
+              {_: 'pageButton', text: text('Vote'), type: {_: 'inlineButtonTypeCallback', pFlags: {}, data: new Uint8Array([1])}}
+            ]},
+            {_: 'pageBlockButtonRow', pFlags: {align_right: true}, buttons: [
+              {
+                _: 'pageButton',
+                text: text('Accept'),
+                type: {_: 'inlineButtonTypeDisabled'},
+                style: {_: 'richButtonStyle', pFlags: {bg_success: true}}
+              },
+              {
+                _: 'pageButton',
+                text: text('Decline'),
+                type: {_: 'inlineButtonTypeCopy', copy_text: 'no'},
+                style: {_: 'richButtonStyle', pFlags: {bg_danger: true}}
+              }
+            ]},
+            {
+              _: 'pageBlockBlockquote',
+              pFlags: {collapsed: true},
+              text: text('A folded quote keeps a few lines in sight.\nThe rest waits for a click.\nLine three.\nLine four.\nLine five.'),
+              caption: text('Author')
+            },
+            {_: 'pageBlockTable', pFlags: {bordered: true, compact: true}, title: text('Compact table'), rows: [
+              {_: 'pageTableRow', cells: [cell('One'), cell('Two')]},
+              {_: 'pageTableRow', cells: [cell('Three'), cell('Four')]}
+            ]}
+          ]
+        },
+        HotReloadGuardProvider: HotReloadGuard
+      });
+      return closeInAppBrowser;
+    }
+  },
+  {
     id: 'aiEditor',
     title: 'AI editor',
     open: async(ctx) => {
@@ -117,9 +232,7 @@ defineStories('Composer & bots', [
     }
   },
   {
-    // Both of these host an <iframe>. Pointed at the dev server's own root so the sandbox stays
-    // off the network — the popup chrome (header, menu, close confirmation) is what a story here
-    // is for, not the bot's page.
+    // A local document tests the iframe chrome without booting another Telegram client.
     id: 'webApp/miniApp',
     fixtureOnly: true,
     title: 'Mini app',
@@ -137,7 +250,7 @@ defineStories('Composer & bots', [
     open: async(ctx) => {
       const {default: showWebAppPopup} = await import('@components/popups/webApp');
       showWebAppPopup({
-        webViewResultUrl: {_: 'webViewResultUrl', pFlags: {}, query_id: '1', url: location.origin + '/'},
+        webViewResultUrl: {_: 'webViewResultUrl', pFlags: {}, query_id: '1', url: EMBEDDED_PAGE_URL},
         webViewOptions: {botId: ctx.peer('bot').toUserId(), peerId: ctx.peer('private')}
       });
     }
@@ -148,7 +261,7 @@ defineStories('Composer & bots', [
     title: 'Payment verification (3-D Secure)',
     open: async(ctx) => {
       const {default: showPaymentVerificationPopup} = await import('@components/popups/paymentVerification');
-      showPaymentVerificationPopup({url: location.origin + '/'});
+      showPaymentVerificationPopup({url: EMBEDDED_PAGE_URL});
     }
   },
   {

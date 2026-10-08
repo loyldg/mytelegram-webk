@@ -72,12 +72,21 @@ $btn-menu-z-index: 4;
   justify-content: center;
   padding: 0 !important;
 
+  // a11y: a corner button slid out of view is no tab stop
+  :where(.a11y) & {
+    visibility: hidden;
+  }
+
   @include hover() {
     background-color: var(--dark-primary-color);
   }
 
   &.is-visible {
     --translateY: 0;
+
+    :where(.a11y) & {
+      visibility: visible;
+    }
   }
 
   body.animation-level-0 & {
@@ -935,6 +944,21 @@ $btn-menu-z-index: 4;
   &-select {
     padding-block: 0;
 
+    &.is-height-constrained {
+      display: flex;
+      flex-direction: column;
+
+      > .btn-menu-search,
+      > .btn-menu-search-delimiter {
+        flex: 0 0 auto;
+      }
+
+      > .btn-menu-search-scrollable {
+        flex: 0 1 auto;
+        min-height: 0;
+      }
+    }
+
     &-text-faded {
       opacity: 0.3;
     }
@@ -1229,6 +1253,11 @@ $btn-menu-z-index: 4;
 .btn-color-primary {
   background: var(--primary-color);
   color: #fff;
+
+  // the contrast-checked fill, with the a11y layer (Increase Contrast is part of it)
+  :where(.a11y) & {
+    background: var(--primary-button-color, var(--primary-color));
+  }
 
   /* .c-ripple__circle {
     background-color: var(--light-primary-color);

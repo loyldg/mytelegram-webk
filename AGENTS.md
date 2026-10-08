@@ -35,7 +35,7 @@ pnpm lint           # oxlint on the whole repo (config: .oxlintrc.json)
 pnpm lint:fix       # Same, with auto-fix
 ```
 
-Debug query params: `?test=1` (test DCs), `?debug=1` (verbose logging), `?noSharedWorker=1` (disable shared worker), `?pfs=1` (Perfect Forward Secrecy — temporary auth keys, `src/lib/mtproto/tempAuthKeys.ts`; off by default).
+Debug query params: `?test=1` (test DCs), `?debug=1` (verbose logging), `?noSharedWorker=1` (disable shared worker), `?pfs=1` (Perfect Forward Secrecy — temporary auth keys, `src/lib/mtproto/tempAuthKeys.ts`; off by default), `?a11y=1` (the keyboard and screen-reader layer — see "Accessibility"; off by default).
 
 ### Preview
 
@@ -92,8 +92,10 @@ Either way every `rootScope.managers` call is answered from
 - `window.popupSandbox` (`ready` / `show` / `hide` / `list` / `open` /
   `closePopups` / `calls` / `unhandled`) drives the same registry from a script;
   `calls` and `unhandled` follow the active data source.
-  `pnpm test:popups` runs `e2e/popupSandbox.spec.ts`, which opens every story in
-  headless Chromium and fails on one that throws or never becomes visible.
+  `pnpm test:popups` runs the `e2e/popupSandbox*.spec.ts` suites in headless
+  Chromium (~50 s): `popupSandbox.spec.ts` opens every story and fails on one
+  that throws or never becomes visible; the others drive the composer's popups.
+  `pnpm test:popups:full` adds Firefox and WebKit (~3 min).
 - `src/tests/popupSandboxCoverage.test.ts` fails when a module under
   `components/popups/` can open a popup and no story imports it, so a new popup
   cannot land without one. It also fails when a story builds its popup out of a
@@ -390,6 +392,84 @@ import {Message, Chat, User, InputPeer} from '@layer';
 - **After every context compaction, reread this entire `AGENTS.md` before
   continuing work.** A compacted context or summary does not replace the
   canonical instructions in this file.
+- **Heavy test suites belong to the final review only — and only those the
+  change touches.** `test:a11y`, `test:focus`, the Playwright e2e configs and a
+  full `vitest run` take a minute or more each — never run them after every
+  small change. While iterating, check the change live in the preview, or run
+  the one test file that covers it (plus `tsc` when types changed). At the
+  final review (task wrap-up, or a review is asked for) run a suite only if it
+  can observe what changed: `test:popups` / `test:a11y` /
+  `test:focus` cover the popup sandbox and the sign-in screens, their `:app`
+  variants the signed-in client, `test:editor:e2e` the composer. A change none
+  of them exercises (chat-only styling, a manager fix) skips them. Report what
+  ran, and what was skipped and why.
+
+## Accessibility (a11y) is part of every UI feature
+
+**Every new or changed interface must include accessibility in its design,
+implementation, and review.** Apply the requirements below to the affected flow
+before calling the feature complete.
+
+**The layer is off by default and on with `?a11y=1` (`Modes.a11y`)** until it
+settles. With the flag off the client must look and behave as it did before the
+layer; with it on, as described below. So every addition that someone without
+assistive technology can notice goes behind `Modes.a11y`, read at call or render
+time: tab stops, `.focus()` and focus restoration, focus traps, key handlers and
+key routing, `inert`, element swaps to `<button>`, reduced motion, and focus
+rings (scope CSS with `:where(.a11y)` / `:global(:where(.a11y))`, which keeps
+specificity). ARIA names, roles and `.sr-only` text stay on either way. The shared
+helpers (`createFocusTrap`, `buttonKeyDown`, `ensureButtonSemantics`,
+`attachTabList`, `attachPickerGrid`, `handleMenuKeyDown`,
+`updateScrollRegionFocusable`, `attachClickEvent`'s keyboard click) already check
+the flag, and a control that becomes a native `<button>` only with the layer is
+an `A11yButton` (`@components/a11yButton`; imperatively `Button(..., {asDiv:
+!Modes.a11y})`). The a11y and focus suites open their pages with `?a11y=1`, and a
+unit test of the layer imports `@/tests/helpers/a11yLayer`.
+
+- **Start with native semantics.** Use buttons for actions, links for navigation,
+  and native form controls where possible. Preserve label/control associations;
+  never nest interactive controls. Expose names, values, errors, and states
+  (disabled, expanded, selected, checked, loading) through native attributes or
+  appropriate ARIA. Reuse visible labels and localized strings from `lang.ts`;
+  give icon-only controls meaningful names and hide decorative icons from AT.
+- **Preserve established presentation and behavior.** Reuse native caret and
+  existing field-focus styling instead of adding a second outline. Avoid blanket
+  restyling, tab stops on layout wrappers, and live regions around long content.
+  Opt into focusable reading/scrolling regions deliberately; keep contrast
+  enhancements behind the user's setting. Check that keyboard guards preserve
+  existing editor shortcuts as well as protecting other focused controls.
+- **Reuse the shared interaction layer.** Search for existing button, row, input,
+  menu, tab, navigation, and focus helpers before adding behavior. Extend those
+  helpers when needed. Do not copy Enter/Space handlers into individual controls
+  or implement separate business logic for keyboard activation. Native buttons
+  already handle keyboard activation; custom widgets should share their
+  navigation logic. Global shortcuts must respect focused controls and editors.
+- **Make every action usable with a keyboard.** Keep a logical focus order and
+  visible focus indicators. Follow the relevant widget's arrow/Home/End behavior
+  through shared helpers; avoid positive `tabindex`. Inactive or hidden panels
+  must not leave controls in the tab order or accessibility tree; use the
+  existing visibility/`inert` mechanism, not `aria-hidden` alone.
+- **Handle focus across the full lifecycle.** Dialogs need appropriate initial
+  focus, modal containment, and restoration on close. Menus and dismissible
+  overlays need consistent Escape behavior, including nested overlays and an
+  opener that has been removed. Reuse the existing overlay/focus lifecycle.
+  For UI that can move into Document PiP, use the owning/active document for
+  creation, listeners, focus, and cleanup; support moving back to the main tab.
+- **Preserve visual accessibility.** Check text, controls, and focus contrast in
+  the shipped themes, support zoom and narrow layouts, avoid color-only cues,
+  and respect reduced-motion preferences.
+- **Verify the affected flow in the browser preview.** Exercise opening,
+  changing, submitting/cancelling, and closing with Tab/Shift+Tab, Enter/Space,
+  arrows, and Escape as applicable; check focus restoration and pointer/touch
+  behavior too. Run the relevant existing accessibility checks (in the final
+  review — see Agent Workflow) and add focused regression coverage for shared
+  or complex interaction changes. Include
+  responsive/PiP states when the feature supports them.
+- **Report what was actually verified.** Distinguish automated checks (including
+  Axe), fixture tests, authenticated UI checks, and screen-reader testing.
+  Check screen-reader names, roles, states, and announcements for affected
+  custom interactions when available, and explicitly record untested cases.
+  Passing Axe or source review alone does not establish full accessibility.
 
 ## What NOT to Do
 
@@ -416,6 +496,56 @@ pnpm test src/tests/foo    # specific test file
 ```
 
 Vitest config: `threads: false`, `globals: true`, jsdom environment, setup in `src/tests/setup.ts`.
+
+Browser suites (Playwright):
+
+```bash
+pnpm test:popups   # every sandbox story opens and becomes visible, composer popups (~50 s)
+pnpm test:popups:full  # the same in Firefox and WebKit too (~3 min)
+pnpm test:a11y     # Axe matrix, keyboard interop, contrast, media editor, stories (~2 min)
+pnpm test:a11y:full  # the same, with the story sweep in all four themes (~4 min; always on CI)
+pnpm test:focus    # keyboard focus is VISIBLE — sandbox stories + the sign-in screens (~50 s)
+pnpm test:focus:app  # the same, for the signed-in client (needs PLAYWRIGHT_BASE_URL)
+pnpm test:a11y:app   # Axe past the login screen (needs PLAYWRIGHT_BASE_URL)
+```
+
+`test:a11y` runs against a plain unauthenticated server, so everything past the
+login screen is outside it — the chat list, a conversation, the profile sidebar,
+settings. `test:a11y:app` is that half, and it needs an authorized preview for
+the same reason `test:focus:app` does.
+
+`test:a11y` runs in parallel and sweeps every popup story with Axe in one theme
+(`day`): roles, names and keyboard wiring do not change with the theme, only
+colour does. `test:a11y:full` (`A11Y_ALL_THEMES=1`, implied on CI) sweeps all
+four — run it after touching colours or theme variables. `A11Y_THEMES=night,tinted`
+picks themes, `A11Y_STORIES=a,b` picks stories, `A11Y_WORKERS` / `A11Y_STORY_PARTS`
+tune the split, and `--project=chromium` drops the other engines (~70 s).
+`test:popups` works the same way: parallel, the story sweep split into parts
+(`POPUPS_WORKERS` / `POPUP_STORY_PARTS`), Chromium unless `POPUPS_ALL_ENGINES=1`
+(`test:popups:full`, implied on CI). So does `test:focus`, on the popup suite's
+server and port (`playwright.focus.config.ts`, so the two run one after the
+other): a part per worker but one, which the sign-in sweep takes
+(`FOCUS_WORKERS` / `FOCUS_STORY_PARTS`, `FOCUS_STORIES=a,b` picks stories).
+Playwright suites run on `vite.e2e.config.ts` — the dev server without hot
+reload, so an edit made while a suite runs no longer reloads the page under it.
+
+`test:focus` answers a question the others cannot: not whether a control has a
+name and a role, but whether a person pressing Tab can *see* where they are. It
+photographs each control holding focus and again a moment after focus is
+dropped, and a pair of frames that do not differ is a control with no visible
+indicator. Reading computed styles instead does not work — a ring can live on a
+pseudo-element or a sibling, and an outline on an `opacity: 0` overlay is
+painted and invisible. It waits for nothing by the clock: each stop runs the
+transitions it set off to their end and waits for the control to hold still.
+Findings come with cropped before/after screenshots, so judge them by eye
+rather than trusting the heuristic. The signed-in half needs
+an authorized preview:
+
+```bash
+bash scripts/start-preview.sh --port 9105
+PLAYWRIGHT_BASE_URL=http://localhost:9105 pnpm test:focus:app
+PLAYWRIGHT_BASE_URL=http://localhost:9105 pnpm test:a11y:app
+```
 
 ## Agents & shared tooling
 
@@ -452,11 +582,3 @@ for c in planner task refactor-popup-procedural; do
   ln -sfn "$(pwd)/.claude/commands/$c.md" ~/.codex/prompts/$c.md
 done
 ```
-
-<!-- rtk-instructions v2 -->
-## RTK — token-optimized commands
-
-Prefix every shell command with `rtk`, including each command inside `&&`
-chains: `rtk git add . && rtk git commit -m "msg"`. RTK applies a filter when it
-has one, otherwise passes through unchanged — so it is always safe.
-<!-- /rtk-instructions -->

@@ -1,5 +1,7 @@
 import contextMenuController from '@helpers/contextMenuController';
+import Modes from '@config/modes';
 import {getOverlayRoot} from '@helpers/appWindow';
+import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {FloatingMenuDirection, positionFloatingMenu} from '@helpers/positionMenu';
 import {doubleRaf} from '@helpers/schedulers';
 
@@ -7,7 +9,7 @@ export type FloatingButtonMenuDirection = FloatingMenuDirection;
 
 export type AttachFloatingButtonMenuOptions = {
   element: HTMLElement;
-  triggerEvent: keyof HTMLElementEventMap;
+  triggerEvent: keyof HTMLElementEventMap | Array<keyof HTMLElementEventMap>;
   direction: FloatingButtonMenuDirection;
   level: number;
   offset?: [number, number];
@@ -26,11 +28,14 @@ export default function attachFloatingButtonMenu({
   canOpen = () => true,
   onClose: onCloseArg
 }: AttachFloatingButtonMenuOptions) {
+  const triggerEvents = Array.isArray(triggerEvent) ? triggerEvent : [triggerEvent];
   let opened = false;
   let hovered = false;
   let requestId = 0;
 
-  const listener = (): void => void (async() => {
+  const listener = (event?: Event): void => void (async() => {
+    const activatedWithKeyboard = event?.type === 'keydown' ||
+      (event?.type === 'click' && (event as MouseEvent).detail === 0);
     hovered = true;
     if(opened || !canOpen()) return;
     const currentRequestId = ++requestId;
@@ -46,8 +51,9 @@ export default function attachFloatingButtonMenu({
       !menu ||
       opened ||
       currentRequestId !== requestId ||
-      !hovered ||
-      !canOpen()
+      (!hovered && !activatedWithKeyboard) ||
+      !canOpen() ||
+      !contextMenuController.isOpened()
     ) {
       return;
     }
@@ -64,7 +70,13 @@ export default function attachFloatingButtonMenu({
     positionFloatingMenu(triggerBcr, menu, direction, offset);
 
     await doubleRaf();
-    contextMenuController.addAdditionalMenu(menu, element, level, onClose);
+    if(currentRequestId !== requestId || !contextMenuController.isOpened()) {
+      opened = false;
+      menu.remove();
+      return;
+    }
+
+    contextMenuController.addAdditionalMenu(menu, element, level, onClose, activatedWithKeyboard);
   })();
 
   const onMouseLeave = () => {
@@ -72,13 +84,32 @@ export default function attachFloatingButtonMenu({
     ++requestId;
   };
 
-  element.addEventListener(triggerEvent, listener);
-  if(triggerEvent === 'mouseenter') {
+  triggerEvents.forEach((event) => element.addEventListener(event, listener));
+  const hoverTriggered = triggerEvents.includes('mouseenter');
+  // a menu that opens on hover opens on activation too, unless a click already opens it
+  const detachActivation = Modes.a11y && hoverTriggered && !triggerEvents.includes('click') ?
+    attachClickEvent(element, listener) :
+    undefined;
+  if(hoverTriggered) {
     element.addEventListener('mouseleave', onMouseLeave);
+    if(Modes.a11y) element.addEventListener('keydown', onKeyDown);
   }
 
   return () => {
-    element.removeEventListener(triggerEvent, listener);
+    ++requestId;
+    triggerEvents.forEach((event) => element.removeEventListener(event, listener));
     element.removeEventListener('mouseleave', onMouseLeave);
+    element.removeEventListener('keydown', onKeyDown);
+    detachActivation?.();
   };
+
+  function onKeyDown(e: KeyboardEvent) {
+    if(e.key !== 'ArrowRight' && e.key !== 'Enter' && e.key !== ' ') {
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    listener(e);
+  }
 }

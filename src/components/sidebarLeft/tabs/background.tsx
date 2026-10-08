@@ -2,7 +2,8 @@ import {createEffect, createResource, createSignal, on, onCleanup, onMount, Show
 import {render} from 'solid-js/web';
 import {averageColor, averageColorFromCanvas} from '@helpers/averageColor';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
-import {attachClickEvent} from '@helpers/dom/clickEvent';
+import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
+import Modes from '@config/modes';
 import findUpClassName from '@helpers/dom/findUpClassName';
 import markGridCornerItem, {GRID_CORNER_CLASSES} from '@helpers/dom/markGridCornerItem';
 import highlightingColor from '@helpers/highlightingColor';
@@ -12,6 +13,7 @@ import {BaseTheme, Document, WallPaper, WebDocument} from '@layer';
 import {MyDocument} from '@appManagers/appDocsManager';
 import appDownloadManager, {AppDownloadManager} from '@lib/appDownloadManager';
 import appImManager from '@lib/appImManager';
+import I18n from '@lib/langPack';
 import rootScope from '@lib/rootScope';
 import {i18n} from '@lib/langPack';
 import {useAppSettings} from '@stores/appSettings';
@@ -352,6 +354,12 @@ const ChatBackground = () => {
     if(result) {
       const {container, media, dispose} = result;
       container.classList.add('grid-item');
+      // The tile is a plain <div> selected via a delegated grid click; expose it as a focusable
+      // control with a name so keyboard / screen-reader users can pick a wallpaper. Here and not
+      // in the static builder: the theme picker nests the same element inside its own tiles.
+      container.setAttribute('role', 'button');
+      if(Modes.a11y) container.setAttribute('tabindex', '0');
+      container.setAttribute('aria-label', I18n.format('ChatBackground', true));
       media.classList.add('grid-item-media');
       solidRoots.push(dispose);
 
@@ -548,6 +556,15 @@ const ChatBackground = () => {
 
   onMount(() => {
     attachClickEvent(grid, onGridClick, {listenerSetter});
+    // Enter/Space on a focused wallpaper tile selects it (tiles are role="button" <div>s
+    // picked via the delegated grid click above).
+    if(Modes.a11y) listenerSetter.add(grid)('keydown', (e: KeyboardEvent) => {
+      if(e.key !== 'Enter' && e.key !== ' ') return;
+      const target = findUpClassName(e.target, 'grid-item') as HTMLElement;
+      if(!target) return;
+      e.preventDefault();
+      simulateClickEvent(target);
+    });
     tab.container.classList.add('background-container', 'background-image-container');
   });
 

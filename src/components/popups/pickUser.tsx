@@ -1,7 +1,7 @@
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import AppSelectPeers, {SelectSearchPeerType} from '@components/appSelectPeers';
 import PopupElement, {createPopup, PopupContext, PopupContextValue} from '@components/popups/indexTsx';
-import {LangPackKey, i18n} from '@lib/langPack';
+import I18n, {LangPackKey, i18n} from '@lib/langPack';
 import {Modify} from '@types';
 import {IsPeerType} from '@appManagers/appPeersManager';
 import TransitionSlider from '@components/transition';
@@ -16,6 +16,7 @@ import getDialogIndex from '@appManagers/utils/dialogs/getDialogIndex';
 import {Middleware} from '@helpers/middleware';
 import deferredPromise from '@helpers/cancellablePromise';
 import {MOUNT_CLASS_TO} from '@config/debug';
+import Modes from '@config/modes';
 import findUpAttribute from '@helpers/dom/findUpAttribute';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import rootScope from '@lib/rootScope';
@@ -302,7 +303,7 @@ export default function showPickUserPopup(options: PopupPickUserOptions) {
 
         elements.forEach((element) => {
           const sel = fs.selected.has(element.dataset.peerId);
-          element.prepend(fs.checkbox(sel));
+          element.prepend(fs.checkbox(sel, undefined, element.querySelector<HTMLElement>('.peer-title, .row-title')));
         });
         fs.list[!append ? 'append' : 'prepend'](...elements);
       },
@@ -590,6 +591,7 @@ export default function showPickUserPopup(options: PopupPickUserOptions) {
     return (
       <PopupElement.FooterButton
         confirm
+        langKey={Modes.a11y ? 'Next' : undefined}
         callback={() => {
           finalize();
         }}
@@ -628,6 +630,7 @@ export default function showPickUserPopup(options: PopupPickUserOptions) {
             <ButtonIconTsx
               icon="checkround"
               class="popup-forward-multiselect"
+              aria-label={I18n.format('Message.Context.Select', true)}
               onClick={enableMultiSelect}
             />
           </Show>

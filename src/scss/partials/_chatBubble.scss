@@ -163,7 +163,8 @@
     }
   }
 
-  &.is-ephemeral.just-media {
+  &.is-ephemeral.just-media,
+  &.is-welcome-first.just-media {
     .ephemeral-badge-container.ephemeral-badge-standalone {
       margin: 0;
       background-color: transparent;
@@ -1041,7 +1042,7 @@
     }
   }
 
-  .anchor-url:not(.reply-markup-button),
+  .anchor-url:not(.reply-markup-button):not(.rich-button-link),
   .mention {
     @include hover() {
       text-decoration: underline !important;
@@ -1967,7 +1968,8 @@
 
   // * mini player section end
 
-  .anchor-url {
+  // a rich message's link button is drawn as a button
+  .anchor-url:not(.rich-button-link) {
     text-decoration: underline;
   }
 
@@ -2685,13 +2687,6 @@
   & + .time {
     display: block;
     float: unset;
-  }
-
-  &-background-canvas {
-    position: absolute;
-    top: 0;
-    inset-inline-end: 0;
-    pointer-events: none;
   }
 
   .audio-transcribed-text {

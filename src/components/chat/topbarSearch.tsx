@@ -1,6 +1,7 @@
 import type {ReactionsContext} from '@appManagers/appReactionsManager';
 import type {RequestHistoryOptions} from '@appManagers/appMessagesManager';
 import {createEffect, createSignal, onCleanup, JSX, createMemo, onMount, on, untrack, batch, Accessor} from 'solid-js';
+import Modes from '@config/modes';
 import InputSearch from '@components/inputSearch';
 import {ButtonIconTsx} from '@components/buttonIconTsx';
 import classNames from '@helpers/string/classNames';
@@ -32,6 +33,8 @@ import {avatarNew} from '@components/avatarNew';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
+import attachTabList from '@helpers/dom/tabList';
+import ensureButtonSemantics from '@helpers/dom/ensureButtonSemantics';
 import AppSelectPeers from '@components/appSelectPeers';
 import PeerTitle from '@components/peerTitle';
 import ReactionsElement from '@components/chat/reactions';
@@ -52,6 +55,7 @@ import getHistoryStorageKey, {getHistoryStorageType} from '@appManagers/utils/me
 import {ScreenSize, useMediaSizes} from '@helpers/mediaSizes';
 import ButtonCorner from '@components/buttonCorner';
 import deferSideEffect from '@helpers/solid/deferSideEffect';
+import A11yButton from '@components/a11yButton';
 
 type SearchType = RequestHistoryOptions['hashtagType'];
 const SEARCH_TYPES: SearchType[] = ['this', 'my', 'public'];
@@ -248,7 +252,11 @@ function SearchFooter(props: {
       <div class="chat-search-footer-left">
         {props.pickDateBtn}
         {props.pickUserBtn}
-        <span class={classNames('chat-search-footer-count', props.count() === undefined && 'hide')}>
+        <span
+          class={classNames('chat-search-footer-count', props.count() === undefined && 'hide')}
+          role="status"
+          aria-live="polite"
+        >
           {
             props.count() === 0 ?
               i18n('NoResult') :
@@ -257,12 +265,15 @@ function SearchFooter(props: {
         </span>
       </div>
       <div class={classNames('chat-search-footer-right', !props.count() && 'hide')}>
-        <span
+        {/* a native button only with the keyboard layer: it brings the button's color and takes the focus on click */}
+        <A11yButton
+          as="span"
           class="chat-search-footer-type"
+          aria-pressed={Modes.a11y ? props.resultsShown() : undefined}
           onClick={() => props.onToggle()}
         >
           {i18n(props.resultsShown() ? 'SearchAsChat' : 'SearchAsList')}
-        </span>
+        </A11yButton>
       </div>
     </div>
   );
@@ -298,7 +309,12 @@ function SearchMobileButtons(props: {
   onArrowButtonClick: (direction: 'up' | 'down') => void
 }) {
   const makeButton = (icon: 'up' | 'down', onClick: () => void) => {
-    const btn = ButtonCorner({icon, className: 'bubbles-corner-button chat-secondary-button chat-search-go chat-search-go-' + icon});
+    const btn = ButtonCorner({
+      icon,
+      // `is-visible` only answers the keyboard layer's `.btn-corner` visibility; it also lifts the button
+      className: (Modes.a11y ? 'is-visible ' : '') + 'bubbles-corner-button chat-secondary-button chat-search-go chat-search-go-' + icon,
+      ariaLabel: icon === 'up' ? 'Chat.Search.PreviousResult' : 'Chat.Search.NextResult'
+    });
     const detach = attachClickEvent(btn, onClick);
     onCleanup(detach);
 
@@ -564,6 +580,8 @@ export default function TopbarSearch(props: {
     fallbackIcon?: Icon,
     title?: HTMLElement,
     active?: Accessor<boolean>,
+    /** ARIA role for the entity element (e.g. 'tab' for the search-type strip). */
+    role?: string,
     onPromises?: (promises: Promise<any>[]) => void,
     onClick?: () => void,
   }) => {
@@ -577,13 +595,22 @@ export default function TopbarSearch(props: {
       meAsSaved: false
     }));
 
+    if(props.role) {
+      entity.element.setAttribute('role', props.role);
+    }
+
     if(props.active !== undefined) {
       createEffect(() => {
-        entity.element.classList.toggle('active', props.active());
+        const active = props.active();
+        entity.element.classList.toggle('active', active);
+        // Single-select strip: expose selection state to AT.
+        entity.element.setAttribute('aria-selected', '' + active);
       });
     }
 
     if(props.onClick) {
+      if(!props.role) ensureButtonSemantics(entity.element);
+
       const detach = attachClickEvent(entity.element, (e) => {
         cancelEvent(e);
         props.onClick();
@@ -610,6 +637,7 @@ export default function TopbarSearch(props: {
         peerId={peerId}
         title={title}
         {...(!_props.notList && {
+          role: 'tab',
           active: () => searchType() === _props.type,
           onClick: () => setSearchType((type) => type === _props.type ? DEFAULT_SEARCH_TYPE : _props.type)
         })}
@@ -688,12 +716,17 @@ export default function TopbarSearch(props: {
     return (
       <ButtonIconTsx
         icon={direction}
+        aria-label={I18n.format(direction === 'up' ? 'Chat.Search.PreviousResult' : 'Chat.Search.NextResult', true)}
         class={classNames(
           'input-search-part',
           'topbar-search-input-arrow',
           (!count() || (filteringSender() && !filterPeerId())) && 'hide'
         )}
         noRipple
+        // Safe to opt into the tab order: the only hidden state is the `hide`
+        // class above, which is `display: none !important`, so it leaves the DOM
+        // focus order entirely while hidden.
+        tabIndex={Modes.a11y ? 0 : undefined}
         onClick={() => {
           onArrowButtonClick(direction);
         }}
@@ -1210,6 +1243,7 @@ export default function TopbarSearch(props: {
     <ButtonIconTsx
       class={classNames(!isSmallScreen() && 'topbar-search-right-filter-button')}
       icon="newprivate"
+      aria-label={I18n.format('Search.Member', true)}
       ref={(element) => {
         const detach = attachClickEvent(element, (e) => {
           cancelEvent(e);
@@ -1225,6 +1259,7 @@ export default function TopbarSearch(props: {
   const pickDateBtn = props.onDatePick && (
     <ButtonIconTsx
       icon="calendar"
+      aria-label={I18n.format('JumpToDate', true)}
       onClick={() => {
         showDatePickerPopup({
           initDate: new Date(),
@@ -1264,7 +1299,7 @@ export default function TopbarSearch(props: {
   const searchTypesScrollable = (
     <Scrollable axis="x" ref={searchTypesScrollableDiv} class="topbar-search-left-reactions-scrollable">
       <div class="topbar-search-left-reactions-padding"></div>
-      <div class="topbar-search-left-search-types">
+      <div class="topbar-search-left-search-types" ref={(element) => onCleanup(attachTabList(element))}>
         {SEARCH_TYPES.map((type) => (<SearchTypeEntity type={type} />))}
       </div>
       <div class="topbar-search-left-reactions-padding"></div>

@@ -224,13 +224,6 @@
     display: flex;
   }
 
-  &-background-canvas {
-    position: absolute;
-    top: 0;
-    inset-inline-end: 0;
-    pointer-events: none;
-  }
-
   &.quote-like-icon &-title {
     padding-inline-end: .875rem;
   }
@@ -278,6 +271,8 @@
 
   &-content {
     flex: 1 1 auto;
+    color: inherit;
+    text-align: inherit;
     overflow: hidden;
     position: relative;
     pointer-events: none;
@@ -381,8 +376,19 @@
     }
   }
 
-  &.has-custom-action-button .pinned-message-wrapper {
-    padding-inline-end: var(--action-button-width, 8rem);
+  &.has-custom-action-button {
+    .pinned-message-wrapper {
+      padding-inline-end: var(--action-button-width, 8rem);
+    }
+
+    // The action button is absolutely positioned over the unpin button and
+    // covers it completely — the bar shows one control, not two. Its box still
+    // spaces the wrapper, so it stays in the layout, but a control nobody can
+    // see must not be a tab stop or be announced; `visibility` takes it out of
+    // both without moving anything.
+    :where(.a11y) & .pinned-message-unpin {
+      visibility: hidden;
+    }
   }
 
   &-content {

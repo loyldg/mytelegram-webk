@@ -3,7 +3,7 @@ import {createEffect, mergeProps, on, splitProps} from 'solid-js';
 import {i18n, LangPackKey} from '@lib/langPack';
 import {InstanceOf} from '@types';
 
-import InputField, {InputFieldOptions, InputState} from '@components/inputField';
+import InputField, {InputFieldOptions, InputFieldValue, InputState} from '@components/inputField';
 
 export interface InputFieldTsxProps<T extends typeof InputField> extends InputFieldOptions {
   InputFieldClass?: T
@@ -11,17 +11,21 @@ export interface InputFieldTsxProps<T extends typeof InputField> extends InputFi
   instanceRef?: (value: InstanceOf<T>) => void
 
   class?: string
-  value?: string | Node
+  value?: InputFieldValue
   onRawInput?: (value: string) => void
   errorLabel?: LangPackKey | null
   errorLabelOptions?: any[]
+  errorDescriptionId?: string
   disabled?: boolean
 }
 
 export const InputFieldTsx = <T extends typeof InputField>(inProps: InputFieldTsxProps<T>) => {
   const props = mergeProps({InputFieldClass: InputField}, inProps);
 
-  const [, options] = splitProps(props, ['class', 'value', 'InputFieldClass', 'errorLabel', 'errorLabelOptions', 'disabled'])
+  const [, options] = splitProps(
+    props,
+    ['class', 'value', 'InputFieldClass', 'errorLabel', 'errorLabelOptions', 'errorDescriptionId', 'disabled']
+  )
 
   const obj = new props.InputFieldClass(options)
   props.instanceRef?.(obj as InstanceOf<T>)
@@ -39,8 +43,26 @@ export const InputFieldTsx = <T extends typeof InputField>(inProps: InputFieldTs
     ([error, options], prev) => {
       if(!error && !prev) return // Prevent setting error first render
 
-      if(error !== undefined) obj.setError(error, options)
+      const isError = error !== undefined
+      if(isError) obj.setError(error, options)
       else obj.setState(InputState.Neutral)
+    }
+  ))
+
+  createEffect(on(
+    () => props.errorDescriptionId,
+    (value, prev) => {
+      const describedBy = new Set(
+        (obj.input.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)
+      );
+      if(prev) describedBy.delete(prev);
+      if(value) describedBy.add(value);
+
+      if(describedBy.size) {
+        obj.input.setAttribute('aria-describedby', [...describedBy].join(' '));
+      } else {
+        obj.input.removeAttribute('aria-describedby');
+      }
     }
   ))
 

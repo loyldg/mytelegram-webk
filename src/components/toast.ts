@@ -5,12 +5,16 @@ import {FormatterArguments, i18n, LangPackKey} from '@lib/langPack';
 
 const toastsContainer = document.createElement('div');
 toastsContainer.classList.add('toasts-container');
+// Live region so screen readers announce toast text as it appears.
+toastsContainer.setAttribute('role', 'status');
+toastsContainer.setAttribute('aria-live', 'polite');
 
 const toastEl = document.createElement('div');
 toastEl.classList.add('toast');
 let timeout: number;
 
-const x = new OverlayClickHandler('toast');
+// a click anywhere hides the toast; a keyboard press still reaches its control
+const x = new OverlayClickHandler('toast', false, true);
 x.addEventListener('toggle', (open) => {
   if(!open) {
     hideToast();

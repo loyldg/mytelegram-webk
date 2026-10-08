@@ -14,9 +14,10 @@ import LazyLoadQueueBase from '@components/lazyLoadQueueBase';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import tsNow from '@helpers/tsNow';
 import {nextRandomUint, randomLong} from '@helpers/random';
-import {BotCommand, Chat, ChatFull, Dialog as MTDialog, DialogPeer, DocumentAttribute, EphemeralMessage, EphemeralSendMessage, InputMedia, InputMessage, InputMessageReadMetric, InputPeerNotifySettings, InputSingleMedia, Message, MessageAction, MessageEntity, MessageFwdHeader, MessageMedia, MessageReplies, MessageReplyHeader, MessagesBotCallbackAnswer, MessagesDialogs, MessagesFilter, MessagesMessages, MethodDeclMap, PageBlock, PeerNotifySettings, PhotoSize, SendMessageAction, Update, Photo, Updates, ReplyMarkup, InputPeer, InputPhoto, InputDocument, WebPage, GeoPoint, InputChannel, InputDialogPeer, ReactionCount, MessagePeerReaction, MessagesSearchCounter, Peer, MessageReactions, Document, InputFile, Reaction, ForumTopic as MTForumTopic, MessagesForumTopics, MessagesGetReplies, MessagesGetHistory, MessagesAffectedHistory, MessagesTranscribedAudio, ReadParticipantDate, WebDocument, MessagesSearch, MessagesSearchGlobal, InputReplyTo, MessagesSendMessage, MessagesSendMedia, MessagesGetSavedHistory, MessagesSavedDialogs, SavedDialog as MTSavedDialog, User, MissingInvitee, TextWithEntities, ChannelsSearchPosts, FactCheck, MessageExtendedMedia, SponsoredMessage, MessagesSponsoredMessages, InputGroupCall, TodoItem, TodoCompletion, SearchPostsFlood, MessagesDeleteSavedHistory, ChannelsDeleteParticipantHistory, MessagesDeleteHistory, MessagesDeleteTopicHistory, RichMessage} from '@layer';
+import {BotCommand, Chat, ChatFull, Dialog as MTDialog, DocumentAttribute, EphemeralMessage, EphemeralSendMessage, InputMedia, InputMessage, InputMessageReadMetric, InputSingleMedia, Message, MessageAction, MessageEntity, MessageFwdHeader, MessageMedia, MessageReplies, MessageReplyHeader, MessagesBotCallbackAnswer, MessagesDialogs, MessagesFilter, MessagesMessages, MethodDeclMap, PageBlock, PeerNotifySettings, PhotoSize, SendMessageAction, Update, Photo, Updates, ReplyMarkup, InputPeer, InputPhoto, InputDocument, WebPage, GeoPoint, InputChannel, InputDialogPeer, ReactionCount, MessagePeerReaction, MessagesSearchCounter, Peer, MessageReactions, Document, InputFile, Reaction, ForumTopic as MTForumTopic, MessagesForumTopics, MessagesGetReplies, MessagesGetHistory, MessagesAffectedHistory, MessagesTranscribedAudio, ReadParticipantDate, WebDocument, MessagesSearch, MessagesSearchGlobal, InputReplyTo, MessagesSendMessage, MessagesSendMedia, MessagesGetSavedHistory, MessagesSavedDialogs, SavedDialog as MTSavedDialog, User, MissingInvitee, TextWithEntities, ChannelsSearchPosts, FactCheck, MessageExtendedMedia, SponsoredMessage, MessagesSponsoredMessages, InputGroupCall, TodoItem, TodoCompletion, SearchPostsFlood, MessagesDeleteSavedHistory, ChannelsDeleteParticipantHistory, MessagesDeleteHistory, MessagesDeleteTopicHistory, RichMessage} from '@layer';
+import type {InputRichMessage} from '@layer';
 import {ArgumentTypes, InvokeApiOptions, Modify} from '@types';
-import {logger, LogTypes} from '@lib/logger';
+import {LogTypes} from '@lib/logger';
 import {ReferenceBytes, ReferenceContext} from '@lib/storages/references';
 import {AnyDialog, FilterType, GLOBAL_FOLDER_ID} from '@lib/storages/dialogs';
 import {ChatRights} from '@appManagers/appChatsManager';
@@ -41,6 +42,8 @@ import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId'
 import isEphemeralMessageId from '@appManagers/utils/messageId/isEphemeralMessageId';
 import isEphemeralMessage from '@appManagers/utils/messages/isEphemeralMessage';
 import isAnchoredEphemeralMessage from '@appManagers/utils/messages/isAnchoredEphemeralMessage';
+import canReplyToEphemeralMessage from '@appManagers/utils/messages/canReplyToEphemeralMessage';
+import isForceReplyMarkup from '@appManagers/utils/messages/isForceReplyMarkup';
 import resolveEphemeralCommand, {
   EphemeralCommandCandidate
 } from '@appManagers/utils/bots/resolveEphemeralCommand';
@@ -58,6 +61,15 @@ import pause from '@helpers/schedulers/pause';
 import makeError from '@helpers/makeError';
 import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
 import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
+import collectInputRichMessageReferences from '@appManagers/utils/richMessage/collectInputRichMessageReferences';
+import toggleRichMessageChecklist from '@appManagers/utils/richMessage/toggleChecklist';
+import toInputRichMessage from '@appManagers/utils/richMessage/toInputRichMessage';
+import {
+  RichMessageValidationOptions,
+  resolveRichMessageLimits,
+  validateRichMessage as validateRichMessageStructure
+} from '@appManagers/utils/richMessage/validateRichMessage';
+import resolveRichMessageMapAvailability from '@appManagers/utils/richMessage/resolveMapAvailability';
 import reactionsEqual from '@appManagers/utils/reactions/reactionsEqual';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
 import {BroadcastEvents} from '@lib/rootScope';
@@ -88,7 +100,6 @@ import PaidMessagesQueue from '@appManagers/utils/messages/paidMessagesQueue';
 import type {ConfirmedPaymentResult} from '@components/chat/paidMessagesInterceptor';
 import RepayRequestHandler, {RepayRequest} from '@appManagers/utils/repayRequestHandler';
 import getPhotoInput from '@appManagers/utils/photos/getPhotoInput';
-import {BatchProcessor} from '@helpers/sortedList';
 import {increment, MonoforumDialog} from '@lib/storages/monoforumDialogs';
 import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
 import {makeMessageMediaInputForSuggestedPost} from '@appManagers/utils/messages/makeMessageMediaInput';
@@ -100,7 +111,7 @@ import isObject from '@helpers/object/isObject';
 import pickKeys from '@helpers/object/pickKeys';
 import namedPromises from '@helpers/namedPromises';
 import callbackifyAll from '@helpers/callbackifyAll';
-import {createBotforumTopicFromAction} from './utils/dialogs/createBotforumTopicFromAction';
+import {createBotforumTopicFromAction} from '@appManagers/utils/dialogs/createBotforumTopicFromAction';
 import {AttachedMedia, CreatePollPayload} from '@components/popups/createPoll/storeContext';
 import StreamedMessageDrafts, {StreamedMessageDraft, StreamedMessageDraftContent, StreamedMessageDraftRemovalReason, StreamedMessageDraftScope, StreamedMessageStopScope, getStreamedMessageContentMatchText} from '@appManagers/utils/messages/streamedMessageDrafts';
 
@@ -124,6 +135,28 @@ const EPHEMERAL_RETRY_MAX_COUNT = 20;
 const STREAMED_MESSAGE_DRAFT_TTL = 30_000;
 
 export const SUGGESTED_POST_MIN_THRESHOLD_SECONDS = 60; // avoid last minute suggests, or if the user was thinking a lot before clicking send
+
+function degradeUnresolvedRichMessageMentions<T>(value: T, userIds: Set<string>): T {
+  if(Array.isArray(value)) {
+    return value.map((item) => degradeUnresolvedRichMessageMentions(item, userIds)) as T;
+  }
+
+  if(!value || typeof(value) !== 'object' || ArrayBuffer.isView(value)) {
+    return value;
+  }
+
+  const object = value as Record<string, unknown>;
+  if(object._ === 'textMentionName' && userIds.has(String(object.user_id))) {
+    return degradeUnresolvedRichMessageMentions(object.text, userIds) as T;
+  }
+
+  return Object.fromEntries(
+    Object.entries(object).map(([key, child]) => [
+      key,
+      degradeUnresolvedRichMessageMentions(child, userIds)
+    ])
+  ) as T;
+}
 
 export enum HistoryType {
   Chat,
@@ -155,6 +188,13 @@ export type SendFileDetails = {
    */
   isAnimated: boolean,
 }>;
+
+export type UploadedRichMessageMedia = {
+  document?: Document.document,
+  photo?: Photo.photo,
+  spoiler?: boolean,
+  type: 'audio' | 'photo' | 'video'
+};
 
 export type HistoryStorageKey = `${HistoryStorage['type']}_${PeerId}` | `replies_${PeerId}_${number}` | `search_${PeerId}_${SearchStorageFilterKey}_${number}`;
 export type HistoryStorage = {
@@ -221,7 +261,9 @@ type AnchoredEphemeral = {
   /** the mid of the ordinary message being stood in for */
   mid: number,
   receiverId: UserId,
-  backup: EphemeralMessageContent
+  backup: EphemeralMessageContent,
+  /** what stands in, to put back over a fresh server copy of the anchor */
+  content: EphemeralMessageContent
 };
 
 export type MyInputMessagesFilter = 'inputMessagesFilterEmpty'
@@ -245,10 +287,8 @@ export type PinnedStorage = Partial<{
   maxId: number
 }>;
 export type MessagesStorage = Map<number, Message.message | Message.messageService> & {peerId: PeerId, type: MessagesStorageType, key: MessagesStorageKey};
-export type MessagesStorageType = 'scheduled' | 'history' | 'grouped' | 'logs';
+export type MessagesStorageType = 'scheduled' | 'history' | 'grouped' | 'logs' | 'welcome';
 export type MessagesStorageKey = `${PeerId}_${MessagesStorageType}`;
-
-export type MyMessageActionType = Message.messageService['action']['_'];
 
 type PendingAfterMsg = Partial<InvokeApiOptions & {
   afterMessageId: string,
@@ -267,7 +307,7 @@ type PendingMessageDetails = {
   tempId: number,
   threadId: number,
   storage: MessagesStorage,
-  sequential?: boolean
+  sequential?: boolean,
 };
 
 const processAfter = (cb: () => void) => {
@@ -294,6 +334,29 @@ export type SuggestedPostPayload = {
   monoforumThreadId?: PeerId
 };
 
+export type RichMessagePayload = {
+  input: InputRichMessage.inputRichMessage,
+  output: RichMessage
+};
+
+export type RichMessagePostingState = {
+  mode: 'enabled' | 'premium' | 'disabled',
+  available: boolean,
+  allowed: boolean
+};
+
+type RichMessageChecklistEdit = {
+  peerId: PeerId,
+  mid: number,
+  scheduled: boolean,
+  base: RichMessage.richMessage,
+  current: RichMessage.richMessage,
+  revision: number,
+  timer?: number,
+  inFlight?: Promise<void>,
+  flushPending?: boolean
+};
+
 export type MessageSendingParams = Partial<{
   peerId: PeerId,
   threadId: number,
@@ -316,7 +379,9 @@ export type MessageSendingParams = Partial<{
   suggestedPost: SuggestedPostPayload,
   ephemeral: boolean,                // ! FOR INNER USE ONLY
   ephemeralReceiverId: UserId,       // ! FOR INNER USE ONLY
-  forceOrdinary: boolean              // ! FOR INNER USE ONLY
+  forceOrdinary: boolean,             // ! FOR INNER USE ONLY
+  /** layer 229: a chat's welcome message — an ephemeral template new members are sent. INNER USE ONLY */
+  welcome: boolean
 }>;
 
 export type MessageForwardParams = MessageSendingParams & {
@@ -327,7 +392,8 @@ export type MessageForwardParams = MessageSendingParams & {
   dropAuthor: boolean,
   dropCaptions: boolean,
   /** layer 229: `mids` are ephemeral messages, forwarded by their ephemeral ids. INNER USE ONLY */
-  fromEphemeral: boolean
+  fromEphemeral: boolean,
+  allowDropRichAuthor: boolean
 }>;
 
 export type RequestHistoryOptions = {
@@ -561,8 +627,10 @@ type EphemeralSendContext = {
   drop: true
 } | {
   drop: false,
+  // absent for a welcome message: it goes to whoever joins next
   receiverId: UserId,
-  replyTo?: InputReplyTo.inputReplyToEphemeralMessage
+  replyTo?: InputReplyTo.inputReplyToEphemeralMessage,
+  welcome?: true
 };
 
 type SendEphemeralMessageArgs = Omit<EphemeralSendMessage, 'peer' | 'receiver_id' | 'random_id'> & {
@@ -586,6 +654,8 @@ export class AppMessagesManager extends AppManager {
   private messagesStorageByPeerId: {[peerId: string]: MessagesStorage};
   private groupedMessagesStorage: {[groupId: string]: MessagesStorage}; // will be used for albums
   private scheduledMessagesStorage: {[peerId: PeerId]: MessagesStorage};
+  private welcomeMessagesStorage: {[peerId: PeerId]: MessagesStorage};
+  private welcomeMessagesHashes: Map<PeerId, Long>;
   private logsMessagesStorage: {[peerId: PeerId]: MessagesStorage}; // messages extracted from admin logs
 
   private historiesStorage: {
@@ -651,6 +721,7 @@ export class AppMessagesManager extends AppManager {
   private channelAvailableMinIdGenerations: Map<PeerId, number> = new Map();
   private channelAvailableMinIdRequestGenerations: Map<PeerId, number> = new Map();
   private channelAvailableMinIdsEpoch = 0;
+  private richMessageChecklistEdits: Map<string, RichMessageChecklistEdit> = new Map();
 
   private deletedMessages: Set<string> = new Set();
   private missingMessages: Set<string> = new Set();
@@ -972,6 +1043,8 @@ export class AppMessagesManager extends AppManager {
     this.messagesStorageByPeerId = {};
     this.groupedMessagesStorage = {};
     this.scheduledMessagesStorage = {};
+    this.welcomeMessagesStorage = {};
+    this.welcomeMessagesHashes = new Map();
     this.logsMessagesStorage = {};
     this.historiesStorage = {};
     this.threadsStorage = {};
@@ -1004,6 +1077,10 @@ export class AppMessagesManager extends AppManager {
     ++this.channelAvailableMinIdsGeneration;
     this.missingMessages.clear();
     this.clearSingleMessageRequests();
+    this.richMessageChecklistEdits.forEach((state) => {
+      if(state.timer) clearTimeout(state.timer);
+    });
+    this.richMessageChecklistEdits.clear();
 
     if(!init) {
       this.appProfileManager.clearBotCommands();
@@ -1033,6 +1110,15 @@ export class AppMessagesManager extends AppManager {
 
   public isEphemeralMessage(message: any): message is MyEphemeralMessage {
     return isEphemeralMessage(message);
+  }
+
+  /**
+   * An ephemeral message the server delivered, which lives by its ephemeral id and apart from the
+   * global storage. The placeholder of our own ephemeral media send is not one yet: until its echo
+   * replaces it, it is a pending message like any other, stored and deleted as one.
+   */
+  private isDeliveredEphemeralMessage(message: MyMessage) {
+    return this.isEphemeralMessage(message) && !message.pFlags.is_outgoing;
   }
 
   public isAnchoredEphemeralMessage(message: any) {
@@ -1119,7 +1205,7 @@ export class AppMessagesManager extends AppManager {
   private getEphemeralSendReceiverId(message: Message.message) {
     const receiverId = message.pFlags.out ?
       message.ephemeral_receiver_id :
-      message.fromId?.isUser() ? message.fromId.toUserId() : undefined;
+      canReplyToEphemeralMessage(message) ? message.fromId.toUserId() : undefined;
 
     return receiverId && this.appUsersManager.getUser(receiverId)?._ === 'user' ?
       receiverId :
@@ -1168,8 +1254,14 @@ export class AppMessagesManager extends AppManager {
     replyToMsgId?: number,
     replyTo?: InputReplyTo,
     ephemeral?: boolean,
-    ephemeralReceiverId?: UserId
+    ephemeralReceiverId?: UserId,
+    welcome?: boolean
   ): EphemeralSendContext {
+    // a welcome message is sent to nobody yet: no receiver, no reply, only the chat
+    if(welcome) {
+      return {drop: false, receiverId: undefined, welcome: true};
+    }
+
     const hasEphemeralReply = replyTo?._ === 'inputReplyToEphemeralMessage' ||
       (
         !!replyToMsgId &&
@@ -1178,7 +1270,12 @@ export class AppMessagesManager extends AppManager {
           this.isEphemeralMessage(this.getMessageByPeer(peerId, replyToMsgId))
         )
       );
-    if(!this.appPeersManager.isAnyGroup(peerId)) {
+    // ephemeral messages live in groups and in private chats with bots (desktop's
+    // `SupportsEphemeral`). In a bot chat only a reply to the bot's ephemeral message reaches it —
+    // a bare ephemeral command is accepted by the server yet never delivered to the bot, which is
+    // why `resolveEphemeralCommand` stays with groups
+    const isBotChat = peerId.isUser() && this.appUsersManager.isBot(peerId.toUserId());
+    if(!this.appPeersManager.isAnyGroup(peerId) && !isBotChat) {
       return ephemeral || hasEphemeralReply ?
         this.blockEphemeralSend(peerId, 'unavailable') :
         undefined;
@@ -1248,6 +1345,12 @@ export class AppMessagesManager extends AppManager {
     randomId = randomLong(),
     ...params
   }: SendEphemeralMessageArgs) {
+    // a welcome template goes to nobody and answers nothing (receiver_id = inputUserEmpty and no
+    // reply, as desktop sends it): a reply the composer still holds must not ride along
+    if(params.welcome) {
+      delete params.reply_to;
+    }
+
     return this.invokeEphemeralMessageSend({
       ...params,
       peerId,
@@ -1261,12 +1364,12 @@ export class AppMessagesManager extends AppManager {
     retryId?: number
   ) {
     const {peerId, receiverId, randomId, ...apiParams} = params;
-    return this.apiManager.invokeApi('ephemeral.sendMessage', {
+    return this.invokeWithRichMessageReferenceRetry(apiParams.rich_message, () => this.apiManager.invokeApi('ephemeral.sendMessage', {
       ...apiParams,
       peer: this.appPeersManager.getInputPeerById(peerId),
-      receiver_id: this.appUsersManager.getUserInput(receiverId),
+      receiver_id: receiverId ? this.appUsersManager.getUserInput(receiverId) : {_: 'inputUserEmpty'},
       random_id: randomId
-    }).then((updates) => {
+    })).then((updates) => {
       if(retryId !== undefined) {
         this.pendingEphemeralRetries.delete(retryId);
       }
@@ -1327,6 +1430,12 @@ export class AppMessagesManager extends AppManager {
 
   public deleteEphemeralMessage(peerId: PeerId, mid: number) {
     const message = this.getMessageByPeer(peerId, mid);
+    // the placeholder of an ephemeral media send still uploading: deleting it calls the send off
+    if((message as Message.message)?.pFlags?.is_outgoing) {
+      this.cancelUploadingEphemeralSend(message as Message.message);
+      return Promise.resolve();
+    }
+
     // an anchored one is an ordinary message wearing ephemeral content — deleting it gives the
     // original back rather than removing a bubble (desktop's `EphemeralMessages::deleteMessage`)
     if(!this.isEphemeralMessage(message) && !isAnchoredEphemeralMessage(message)) {
@@ -1528,6 +1637,39 @@ export class AppMessagesManager extends AppManager {
     throw makeError('UNKNOWN');
   }
 
+  /**
+   * Deleting the placeholder of an ephemeral media send — or of a welcome template — calls the send
+   * off: the file stops uploading and the placeholder goes.
+   */
+  private cancelUploadingEphemeralSend(message: Message.message) {
+    message.uploadingFileName?.forEach((fileName) => this.apiFileManager.cancelDownload(fileName));
+    this.cancelPendingMessage(message.random_id);
+  }
+
+  /** What an ephemeral message is kept as locally, before its kind adds its own. */
+  private makeLocalEphemeralMessage(message: EphemeralMessage, peerId: PeerId, id: number): Message.message {
+    return {
+      _: 'message',
+      pFlags: {
+        ...(message.pFlags.out ? {out: true} : {}),
+        // layer 229 added these two to `ephemeralMessage`
+        ...(message.pFlags.invert_media ? {invert_media: true} : {}),
+        ...(message.pFlags.noforwards ? {noforwards: true} : {})
+      },
+      id,
+      from_id: message.from_id,
+      // the chat the message was put into, not the server's peer_id: in a private chat with a bot
+      // that one names the reader (desktop's `PeerIdFromEphemeral` decides the chat either way)
+      peer_id: this.appPeersManager.getOutputPeer(peerId),
+      date: message.date,
+      message: message.message,
+      entities: message.entities,
+      media: message.media,
+      rich_message: message.rich_message,
+      reply_markup: message.reply_markup
+    };
+  }
+
   private makeEphemeralMessage(message: EphemeralMessage, localMid: number, forceMissingReply: boolean) {
     const peerId = this.getEphemeralPeerId(message);
     let ephemeralReplyTarget: Message.message;
@@ -1597,29 +1739,11 @@ export class AppMessagesManager extends AppManager {
       replyTo = undefined;
     }
 
-    const localMessage: Message.message = {
-      _: 'message',
-      pFlags: {
-        ...(message.pFlags.out ? {out: true} : {}),
-        // layer 229 added these two to `ephemeralMessage`
-        ...(message.pFlags.invert_media ? {invert_media: true} : {}),
-        ...(message.pFlags.noforwards ? {noforwards: true} : {}),
-        ephemeral: true
-      },
-      id: localMid,
-      from_id: message.from_id,
-      peer_id: message.peer_id || this.appPeersManager.getOutputPeer(peerId),
-      date: message.date,
-      message: message.message,
-      entities: message.entities,
-      media: message.media,
-      rich_message: message.rich_message,
-      reply_markup: message.reply_markup,
-      reply_to: replyTo,
-      ephemeral_id: message.id,
-      ephemeral_receiver_id: +message.receiver_id as UserId
-    };
-
+    const localMessage = this.makeLocalEphemeralMessage(message, peerId, localMid);
+    localMessage.pFlags.ephemeral = true;
+    localMessage.reply_to = replyTo;
+    localMessage.ephemeral_id = message.id;
+    localMessage.ephemeral_receiver_id = +message.receiver_id as UserId;
     return localMessage;
   }
 
@@ -1691,23 +1815,10 @@ export class AppMessagesManager extends AppManager {
     decorate?: (newMessage: Message.message) => void
   ) {
     const storage = this.getHistoryMessagesStorage(oldMessage.peerId);
-    const newMessage: Message.message = {
-      ...oldMessage,
-      pFlags: {...oldMessage.pFlags},
-      message: content.message,
-      entities: content.entities,
-      media: content.media,
-      reply_markup: content.reply_markup,
-      rich_message: content.rich_message,
-      edit_date: content.edit_date
-    };
-
-    if(content.invert_media) newMessage.pFlags.invert_media = true;
-    else delete newMessage.pFlags.invert_media;
-
+    const newMessage: Message.message = {...oldMessage, pFlags: {...oldMessage.pFlags}};
+    this.applyMessageContent(newMessage, content);
     decorate?.(newMessage);
 
-    delete newMessage.totalEntities;
     const richMessageChanged = this.releaseEditedMessageRichMedia(oldMessage, newMessage);
     this.saveMessage(newMessage, {storage});
     delete newMessage.pFlags.unread;
@@ -1715,6 +1826,19 @@ export class AppMessagesManager extends AppManager {
     this.handleEditedMessage(oldMessage, newMessage, storage, richMessageChanged);
     this.dispatchMessageEditEvent(newMessage, storage.key);
     return newMessage;
+  }
+
+  /** Writes what an anchor shows into a message that is not stored yet. */
+  private applyMessageContent(message: Message.message, content: EphemeralMessageContent) {
+    message.message = content.message;
+    message.entities = content.entities;
+    message.media = content.media;
+    message.reply_markup = content.reply_markup;
+    message.rich_message = content.rich_message;
+    message.edit_date = content.edit_date;
+    if(content.invert_media) message.pFlags.invert_media = true;
+    else delete message.pFlags.invert_media;
+    delete message.totalEntities;
   }
 
   private markAnchoredEphemeral(newMessage: Message.message, anchored: AnchoredEphemeral | undefined) {
@@ -1766,7 +1890,8 @@ export class AppMessagesManager extends AppManager {
       ephemeralId: message.id,
       mid,
       receiverId: +message.receiver_id as UserId,
-      backup: this.captureMessageContent(target)
+      backup: this.captureMessageContent(target),
+      content: this.getEphemeralMessageContent(message)
     };
 
     this.anchoredEphemerals ??= new Map();
@@ -1778,7 +1903,7 @@ export class AppMessagesManager extends AppManager {
 
     return this.replaceMessageContentInPlace(
       target,
-      this.getEphemeralMessageContent(message),
+      anchored.content,
       (newMessage) => this.markAnchoredEphemeral(newMessage, anchored)
     );
   }
@@ -1789,11 +1914,36 @@ export class AppMessagesManager extends AppManager {
       return;
     }
 
+    anchored.content = this.getEphemeralMessageContent(message);
     return this.replaceMessageContentInPlace(
       target,
-      this.getEphemeralMessageContent(message),
+      anchored.content,
       (newMessage) => this.markAnchoredEphemeral(newMessage, anchored)
     );
+  }
+
+  /**
+   * The server sent an anchor over again — a history reload, since an edit drops the anchor
+   * before saving. Its fresh copy becomes what Revert brings back, and the stand-in stays on top:
+   * desktop keeps the existing item there, and replacing it would lose the bot's content while
+   * the registration still claims it is shown.
+   */
+  private keepAnchoredEphemeralOverRefetch(peerId: PeerId, message: Message.message) {
+    const byId = this.anchoredEphemerals?.get(peerId);
+    if(!byId || message.pFlags.ephemeral_anchored) {
+      return;
+    }
+
+    for(const anchored of byId.values()) {
+      if(anchored.mid !== message.mid) {
+        continue;
+      }
+
+      anchored.backup = this.captureMessageContent(message);
+      this.applyMessageContent(message, anchored.content);
+      this.markAnchoredEphemeral(message, anchored);
+      return;
+    }
   }
 
   /** Puts the original message back. */
@@ -1905,6 +2055,13 @@ export class AppMessagesManager extends AppManager {
       message: storedMessage as MyEphemeralMessage
     });
 
+    // a bot's keyboard or force-reply comes on ephemeral messages too (layer 229): it becomes the
+    // chat's keyboard like any other (desktop adds them through the same `addNewItem`), and a
+    // press answers the bot privately, in reply to this message
+    if(this.mergeReplyKeyboard(this.getHistoryStorage(peerId), storedMessage)) {
+      this.rootScope.dispatchEvent('history_reply_markup', {peerId});
+    }
+
     return storedMessage;
   }
 
@@ -1954,6 +2111,13 @@ export class AppMessagesManager extends AppManager {
       return;
     }
 
+    // the keyboard goes with the ephemeral message that brought it
+    const historyStorage = this.getHistoryStorage(peerId);
+    if(historyStorage.replyMarkup && deletedMids.has(historyStorage.replyMarkup.mid)) {
+      historyStorage.replyMarkup = undefined;
+      this.rootScope.dispatchEvent('history_reply_markup', {peerId});
+    }
+
     this.rootScope.dispatchEvent('ephemeral_history_delete', {peerId, msgs: deletedMids});
   }
 
@@ -1978,6 +2142,11 @@ export class AppMessagesManager extends AppManager {
 
   private onUpdateNewEphemeralMessage = (update: Update.updateNewEphemeralMessage) => {
     const {message} = update;
+    if(message.pFlags.welcome_template) {
+      this.applyWelcomeMessage(message);
+      return;
+    }
+
     const peerId = this.getEphemeralPeerId(message);
     if(this.getEphemeralMessage(peerId, message.id) || this.getAnchoredEphemeral(peerId, message.id)) {
       return;
@@ -1994,6 +2163,11 @@ export class AppMessagesManager extends AppManager {
 
   private onUpdateEditEphemeralMessage = (update: Update.updateEditEphemeralMessage) => {
     const {message} = update;
+    if(message.pFlags.welcome_template) {
+      this.applyWelcomeMessage(message);
+      return;
+    }
+
     const peerId = this.getEphemeralPeerId(message);
     const anchored = this.getAnchoredEphemeral(peerId, message.id);
     if(anchored) {
@@ -2018,8 +2192,251 @@ export class AppMessagesManager extends AppManager {
   };
 
   private onUpdateDeleteEphemeralMessages = (update: Update.updateDeleteEphemeralMessages) => {
-    this.removeEphemeralMessages(this.appPeersManager.getPeerId(update.peer), update.ids);
+    const peerId = this.appPeersManager.getPeerId(update.peer);
+    // a deleted welcome template comes the same way (desktop's `applyDelete` goes first)
+    const welcomeStorage = this.welcomeMessagesStorage?.[peerId];
+    const ids = welcomeStorage ? update.ids.filter((id) => {
+      return !this.removeWelcomeMessages(peerId, [this.getWelcomeMessageMid(peerId, id)]).length;
+    }) : update.ids;
+    this.removeEphemeralMessages(peerId, ids);
   };
+
+  public resolveInputRichMessage(input: InputRichMessage.inputRichMessage) {
+    const {documentIds, photoIds, userIds} = collectInputRichMessageReferences(input);
+    const missingReferences: string[] = [];
+    const unresolvedUserIds = new Set<string>();
+    const documents = [...(input.documents || [])];
+    const documentKeys = new Set<string>();
+    documents.forEach((document) => {
+      if(document._ === 'inputDocument') {
+        documentKeys.add(String(document.id));
+      }
+    });
+    documentIds.forEach((documentId) => {
+      const key = String(documentId);
+      if(documentKeys.has(key)) return;
+      const document = this.appDocsManager.getDoc(documentId as DocId);
+      if(!document) {
+        missingReferences.push(`document:${key}`);
+        return;
+      }
+      documents.push(getDocumentInput(document));
+      documentKeys.add(key);
+    });
+
+    const photos = [...(input.photos || [])];
+    const photoKeys = new Set<string>();
+    photos.forEach((photo) => {
+      if(photo._ === 'inputPhoto') {
+        photoKeys.add(String(photo.id));
+      }
+    });
+    photoIds.forEach((photoId) => {
+      const key = String(photoId);
+      if(photoKeys.has(key)) return;
+      const photo = this.appPhotosManager.getPhoto(photoId);
+      if(!photo) {
+        missingReferences.push(`photo:${key}`);
+        return;
+      }
+      photos.push(getPhotoInput(photo));
+      photoKeys.add(key);
+    });
+
+    const users = [...(input.users || [])];
+    const userKeys = new Set<string>();
+    users.forEach((user) => {
+      if(user._ === 'inputUser' || user._ === 'inputUserFromMessage') {
+        userKeys.add(String(user.user_id));
+      }
+    });
+    userIds.forEach((userId) => {
+      const key = String(userId);
+      if(userKeys.has(key)) return;
+      if(!this.appUsersManager.getUser(userId as UserId)) {
+        unresolvedUserIds.add(key);
+        return;
+      }
+      users.push(this.appUsersManager.getUserInput(userId as UserId));
+      userKeys.add(key);
+    });
+
+    if(missingReferences.length) {
+      throw makeError('UNKNOWN', `RICH_MESSAGE_REFERENCES_MISSING ${missingReferences.join(', ')}`);
+    }
+
+    return {
+      ...input,
+      blocks: unresolvedUserIds.size ?
+        degradeUnresolvedRichMessageMentions(input.blocks, unresolvedUserIds) :
+        input.blocks,
+      documents: documents.length ? documents : undefined,
+      photos: photos.length ? photos : undefined,
+      users: users.length ? users : undefined
+    };
+  }
+
+  private refreshInputRichMessageReferences(input: InputRichMessage.inputRichMessage) {
+    type InputReference = InputDocument.inputDocument | InputPhoto.inputPhoto;
+    const inputsByReference = new Map<InputReference['file_reference'], InputReference[]>();
+    const addInput = (input: InputReference) => {
+      const inputs = inputsByReference.get(input.file_reference);
+      if(inputs) {
+        inputs.push(input);
+      } else {
+        inputsByReference.set(input.file_reference, [input]);
+      }
+    };
+
+    input.documents?.forEach((document) => {
+      if(document._ === 'inputDocument') {
+        addInput(document);
+      }
+    });
+    input.photos?.forEach((photo) => {
+      if(photo._ === 'inputPhoto') {
+        addInput(photo);
+      }
+    });
+
+    if(!inputsByReference.size) {
+      return Promise.resolve(false);
+    }
+
+    return Promise.all([...inputsByReference].map(([reference, inputs]) => {
+      return this.referencesStorage.refreshReference(reference).then((refreshedReference) => {
+        inputs.forEach((input) => {
+          input.file_reference = refreshedReference;
+        });
+        return true;
+      }, () => false);
+    })).then((refreshed) => refreshed.some(Boolean));
+  }
+
+  public invokeWithRichMessageReferenceRetry<T>(
+    input: InputRichMessage | undefined,
+    invoke: () => Promise<T>
+  ): Promise<T> {
+    if(input?._ !== 'inputRichMessage') {
+      return invoke();
+    }
+
+    return invoke().catch(async(error: ApiError) => {
+      const fileReferenceError = error?.type === 'FILE_REFERENCE_EXPIRED' ||
+        error?.type === 'FILE_REFERENCE_INVALID' ||
+        /^FILE_REFERENCE_\d+_(?:EXPIRED|INVALID)$/.test(error?.type || '');
+      if(
+        !fileReferenceError
+      ) {
+        throw error;
+      }
+
+      if(!await this.refreshInputRichMessageReferences(input)) {
+        throw error;
+      }
+
+      return invoke();
+    });
+  }
+
+  private resolveRichMessageOutput(input: InputRichMessage.inputRichMessage, output: RichMessage): RichMessage {
+    const {documentIds, photoIds} = collectInputRichMessageReferences(input);
+    const documents = [...(output.documents || [])];
+    const documentKeys = new Set(documents.map((document) => String(document.id)));
+    const photos = [...(output.photos || [])];
+    const photoKeys = new Set(photos.map((photo) => String(photo.id)));
+    let changed = false;
+
+    documentIds.forEach((documentId) => {
+      const key = String(documentId);
+      if(documentKeys.has(key)) return;
+      const document = this.appDocsManager.getDoc(documentId as DocId);
+      if(!document) return;
+      documents.push(document);
+      documentKeys.add(key);
+      changed = true;
+    });
+
+    photoIds.forEach((photoId) => {
+      const key = String(photoId);
+      if(photoKeys.has(key)) return;
+      const photo = this.appPhotosManager.getPhoto(photoId);
+      if(!photo) return;
+      photos.push(photo);
+      photoKeys.add(key);
+      changed = true;
+    });
+
+    return {
+      ...output,
+      pFlags: input.pFlags.rtl ? {rtl: true} : {},
+      blocks: input.blocks,
+      documents: changed ? documents : output.documents,
+      photos: changed ? photos : output.photos
+    };
+  }
+
+  private getRichMessageValidation(
+    input: InputRichMessage.inputRichMessage,
+    appConfig: MTAppConfig,
+    options?: RichMessageValidationOptions
+  ) {
+    return validateRichMessageStructure(input, resolveRichMessageLimits(appConfig), options);
+  }
+
+  private resolveRichMessagePostingState(appConfig: MTAppConfig): RichMessagePostingState {
+    const configured = appConfig.rich_message_posting;
+    const mode = configured === undefined ?
+      'premium' :
+      configured === 'enabled' || configured === 'premium' || configured === 'disabled' ?
+        configured :
+        'disabled';
+    return {
+      mode,
+      available: mode !== 'disabled',
+      allowed: mode === 'enabled' || mode === 'premium' && !!this.rootScope.premium
+    };
+  }
+
+  public async getRichMessagePostingState() {
+    return this.resolveRichMessagePostingState(await this.apiManager.getAppConfig());
+  }
+
+  public async isRichMessageMapAvailable() {
+    return resolveRichMessageMapAvailability(await this.apiManager.getConfig());
+  }
+
+  private assertRichMessagePostingAllowed(appConfig: MTAppConfig) {
+    const state = this.resolveRichMessagePostingState(appConfig);
+    if(state.allowed) return state;
+    throw makeError(
+      state.mode === 'premium' ? 'PREMIUM_ACCOUNT_REQUIRED' : 'UNKNOWN',
+      state.mode === 'premium' ? 'RICH_MESSAGE_PREMIUM_REQUIRED' : 'RICH_MESSAGE_POSTING_DISABLED'
+    );
+  }
+
+  public async validateRichMessage(
+    input: InputRichMessage.inputRichMessage,
+    options?: RichMessageValidationOptions
+  ) {
+    const resolved = this.resolveInputRichMessage(input) as InputRichMessage.inputRichMessage;
+    return this.getRichMessageValidation(resolved, await this.apiManager.getAppConfig(), options);
+  }
+
+  private assertRichMessageValidation(validation: Awaited<ReturnType<AppMessagesManager['validateRichMessage']>>) {
+    if(!validation.valid) {
+      throw makeError('UNKNOWN', `RICH_MESSAGE_LIMIT_${validation.error}`);
+    }
+  }
+
+  public async assertRichMessage(
+    input: InputRichMessage.inputRichMessage,
+    options?: RichMessageValidationOptions
+  ) {
+    const validation = await this.validateRichMessage(input, options);
+    this.assertRichMessageValidation(validation);
+    return validation;
+  }
 
   public invokeAfterMessageIsSent(tempId: number, callbackName: string, callback: (message: MyMessage) => Promise<any>) {
     const finalize = this.tempFinalizeCallbacks[tempId] ??= {};
@@ -2051,14 +2468,15 @@ export class AppMessagesManager extends AppManager {
     }
   }
 
-  public editMessage(
+  public async editMessage(
     message: MyMessage,
     text: string,
     options: Partial<{
       newMedia: InputMedia,
       scheduleDate: number,
       scheduleRepeatPeriod: number,
-      entities: MessageEntity[]
+      entities: MessageEntity[],
+      richMessage: RichMessagePayload
     }> & Partial<Pick<Parameters<AppMessagesManager['sendText']>[0], 'webPage' | 'webPageOptions' | 'noWebPage' | 'invertMedia'>> = {}
   ): Promise<void> {
     /* if(!this.canEditMessage(messageId)) {
@@ -2067,6 +2485,16 @@ export class AppMessagesManager extends AppManager {
 
     if(this.isEphemeralMessage(message)) {
       return Promise.reject({type: 'MESSAGE_EDIT_FORBIDDEN'} as ApiError);
+    }
+
+    const richMessage = options.richMessage;
+    const inputRichMessage = richMessage && this.resolveInputRichMessage(richMessage.input);
+    if(inputRichMessage?._ === 'inputRichMessage') {
+      await this.assertRichMessage(inputRichMessage);
+    }
+
+    if(message._ === 'message' && message.pFlags.welcome_template) {
+      return this.editWelcomeMessage(message, text, options, inputRichMessage);
     }
 
     const {mid, peerId} = message;
@@ -2078,44 +2506,50 @@ export class AppMessagesManager extends AppManager {
       });
     }
 
-    let entities = options.entities || [];
-    if(text) {
+    let entities = richMessage ? [] : options.entities || [];
+    if(text && !richMessage) {
       [text, entities] = parseMarkdown(text, entities);
     }
 
-    const sendEntities = this.getInputEntities(entities);
+    const sendEntities = richMessage ? undefined : this.getInputEntities(entities);
 
-    const inputMediaWebPage = this.getInputMediaWebPage(options);
+    const inputMediaWebPage = richMessage ? undefined : this.getInputMediaWebPage(options);
 
     const schedule_date = options.scheduleDate || ((message as Message.message).pFlags.is_scheduled ? message.date : undefined);
-    return this.apiManager.invokeApi('messages.editMessage', {
+    const invoke = () => this.apiManager.invokeApi('messages.editMessage', {
       peer: this.appPeersManager.getInputPeerById(peerId),
       id: message.id,
-      message: text,
-      media: options.newMedia,
+      message: richMessage ? undefined : text,
+      media: richMessage ? undefined : options.newMedia,
       entities: sendEntities,
-      no_webpage: options.noWebPage,
+      rich_message: inputRichMessage,
+      no_webpage: richMessage ? true : options.noWebPage,
       schedule_date,
       schedule_repeat_period: options.scheduleRepeatPeriod || undefined,
-      invert_media: options.invertMedia,
+      invert_media: richMessage ? undefined : options.invertMedia,
       ...(inputMediaWebPage ? {media: inputMediaWebPage} : {})
-    }).then((updates) => {
-      this.apiUpdatesManager.processUpdateMessage(updates);
-    }, (error: ApiError) => {
-      this.log.error('editMessage error:', error);
-
-      if(error?.type === 'MESSAGE_NOT_MODIFIED') {
-        error.handled = true;
-        return;
-      }
-
-      if(error?.type === 'MESSAGE_EMPTY') {
-        error.handled = true;
-      }
-
-      throw error;
     });
+    return this.invokeWithRichMessageReferenceRetry(inputRichMessage, invoke).then((updates) => {
+      this.invalidateRichMessage(peerId, mid);
+      this.apiUpdatesManager.processUpdateMessage(updates);
+    }, this.onEditMessageError);
   }
+
+  /** Saving an edit that changes nothing is no failure; an empty one the composer explains. */
+  private onEditMessageError = (error: ApiError) => {
+    this.log.error('editMessage error:', error);
+
+    if(error?.type === 'MESSAGE_NOT_MODIFIED') {
+      error.handled = true;
+      return;
+    }
+
+    if(error?.type === 'MESSAGE_EMPTY') {
+      error.handled = true;
+    }
+
+    throw error;
+  };
 
   public async editMessageMedia({message, text, sendFileDetails, options = {}}: EditMessageMediaArgs) {
     let {file} = sendFileDetails;
@@ -2164,7 +2598,6 @@ export class AppMessagesManager extends AppManager {
       photo,
       document
     };
-
 
     if(options.invertMedia) {
       message.pFlags.invert_media = true;
@@ -2330,6 +2763,84 @@ export class AppMessagesManager extends AppManager {
     return inputMedia;
   }
 
+  public async uploadRichMessageMedia(options: {
+    peerId: PeerId,
+    sendFileDetails: SendFileDetails,
+    uploadingFileName?: string
+  }): Promise<UploadedRichMessageMedia> {
+    const {sendFileDetails, peerId} = options;
+    const {file} = sendFileDetails;
+    if(!(file instanceof File) && !(file instanceof Blob)) {
+      throw makeError('UNKNOWN', 'RICH_MESSAGE_MEDIA_FILE_REQUIRED');
+    }
+
+    const metadata = this.makeDocumentAndMetaForSendingFile({
+      mediaTempId: this.mediaTempId++,
+      isDocument: false,
+      file,
+      entities: [],
+      isMedia: true,
+      ...pickKeys(sendFileDetails, [
+        'strippedBytes',
+        'width',
+        'height',
+        'objectURL',
+        'duration',
+        'thumb',
+        'isAnimated'
+      ])
+    });
+    if(
+      metadata.attachType !== 'audio' &&
+      metadata.attachType !== 'photo' &&
+      metadata.attachType !== 'video'
+    ) {
+      throw makeError('UNKNOWN', 'RICH_MESSAGE_MEDIA_TYPE_UNSUPPORTED');
+    }
+
+    const inputMedia = await this.uploadMediaFile({
+      peerId,
+      file,
+      uploadingFileName: options.uploadingFileName || getFileNameForUpload(file),
+      ...pickKeys(sendFileDetails, ['objectURL', 'thumb']),
+      spoiler: metadata.attachType === 'audio' ? undefined : sendFileDetails.spoiler,
+      ...pickKeys(metadata, [
+        'fileType',
+        'apiFileName',
+        'attachType',
+        'attributes',
+        'actionName'
+      ])
+    });
+    const uploaded = await this.apiManager.invokeApi('messages.uploadMedia', {
+      peer: this.appPeersManager.getInputPeerById(peerId),
+      media: inputMedia
+    });
+
+    if(metadata.attachType === 'photo' && uploaded._ === 'messageMediaPhoto') {
+      return {
+        type: 'photo',
+        photo: this.appPhotosManager.savePhoto(uploaded.photo),
+        spoiler: sendFileDetails.spoiler || undefined
+      };
+    }
+    if(metadata.attachType === 'video' && uploaded._ === 'messageMediaDocument') {
+      return {
+        type: 'video',
+        document: this.appDocsManager.saveDoc(uploaded.document),
+        spoiler: sendFileDetails.spoiler || undefined
+      };
+    }
+    if(metadata.attachType === 'audio' && uploaded._ === 'messageMediaDocument') {
+      return {
+        type: 'audio',
+        document: this.appDocsManager.saveDoc(uploaded.document)
+      };
+    }
+
+    throw makeError('UNKNOWN', 'RICH_MESSAGE_MEDIA_UPLOAD_INVALID');
+  }
+
   private runTempUpdateForMessageEdit(message: Message.message) {
     if(message.pFlags?.is_scheduled) {
       this.onUpdateNewScheduledMessage({
@@ -2469,6 +2980,7 @@ export class AppMessagesManager extends AppManager {
       replyMarkup: ReplyMarkup,
       clearDraft: boolean,
       invertMedia: boolean,
+      richMessage: RichMessagePayload,
       webPage: WebPage,
       webPageOptions: Partial<{
         largeMedia: boolean,
@@ -2478,7 +2990,11 @@ export class AppMessagesManager extends AppManager {
     }>
   ): Promise<void> {
     let {peerId, text} = options;
-    if(!text.trim() && !options.suggestedPost?.changeMid) {
+    text ||= '';
+    const richMessage = options.richMessage;
+    const inputRichMessage = richMessage && this.resolveInputRichMessage(richMessage.input);
+    const outputRichMessage = richMessage && this.resolveRichMessageOutput(inputRichMessage, richMessage.output);
+    if(!text.trim() && !richMessage && !options.suggestedPost?.changeMid) {
       return;
     }
 
@@ -2492,13 +3008,20 @@ export class AppMessagesManager extends AppManager {
         options.replyToMsgId,
         options.replyTo,
         options.ephemeral,
-        options.ephemeralReceiverId
+        options.ephemeralReceiverId,
+        options.welcome
       );
 
     options.entities ??= [];
     options.webPageOptions ??= {};
 
     const {config, appConfig} = await this.checkSendOptions(options);
+
+    if(inputRichMessage?._ === 'inputRichMessage') {
+      this.assertRichMessagePostingAllowed(appConfig);
+      const validation = this.getRichMessageValidation(inputRichMessage, appConfig);
+      this.assertRichMessageValidation(validation);
+    }
 
     if(ephemeralContext) {
       if(!('receiverId' in ephemeralContext) || options.scheduleDate) {
@@ -2507,7 +3030,7 @@ export class AppMessagesManager extends AppManager {
 
       const {receiverId, replyTo: ephemeralReplyTo} = ephemeralContext;
       let entities = options.entities;
-      if(!options.viaBotId) {
+      if(!options.viaBotId && !richMessage) {
         [text, entities] = parseMarkdown(text, entities);
       }
 
@@ -2521,19 +3044,22 @@ export class AppMessagesManager extends AppManager {
       return this.sendEphemeralMessage({
         peerId,
         receiverId,
-        message: text,
-        entities: this.getInputEntities(entities),
-        media: this.getInputMediaWebPage(options),
+        welcome: ephemeralContext.welcome,
+        // a rich message is its own content, as in an ordinary send
+        message: richMessage ? '' : text,
+        entities: richMessage ? undefined : this.getInputEntities(entities),
+        media: richMessage ? undefined : this.getInputMediaWebPage(options),
+        rich_message: inputRichMessage,
         // the link preview keeps the side of the text the user put it on, as it does for an
         // ordinary send (desktop sets the same flag from `webPage.invert`)
-        invert_media: options.invertMedia || undefined,
+        invert_media: richMessage ? undefined : options.invertMedia || undefined,
         query_id: options.queryId,
         reply_markup: options.replyMarkup,
         reply_to: ephemeralReplyTo || options.replyTo
       }).then(noop);
     }
 
-    if(appConfig.emojies_send_dice?.includes(text.trim())) {
+    if(!richMessage && appConfig.emojies_send_dice?.includes(text.trim())) {
       return this.sendOther({
         ...options,
         inputMedia: {
@@ -2544,7 +3070,7 @@ export class AppMessagesManager extends AppManager {
     }
 
     const MAX_LENGTH = config.message_length_max;
-    const splitted = splitStringByLength(text, MAX_LENGTH);
+    const splitted = richMessage ? [text] : splitStringByLength(text, MAX_LENGTH);
     text = splitted[0];
     if(splitted.length > 1) {
       if(options.webPage?._ === 'webPage' && !text.includes(options.webPage.url)) {
@@ -2552,23 +3078,26 @@ export class AppMessagesManager extends AppManager {
       }
     }
 
-    const originalEntities = options.entities;
+    peerId = this.appPeersManager.getPeerMigratedTo(peerId) || peerId;
+
+    const originalEntities = richMessage ? undefined : options.entities;
     let entities = splitted.length > 1 && originalEntities?.length ?
       sliceMessageEntities(originalEntities, 0, text.length) :
       originalEntities;
-    if(!options.viaBotId) {
+    if(!options.viaBotId && !richMessage) {
       [text, entities] = parseMarkdown(text, entities);
     }
 
-    const sendEntities = this.getInputEntities(entities);
+    const sendEntities = richMessage ? undefined : this.getInputEntities(entities);
 
     const message = this.generateOutgoingMessage(peerId, options);
-    message.entities = entities;
-    message.message = text;
+    message.entities = richMessage ? undefined : entities;
+    message.message = richMessage ? '' : text;
+    message.rich_message = outputRichMessage;
 
     const isChannel = this.appPeersManager.isChannel(peerId);
 
-    const webPageSend = this.generateOutgoingWebPage(message, options);
+    const webPageSend = richMessage ? {} : this.generateOutgoingWebPage(message, options);
 
     const toggleError = (error?: ApiError, repayRequest?: RepayRequest) => {
       this.onMessagesSendError([message], error, repayRequest);
@@ -2609,7 +3138,7 @@ export class AppMessagesManager extends AppManager {
 
         const commonOptions: Partial<MessagesSendMessage | MessagesSendMedia> = {
           peer: inputPeer,
-          message: text,
+          message: richMessage ? '' : text,
           random_id: message.random_id,
           reply_to: replyTo,
           entities: sendEntities,
@@ -2619,23 +3148,27 @@ export class AppMessagesManager extends AppManager {
           silent: options.silent,
           send_as: sendAs,
           update_stickersets_order: options.updateStickersetOrder,
-          invert_media: options.invertMedia,
+          invert_media: richMessage ? undefined : options.invertMedia,
           effect: options.effect,
           allow_paid_stars: paidStars,
           suggested_post: message.suggested_post,
-          media
+          media: richMessage ? undefined : media
         };
 
         const mergedOptions: MessagesSendMessage | MessagesSendMedia = {
           ...commonOptions as any,
-          ...webPageSend
+          ...(richMessage ? {
+            no_webpage: true,
+            rich_message: inputRichMessage
+          } : webPageSend)
         };
 
-        apiPromise = this.apiManager.invokeApiAfter(
-          options.webPage || media ? 'messages.sendMedia' : 'messages.sendMessage',
+        const invoke = () => this.apiManager.invokeApiAfter(
+          richMessage || (!options.webPage && !media) ? 'messages.sendMessage' : 'messages.sendMedia',
           mergedOptions,
           sentRequestOptions
         );
+        apiPromise = this.invokeWithRichMessageReferenceRetry(inputRichMessage, invoke);
       }
 
       this.pendingAfterMsgs[peerId] = sentRequestOptions;
@@ -2757,7 +3290,8 @@ export class AppMessagesManager extends AppManager {
         options.replyToMsgId,
         options.replyTo,
         options.ephemeral,
-        options.ephemeralReceiverId
+        options.ephemeralReceiverId,
+        options.welcome
       );
 
     await this.checkSendOptions(options);
@@ -2783,6 +3317,20 @@ export class AppMessagesManager extends AppManager {
 
     const hadMessageBefore = !!options.groupedMessage;
     const message = options.groupedMessage || this.generateOutgoingMessage(peerId, options);
+    // an ephemeral media send shows a placeholder while it uploads, as desktop's local sending
+    // item does, and the echo of the send replaces it. It reads as what it becomes: an ephemeral
+    // message only visible to its bot (`ephemeral_id` 0 — it has no server id yet), or a welcome
+    // template, which sits in the welcome section and comes from the chat
+    const ephemeralPlaceholder = !!activeEphemeralContext && !hadMessageBefore;
+    const isWelcome = !!activeEphemeralContext?.welcome;
+    if(ephemeralPlaceholder && isWelcome) {
+      message.pFlags.welcome_template = true;
+      message.from_id = message.peer_id;
+    } else if(ephemeralPlaceholder) {
+      message.pFlags.ephemeral = true;
+      (message as MyEphemeralMessage).ephemeral_id = 0;
+      (message as MyEphemeralMessage).ephemeral_receiver_id = activeEphemeralContext.receiverId;
+    }
 
     let caption = options.caption || '';
 
@@ -2922,7 +3470,9 @@ export class AppMessagesManager extends AppManager {
               this.log('cancelling upload', media);
 
               message && this.cancelPendingMessage(message.random_id);
-              this.setTyping(peerId, {_: 'sendMessageCancelAction'}, undefined, options.threadId);
+              if(!activeEphemeralContext) {
+                this.setTyping(peerId, {_: 'sendMessageCancelAction'}, undefined, options.threadId);
+              }
               sentDeferred.reject(err);
             });
 
@@ -2932,7 +3482,8 @@ export class AppMessagesManager extends AppManager {
               } */
 
               const percents = Math.max(1, Math.floor(100 * progress.done / progress.total));
-              if(actionName) {
+              // an ephemeral send is nobody else's business: the chat is not told of the upload
+              if(actionName && !activeEphemeralContext) {
                 this.setTyping(peerId, {_: actionName, progress: percents | 0}, undefined, options.threadId);
               }
               sentDeferred.notifyAll(progress);
@@ -3008,7 +3559,7 @@ export class AppMessagesManager extends AppManager {
 
             sentDeferred.resolve(inputMedia);
           }, (error: ApiError) => {
-            if(activeEphemeralContext) {
+            if(activeEphemeralContext && error?.type !== 'UPLOAD_CANCELED') {
               this.registerEphemeralRetry(peerId, {
                 type: 'file',
                 options
@@ -3043,7 +3594,10 @@ export class AppMessagesManager extends AppManager {
       threadId: options.threadId,
       clearDraft: options.clearDraft,
       processAfter: options.processAfter,
-      noOutgoingMessage: !!activeEphemeralContext
+      noOutgoingMessage: !!activeEphemeralContext && !ephemeralPlaceholder,
+      // an ephemeral message never becomes the chat's last message
+      keepOutOfDialog: ephemeralPlaceholder,
+      isWelcome: ephemeralPlaceholder && isWelcome
     });
 
     if(!options.isGroupedItem) {
@@ -3051,15 +3605,28 @@ export class AppMessagesManager extends AppManager {
 
       const invokeSend = (inputMedia: Awaited<typeof sentDeferred>) => {
         if(activeEphemeralContext) {
+          // its placeholder was deleted while it uploaded: the send is off
+          if(ephemeralPlaceholder && !this.pendingByRandomId[message.random_id]) {
+            return Promise.resolve();
+          }
+
           return this.sendEphemeralMessage({
             peerId,
             receiverId: activeEphemeralContext.receiverId,
+            welcome: activeEphemeralContext.welcome,
             message: caption,
             entities: sendEntities,
             media: inputMedia,
+            // the caption above the media, as desktop sends it for ephemeral media
+            invert_media: options.invertMedia || undefined,
             reply_to: activeEphemeralContext.replyTo || options.replyTo,
             randomId: message.random_id
-          }).then(noop);
+          }).then(noop).finally(() => {
+            // the echo of the send stands in its place now, or the send failed and says so
+            if(ephemeralPlaceholder) {
+              this.cancelPendingMessage(message.random_id);
+            }
+          });
         }
 
         return this.apiManager.invokeApi('messages.sendMedia', {
@@ -3091,7 +3658,9 @@ export class AppMessagesManager extends AppManager {
 
       const send = () => {
         sentDeferred.then((inputMedia) => {
-          this.setTyping(peerId, {_: 'sendMessageCancelAction'}, undefined, options.threadId);
+          if(!activeEphemeralContext) {
+            this.setTyping(peerId, {_: 'sendMessageCancelAction'}, undefined, options.threadId);
+          }
 
           let promise: Promise<void>;
           if(inputMedia._ === 'inputMediaDocument') {
@@ -3104,9 +3673,11 @@ export class AppMessagesManager extends AppManager {
           }
 
           return promise.catch((error: ApiError) => {
+            // an ephemeral send already said it failed (its retry toast) and took its placeholder
+            // away; nothing awaits this chain, so a rethrow would only be an unhandled rejection
             if(activeEphemeralContext) {
               toggleError(error);
-              throw error;
+              return;
             }
 
             if(attachType === 'photo' &&
@@ -3223,7 +3794,7 @@ export class AppMessagesManager extends AppManager {
           voice: args.isVoiceMessage || undefined
         },
         waveform: args.waveform,
-        duration: args.duration || undefined
+        duration: args.duration ?? 0
       };
 
       attributes.push(attribute);
@@ -3447,7 +4018,8 @@ export class AppMessagesManager extends AppManager {
         options.replyToMsgId,
         options.replyTo,
         options.ephemeral,
-        options.ephemeralReceiverId
+        options.ephemeralReceiverId,
+        options.welcome
       );
 
     await this.checkSendOptions(options);
@@ -3593,6 +4165,7 @@ export class AppMessagesManager extends AppManager {
               promise = promise.then(() => this.sendEphemeralMessage({
                 peerId,
                 receiverId: activeEphemeralContext.receiverId,
+                welcome: activeEphemeralContext.welcome,
                 message: input.message,
                 entities: input.entities,
                 media: input.media,
@@ -3786,7 +4359,8 @@ export class AppMessagesManager extends AppManager {
         options.replyToMsgId,
         options.replyTo,
         options.ephemeral,
-        options.ephemeralReceiverId
+        options.ephemeralReceiverId,
+        options.welcome
       );
     if(inputMedia?._ === 'inputMediaTodo') {
       this.stripEphemeralReply(options);
@@ -3814,6 +4388,7 @@ export class AppMessagesManager extends AppManager {
       return this.sendEphemeralMessage({
         peerId,
         receiverId,
+        welcome: ephemeralContext.welcome,
         message: '',
         media: inputMedia,
         query_id: options.queryId,
@@ -4194,17 +4769,27 @@ export class AppMessagesManager extends AppManager {
     clearDraft: boolean,
     sequential: boolean,
     processAfter?: (cb: () => void) => void,
-    noOutgoingMessage?: boolean
+    noOutgoingMessage?: boolean,
+    keepOutOfDialog?: boolean,
+    /** a welcome template's placeholder: it lives in the welcome section, not in the history */
+    isWelcome?: boolean
   }> = {}) {
     const messageId = message.id;
     const peerId = this.getMessagePeer(message);
-    const storage = options.isScheduled ? this.getScheduledMessagesStorage(peerId) : this.getHistoryMessagesStorage(peerId);
+    const storage = options.isScheduled ? this.getScheduledMessagesStorage(peerId) :
+      options.isWelcome ? this.getWelcomeMessagesStorage(peerId) :
+      this.getHistoryMessagesStorage(peerId);
     const monoforumThreadId = this.getMonoforumThreadId(peerId, message.saved_peer_id);
 
     message.storageKey = storage.key;
 
     const callbacks: Array<() => void> = [];
-    if(options.isScheduled && !options.noOutgoingMessage) {
+    if(options.isWelcome && !options.noOutgoingMessage) {
+      this.saveMessages([message], {storage, isOutgoing: true});
+      callbacks.push(() => {
+        this.rootScope.dispatchEvent('welcome_message_new', message);
+      });
+    } else if(options.isScheduled && !options.noOutgoingMessage) {
       // if(!options.isGroupedItem) {
       this.saveMessages([message], {storage, isScheduled: true, isOutgoing: true});
       callbacks.push(() => {
@@ -4224,17 +4809,19 @@ export class AppMessagesManager extends AppManager {
       }
 
       this.saveMessages([message], {storage, isOutgoing: true});
-      this.setDialogTopMessage(message);
+      if(!options.keepOutOfDialog) {
+        this.setDialogTopMessage(message);
+      }
       this.updateMessageContextForInserting(message);
 
-      if(options.threadId) {
+      if(options.threadId && !options.keepOutOfDialog) {
         const dialog = this.dialogsStorage.getAnyDialog(peerId, options.threadId);
         if(dialog) {
           this.setDialogTopMessage(message, dialog);
         }
       }
 
-      if(monoforumThreadId) {
+      if(monoforumThreadId && !options.keepOutOfDialog) {
         this.monoforumDialogsStorage.checkLastMessageForExistingDialog(message);
       }
 
@@ -4256,7 +4843,7 @@ export class AppMessagesManager extends AppManager {
         sequential: options.sequential
       };
 
-      if(!options.isScheduled) {
+      if(!options.isScheduled && !options.keepOutOfDialog) {
         this.pendingTopMsgs[peerId] = messageId;
 
         if(options.threadId) {
@@ -4803,6 +5390,14 @@ export class AppMessagesManager extends AppManager {
 
     if(pendingData) {
       const {peerId, tempId, storage} = pendingData;
+      // a welcome template's placeholder never entered the history: the section drops it
+      if(storage.type === 'welcome') {
+        this.rejectPendingMessageCallbacks(tempId, makeError('UPLOAD_CANCELED'));
+        delete this.pendingByRandomId[randomId];
+        this.removeWelcomeMessages(peerId, [tempId]);
+        return true;
+      }
+
       const historyStorage = this.getHistoryStorage(peerId);
 
       const tempMessage = this.getMessageFromStorage(storage, tempId);
@@ -5287,7 +5882,7 @@ export class AppMessagesManager extends AppManager {
     for(let i = 0, length = mids.length; i < length; ++i) {
       const mid = mids[i];
       const originalMessage = this.getMessageByPeer(fromPeerId, mid) as Message.message;
-      if(originalMessage.pFlags.is_outgoing) { // this can happen when forwarding a changelog
+      if(originalMessage.pFlags.is_outgoing && !originalMessage.rich_message) { // this can happen when forwarding a changelog
         this.sendText({
           peerId,
           threadId: options.threadId,
@@ -5311,9 +5906,11 @@ export class AppMessagesManager extends AppManager {
     const config = await this.apiManager.getConfig();
     const overflowMids = mids.splice(config.forwarded_count_max, mids.length - config.forwarded_count_max);
 
-    if(options.dropCaptions) {
-      options.dropAuthor = true;
-    }
+    const hasProtectedRichMessages = !options.allowDropRichAuthor && mids.some((mid) => (
+      !!(this.getMessageByPeer(fromPeerId, mid) as Message.message).rich_message
+    ));
+    const dropCaptions = !!options.dropCaptions && !hasProtectedRichMessages;
+    const dropAuthor = (!!options.dropAuthor || dropCaptions) && !hasProtectedRichMessages;
 
     const groups: {
       [groupId: string]: {
@@ -5330,7 +5927,8 @@ export class AppMessagesManager extends AppManager {
 
       const keys: Array<keyof Message.message> = [
         'entities',
-        'media'
+        'media',
+        'rich_message'
         // 'reply_markup'
       ];
 
@@ -5338,7 +5936,9 @@ export class AppMessagesManager extends AppManager {
         'invert_media'
       ];
 
-      if(!options.dropAuthor) {
+      // Only Premium accounts can hide the author of rich messages. Keep the
+      // optimistic header aligned with the server.
+      if(!dropAuthor) {
         message.fwd_from = this.generateForwardHeader(peerId, originalMessage);
         keys.push('views', 'forwards');
 
@@ -5347,7 +5947,7 @@ export class AppMessagesManager extends AppManager {
         }
       }
 
-      if(!options.dropCaptions || !originalMessage.media) {
+      if(!dropCaptions || !originalMessage.media) {
         keys.push('message');
       }
 
@@ -5464,8 +6064,8 @@ export class AppMessagesManager extends AppManager {
       silent: options.silent,
       schedule_date: options.scheduleDate,
       schedule_repeat_period: options.scheduleRepeatPeriod || undefined,
-      drop_author: options.dropAuthor,
-      drop_media_captions: options.dropCaptions,
+      drop_author: dropAuthor || undefined,
+      drop_media_captions: dropCaptions || undefined,
       send_as: options.sendAsPeerId ? this.appPeersManager.getInputPeerById(options.sendAsPeerId) : undefined,
       top_msg_id: options.threadId ? this.appMessagesIdsManager.generateMessageId(options.threadId) : undefined,
       allow_paid_stars: paidStars,
@@ -5574,6 +6174,7 @@ export class AppMessagesManager extends AppManager {
     }
 
     await this.checkSendOptions(options);
+    const allowDropRichAuthor = !!this.rootScope.premium;
 
     const {peerId, fromPeerId} = options;
     const promises: Promise<any>[] = [];
@@ -5581,6 +6182,7 @@ export class AppMessagesManager extends AppManager {
     if(ephemeralMids.length) {
       promises.push(this.forwardMessagesInner({
         ...options,
+        allowDropRichAuthor,
         peerId,
         fromPeerId,
         mids: ephemeralMids,
@@ -5594,6 +6196,7 @@ export class AppMessagesManager extends AppManager {
       promises.push(...splitted.map(([_channelId, {mids}]) => {
         return this.forwardMessagesInner({
           ...options,
+          allowDropRichAuthor,
           peerId,
           fromPeerId: _channelId ? channelId.toPeerId(true) : this.getMessageByPeer(fromPeerId, mids[0]).peerId,
           mids,
@@ -5793,7 +6396,8 @@ export class AppMessagesManager extends AppManager {
     const mirror: Mirrors['messages'] = {};
     [
       this.messagesStorageByPeerId,
-      this.scheduledMessagesStorage
+      this.scheduledMessagesStorage,
+      this.welcomeMessagesStorage
     ].forEach((storages) => {
       for(const key in storages) {
         const storage = storages[key];
@@ -5861,6 +6465,7 @@ export class AppMessagesManager extends AppManager {
     const s = key.split('_');
     const peerId: PeerId = +s[0];
     const type: MessagesStorageType = s[1] as any;
+    if(type === 'welcome') return this.getWelcomeMessagesStorage(peerId);
     return type === 'scheduled' ? this.getScheduledMessagesStorage(peerId) : this.getHistoryMessagesStorage(peerId);
   }
 
@@ -5889,7 +6494,7 @@ export class AppMessagesManager extends AppManager {
       storage?.type === 'history' &&
       isLegacyMessageId(mid) &&
       storage.peerId !== GLOBAL_HISTORY_PEER_ID &&
-      !this.isEphemeralMessage(message)
+      !this.isDeliveredEphemeralMessage(message)
     ) {
       const globalStorage = this.getGlobalHistoryMessagesStorage();
       this.setMessageToStorage(globalStorage, message);
@@ -5913,7 +6518,7 @@ export class AppMessagesManager extends AppManager {
       storage?.type === 'history' &&
       isLegacyMessageId(mid) &&
       storage.peerId !== GLOBAL_HISTORY_PEER_ID &&
-      !this.isEphemeralMessage(message)
+      !this.isDeliveredEphemeralMessage(message)
     ) {
       const globalStorage = this.getGlobalHistoryMessagesStorage();
       this.deleteMessageFromStorage(globalStorage, mid);
@@ -6715,7 +7320,7 @@ export class AppMessagesManager extends AppManager {
 
     const storage = this.groupedMessagesStorage[message.grouped_id];
     let minMid = Number.MAX_SAFE_INTEGER;
-    for(const [mid, message] of storage) {
+    for(const message of storage.values()) {
       if(message.mid < minMid) {
         minMid = message.mid;
       }
@@ -6744,7 +7349,7 @@ export class AppMessagesManager extends AppManager {
     const out: MyMessage[] = [];
     if((message as Message.message).grouped_id) {
       const storage = this.groupedMessagesStorage[(message as Message.message).grouped_id];
-      for(const [mid, message] of storage) {
+      for(const message of storage.values()) {
         if(verify(message)) {
           out.push(message);
         }
@@ -7141,8 +7746,17 @@ export class AppMessagesManager extends AppManager {
       }
     }
 
+    // only the chat's own copy: a log or scheduled copy of the anchor is no fresh original
+    if(isMessage && storage.type === 'history') {
+      this.keepAnchoredEphemeralOverRefetch(peerId, message);
+    }
+
     if(isMessage && message.message.length && !message.totalEntities) {
       this.wrapMessageEntities(message);
+    }
+
+    if(storage.type === 'history') {
+      this.appPeersManager.registerMessagePeers(message);
     }
 
     this.setMessageToStorage(storage, message);
@@ -7466,7 +8080,7 @@ export class AppMessagesManager extends AppManager {
     }
 
     const serverMessageId = getServerMessageId(mid);
-    const promise = this.apiManager.invokeApi('messages.getRichMessage', {
+    const promise: Promise<RichMessage | undefined> = this.apiManager.invokeApi('messages.getRichMessage', {
       peer: this.appPeersManager.getInputPeerById(peerId),
       id: serverMessageId
     }, {
@@ -8155,6 +8769,16 @@ export class AppMessagesManager extends AppManager {
       return false;
     }
 
+    // a welcome message stays editable for as long as it exists, by anyone who manages them —
+    // a rich one too, unless only part of it came (its id is no message's, so the rest cannot be
+    // fetched)
+    if(message?._ === 'message' && message.pFlags.welcome_template) {
+      return kind === 'text' &&
+        !message.rich_message?.pFlags.part &&
+        this.canMessageBeEdited(message, kind) &&
+        this.canManageWelcomeMessages(message.peerId);
+    }
+
     if(!message || !this.canMessageBeEdited(message, kind)) {
       return false;
     }
@@ -8189,7 +8813,15 @@ export class AppMessagesManager extends AppManager {
     return true;
   }
 
+  public canManageWelcomeMessages(peerId: PeerId) {
+    return peerId.isAnyChat() && this.appChatsManager.hasRights(peerId.toChatId(), 'manage_welcome_messages');
+  }
+
   public canDeleteMessage(message: MyMessage) {
+    if(message?._ === 'message' && message.pFlags.welcome_template) {
+      return this.canManageWelcomeMessages(message.peerId);
+    }
+
     return this.isEphemeralMessage(message) || message && (
       message.peerId.isUser() ||
       message.pFlags.out ||
@@ -8200,6 +8832,27 @@ export class AppMessagesManager extends AppManager {
 
   public getReplyKeyboard(peerId: PeerId) {
     return this.getHistoryStorage(peerId).replyMarkup;
+  }
+
+  /**
+   * Whether a message comes after the one the chat's keyboard came with. Ephemeral mids live in a
+   * range of their own above every history mid, so when either side is ephemeral the date decides.
+   */
+  private isAfterReplyMarkup(message: Message.messageService | Message.message, replyMarkup: ReplyMarkup) {
+    if(message.mid === replyMarkup.mid) {
+      return false;
+    }
+
+    if(!isEphemeralMessageId(message.mid) && !isEphemeralMessageId(replyMarkup.mid)) {
+      return message.mid > replyMarkup.mid;
+    }
+
+    // strictly later: our own ephemeral command comes back from the server only after the bot's
+    // answer to it may already be here, dated the same second — it is not an answer to that answer.
+    // A tie keeps the keyboard there is for incoming ones too: a history load merges every message
+    // of that second again, older ones included
+    const keyboardMessage = this.getMessageByPeer(message.peerId, replyMarkup.mid);
+    return !keyboardMessage || message.date > keyboardMessage.date;
   }
 
   public mergeReplyKeyboard(historyStorage: HistoryStorage, message: Message.messageService | Message.message) {
@@ -8224,7 +8877,7 @@ export class AppMessagesManager extends AppManager {
 
     const lastReplyMarkup = historyStorage.replyMarkup;
     if(messageReplyMarkup) {
-      if(lastReplyMarkup && lastReplyMarkup.mid >= message.mid) {
+      if(lastReplyMarkup && !this.isAfterReplyMarkup(message, lastReplyMarkup)) {
         return false;
       }
 
@@ -8255,16 +8908,28 @@ export class AppMessagesManager extends AppManager {
     if(message.pFlags.out) {
       if(lastReplyMarkup) {
         assumeType<ReplyMarkup.replyKeyboardMarkup>(lastReplyMarkup);
-        if(lastReplyMarkup.pFlags.single_use &&
+        // a single-use keyboard is spent by the next message, a force-reply by the answer to it
+        // (desktop's `lastKeyboardUsed`) — so reopening the chat does not ask for the reply again
+        const answersForceReply = isForceReplyMarkup(lastReplyMarkup) &&
+          (message as Message.message).reply_to_mid === lastReplyMarkup.mid;
+        if((lastReplyMarkup.pFlags.single_use || answersForceReply) &&
           !lastReplyMarkup.pFlags.hidden &&
-          (message.mid > lastReplyMarkup.mid || message.pFlags.is_outgoing) &&
+          (answersForceReply || this.isAfterReplyMarkup(message, lastReplyMarkup) || message.pFlags.is_outgoing) &&
           (message as Message.message).message) {
-          lastReplyMarkup.pFlags.hidden = true;
-          // this.log('set', historyStorage.reply_markup)
+          // a new object rather than a flag set in place: only top-level writes of the history
+          // storage reach the tab's mirror, and the tab is where the flag is read
+          historyStorage.replyMarkup = {
+            ...lastReplyMarkup,
+            pFlags: {...lastReplyMarkup.pFlags, hidden: true}
+          };
           return true;
         }
-      } else if(!historyStorage.maxOutId ||
-        message.mid > historyStorage.maxOutId) {
+      } else if(
+        // ephemeral mids are random and above the history's: they would make every later
+        // single-use keyboard look answered already
+        !isEphemeralMessageId(message.mid) &&
+        (!historyStorage.maxOutId || message.mid > historyStorage.maxOutId)
+      ) {
         historyStorage.maxOutId = message.mid;
       }
     }
@@ -9803,7 +10468,8 @@ export class AppMessagesManager extends AppManager {
 
   public hasOutgoingMessage(peerId: PeerId) {
     for(const randomId in this.pendingByRandomId) {
-      if(this.pendingByRandomId[randomId].peerId === peerId) {
+      const pending = this.pendingByRandomId[randomId];
+      if(pending.peerId === peerId) {
         return true;
       }
     }
@@ -9939,7 +10605,6 @@ export class AppMessagesManager extends AppManager {
 
     dumpTemporaryTopic();
 
-
     delete this.pendingNewBotforumTopics[peerId];
 
     beforeMessageSendCallbacks.forEach((callback) => callback());
@@ -10039,7 +10704,6 @@ export class AppMessagesManager extends AppManager {
     }
 
     const dialog = this.dialogsStorage.getAnyDialog(peerId, isLocalThreadUpdate ? threadId : undefined);
-
 
     if((!dialog || this.reloadConversationsPeers.has(peerId)) && !isLocalThreadUpdate) {
       let good = true;
@@ -10429,6 +11093,7 @@ export class AppMessagesManager extends AppManager {
     const peerId = this.getMessagePeer(message);
     const channelId = this.appPeersManager.isChannel(peerId) ? peerId.toChatId() : undefined;
     const mid = this.appMessagesIdsManager.generateMessageId(message.id, channelId);
+    this.invalidateRichMessage(peerId, mid);
     const storage = this.getHistoryMessagesStorage(peerId);
     if(!storage.has(mid)) {
       this.fixDialogUnreadMentionsIfNoMessage({peerId, threadId: getMessageThreadId(message, {isForum: this.appPeersManager.isForum(peerId), isBotforum: this.appPeersManager.isBotforum(peerId)}), force: true});
@@ -10451,7 +11116,6 @@ export class AppMessagesManager extends AppManager {
       // if(newMessage?._ === 'message' && oldMessage?._ === 'message' && oldMessage.uploadingFileName) {
       //   newMessage.uploadingFileName = [...oldMessage.uploadingFileName];
       // }
-
 
       return newMessage;
     }, false, true);
@@ -10613,7 +11277,6 @@ export class AppMessagesManager extends AppManager {
       }
 
       const messageThreadId = getMessageThreadId(message, {isForum, isBotforum});
-
 
       if(threadId && messageThreadId !== threadId ||
         monoforumThreadId && messageThreadId !== monoforumThreadId) {
@@ -11224,11 +11887,11 @@ export class AppMessagesManager extends AppManager {
     const ephemeralIds: number[] = [];
     mids = mids.filter((mid) => {
       const message = this.getMessageByPeer(peerId, mid);
-      if(!this.isEphemeralMessage(message)) {
+      if(!this.isDeliveredEphemeralMessage(message)) {
         return true;
       }
 
-      ephemeralIds.push(message.ephemeral_id);
+      ephemeralIds.push((message as MyEphemeralMessage).ephemeral_id);
       return false;
     });
     if(ephemeralIds.length) {
@@ -11516,7 +12179,7 @@ export class AppMessagesManager extends AppManager {
     const peerId = this.appPeersManager.getPeerId(peer.peer);
     const dialog = this.dialogsStorage.getAnyDialog(
       peerId,
-      isTopic ? this.appMessagesIdsManager.generateMessageId(peer.top_msg_id, (peer.peer as Peer.peerChannel).channel_id) : undefined
+      isTopic ? this.appNotificationsManager.getTopicThreadId(peer) : undefined
     ) as Dialog | ForumTopic;
     if(!dialog) {
       return;
@@ -11722,21 +12385,15 @@ export class AppMessagesManager extends AppManager {
     }
 
     const {peerId, muteUntil, threadId} = options;
-    const settings: InputPeerNotifySettings = {
-      _: 'inputPeerNotifySettings'
-    };
-
-    settings.mute_until = muteUntil;
-
     const peer = this.appPeersManager.getInputPeerById(peerId);
-    return this.appNotificationsManager.updateNotifySettings(threadId ? {
+    return this.appNotificationsManager.editNotifySettings(threadId ? {
       _: 'inputNotifyForumTopic',
       peer,
       top_msg_id: getServerMessageId(threadId)
     } : {
       _: 'inputNotifyPeer',
       peer
-    }, settings);
+    }, {mute_until: muteUntil});
   }
 
   public togglePeerMute({peerId, mute, threadId}: {peerId: PeerId, mute?: boolean, threadId?: number}) {
@@ -12181,6 +12838,187 @@ export class AppMessagesManager extends AppManager {
     }).then((updates) => {
       this.apiUpdatesManager.processUpdateMessage(updates);
     });
+  }
+
+  // * welcome messages (layer 229)
+
+  public getWelcomeMessagesStorage(peerId: PeerId) {
+    return this.welcomeMessagesStorage[peerId] ??= this.createMessageStorage(peerId, 'welcome');
+  }
+
+  public getWelcomeMessage(peerId: PeerId, mid: number) {
+    return this.getMessageFromStorage(this.getWelcomeMessagesStorage(peerId), mid);
+  }
+
+  /** How many welcome messages the chat has; `load` asks the server for the list first. */
+  public getWelcomeMessagesCount(peerId: PeerId, load?: boolean): MaybePromise<number> {
+    return load ?
+      this.getWelcomeMessages(peerId).then((mids) => mids.length) :
+      this.getWelcomeMessagesStorage(peerId).size;
+  }
+
+  /** How many welcome messages a chat may have (desktop and Android read the same key). */
+  public async getWelcomeMessagesLimit() {
+    const appConfig = await this.apiManager.getAppConfig();
+    return appConfig.ephemeral_welcome_messages_max ?? 5;
+  }
+
+  private getWelcomeMessageMid(peerId: PeerId, ephemeralId: number) {
+    const channelId = this.appPeersManager.isChannel(peerId) ? peerId.toChatId() : undefined;
+    return this.appMessagesIdsManager.generateMessageId(ephemeralId, channelId);
+  }
+
+  /** The chat's welcome messages in the order they are sent in, oldest first. */
+  public getWelcomeMessagesMids(peerId: PeerId) {
+    const storage = this.getWelcomeMessagesStorage(peerId);
+    return [...storage.values()]
+    .sort((a, b) => (a.date - b.date) || (a.mid - b.mid))
+    .map((message) => message.mid);
+  }
+
+  /**
+   * Layer 229's welcome messages: templates a chat's admins write, which the server sends, as
+   * ephemeral messages, to each member who joins. They are kept apart from the chat's history,
+   * like desktop's `WelcomeMessages`, and are only ever seen in their own section.
+   */
+  public getWelcomeMessages(peerId: PeerId): Promise<number[]> {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'ephemeral.getWelcomeMessages',
+      params: {
+        peer: this.appPeersManager.getInputPeerById(peerId),
+        hash: this.welcomeMessagesHashes.get(peerId) ?? 0
+      },
+      processResult: (result) => {
+        if(result._ === 'ephemeral.welcomeMessages') {
+          this.welcomeMessagesHashes.set(peerId, result.hash);
+          const received = new Set(result.messages.map((message) => this.saveWelcomeMessage(message).message.mid));
+          const storage = this.getWelcomeMessagesStorage(peerId);
+          // a template still uploading is not on the server yet: it stays until its echo comes
+          const gone = [...storage.keys()].filter((mid) => {
+            return !received.has(mid) && !(storage.get(mid) as Message.message).pFlags.is_outgoing;
+          });
+          this.removeWelcomeMessages(peerId, gone);
+        }
+
+        return this.getWelcomeMessagesMids(peerId);
+      }
+    });
+  }
+
+  private saveWelcomeMessage(message: EphemeralMessage) {
+    const peerId = this.getEphemeralPeerId(message);
+    const storage = this.getWelcomeMessagesStorage(peerId);
+    const existing = this.getMessageFromStorage(storage, this.getWelcomeMessageMid(peerId, message.id));
+    const localMessage = this.makeLocalEphemeralMessage(message, peerId, message.id);
+    localMessage.pFlags.welcome_template = true;
+    // new members get it from the chat itself, whoever wrote it: desktop shows the chat as its
+    // sender (`displayFrom`), Android writes the chat into from_id. It also keeps a template a bot
+    // admin wrote editable by the other admins, as a bot's own message would not be
+    localMessage.from_id = localMessage.peer_id;
+
+    if(existing) {
+      this.handleReleasingMessage(existing, storage);
+    }
+
+    const stored = this.saveMessage(localMessage, {storage}) as Message.message;
+    delete stored.pFlags.unread;
+    stored.storageKey = storage.key;
+    this.setMessageToStorage(storage, stored);
+    return {message: stored, existing};
+  }
+
+  /** An update carrying a welcome template: a new one, or a change to one, by any of the admins. */
+  private applyWelcomeMessage(message: EphemeralMessage) {
+    const {message: stored, existing} = this.saveWelcomeMessage(message);
+    if(existing) {
+      this.dispatchMessageEditEvent(stored, stored.storageKey);
+    } else {
+      this.rootScope.dispatchEvent('welcome_message_new', stored);
+    }
+  }
+
+  private removeWelcomeMessages(peerId: PeerId, mids: number[]) {
+    const storage = this.getWelcomeMessagesStorage(peerId);
+    const removed = mids.filter((mid) => {
+      const message = storage.get(mid);
+      if(!message) return false;
+      this.handleReleasingMessage(message, storage);
+      this.deleteMessageFromStorage(storage, mid);
+      return true;
+    });
+
+    if(removed.length) {
+      this.rootScope.dispatchEvent('welcome_messages_delete', {peerId, mids: removed});
+    }
+
+    return removed;
+  }
+
+  private editWelcomeMessage(
+    message: Message.message,
+    text: string,
+    options: Parameters<AppMessagesManager['editMessage']>[2],
+    inputRichMessage?: InputRichMessage
+  ) {
+    let entities = options.entities || [];
+    if(text && !inputRichMessage) {
+      [text, entities] = parseMarkdown(text, entities);
+    }
+
+    // a rich template is its own content, as a rich message is in an ordinary edit
+    const invoke = () => this.apiManager.invokeApi('ephemeral.editMessage', {
+      welcome: true,
+      peer: this.appPeersManager.getInputPeerById(message.peerId),
+      receiver_id: {_: 'inputUserEmpty'},
+      id: getServerMessageId(message.mid),
+      invert_media: inputRichMessage ? undefined : options.invertMedia,
+      message: inputRichMessage ? undefined : text,
+      entities: inputRichMessage ? undefined : this.getInputEntities(entities),
+      // there is no `no_webpage` here: the link preview picked in the composer rides as media, as
+      // it does when the template is sent
+      media: inputRichMessage ? undefined : this.getInputMediaWebPage(options) ?? options.newMedia,
+      rich_message: inputRichMessage
+    });
+    return this.invokeWithRichMessageReferenceRetry(inputRichMessage, invoke).then((updates) => {
+      this.apiUpdatesManager.processUpdateMessage(updates);
+    }, this.onEditMessageError);
+  }
+
+  /**
+   * A template still uploading has no server id: deleting it calls its send off, or its echo
+   * would bring it back. Returns the ones the server has to delete.
+   */
+  private cancelUploadingWelcomeMessages(peerId: PeerId, mids: number[]) {
+    const storage = this.getWelcomeMessagesStorage(peerId);
+    return mids.filter((mid) => {
+      const message = storage.get(mid) as Message.message;
+      if(!message?.pFlags.is_outgoing) {
+        return true;
+      }
+
+      this.cancelUploadingEphemeralSend(message);
+      return false;
+    });
+  }
+
+  public deleteWelcomeMessages(peerId: PeerId, mids: number[]) {
+    const peer = this.appPeersManager.getInputPeerById(peerId);
+    mids = this.cancelUploadingWelcomeMessages(peerId, mids);
+    const promises = mids.map((mid) => this.apiManager.invokeApi('ephemeral.deleteWelcomeMessage', {
+      peer,
+      id: getServerMessageId(mid)
+    }));
+    this.removeWelcomeMessages(peerId, mids);
+    return Promise.all(promises).then(noop);
+  }
+
+  public deleteAllWelcomeMessages(peerId: PeerId) {
+    const promise = this.apiManager.invokeApi('ephemeral.deleteAllWelcomeMessages', {
+      peer: this.appPeersManager.getInputPeerById(peerId)
+    });
+    const mids = [...this.getWelcomeMessagesStorage(peerId).keys()];
+    this.removeWelcomeMessages(peerId, this.cancelUploadingWelcomeMessages(peerId, mids));
+    return promise.then(noop);
   }
 
   public deleteScheduledMessages(peerId: PeerId, mids: number[]) {
@@ -12695,6 +13533,17 @@ export class AppMessagesManager extends AppManager {
       }
     }
 
+    // * a result that is not the bottom end still extends the bottom-end slice upward when it
+    // * overlaps its top (insertSlice unshifts the newer mids), so the stored top has to follow
+    const first = historyStorage.history?.first;
+    if(!inputFilter && first?.isEnd(SliceEnd.Bottom) && first[0] > historyStorage.maxId) {
+      historyStorage._maxId = first[0];
+
+      if(!options.previewOnly) {
+        this.reloadConversation(peerId);
+      }
+    }
+
     // * load grouped missing messages (only once per recursion)
     if(!inputFilter && !recursion) {
       const firstMessage = messages[0] as Message.message;
@@ -12740,7 +13589,6 @@ export class AppMessagesManager extends AppManager {
           }
         }
       };
-
 
       if(!isBottomEnd && firstMessage?.grouped_id) {
         await fillMissingGroupedMessages(true);
@@ -13071,13 +13919,6 @@ export class AppMessagesManager extends AppManager {
               }, storage);
             }
           }
-        }
-
-        if(fetchTargetedMessage) {
-          const index = messages.findIndex((message) => message.id === offsetId);
-          // if(index !== -1) {
-          //   messages.splice(index, 1);
-          // }
         }
 
         if('pts' in historyResult) {
@@ -13475,15 +14316,29 @@ export class AppMessagesManager extends AppManager {
 
     const key = this.getTypingKey(peerId, threadId);
     let typing = this.typings[key];
+    const isDraftAction = action._ === 'sendMessageTextDraftAction' ||
+      action._ === 'inputSendMessageRichMessageDraftAction';
     if(
       !peerId ||
       !(await this.canSendToPeer(peerId)) ||
       peerId === this.appPeersManager.peerId ||
-      // (!force && deepEqual(typing?.action, action))
-      (!force && typing?.action?._ === action._) ||
+      (!force && !isDraftAction && typing?.action?._ === action._) ||
       this.appPeersManager.isMonoforum(peerId)
     ) {
       return Promise.resolve(false);
+    }
+
+    let inputRichMessage: InputRichMessage.inputRichMessage;
+    if(
+      action._ === 'inputSendMessageRichMessageDraftAction' &&
+      action.rich_message._ === 'inputRichMessage'
+    ) {
+      inputRichMessage = this.resolveInputRichMessage(action.rich_message);
+      await this.assertRichMessage(inputRichMessage, {streaming: true});
+      action = {
+        ...action,
+        rich_message: inputRichMessage
+      };
     }
 
     if(typing?.timeout) {
@@ -13494,11 +14349,12 @@ export class AppMessagesManager extends AppManager {
       action
     };
 
-    return this.apiManager.invokeApi('messages.setTyping', {
+    const invoke = () => this.apiManager.invokeApi('messages.setTyping', {
       peer: this.appPeersManager.getInputPeerById(peerId),
       action,
       top_msg_id: threadId ? getServerMessageId(threadId) : undefined
-    }).finally(() => {
+    });
+    return this.invokeWithRichMessageReferenceRetry(inputRichMessage, invoke).finally(() => {
       if(typing === this.typings[key]) {
         typing.timeout = ctx.setTimeout(() => {
           delete this.typings[key];
@@ -14244,6 +15100,138 @@ export class AppMessagesManager extends AppManager {
 
   public cancelQueuedPaidMessages(peerId: PeerId) {
     this.paidMessagesQueue.cancelFor(peerId);
+  }
+
+  private getRichMessageChecklistStorage(state: Pick<RichMessageChecklistEdit, 'peerId' | 'scheduled'>) {
+    return state.scheduled ?
+      this.getScheduledMessagesStorage(state.peerId) :
+      this.getHistoryMessagesStorage(state.peerId);
+  }
+
+  private applyRichMessageChecklistUpdate(state: RichMessageChecklistEdit, richMessage: RichMessage.richMessage) {
+    const storage = this.getRichMessageChecklistStorage(state);
+    const message = this.getMessageFromStorage(storage, state.mid) as Message.message;
+    if(!message) return false;
+
+    this.modifyMessage(message, (message) => {
+      message.rich_message = richMessage;
+    }, storage);
+    this.invalidateRichMessage(state.peerId, state.mid);
+    this.rootScope.dispatchEvent('message_edit', {
+      storageKey: storage.key,
+      peerId: state.peerId,
+      mid: state.mid,
+      message
+    });
+    return true;
+  }
+
+  private scheduleRichMessageChecklistEdit(key: string, state: RichMessageChecklistEdit, delay = 350) {
+    if(state.timer) clearTimeout(state.timer);
+    state.timer = ctx.setTimeout(() => {
+      state.timer = undefined;
+      void this.flushRichMessageChecklistEdit(key, state);
+    }, delay);
+  }
+
+  private async flushRichMessageChecklistEdit(key: string, state: RichMessageChecklistEdit) {
+    if(this.richMessageChecklistEdits.get(key) !== state) return;
+    if(state.inFlight) {
+      state.flushPending = true;
+      return;
+    }
+
+    const storage = this.getRichMessageChecklistStorage(state);
+    const message = this.getMessageFromStorage(storage, state.mid) as Message.message;
+    if(!message?.rich_message) {
+      this.richMessageChecklistEdits.delete(key);
+      return;
+    }
+
+    const sentRevision = state.revision;
+    const sentRichMessage = state.current;
+    let failed = false;
+    const promise = this.editMessage(message, '', {
+      richMessage: {
+        input: toInputRichMessage(sentRichMessage),
+        output: sentRichMessage
+      }
+    });
+    state.inFlight = promise;
+
+    try {
+      await promise;
+    } catch(error) {
+      failed = true;
+      this.log.error('rich message checklist edit error:', error);
+    }
+
+    if(this.richMessageChecklistEdits.get(key) !== state) return;
+    state.inFlight = undefined;
+
+    if(failed) {
+      this.applyRichMessageChecklistUpdate(state, state.base);
+      this.richMessageChecklistEdits.delete(key);
+      return;
+    }
+
+    if(state.revision === sentRevision) {
+      this.richMessageChecklistEdits.delete(key);
+      return;
+    }
+
+    // The first edit completed while another checkbox was toggled. Keep the
+    // newer local page visible after the older server update, then send the
+    // accumulated follow-up edit. The successful payload is now our rollback
+    // base if that follow-up fails.
+    state.base = sentRichMessage;
+    this.applyRichMessageChecklistUpdate(state, state.current);
+    if(state.flushPending || !state.timer) {
+      state.flushPending = false;
+      this.scheduleRichMessageChecklistEdit(key, state, 0);
+    }
+  }
+
+  public async toggleRichMessageChecklist(params: {
+    peerId: PeerId,
+    mid: number,
+    path: number[],
+    checked: boolean,
+    scheduled?: boolean
+  }) {
+    const scheduled = !!params.scheduled;
+    const storage = scheduled ?
+      this.getScheduledMessagesStorage(params.peerId) :
+      this.getHistoryMessagesStorage(params.peerId);
+    const message = this.getMessageFromStorage(storage, params.mid) as Message.message;
+    if(!message?.rich_message || message.rich_message.pFlags.part) return false;
+    if(!await this.canEditMessage(message, 'text')) return false;
+
+    const key = `${scheduled ? 'scheduled' : 'history'}:${params.peerId}:${params.mid}`;
+    let state = this.richMessageChecklistEdits.get(key);
+    const current = state?.current || message.rich_message;
+    const updated = toggleRichMessageChecklist(current, params.path, params.checked);
+    if(!updated) return false;
+    if(updated === current) return true;
+
+    if(!state) {
+      state = {
+        peerId: params.peerId,
+        mid: params.mid,
+        scheduled,
+        base: copy(current),
+        current: updated,
+        revision: 1
+      };
+      this.richMessageChecklistEdits.set(key, state);
+    } else {
+      state.current = updated;
+      ++state.revision;
+    }
+
+    this.applyRichMessageChecklistUpdate(state, updated);
+    this.scheduleRichMessageChecklistEdit(key, state);
+    return true;
   }
 
   public confirmRepayRequest(requestId: number, confirmedPaymentResult: ConfirmedPaymentResult) {

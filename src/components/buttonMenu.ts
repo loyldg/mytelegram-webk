@@ -1,3 +1,5 @@
+import {handleMenuKeyDown} from '@helpers/dom/menuKeyboard';
+import Modes from '@config/modes';
 import flatten from '@helpers/array/flatten';
 import contextMenuController from '@helpers/contextMenuController';
 import cancelEvent from '@helpers/dom/cancelEvent';
@@ -110,6 +112,15 @@ export function ButtonMenuItem(options: ButtonMenuItemOptions) {
     (className ? ' ' + className : '') +
     (options.danger ? ' danger' : '');
 
+  // a11y: each clickable item is a menuitem; tabindex makes it focusable while
+  // the menu is open so the focus trap (Tab/Shift+Tab) and arrow-key navigation
+  // can reach it. The menu element itself is visibility:hidden until `.active`,
+  // so these are not tab-reachable until the menu is actually open.
+  if(onClick || options.inner) {
+    el.setAttribute('role', 'menuitem');
+    if(Modes.a11y) el.tabIndex = 0;
+  }
+
   if(IS_MOBILE) {
     ripple(el);
   }
@@ -214,12 +225,16 @@ export function ButtonMenuItem(options: ButtonMenuItemOptions) {
   if(checkboxField) {
     textElement.id ||= `btn-menu-item-label-${++nextButtonMenuLabelId}`;
     checkboxField.input.setAttribute('aria-labelledby', textElement.id);
+    checkboxField.input.setAttribute('role', checkboxField.input.type === 'radio' ? 'menuitemradio' : 'menuitemcheckbox');
+    el.setAttribute('role', 'none');
+    el.removeAttribute('tabindex');
     el.append(checkboxField.label);
     el.classList.add('has-checkbox')
   }
 
   if(options.separator === true || options.separatorDown) {
     options.separator = document.createElement('hr');
+    (options.separator as HTMLElement).setAttribute('role', 'separator');
   }
 
   if(options.secondary) {
@@ -257,6 +272,7 @@ export function ButtonMenuSync({listenerSetter, buttons, radioGroups}: {
 }) {
   const el: HTMLElement = document.createElement('div');
   el.classList.add('btn-menu');
+  el.setAttribute('role', 'menu');
 
   if(radioGroups) {
     buttons.forEach((b) => {
@@ -282,11 +298,13 @@ export function ButtonMenuSync({listenerSetter, buttons, radioGroups}: {
       const elements = buttons.filter((button) => button.radioGroup === group.name);
 
       const hr = document.createElement('hr');
+      hr.setAttribute('role', 'separator');
       elements[0].element.replaceWith(hr);
 
       const container = RadioForm(elements.map((e, idx) => {
         const input = e.checkboxField.input;
         input.type = 'radio';
+        input.setAttribute('role', 'menuitemradio');
         input.name = group.name;
         input.value = '' + +(idx === group.checked);
         input.checked = idx === group.checked;
@@ -301,19 +319,20 @@ export function ButtonMenuSync({listenerSetter, buttons, radioGroups}: {
     });
   }
 
-  // ButtonMenu is used for a mix of actions, native checkbox/radio controls,
-  // and static rows. Keep the ordinary tab model instead of claiming the
-  // composite ARIA menu pattern, which would also require roving focus and
-  // arrow-key navigation. Native form controls own their focus; only plain
-  // action rows need button semantics and delegated keyboard activation.
+
+  const add = listenerSetter ? listenerSetter.add(el) : el.addEventListener.bind(el);
+  if(Modes.a11y) {
+    add('keydown', handleMenuKeyDown);
+    return el;
+  }
+
+  // Without the a11y layer: the ordinary tab model — plain action rows are tab
+  // stops activated by Enter/Space, native checkbox/radio controls own their focus.
   buttons.forEach(({element, onClick, checkboxField}) => {
     if(!onClick || checkboxField || !element.classList.contains('btn-menu-item')) return;
-
-    element.setAttribute('role', 'button');
     element.tabIndex = 0;
   });
 
-  const add = listenerSetter ? listenerSetter.add(el) : el.addEventListener.bind(el);
   add('keydown', (e: KeyboardEvent) => {
     const target = e.target as HTMLElement;
     const item = target.closest<HTMLElement>('.btn-menu-item');

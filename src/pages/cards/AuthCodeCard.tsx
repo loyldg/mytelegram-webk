@@ -1,4 +1,5 @@
 import {JSX, Show, createSignal, onCleanup, onMount} from 'solid-js';
+import {Dynamic} from 'solid-js/web';
 
 import Button from '@components/buttonTsx';
 import CodeInputFieldCompat from '@components/codeInputField';
@@ -21,11 +22,12 @@ import {fastRaf} from '@helpers/schedulers';
 import toHHMMSS from '@helpers/string/toHHMMSS';
 import tsNow from '@helpers/tsNow';
 import {AuthSentCodeType, AuthSignIn} from '@layer';
-import {LangPackKey, i18n} from '@lib/langPack';
+import I18n, {LangPackKey, i18n} from '@lib/langPack';
 import setBlankToAnchor from '@lib/richTextProcessor/setBlankToAnchor';
 import lottieLoader from '@lib/lottie/lottieLoader';
 import LottiePlayer from '@lib/lottie/lottiePlayer';
 import ctx from '@environment/ctx';
+import Modes from '@config/modes';
 
 import AuthCard from '@/pages/AuthCard';
 import AuthCardError from '@/pages/AuthCardError';
@@ -40,6 +42,7 @@ import {
   getCodeLength,
   getResendLangKey,
   getResendPendingLangKey,
+  getResendTimeout,
   isEmailCode,
   sentCodeToCardSpec,
   withPhoneNumber
@@ -49,9 +52,6 @@ import styles from '@/pages/authFlow.module.scss';
 if(import.meta.hot) import.meta.hot.accept();
 
 type Spec = Extract<CardSpec, {name: 'authCode'}>;
-
-/** `auth.resendCode` is offered after this long when the server names no timeout. */
-const DEFAULT_RESEND_TIMEOUT = 60;
 
 /**
  * Card variant of `pageAuthCode` — every code the server can ask for, except the
@@ -103,16 +103,19 @@ export default function AuthCodeCard(props: {spec: Spec}) {
   let player: LottiePlayer | undefined;
   let resetEmailTimer: number | undefined;
   let resendTimer: number | undefined;
-  let resendDeadline = 0;
   let resending = false;
 
   /* ---------- header pieces (mutated imperatively in applySentCode) ---------- */
 
-  const phoneEl = document.createElement('h4');
+  // without `?a11y=1` the number stays an h4, which is what gives it the global heading size
+  const phoneEl = document.createElement(Modes.a11y ? 'span' : 'h4');
   phoneEl.classList.add(styles.phone);
 
   const editButton = document.createElement('span');
   editButton.classList.add(styles.phoneEdit);
+  editButton.setAttribute('role', 'button');
+  editButton.setAttribute('aria-label', I18n.format('Edit', true));
+  if(Modes.a11y) editButton.tabIndex = 0;
   editButton.append(Icon('edit'));
   attachClickEvent(editButton, () => navigate({name: 'signIn'}));
 
@@ -120,7 +123,7 @@ export default function AuthCodeCard(props: {spec: Spec}) {
 
   // Digit boxes and the word/phrase field are different widgets, and the tracking
   // monkey binds to whichever one is live — so both are rebuilt together by
-  // `applySentCode()` and disposed here.
+  // `applySentCode()`.
   const inputHost = document.createElement('div');
   inputHost.classList.add(styles.codeInputHost);
 
@@ -146,11 +149,15 @@ export default function AuthCodeCard(props: {spec: Spec}) {
     markError(i18n(key));
   }
 
+  /**
+   * Leaves the field's nodes where they are: the card unmounts before its exit
+   * animation starts, and a field pulled out of it then would collapse the card
+   * while it is still fading out. Only a rebuild detaches them.
+   */
   function disposeInput() {
     codeInputField?.cleanup();
     codeInputField = undefined;
     textInputField = undefined;
-    inputHost.replaceChildren();
   }
 
   function rebuildInput() {
@@ -158,6 +165,7 @@ export default function AuthCodeCard(props: {spec: Spec}) {
     const length = getCodeLength(sentCode.type);
 
     disposeInput();
+    inputHost.replaceChildren();
     currentInputKind = kind;
     setInputKind(kind);
 
@@ -241,9 +249,6 @@ export default function AuthCodeCard(props: {spec: Spec}) {
         case 'SESSION_PASSWORD_NEEDED':
           good = true;
           navigate({name: 'password'});
-          setTimeout(() => {
-            if(codeInputField) codeInputField.value = '';
-          }, 300);
           break;
         case 'PHONE_CODE_EXPIRED':
           showError('PHONE_CODE_EXPIRED');
@@ -365,7 +370,7 @@ export default function AuthCodeCard(props: {spec: Spec}) {
     // a resend is in flight; its own "requesting…" line stands until it answers
     if(resending) return;
 
-    const diff = resendDeadline - tsNow(true);
+    const diff = sentCode.resend_deadline - tsNow(true);
     if(diff > 0) {
       setResendContent(i18n(getResendPendingLangKey(sentCode.next_type), [toHHMMSS(diff)]));
       resendTimer = ctx.setTimeout(updateResend, 1000);
@@ -414,7 +419,8 @@ export default function AuthCodeCard(props: {spec: Spec}) {
         const next = withPhoneNumber(code, sentCode.phone_number);
         if(next.type._ === 'auth.sentCodeTypeEmailCode') {
           // still the same email screen, only the reset countdown moved — leave
-          // the input and the animation alone
+          // the input, the animation and the resend countdown alone
+          next.resend_deadline = sentCode.resend_deadline;
           sentCode = next;
           persistSentCode();
           updatePendingEmail(next.type);
@@ -548,7 +554,8 @@ export default function AuthCodeCard(props: {spec: Spec}) {
 
     setSentTypeContent(i18n(key, args));
 
-    resendDeadline = tsNow(true) + (sentCode.timeout || DEFAULT_RESEND_TIMEOUT);
+    // a code restored after a reload already has its deadline
+    sentCode.resend_deadline ??= tsNow(true) + getResendTimeout(sentCode);
     updateResend();
 
     persistSentCode();
@@ -579,11 +586,12 @@ export default function AuthCodeCard(props: {spec: Spec}) {
       header={
         <MediaHeader>
           <MediaHeader.Sticker element={stickerHost} size={stickerSize}/>
-          <MediaHeader.Title>
-            <div class={styles.phoneWrapper}>
+          {/* the heading only with `?a11y=1`: without it the number is an h4 of its own */}
+          <MediaHeader.Title tag={Modes.a11y ? 'h1' : undefined}>
+            <Dynamic component={Modes.a11y ? 'span' : 'div'} class={styles.phoneWrapper}>
               {phoneEl}
               {editButton}
-            </div>
+            </Dynamic>
           </MediaHeader.Title>
           <MediaHeader.Subtitle class="secondary">{sentTypeContent()}</MediaHeader.Subtitle>
         </MediaHeader>
@@ -591,7 +599,7 @@ export default function AuthCodeCard(props: {spec: Spec}) {
       inputWrapper={false}
     >
       {inputHost}
-      <AuthCardError content={errorContent()} />
+      <AuthCardError content={errorContent()} describes={activeInput()} />
       <Show when={inputKind() === 'text'}>
         <Button
           class={classNames('btn-primary btn-color-primary', styles.wordSubmit)}

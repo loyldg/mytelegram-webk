@@ -1,3 +1,4 @@
+import I18n, {LangPackKey} from '@lib/langPack';
 import type LazyLoadQueueIntersector from '@components/lazyLoadQueueIntersector';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import appImManager from '@lib/appImManager';
@@ -20,7 +21,6 @@ import blurActiveElement from '@helpers/dom/blurActiveElement';
 import whichChild from '@helpers/dom/whichChild';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import DropdownHover from '@helpers/dropdownHover';
-import pause from '@helpers/schedulers/pause';
 import {IS_APPLE_MOBILE} from '@environment/userAgent';
 import {AppManagers} from '@lib/managers';
 import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
@@ -40,6 +40,7 @@ import Tabs from '@components/tabs';
 import StickersTabCategory from '@components/emoticonsDropdown/category';
 import {Middleware} from '@helpers/middleware';
 import {Accessor, createSignal, Setter} from 'solid-js';
+import {getChatInputEditor} from '@components/chat/inputEditor/registry';
 
 export const EMOTICONSSTICKERGROUP: AnimationItemGroup = 'emoticons-dropdown';
 
@@ -75,20 +76,21 @@ const renderEmojiDropdownElement = (): HTMLDivElement => {
       </div>
     </div>`;
   // the first word of `className` names the tab, the rest are extra classes on it
-  const a: [string, Icon, number][] = [
-    ['search justify-self-start', 'search', -1],
-    ['emoji', 'smile', 0],
-    ['stickers', 'stickers_face', 1],
-    ['gifs', 'gifs', 2],
-    ['delete justify-self-end', 'deleteleft', -1]
+  const a: [string, Icon, number, LangPackKey][] = [
+    ['search justify-self-start', 'search', -1, 'Search'],
+    ['emoji', 'smile', 0, 'Emoji'],
+    ['stickers', 'stickers_face', 1, 'AccDescr.Stickers'],
+    ['gifs', 'gifs', 2, 'AccDescr.Gifs'],
+    ['delete justify-self-end', 'deleteleft', -1, 'AccDescr.DeleteLastCharacter']
   ];
   const d = div.firstElementChild as HTMLDivElement;
   d.append(Tabs.Menu({
     class: 'emoji-tabs emoticons-menu no-stripe',
-    children: a.map(([className, icon, tabId]) => Tabs.MenuIconTab({
+    children: a.map(([className, icon, tabId, ariaLabel]) => Tabs.MenuIconTab({
       icon,
       class: `emoji-tabs-${className}`,
-      tab: tabId
+      tab: tabId,
+      label: I18n.format(ariaLabel, true)
     }))
   }) as HTMLElement);
   return d;
@@ -312,6 +314,12 @@ export class EmoticonsDropdown extends DropdownHover {
     attachClickEvent(this.deleteBtn, (e) => {
       cancelEvent(e);
       const input = this.chatInput.messageInput;
+      const editor = getChatInputEditor(input);
+      if(editor) {
+        editor.deleteBackward();
+        return;
+      }
+
       // RichInputHandler.getInstance().makeFocused(this.chatInput.messageInput);
       let range = RichInputHandler.getInstance().getSavedRange(input);
       if(!range) {

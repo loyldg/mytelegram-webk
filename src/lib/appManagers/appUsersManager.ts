@@ -20,6 +20,8 @@ import SearchIndex from '@lib/searchIndex';
 import {AppManager} from '@appManagers/manager';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import canSendToUser from '@appManagers/utils/users/canSendToUser';
+import getUserStatusForSort from '@appManagers/utils/users/getUserStatusForSort';
+import {getUserSortName} from '@appManagers/utils/users/sortContacts';
 import {AppStoragesManager} from '@appManagers/appStoragesManager';
 import deepEqual from '@helpers/object/deepEqual';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
@@ -690,9 +692,7 @@ export class AppUsersManager extends AppManager {
       oldUser.sortName === undefined ||
       oldUser.first_name !== user.first_name ||
       oldUser.last_name !== user.last_name) {
-      const fullName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
-
-      user.sortName = user.pFlags.deleted ? '' : cleanSearchText(fullName, false);
+      user.sortName = user.pFlags.deleted ? '' : cleanSearchText(getUserSortName(user), false);
     } else {
       user.sortName = oldUser.sortName;
     }
@@ -817,32 +817,7 @@ export class AppUsersManager extends AppManager {
       status = user?.status;
     }
 
-    if(status) {
-      const expires = status._ === 'userStatusOnline' ? status.expires : (status._ === 'userStatusOffline' ? status.was_online : 0);
-      if(expires) {
-        return expires;
-      }
-
-      /* const timeNow = tsNow(true);
-      switch(status._) {
-        case 'userStatusRecently':
-          return timeNow - 86400 * 3;
-        case 'userStatusLastWeek':
-          return timeNow - 86400 * 7;
-        case 'userStatusLastMonth':
-          return timeNow - 86400 * 30;
-      } */
-      switch(status._) {
-        case 'userStatusRecently':
-          return 3;
-        case 'userStatusLastWeek':
-          return 2;
-        case 'userStatusLastMonth':
-          return 1;
-      }
-    }
-
-    return 0;
+    return getUserStatusForSort(status);
   }
 
   public getUser(id: User | UserId) {
@@ -972,6 +947,12 @@ export class AppUsersManager extends AppManager {
       return {_: 'inputUserSelf'};
     }
 
+    // * a `min` user's access_hash is not accepted by most methods — name them through a message
+    const fromMessage = user?.pFlags?.min && this.appPeersManager.getMessageWithPeer(id.toPeerId(false));
+    if(fromMessage) {
+      return {_: 'inputUserFromMessage', ...fromMessage, user_id: id};
+    }
+
     return {
       _: 'inputUser',
       user_id: id,
@@ -979,7 +960,7 @@ export class AppUsersManager extends AppManager {
     };
   }
 
-  public getUserInputPeer(id: UserId): InputPeer.inputPeerSelf | InputPeer.inputPeerUser {
+  public getUserInputPeer(id: UserId): InputPeer.inputPeerSelf | InputPeer.inputPeerUser | InputPeer.inputPeerUserFromMessage {
     const user = this.getUser(id);
     // ! do not use it, there are places that don't support it. need explicit peer id
     // if(user.pFlags?.self) {
@@ -990,6 +971,11 @@ export class AppUsersManager extends AppManager {
     // * ourselves beats an inputPeerUser with an undefined access_hash
     if(!user && id === this.userId) {
       return {_: 'inputPeerSelf'};
+    }
+
+    const fromMessage = user?.pFlags?.min && this.appPeersManager.getMessageWithPeer(id.toPeerId(false));
+    if(fromMessage) {
+      return {_: 'inputPeerUserFromMessage', ...fromMessage, user_id: id};
     }
 
     return {
@@ -1147,6 +1133,29 @@ export class AppUsersManager extends AppManager {
 
         return topPeers;
       });
+    }).catch((err) => {
+      // * don't keep a failure for the whole session, the next caller asks again
+      delete this.getTopPeersPromises[type];
+      throw err;
+    });
+  }
+
+  /**
+   * Takes a peer out of the top correspondents, on the server and in the cached list
+   */
+  public resetTopPeerRating(peerId: PeerId) {
+    const type: TopPeerType = 'correspondents';
+    return this.apiManager.invokeApi('contacts.resetTopPeerRating', {
+      category: {_: 'topPeerCategoryCorrespondents'},
+      peer: this.appPeersManager.getInputPeerById(peerId)
+    }).then(() => {
+      delete this.getTopPeersPromises[type];
+      return this.appStateManager.getState().then((state) => {
+        const cached = state.topPeersCache[type];
+        if(!cached?.peers) return;
+        cached.peers = cached.peers.filter((topPeer) => topPeer.id !== peerId);
+        this.appStateManager.pushToState('topPeersCache', state.topPeersCache);
+      });
     });
   }
 
@@ -1209,7 +1218,8 @@ export class AppUsersManager extends AppManager {
       return out;
     });
   } */
-  public searchContacts(query: string, limit = 20) {
+  // * `filter` asks the server for channels or bots only (both at once are not supported)
+  public searchContacts(query: string, limit = 20, filter?: 'broadcasts' | 'bots') {
     // handle 't.me/username' as 'username'
     const entities = parseEntities(query);
     if(entities.length && entities[0].length === query.trim().length && entities[0]._ === 'messageEntityUrl') {
@@ -1224,7 +1234,8 @@ export class AppUsersManager extends AppManager {
 
     return this.apiManager.invokeApiCacheable('contacts.search', {
       q: query,
-      limit
+      limit,
+      ...(filter && {[filter]: true})
     }, {cacheSeconds: 60}).then((peers) => {
       this.saveApiUsers(peers.users);
       this.appChatsManager.saveApiChats(peers.chats);

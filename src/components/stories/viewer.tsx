@@ -1,3 +1,5 @@
+import {shouldPreserveKeyboardFocus} from '@helpers/dom/isKeyboardControl';
+import createFocusTrap, {FocusTrap} from '@helpers/dom/focusTrap';
 /* @refresh reload */
 
 import {animateSingle, cancelAnimationByKey} from '@helpers/animation';
@@ -21,7 +23,9 @@ import {Middleware} from '@helpers/middleware';
 import wrapRichText, {WrapRichTextOptions} from '@lib/richTextProcessor/wrapRichText';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
 import tsNow from '@helpers/tsNow';
-import {LangPackKey, i18n, joinElementsWith} from '@lib/langPack';
+import I18n, {LangPackKey, i18n, joinElementsWith} from '@lib/langPack';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
 import formatDuration, {DurationType} from '@helpers/formatDuration';
 import {easeOutCubicApply} from '@helpers/easing/easeOutCubic';
 import findUpClassName from '@helpers/dom/findUpClassName';
@@ -53,6 +57,7 @@ import idleController from '@helpers/idleController';
 import OverlayClickHandler from '@helpers/overlayClickHandler';
 import getStoryPrivacyType, {StoryPrivacyType} from '@appManagers/utils/stories/privacyType';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
+import removeStoriesFromRecent from '@components/stories/removeFromRecent';
 import StackedAvatars from '@components/stackedAvatars';
 import {processDialogElementForReaction} from '@components/popups/reactedList';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
@@ -108,6 +113,7 @@ import StoryWeatherArea, {toggleTemperatureUnit} from '@components/stories/weath
 import StoryMusicPanel, {STORY_MUSIC_PANEL_CLASS} from '@components/stories/musicPanel';
 import getAudioTitles from '@appManagers/utils/docs/getAudioTitles';
 import type {MyDocument} from '@appManagers/appDocsManager';
+import A11yButton from '@components/a11yButton';
 
 export const STORY_DURATION = 5e3;
 const STORY_HEADER_AVATAR_SIZE = 32;
@@ -299,9 +305,10 @@ const StoryInput = (props: {
     <ButtonIconTsx
       ref={btnReactionEl}
       onClick={onReactionClick}
-      tabIndex={-1}
       class="btn-circle btn-reaction chat-input-secondary-button chat-secondary-button"
       noRipple={true}
+      aria-label={I18n.format('Reactions', true)}
+      aria-pressed={!!(props.currentStory() as StoryItem.storyItem)?.sent_reaction}
     >
       {props.reaction()}
     </ButtonIconTsx>
@@ -865,6 +872,15 @@ const StoryMediaArea = (props: {
     props.setReady(true);
   }
 
+  // accessible name for the interactive overlay (only when the area has an action)
+  const interactiveLabel = createMemo<LangPackKey>(() => {
+    if(isReaction()) return 'Reactions';
+    if(isLocation()) return 'StoryViewLocation';
+    if(isPost()) return 'Story.ViewPost';
+    if(isLink()) return 'OpenUrlTitle';
+    return undefined;
+  });
+
   let div: HTMLDivElement;
   return (
     <div
@@ -883,6 +899,10 @@ const StoryMediaArea = (props: {
       )}
       style={`left: ${x}%; top: ${y}%; width: ${w}%; height: ${h}%; --rotate: ${rotation}deg`}
       onClick={onClick}
+      role={interactiveLabel() ? 'button' : undefined}
+      tabindex={Modes.a11y && interactiveLabel() ? 0 : undefined}
+      onKeyDown={interactiveLabel() ? buttonKeyDown : undefined}
+      aria-label={interactiveLabel() ? I18n.format(interactiveLabel(), true) : undefined}
     >
       {children()}
     </div>
@@ -1868,6 +1888,8 @@ const Stories = (props: {
       classList={{[styles.noSound]: noSound()}}
       icon={stories.muted || noSound() ? 'speakeroff_filled' : 'speaker_filled'}
       onClick={toggleMute}
+      aria-label={I18n.format(stories.muted || noSound() ? 'VoipUnmute' : 'Call.Mute', true)}
+      aria-pressed={!!(stories.muted || noSound())}
     />
   );
 
@@ -1980,6 +2002,9 @@ const Stories = (props: {
   const captionContainer = (
     <div
       ref={captionScrollable}
+      tabindex={Modes.a11y ? 0 : undefined}
+      role="region"
+      aria-label={I18n.format('AccDescr.StoryCaption', true)}
       class={classNames(
         'scrollable',
         'scrollable-y',
@@ -2008,6 +2033,8 @@ const Stories = (props: {
   const contentItem = (
     <div
       class={styles.ViewerStoryContentItem}
+      role="img"
+      aria-label={I18n.format(videoDuration() ? 'AttachVideo' : 'AttachPhoto', true)}
       style={captionOpacity() && {opacity: 1 - captionOpacity() * 0.5}}
     >
       {content()}
@@ -2264,6 +2291,12 @@ const Stories = (props: {
       onClick: () => togglePeerHidden(false),
       verify: () => isPeerArchived(false)
     }, {
+      icon: 'delete',
+      text: 'StoriesRemoveFromRecent',
+      onClick: () => removeStoriesFromRecent(props.state.peerId),
+      verify: async() => props.state.peerId !== rootScope.myId &&
+        await rootScope.managers.appStoriesManager.getPeerStoriesRemoval(props.state.peerId) === 'remove'
+    }, {
       icon: 'statistics_filled',
       text: 'ViewStatistics',
       onClick: () => {
@@ -2317,6 +2350,7 @@ const Stories = (props: {
     ...topMenuOptions
   });
   btnMenu.classList.add('night');
+  btnMenu.setAttribute('aria-label', I18n.format('MultiAccount.More', true));
 
   // * top menu end
 
@@ -2370,9 +2404,9 @@ const Stories = (props: {
     );
   });
 
-  let privacyIconElement: HTMLDivElement;
+  let privacyIconElement: HTMLButtonElement;
   const privacyIcon = (
-    <div
+    <A11yButton
       ref={privacyIconElement}
       class={classNames(
         styles.ViewerStoryPrivacy,
@@ -2380,9 +2414,10 @@ const Stories = (props: {
         `privacy-bg-${privacyType()}`
       )}
       onClick={() => onPrivacyIconClick()}
+      aria-label={I18n.format('PrivacyTitle', true)}
     >
       {Icon(privacyIconMap[privacyType()])}
-    </div>
+    </A11yButton>
   );
 
   // * privacy icon end
@@ -2515,7 +2550,7 @@ const Stories = (props: {
     });
   }
 
-  let footerReactionElement: HTMLSpanElement;
+  let footerReactionElement: HTMLButtonElement;
   const footer = (isMe || CHANGELOG_PEER_ID === props.state.peerId || !props.state.peerId.isUser()) && (
     <div
       class={classNames(
@@ -2527,10 +2562,10 @@ const Stories = (props: {
     >
       {isMe ? (
         <>
-          <div class={styles.ViewerStoryFooterLeft} onClick={openViewsList}>
+          <A11yButton class={styles.ViewerStoryFooterLeft} onClick={openViewsList}>
             {stackedAvatars() && stackedAvatars().container}
             {getViews()}
-          </div>
+          </A11yButton>
           <div class={styles.ViewerStoryFooterRight}>
             <ButtonIconTsx icon="delete" onClick={onDeleteClick} />
           </div>
@@ -2552,18 +2587,21 @@ const Stories = (props: {
                 }}
               />
             )}
-            <span
+            <A11yButton
+              as="span"
+              aria-label={I18n.format('Reactions', true)}
+              aria-pressed={!!(currentStory() as StoryItem.storyItem).sent_reaction}
               ref={footerReactionElement}
               class={classNames(
                 styles.ViewerStoryFooterIcon,
                 styles.ViewerStoryFooterReaction,
                 (currentStory() as StoryItem.storyItem).sent_reaction && styles.isReacted
               )}
-              onClick={(e) => sendReaction({reaction: {_: 'reactionEmoji', emoticon: DEFAULT_REACTION_EMOTICON}, target: footerReactionElement.firstElementChild as HTMLElement})}
+              onClick={() => sendReaction({reaction: {_: 'reactionEmoji', emoticon: DEFAULT_REACTION_EMOTICON}, target: footerReactionElement.firstElementChild as HTMLElement})}
             >
               <IconTsx icon={(currentStory() as StoryItem.storyItem).sent_reaction ? 'reactions_filled' : 'reactions'} class={styles.ViewerStoryFooterIconIcon}></IconTsx>
               {(currentStory() as StoryItem.storyItem).views?.reactions_count || 0}
-            </span>
+            </A11yButton>
           </div>
         </>
       ) : i18n('StoryCantReply'))}
@@ -2666,6 +2704,10 @@ const Stories = (props: {
     <div
       ref={div}
       class={styles.ViewerStoryContainer}
+      role={!isActive() ? 'button' : undefined}
+      tabindex={Modes.a11y && !isActive() ? 0 : undefined}
+      aria-label={!isActive() ? I18n.format('OpenStory', true) : undefined}
+      onKeyDown={!isActive() ? buttonKeyDown : undefined}
       classList={{
         ...(props.isFull() ? {
           [styles.fromLeft]: fromLeft(),
@@ -2748,7 +2790,7 @@ const Stories = (props: {
             {slides}
           </div>
           <div ref={headerDiv} class={classNames(styles.ViewerStoryHeader, 'night')}>
-            <div class={styles.ViewerStoryHeaderLeft} onClick={onProfileClick}>
+            <A11yButton class={styles.ViewerStoryHeaderLeft} onClick={onProfileClick}>
               {avatar.element}
               <div class={styles.ViewerStoryHeaderInfo}>
                 <div class={styles.ViewerStoryHeaderRow}>
@@ -2769,12 +2811,13 @@ const Stories = (props: {
                   {getDateText()}
                 </div>
               </div>
-            </div>
+            </A11yButton>
             <div class={styles.ViewerStoryHeaderRight}>
               {privacyType() && privacyIcon}
               <ButtonIconTsx
                 icon={stories.paused && !stories.playAfterGesture ? 'play_filled' : 'pause_filled'}
                 onClick={() => actions.toggle()}
+                aria-label={I18n.format(stories.paused && !stories.playAfterGesture ? 'Play' : 'Pause', true)}
               />
               {videoDuration() && muteButton}
               {/* <ButtonIconTsx icon={'more'} /> */}
@@ -2783,6 +2826,7 @@ const Stories = (props: {
                 <ButtonIconTsx
                   icon={'close'}
                   onClick={() => props.close()}
+                  aria-label={I18n.format('Close', true)}
                 />
               )}
             </div>
@@ -2841,6 +2885,8 @@ export default function StoriesViewer(props: {
 }) {
   const [stories, actions] = useStories();
   const [show, setShow] = createSignal(false);
+  const previouslyFocused = getOverlayRoot().ownerDocument.activeElement as HTMLElement;
+  let focusTrap: FocusTrap;
   const isFull = createMemo(() => {
     return windowSize.height > windowSize.width ||
       windowSize.width < (stories.width + 135 + 8 * 2) ||
@@ -2859,6 +2905,7 @@ export default function StoriesViewer(props: {
   ]);
 
   const onKeyDown = (e: KeyboardEvent) => {
+    if(Modes.a11y && shouldPreserveKeyboardFocus(e)) return;
     if(isTargetAnInput(getAppWindow().document.activeElement as HTMLElement)) {
       throttledKeyDown.clear();
       return;
@@ -2913,6 +2960,7 @@ export default function StoriesViewer(props: {
 
   onCleanup(() => {
     disposeKeyDownListener?.();
+    focusTrap?.deactivate();
     toggleOverlay(false);
     swipeHandler.removeListeners();
     appNavigationController.removeItem(navigationItem);
@@ -3030,12 +3078,15 @@ export default function StoriesViewer(props: {
     const preserve = STORIES_PRESERVE + STORIES_PRESERVE_HIDDEN;
     const getItemsToRender = (index: number) => stories.peers.slice(Math.max(index - preserve, 0), Math.min(index + preserve + 1, stories.peers.length));
     const itemsToRender = createMemo(() => getItemsToRender(stories.index));
-    const btnClose = <ButtonIconTsx ref={closeButton} icon={'close'} class={styles.ViewerClose} onClick={() => close()} />;
+    const btnClose = <ButtonIconTsx ref={closeButton} icon={'close'} class={styles.ViewerClose} onClick={() => close()} aria-label={I18n.format('Close', true)} />;
     const transitions: WeakMap<Element, Accessor<boolean>> = new WeakMap();
 
     return (
       <div
         ref={div}
+        role="dialog"
+        aria-modal="true"
+        aria-label={I18n.format('Stories', true)}
         class={classNames(
           styles.Viewer,
           !show() && styles.isInvisible,
@@ -3063,6 +3114,14 @@ export default function StoriesViewer(props: {
         <TransitionGroup noWait={() => isFull()/*  || !stories.hasViewer */} transitions={transitions}>
           <For each={itemsToRender()}>{createStories}</For>
         </TransitionGroup>
+        {Modes.a11y && <>
+          <button type="button" class="sr-only sr-only-focusable" onClick={() => actions.goToNearestStorySafe(false)}>
+            {i18n('KeyboardShortcuts.Action.PreviousStory')}
+          </button>
+          <button type="button" class="sr-only sr-only-focusable" onClick={() => actions.goToNearestStorySafe(true)}>
+            {i18n('KeyboardShortcuts.Action.NextStory')}
+          </button>
+        </>}
       </div>
     );
   });
@@ -3215,6 +3274,7 @@ export default function StoriesViewer(props: {
 
   const navigationItem: NavigationItem = {
     type: 'stories',
+    noBlurOnPop: Modes.a11y,
     onPop: () => {
       if(animating) {
         return false;
@@ -3457,11 +3517,16 @@ export default function StoriesViewer(props: {
         }}
         onAfterEnter={() => {
           animating = false;
+          focusTrap = createFocusTrap(div);
+          // land on the dialog, not on its first button: that one is Close, and Space — the
+          // pause key — would press it
+          focusTrap.activate(previouslyFocused, div);
           actions.viewerReady(true);
           deferred.resolve();
           // play();
         }}
         onExit={(el, done) => {
+          focusTrap?.deactivate();
           animating = true;
           actions.viewerReady(false);
           animate(el, false, done);
@@ -3469,7 +3534,7 @@ export default function StoriesViewer(props: {
         onAfterExit={() => {
           animating = false;
           props.onExit?.();
-          stop();
+          actions.stop();
           deferred.resolve();
         }}
         appear
@@ -3513,7 +3578,7 @@ export const createStoriesViewer = (
   }
 
   return (
-    <Portal mount={document.getElementById('stories-viewer')}>
+    <Portal mount={getAppWindow().document.getElementById('stories-viewer')}>
       <StoriesViewer {...props} />
     </Portal>
   );

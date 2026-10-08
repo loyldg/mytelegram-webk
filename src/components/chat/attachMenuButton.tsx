@@ -5,7 +5,8 @@ import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {attachHotClassName} from '@helpers/solid/classname';
 import defineSolidElement, {PassedProps} from '@lib/solidjs/defineSolidElement';
 import {createEffect, createSignal, onCleanup, Show} from 'solid-js';
-import {Transition} from 'solid-transition-group';
+import I18n from '@lib/langPack';
+import Modes from '@config/modes';
 import styles from './attachMenuButton.module.scss';
 
 if(import.meta.hot) import.meta.hot.accept();
@@ -24,7 +25,10 @@ const AttachMenuButton = defineSolidElement({
     attachHotClassName(props.element, styles.Container, 'btn-menu-toggle', 'btn-icon');
     ripple(props.element, () => true);
 
-    const [loadingContainer, setLoadingContainer] = createSignal<HTMLDivElement>();
+    createEffect(() => {
+      const label = props.isLoading ? 'Cancel' : props.isReplacingMedia ? 'Edit' : 'Chat.Input.Attach';
+      props.element.setAttribute('aria-label', I18n.format(label, true));
+    });
 
     createEffect(() => {
       if(!props.isLoading) return;
@@ -33,9 +37,11 @@ const AttachMenuButton = defineSolidElement({
       onCleanup(() => props.element.classList.remove(styles.disabled));
     });
 
-    // Workaround around a workaround
+    // The keyboard layer cancels from the whole button, where Enter and Space land; without it only
+    // the loader under the pointer does, as before the layer.
+    const [loadingContainer, setLoadingContainer] = createSignal<HTMLSpanElement>();
     createEffect(() => {
-      if(!loadingContainer()) return;
+      if(Modes.a11y || !props.isLoading || !loadingContainer()) return;
 
       const clean = attachClickEvent(loadingContainer(), (e) => {
         e.stopPropagation();
@@ -43,6 +49,23 @@ const AttachMenuButton = defineSolidElement({
       });
 
       onCleanup(clean);
+    });
+
+    createEffect(() => {
+      if(!Modes.a11y || !props.isLoading) return;
+      const hasPopup = props.element.getAttribute('aria-haspopup');
+      props.element.removeAttribute('aria-haspopup');
+
+      const clean = attachClickEvent(props.element, (e) => {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        props.onCancel?.();
+      }, {capture: true});
+
+      onCleanup(() => {
+        clean();
+        if(hasPopup) props.element.setAttribute('aria-haspopup', hasPopup);
+      });
     });
 
     return (

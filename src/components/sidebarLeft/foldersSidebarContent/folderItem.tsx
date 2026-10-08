@@ -1,4 +1,6 @@
 import {createComputed, createEffect, createMemo, createSignal, Show} from 'solid-js';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
 import {keepMe} from '@helpers/keepMe';
 import createMiddleware from '@helpers/solid/createMiddleware';
 import {CustomEmojiRendererElement} from '@lib/customEmoji/renderer';
@@ -16,7 +18,8 @@ type FolderItemProps = FolderItemPayload & {
   ref?: (el: HTMLDivElement | null) => void,
   class?: string,
   selected?: boolean,
-  onClick?: () => void
+  onClick?: () => void,
+  'aria-label'?: string
 };
 
 const ICON_SIZE = 30;
@@ -65,11 +68,16 @@ export default function FolderItem(props: FolderItemProps) {
         [props.class]: !!props.class,
         'folders-sidebar__folder-item--selected': props.selected
       }}
+      role="button"
+      tabindex={Modes.a11y ? 0 : undefined}
+      aria-label={props['aria-label']}
+      aria-pressed={props.selected ? 'true' : undefined}
       {...(props.id !== undefined ?
         {'data-filter-id': props.id} :
         {}
       )}
       onClick={props.onClick}
+      onKeyDown={buttonKeyDown}
     >
       <Show
         when={showCustomIcon()}

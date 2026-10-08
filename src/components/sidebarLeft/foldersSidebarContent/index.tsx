@@ -1,6 +1,8 @@
 import {Accessor, createEffect, createSelector, createSignal, For, onCleanup, onMount, Show} from 'solid-js';
 import {createStore} from 'solid-js/store';
 import {render} from 'solid-js/web';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
 import createFolderContextMenu from '@helpers/dom/createFolderContextMenu';
 import {keepMe} from '@helpers/keepMe';
 import {Middleware} from '@helpers/middleware';
@@ -35,7 +37,8 @@ export function FoldersSidebarContent(props: {
     appSidebarLeft,
     AppChatFoldersTab,
     AppEditFolderTab,
-    i18n
+    i18n,
+    I18n
   } = useHotReloadGuard();
 
   const {selectedFolderId, onClick, folderItems} = useFolders();
@@ -145,6 +148,7 @@ export function FoldersSidebarContent(props: {
         ref={setMenuTarget}
         class="folders-sidebar__menu-button is-first"
         icon="menu"
+        aria-label={I18n.format('MultiAccount.More', true)}
         notifications={{
           count: props.allNotificationsCount(),
           muted: false
@@ -181,7 +185,10 @@ export function FoldersSidebarContent(props: {
           {showAddFolders() && <div
             use:ripple
             class="folders-sidebar__add-folders-button"
+            role="button"
+            tabindex={Modes.a11y ? 0 : undefined}
             onClick={() => contextMenu.openSettingsForFilter(selectedFolderId())}
+            onKeyDown={buttonKeyDown}
             style={{
               '--offset': addFoldersOffset()
             }}
@@ -197,6 +204,7 @@ export function FoldersSidebarContent(props: {
       <FolderItem
         class="folders-sidebar__menu-button is-last"
         icon="equalizer"
+        aria-label={I18n.format('Filters', true)}
         onClick={() => {
           if(openingChatFolders || appSidebarLeft.getTab(AppChatFoldersTab)) return;
           openingChatFolders = true;

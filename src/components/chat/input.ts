@@ -1,3 +1,6 @@
+import RichMessageInput, {RichMessageInputController} from '@components/richMessageInput';
+import type {RichMediaUploadServices} from '@components/richMessageInput/media';
+import createAiEditorContext from '@components/chat/inputState/createAiEditorContext';
 import type {MyDocument} from '@appManagers/appDocsManager';
 import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
 import type {MyDraftMessage} from '@appManagers/appDraftsManager';
@@ -5,13 +8,31 @@ import type {AppMessagesManager, MessageSendingParams, MyMessage, SuggestedPostP
 import type Chat from '@components/chat/chat';
 import {AppImManager, APP_TABS} from '@lib/appImManager';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
+import Modes from '@config/modes';
 import ChatRecording from '@components/chat/recording/chatRecording';
 import {ButtonMenuItemOptions, ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
 import emoticonsDropdown, {EmoticonsDropdown} from '@components/emoticonsDropdown';
 import showForwardPopup from '@components/popups/forward';
 import showNewMediaPopup, {getCurrentNewMediaPopup} from '@components/popups/newMedia';
 import {toast, toastNew} from '@components/toast';
-import {MessageEntity, DraftMessage, WebPage, Message, UserFull, AttachMenuPeerType, BotMenuButton, MessageMedia, InputReplyTo, Chat as MTChat, User, ChatFull, Dialog, TextWithEntities, GlobalPrivacySettings} from '@layer';
+import {
+  MessageEntity,
+  DraftMessage,
+  WebPage,
+  Message,
+  UserFull,
+  AttachMenuPeerType,
+  BotMenuButton,
+  MessageMedia,
+  InputReplyTo,
+  Chat as MTChat,
+  User,
+  ChatFull,
+  Dialog,
+  TextWithEntities,
+  GlobalPrivacySettings,
+  RichMessage
+} from '@layer';
 import StickersHelper from '@components/chat/stickersHelper';
 import ChatInputPlate from '@components/chat/controlPlate';
 import showSendGiftPopup from '@components/popups/sendGift';
@@ -31,6 +52,7 @@ import {
   AttachedMediaType,
   canUploadAsWhenEditing,
   generateTail,
+  getMediaTypeForMessage,
   shouldUseReplaceMediaIcon,
   slowModeTimer
 } from '@components/chat/utils';
@@ -62,9 +84,7 @@ import {fastRaf} from '@helpers/schedulers';
 import showDeleteMessagesPopup from '@components/popups/deleteMessages';
 import fixSafariStickyInputFocusing, {IS_STICKY_INPUT_BUGGED} from '@helpers/dom/fixSafariStickyInputFocusing';
 import showPeerPopup from '@components/popups/peer';
-import appMediaPlaybackController from '@components/appMediaPlaybackController';
-import {BOT_START_PARAM, GENERAL_TOPIC_ID, HIDDEN_PEER_ID, NULL_PEER_ID, REPLIES_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SEND_WHEN_ONLINE_TIMESTAMP, SERVICE_PEER_ID} from '@appManagers/constants';
-import setCaretAt from '@helpers/dom/setCaretAt';
+import {BOT_START_PARAM, GENERAL_TOPIC_ID, HIDDEN_PEER_ID, NULL_PEER_ID, REPLIES_PEER_ID, SEND_WHEN_ONLINE_TIMESTAMP, SERVICE_PEER_ID} from '@appManagers/constants';
 import DropdownHover from '@helpers/dropdownHover';
 import {positionMenuTrigger} from '@helpers/positionMenu';
 import {getAppWindow, getOverlayRoot} from '@helpers/appWindow';
@@ -73,13 +93,12 @@ import toggleDisability from '@helpers/dom/toggleDisability';
 import callbackify from '@helpers/callbackify';
 import ChatBotCommands from '@components/chat/botCommands';
 import copy from '@helpers/object/copy';
-import documentFragmentToHTML from '@helpers/dom/documentFragmentToHTML';
 import getEmojiEntityFromEmoji from '@lib/richTextProcessor/getEmojiEntityFromEmoji';
 import mergeEntities from '@lib/richTextProcessor/mergeEntities';
 import parseEntities from '@lib/richTextProcessor/parseEntities';
 import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
-import wrapDraftText from '@lib/richTextProcessor/wrapDraftText';
-import wrapDraft from '@components/wrappers/draft';
+import trimRichText from '@lib/richTextProcessor/trimRichText';
+import draftTextWithEntities from '@lib/richTextProcessor/draftTextWithEntities';
 import wrapMessageForReply from '@components/wrappers/messageForReply';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
 import {AppManagers} from '@lib/managers';
@@ -96,13 +115,17 @@ import wrapPeerTitle from '@components/wrappers/peerTitle';
 import wrapReply from '@components/wrappers/reply';
 import {getEmojiFromElement} from '@components/emoticonsDropdown/tabs/emoji';
 import RichInputHandler from '@helpers/dom/richInputHandler';
-import {insertRichTextAsHTML} from '@components/inputField';
 import draftsAreEqual from '@appManagers/utils/drafts/draftsAreEqual';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
-import {ObjectURLScope} from '@helpers/objectUrl';
+import {ObjectURLScope} from '@helpers/objectUrlScope';
 import getAttachMenuBotIcon from '@appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
+import type {RichMessageValidationResult} from '@appManagers/utils/richMessage/validateRichMessage';
 import forEachReverse from '@helpers/array/forEachReverse';
 import {MARKDOWN_ENTITIES} from '@lib/richTextProcessor';
+import {
+  RICH_MESSAGE_AUDIO_FILE_EXTENSIONS_SUPPORTED,
+  RICH_MESSAGE_AUDIO_MIME_TYPES_SUPPORTED
+} from '@environment/audioMimeTypeSupport';
 import IMAGE_MIME_TYPES_SUPPORTED from '@environment/imageMimeTypesSupport';
 import VIDEO_MIME_TYPES_SUPPORTED from '@environment/videoMimeTypesSupport';
 import {ChatRights} from '@appManagers/appChatsManager';
@@ -114,11 +137,11 @@ import {FontFull} from '@config/font';
 import {ChatType} from './chatType';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import idleController from '@helpers/idleController';
+import getFileMimeType from '@helpers/files/getFileMimeType';
 import Icon from '@components/icon';
 import setBadgeContent from '@helpers/setBadgeContent';
 import createBadge from '@helpers/createBadge';
 import deepEqual from '@helpers/object/deepEqual';
-import {clearMarkdownExecutions, createMarkdownCache, handleMarkdownShortcut, maybeClearUndoHistory, processCurrentFormatting} from '@helpers/dom/markdown';
 import MarkupTooltip from '@components/chat/markupTooltip';
 import showPremiumPopup from '@components/popups/premium';
 import {showReplyPickerPopup} from '@components/popups/pickUser';
@@ -126,15 +149,12 @@ import getPeerId from '@appManagers/utils/peers/getPeerId';
 import {isSavedDialog} from '@appManagers/utils/dialogs/isDialog';
 import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
 import apiManagerProxy from '@lib/apiManagerProxy';
-import eachSecond from '@helpers/eachSecond';
-import {wrapSlowModeLeftDuration} from '@components/wrappers/wrapDuration';
 import showTooltip from '@components/tooltip';
 import createContextMenu from '@helpers/dom/createContextMenu';
-import {Accessor, createEffect, createMemo, createRoot, createSignal, on, onCleanup, Setter} from 'solid-js';
-import {createStore} from 'solid-js/store';
+import {Accessor, createComponent, createEffect, createRoot, createSignal, Setter} from 'solid-js';
+import {wrapSolidComponent} from '@helpers/solid/wrapSolidComponent';
 import SelectedEffect from '@components/chat/selectedEffect';
 import windowSize from '@helpers/windowSize';
-import mediaSizes from '@helpers/mediaSizes';
 import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import accumulate from '@helpers/array/accumulate';
 import splitStringByLength from '@helpers/string/splitStringByLength';
@@ -159,8 +179,15 @@ import pause from '@helpers/schedulers/pause';
 import {Middleware, getMiddleware, MiddlewareHelper} from '@helpers/middleware';
 import {createAutoDeleteIcon} from '@components/autoDeleteIcon';
 import compareUint8Arrays from '@helpers/bytes/compareUint8Arrays';
-import {LocalTextWithOptionalEntities} from '@types';
+import {LocalTextWithEntities, LocalTextWithOptionalEntities} from '@types';
 import createChatInputState, {ChatInputState} from './inputState';
+import {ChatInputEditor, ChatInputEditorInputEvent, ChatInputRichMessage} from './inputEditor';
+import {getChatInputEditor} from './inputEditor/registry';
+import canSafelyEditRichMessage from './inputEditor/richMessageEditability';
+import {canFallbackRichMessageToPlain, getAttachRichMediaTarget, RichMediaItemInsertAction} from '@components/chat/inputEditor/mediaPaste';
+import {canShowAttachMenuAction} from '@components/chat/inputEditor/attachMenuPolicy';
+import type {RichMessageAttachMenuAction} from '@components/chat/inputEditor/attachMenuPolicy';
+import {getRichMessageMediaRequiredRight} from '@helpers/files/richMessageMediaInsertPolicy';
 import {SupportedMediaType} from '@components/popups/createPoll/storeContext';
 import {runWithHotReloadGuard} from '@lib/solidjs/runWithHotReloadGuard';
 import isEphemeralMessage from '@appManagers/utils/messages/isEphemeralMessage';
@@ -168,8 +195,38 @@ import resolveEphemeralCommand, {
   EphemeralCommandCandidate,
   EphemeralCommandResolution
 } from '@appManagers/utils/bots/resolveEphemeralCommand';
+import generatePremiumIcon from '@components/generatePremiumIcon';
+import deriveEditorDraftContent from '@components/chat/inputEditor/draftContent';
+import captureInputContent from '@components/chat/inputEditor/captureInputContent';
+import getRichMessagePostingChoice from '@components/chat/inputEditor/richMessagePostingChoice';
 
 const HOT_CHAT_INPUTS = import.meta.hot ? [] as ChatInput[] : null;
+let botCommandsListId = 0;
+
+function showRichMessageValidationError(validation: RichMessageValidationResult) {
+  if(validation.valid) return false;
+
+  const {limits, metrics} = validation;
+  const error = validation.error;
+  if(error === 'empty' || error === 'content' || error === 'unsupported' || error === 'invalid') {
+    toastNew({langPackKey: 'RichMessage.Error.UnsupportedContent'});
+    return true;
+  }
+  const details = error === 'length' ? [metrics.textLength, limits.lengthLimit] :
+    error === 'blocks' ? [metrics.blockCount, limits.maxBlocks] :
+    error === 'depth' ? [metrics.maxDepth, limits.maxDepth] :
+    error === 'media' ? [metrics.mediaCount, limits.maxMedia] :
+    error === 'size' ? [metrics.serializedSize, limits.serializedSizeLimit] :
+    [metrics.maxTableColumns, limits.maxTableColumns];
+  const key = error === 'length' ? 'RichMessage.Error.TooLong' :
+    error === 'blocks' ? 'RichMessage.Error.TooManyBlocks' :
+    error === 'depth' ? 'RichMessage.Error.TooDeep' :
+    error === 'media' ? 'RichMessage.Error.TooManyMedia' :
+    error === 'size' ? 'RichMessage.Error.TooLarge' :
+    'RichMessage.Error.TooManyTableColumns';
+  toastNew({langPackKey: key, langPackArguments: details});
+  return true;
+}
 
 if(import.meta.hot) {
   import.meta.hot.accept('./inputState', (newModule) => {
@@ -179,10 +236,13 @@ if(import.meta.hot) {
   });
 }
 
-
 const REPLY_IN_TOPIC = false;
 
 export const POSTING_NOT_ALLOWED_MAP: {[action in ChatRights]?: LangPackKey} = {
+  send_audios: 'GlobalAttachAudioRestricted',
+  send_docs: 'GlobalAttachDocumentsRestricted',
+  send_photos: 'GlobalAttachPhotoRestricted',
+  send_videos: 'GlobalAttachVideoRestricted',
   send_voices: 'GlobalAttachVoiceRestricted',
   send_stickers: 'GlobalAttachStickersRestricted',
   send_gifs: 'GlobalAttachGifRestricted',
@@ -195,10 +255,14 @@ export const POSTING_NOT_ALLOWED_MAP: {[action in ChatRights]?: LangPackKey} = {
 type ChatInputHelperType = 'edit' | 'webpage' | 'forward' | 'reply' | 'suggested';
 
 type ChatSendBtnIcon = 'send' | 'record' | 'record-video' | 'edit' | 'schedule' | 'forward' | 'stop';
+type ChatInputAttachMenuButton = ButtonMenuItemOptionsVerifiable & {
+  richMessageAction?: RichMessageAttachMenuAction
+};
+
 export type ChatInputReplyTo = Pick<MessageSendingParams, 'replyToMsgId' | 'replyToQuote' | 'replyToPollOption' | 'replyToStoryId' | 'replyToPeerId' | 'replyToMonoforumPeerId'>;
 
 const CLASS_NAME = 'chat-input';
-const PEER_EXCEPTIONS = new Set<ChatType>([ChatType.Scheduled, ChatType.Stories, ChatType.Saved]);
+const PEER_EXCEPTIONS = new Set<ChatType>([ChatType.Scheduled, ChatType.Stories, ChatType.Saved, ChatType.Welcome]);
 
 type WatchDownloadProgressArgs<T> = {
   getDownloadPromise: () => DownloadBlob;
@@ -208,12 +272,98 @@ type WatchDownloadProgressArgs<T> = {
 };
 
 export default class ChatInput {
+  private richMessageInput: RichMessageInputController;
+  public get messageInputField() {return this.richMessageInput?.field;}
+  private get messageInputEditor() {return this.richMessageInput?.editor;}
+  private get messageInputExpanded() {return this.richMessageInput?.expanded;}
+
+  public getAiEditorContext() {return createAiEditorContext(this);}
+
+  private captureMessageInputContext() {
+    const {peerId, threadId} = this.chat;
+    const editMsgId = this.editMsgId;
+    const inputGeneration = this.inputValueGeneration;
+    const middleware = this.getMiddleware();
+    return () => middleware() && this.chat.peerId === peerId && this.chat.threadId === threadId &&
+      this.editMsgId === editMsgId && this.inputValueGeneration === inputGeneration;
+  }
+
+  private createMediaServices(): RichMediaUploadServices {
+    return {
+      capture: () => {
+        const peerId = this.chat.peerId;
+        const isCurrent = this.captureMessageInputContext();
+        return {
+          isCurrent,
+          authorize: async(files) => {
+            const rights = [...new Set(files.map(file => getRichMessageMediaRequiredRight(getFileMimeType(file), file.name)).filter(Boolean))];
+            const allowed = await Promise.all(rights.map(right => this.chat.canSend(right)));
+            if(!isCurrent()) return false;
+            const denied = rights.find((_right, index) => !allowed[index]);
+            if(denied) toastNew({langPackKey: POSTING_NOT_ALLOWED_MAP[denied]});
+            return !denied;
+          },
+          upload: (sendFileDetails, uploadingFileName) => this.managers.appMessagesManager.uploadRichMessageMedia({peerId, sendFileDetails, uploadingFileName}),
+          cancel: (fileName) => {void this.managers.apiFileManager.cancelDownload(fileName);}
+        };
+      },
+      subscribeProgress: (listener) => {
+        rootScope.addEventListener('download_progress', listener);
+        return () => rootScope.removeEventListener('download_progress', listener);
+      }
+    };
+  }
+
+  private mountMessageInput() {
+    runWithHotReloadGuard(() => wrapSolidComponent(() => createComponent(RichMessageInput, {
+      layoutElement: this.chatInput,
+      expandable: this.className === 'chat-input-main' && !this.chat.isPreview,
+      captureContext: () => this.captureMessageInputContext(),
+      media: this.createMediaServices(),
+      ai: this.getAiEditorContext(),
+      isAiHidden: () => this.inputState.store.messageCount !== 1,
+      canInsertMap: async() => {
+        if(!await this.managers.appMessagesManager.isRichMessageMapAvailable()) return false;
+        if(rootScope.premium) return true;
+        showPremiumPopup();
+        return false;
+      },
+      getPremiumRequired: async() => {
+        const state = await this.managers.appMessagesManager.getRichMessagePostingState();
+        return state.mode === 'premium' && !state.allowed;
+      },
+      subscribeCapabilities: (update) => {
+        rootScope.addEventListener('premium_toggle', update);
+        return () => rootScope.removeEventListener('premium_toggle', update);
+      },
+      onSubmit: () => {void this.sendMessage();},
+      onInput: this.onMessageInput,
+      onHeightChange: (height) => {this.messageInputNaturalHeight = height; this.notifyChatInputHeight();},
+      onExpandedChange: (expanded) => {
+        if(!expanded) return;
+        this.emoticonsDropdown?.toggle(false);
+        this.autocompleteHelperController?.hideOtherHelpers();
+      },
+      onReadOnlyClick: () => toastNew({langPackKey: this.chat.isTemporaryThread ? 'WaitForTopicCreation' : POSTING_NOT_ALLOWED_MAP.send_plain}),
+      onChooseMedia: (selection, action) => {void this.onAttachClick(false, true, true, selection, false, action);},
+      ref: (field) => {this.richMessageInput = field; this.messageInput = field.input;}
+    }), this.middlewareHelper.get()));
+  }
+
+  public setMessageInputExpanded(expanded: boolean, animate = false) {this.richMessageInput?.setExpanded(expanded, animate);}
+  public captureRichMediaPasteTarget(event: ClipboardEvent | DragEvent) {return this.richMessageInput?.captureMediaTarget(event);}
+  public insertRichMediaFiles(files: File[], selection: ReturnType<ChatInputEditor['captureSelection']>) {
+    if(!files.length || !selection) return Promise.resolve(false);
+    return this.richMessageInput?.insertMedia(files, selection) || Promise.resolve(false);
+  }
+  public isRichMessageEditorExpanded() {return !!this.richMessageInput?.expanded;}
+
   readonly Class = ChatInput;
   // private static AUTO_COMPLETE_REG_EXP = /(\s|^)((?::|.)(?!.*[:@]).*|(?:[@\/]\S*))$/;
   private static AUTO_COMPLETE_REG_EXP = /(\s|^)((?:(?:@|^\/)\S*)|(?::|^[^:@\/])(?!.*[:@\/]).*)$/;
   public messageInput: HTMLElement;
-  public messageInputField: InputFieldAnimated;
-  private inputHeightDelta = 0;
+
+  private messageInputNaturalHeight = 0;
   private helperVisible = false;
   /** @internal — used by ChatInput input state */
   public fileInput: HTMLInputElement;
@@ -234,6 +384,7 @@ export default class ChatInput {
   public newMessageWrapper: HTMLDivElement;
   /** @internal — used by ChatInput input state */
   public btnToggleEmoticons: HTMLButtonElement;
+
   private btnToggleReplyMarkup: HTMLButtonElement;
   public btnSendContainer: HTMLDivElement;
   /** layer 229: a bot is streaming text into this chat/topic and lets us stop it */
@@ -243,7 +394,7 @@ export default class ChatInput {
   private replyKeyboard: ReplyKeyboard;
 
   public attachMenu: InstanceType<typeof AttachMenuButton>;
-  private attachMenuButtons: ButtonMenuItemOptionsVerifiable[];
+  private attachMenuButtons: ChatInputAttachMenuButton[];
 
   public btnSuggestPost: HTMLElement;
 
@@ -290,6 +441,7 @@ export default class ChatInput {
   public webPageOptions: Parameters<AppMessagesManager['sendText']>[0]['webPageOptions'] = {};
   /** @internal — used by ChatRecording */
   public forwarding: {[fromPeerId: PeerId]: number[]};
+  private forwardingHasProtectedRichMessages = false;
   public replyToMsgId: MessageSendingParams['replyToMsgId'];
   public replyToStoryId: MessageSendingParams['replyToStoryId'];
   public replyToQuote: MessageSendingParams['replyToQuote'];
@@ -298,6 +450,9 @@ export default class ChatInput {
   public replyToMonoforumPeerId: MessageSendingParams['replyToMonoforumPeerId'];
   public editMsgId: number;
   public editMessage: Message.message;
+  private messageEditingGeneration = 0;
+  private inputValueGeneration = 0;
+  private appliedInputDraft?: {value?: DraftMessage.draftMessage};
   private noWebPage: true;
   public scheduleDate: number;
   public scheduleRepeatPeriod: number;
@@ -355,18 +510,21 @@ export default class ChatInput {
   private btnPreloader: HTMLButtonElement;
 
   private saveDraftDebounced: DebounceReturnType<() => void>;
+  private suppressDraftSyncForUnsupportedRichMessage = false;
 
   private fakeRowsWrapper: HTMLDivElement;
 
   private previousQuery: string;
-
-  private releaseMediaPlayback: () => void;
 
   private botStartBtn: HTMLButtonElement;
   private unblockBtn: HTMLButtonElement;
   private onlyPremiumBtn: HTMLButtonElement;
   private onlyPremiumBtnText: I18n.IntlElement;
   private frozenBtn: HTMLButtonElement;
+  private welcomeLimitPlate: HTMLElement;
+  private welcomeLimitText: I18n.IntlElement;
+  /** The chat's welcome messages limit while it is reached, which takes the composer away. */
+  private welcomeLimitReached: number;
   private joinBtn: HTMLButtonElement;
   private channelMuteBtn: HTMLButtonElement;
   private directControlBtn: HTMLButtonElement;
@@ -397,7 +555,6 @@ export default class ChatInput {
   private replyInTopicOverlay: HTMLDivElement;
   private restoreInputLock: () => void;
 
-  private isFocused: boolean;
   private freezedFocused: boolean;
   /** True while `finishPeerChange` runs — suppresses animated plate centering. */
   private peerChanging: boolean;
@@ -431,7 +588,10 @@ export default class ChatInput {
   private processingDraftMessage: DraftMessage.draftMessage;
 
   private fileSelectionPromise: CancellablePromise<File[]>;
+  private fileSelectionIsCurrent: () => boolean;
   private fileSelectionEphemeralSnapshot: MessageSendingParams;
+  private richMediaInsertSelection: ReturnType<ChatInputEditor['captureSelection']>;
+  private richMediaItemAction: RichMediaItemInsertAction;
 
   public paidMessageInterceptor: PaidMessagesInterceptor;
 
@@ -448,6 +608,14 @@ export default class ChatInput {
   };
   private replyIsEphemeral = false;
   private ephemeralComposer = false;
+  /**
+   * The composer of a chat's welcome messages (layer 229). What it sends is an ephemeral message
+   * the server keeps: one attachment, no schedule, no voice notes, no polls — desktop and Android
+   * narrow it the same way.
+   */
+  private get isWelcomeComposer() {
+    return this.chat?.type === ChatType.Welcome;
+  }
   private ephemeralCommandReceiverId: UserId;
   private ephemeralCommandResolution: EphemeralCommandResolution = {state: 'none'};
 
@@ -462,7 +630,6 @@ export default class ChatInput {
     this.hoverListenerSetter = new ListenerSetter();
     this.middlewareHelper = getMiddleware();
     this.excludeParts = {};
-    this.isFocused = false;
     this.emoticonsDropdown = emoticonsDropdown;
   }
 
@@ -601,7 +768,9 @@ export default class ChatInput {
     const carried = {...this.inputState.store};
     this.inputState.dispose();
     this.inputState = runWithHotReloadGuard(() => create(this, carried));
+    this.richMessageInput?.sync();
   }
+
 
   public freezeFocused(focused: boolean) {
     if(this.freezedFocused === focused) {
@@ -619,12 +788,16 @@ export default class ChatInput {
     }
 
     const button = ButtonIcon(...args);
-    button.tabIndex = -1;
+    if(!Modes.a11y) button.tabIndex = -1;
     return button;
   }
 
   private constructGoDownButton() {
-    this.goDownBtn = ButtonCorner({icon: 'arrow_down', className: 'bubbles-corner-button chat-secondary-button bubbles-go-down hide'});
+    this.goDownBtn = ButtonCorner({
+      icon: 'arrow_down',
+      className: 'bubbles-corner-button chat-secondary-button bubbles-go-down hide',
+      ariaLabel: 'Chat.GoToLatestMessage'
+    });
     this.inputContainer.append(this.goDownBtn);
 
     attachClickEvent(this.goDownBtn, (e) => {
@@ -641,7 +814,9 @@ export default class ChatInput {
     this.replyElements.content.classList.add('reply-wrapper-content');
 
     this.replyElements.iconBtn = this.createButtonIcon('');
-    this.replyElements.cancelBtn = this.createButtonIcon('close reply-cancel', {noRipple: true});
+    this.replyElements.iconBtn.tabIndex = -1;
+    this.replyElements.iconBtn.setAttribute('aria-hidden', 'true');
+    this.replyElements.cancelBtn = this.createButtonIcon('close reply-cancel', {noRipple: true, ariaLabel: 'Cancel'});
 
     this.replyElements.content.append(this.replyElements.iconBtn, this.replyElements.cancelBtn);
     this.replyElements.container.append(this.replyElements.content);
@@ -836,7 +1011,13 @@ export default class ChatInput {
     const isReaction = kind === 'reaction';
     const isPollVote = kind === 'pollVote';
     const icon: Icon = isPollVote ? 'poll' : (isReaction ? 'reactions' : 'mention');
-    const btn = ButtonCorner({icon, className: 'bubbles-corner-button chat-secondary-button bubbles-go-mention bubbles-go-reaction'});
+    const btn = ButtonCorner({
+      icon,
+      className: 'bubbles-corner-button chat-secondary-button bubbles-go-mention bubbles-go-reaction',
+      ariaLabel: isPollVote ?
+        'Chat.GoToNextPollVote' :
+        (isReaction ? 'Chat.GoToNextReaction' : 'Chat.GoToNextMention')
+    });
     const badge = createBadge('span', 24, 'primary');
     btn.append(badge);
     this.inputContainer.append(btn);
@@ -896,7 +1077,7 @@ export default class ChatInput {
   }
 
   private constructScheduledButton() {
-    this.btnScheduled = this.createButtonIcon('schedule btn-scheduled float hide', {noRipple: true});
+    this.btnScheduled = this.createButtonIcon('schedule btn-scheduled float hide', {noRipple: true, ariaLabel: 'ScheduledMessages'});
 
     attachClickEvent(this.btnScheduled, (e) => {
       this.appImManager.openScheduled(this.chat.peerId);
@@ -922,7 +1103,7 @@ export default class ChatInput {
   }
 
   private constructReplyMarkup() {
-    this.btnToggleReplyMarkup = this.createButtonIcon('botcom toggle-reply-markup float hide', {noRipple: true});
+    this.btnToggleReplyMarkup = this.createButtonIcon('botcom toggle-reply-markup float hide', {noRipple: true, ariaLabel: 'General.Keyboard'});
     this.replyKeyboard = new ReplyKeyboard({
       appendTo: this.rowsWrapper,
       listenerSetter: this.listenerSetter,
@@ -937,8 +1118,13 @@ export default class ChatInput {
 
   private constructBotCommands() {
     this.botCommands = new ChatBotCommands(this.rowsWrapper, this, this.managers);
+    this.botCommands.container.id = `chat-bot-commands-${++botCommandsListId}`;
+    this.botCommands.container.setAttribute('aria-hidden', 'true');
     this.botCommandsToggle = document.createElement('div');
     this.botCommandsToggle.classList.add('new-message-bot-commands');
+    this.botCommandsToggle.setAttribute('role', 'button');
+    this.botCommandsToggle.setAttribute('aria-label', I18n.format('Chat.BotCommands', true));
+    if(Modes.a11y) this.botCommandsToggle.tabIndex = -1;
     this.botCommandsToggle.append(Icon('webview', 'new-message-bot-commands-view-icon'));
 
     const scaler = document.createElement('div');
@@ -1001,10 +1187,18 @@ export default class ChatInput {
 
     this.botCommands.addEventListener('visible', () => {
       icon.classList.add('state-back');
+      this.botCommands.container.removeAttribute('aria-hidden');
+      if(!this.botMenuButton) {
+        this.botCommandsToggle.setAttribute('aria-expanded', 'true');
+      }
     });
 
     this.botCommands.addEventListener('hiding', () => {
       icon.classList.remove('state-back');
+      this.botCommands.container.setAttribute('aria-hidden', 'true');
+      if(!this.botMenuButton) {
+        this.botCommandsToggle.setAttribute('aria-expanded', 'false');
+      }
     });
   }
 
@@ -1025,8 +1219,9 @@ export default class ChatInput {
       }
     }
 
-    this.newMessageWrapper = document.createElement('div');
-    this.newMessageWrapper.classList.add('new-message-wrapper', 'rows-wrapper-row');
+    this.mountMessageInput();
+    this.newMessageWrapper = this.richMessageInput.row;
+    this.inputMessageContainer = this.richMessageInput.content;
 
     if(REPLY_IN_TOPIC) {
       this.replyInTopicOverlay = document.createElement('div');
@@ -1034,16 +1229,15 @@ export default class ChatInput {
       this.replyInTopicOverlay.append(i18n('Chat.Input.ReplyToAnswer'));
     }
 
-    if(!this.excludeParts.emoticons) this.btnToggleEmoticons = this.createButtonIcon('smile toggle-emoticons', {noRipple: true});
+    if(!this.excludeParts.emoticons) this.btnToggleEmoticons = this.createButtonIcon('smile toggle-emoticons', {noRipple: true, ariaLabel: 'Emoji'});
 
-    this.btnSendGift = this.createButtonIcon('gift toggle-send-gift float hide', {noRipple: true});
+    this.btnSendGift = this.createButtonIcon('gift toggle-send-gift float hide', {
+      noRipple: true,
+      ariaLabel: 'Chat.Menu.SendGift'
+    });
     attachClickEvent(this.btnSendGift, () => {
       showSendGiftPopup({peerId: this.chat.peerId});
     }, {listenerSetter: this.listenerSetter});
-
-    this.inputMessageContainer = document.createElement('div');
-    this.inputMessageContainer.classList.add('input-message-container');
-    this.inputState.set({inputMessageContainerInited: true});
 
     if(this.goDownBtn) {
       this.goDownUnreadBadge = createBadge('span', 24, 'primary');
@@ -1071,13 +1265,62 @@ export default class ChatInput {
     // const getSendMediaRights = () => Promise.all([this.chat.canSend('send_photos'), this.chat.canSend('send_videos')]).then(([photos, videos]) => ({photos, videos}));
 
     const inputThis = this;
+    let attachMenuEditorSelection: ReturnType<ChatInputEditor['captureSelection']>;
+    const createAttachPremiumLabel = (key: LangPackKey) => {
+      const label = i18n(key);
+      const indicator = generatePremiumIcon();
+      indicator.classList.add('message-input-editor-premium-star');
+      indicator.hidden = rootScope.premium;
+      label.append(indicator);
+      this.listenerSetter.add(rootScope)('premium_toggle', () => {
+        indicator.hidden = rootScope.premium;
+      });
+      return label;
+    };
+    const runAttachEditorCommand = (
+      command: (editor: ChatInputEditor) => boolean
+    ) => {
+      const editor = this.messageInputEditor;
+      if(!editor) return false;
+      if(attachMenuEditorSelection) {
+        editor.restoreSelection(attachMenuEditorSelection, false);
+      }
+      return command(editor);
+    };
 
     this.attachMenuButtons = [{
       icon: 'image',
+      richMessageAction: 'visualMedia',
       text: 'Chat.Input.Attach.PhotoOrVideo',
-      onClick: () => this.onAttachClick(false, true, true),
+      onClick: () => this.onAttachClick(
+        false,
+        true,
+        true,
+        getAttachRichMediaTarget(
+          this.messageInputExpanded,
+          attachMenuEditorSelection
+        )
+      ),
       verify: () => canUploadAsWhenEditing({asWhat: 'media', message: this.editMessage})
       // verify: () => getSendMediaRights().then(({photos, videos}) => photos && videos)
+    }, {
+      icon: 'music_filled',
+      richMessageAction: 'audio',
+      textElement: createAttachPremiumLabel('Chat.Input.Editor.Toolbar.Audio'),
+      onClick: () => this.onAttachClick(
+        false,
+        false,
+        false,
+        getAttachRichMediaTarget(
+          this.messageInputExpanded,
+          attachMenuEditorSelection
+        ),
+        true
+      ),
+      verify: () => (
+        this.messageInputExpanded &&
+        canUploadAsWhenEditing({asWhat: 'media', message: this.editMessage})
+      )
     }, /* {
       icon: 'image',
       text: 'AttachPhoto',
@@ -1090,6 +1333,7 @@ export default class ChatInput {
       verify: () => getSendMediaRights().then(({photos, videos}) => !photos && videos)
     }, */ {
       icon: 'document',
+      richMessageAction: 'document',
       text: 'Chat.Input.Attach.Document',
       onClick: () => this.onAttachClick(true),
       verify: () => canUploadAsWhenEditing({asWhat: 'document', message: this.editMessage})
@@ -1102,7 +1346,7 @@ export default class ChatInput {
         showMusicSearchPopup({chat: this.chat});
       },
       verify: async() => {
-        if(this.editMsgId) return false;
+        if(this.editMsgId || this.isWelcomeComposer) return false;
         // Either half of the picker is reason enough to offer it: the inline-bot search (which the
         // server gates behind an app-config username) or the user's own profile playlist.
         // getAppConfig comes off the proxy's warm cache, and the ids list is cached in the worker.
@@ -1114,7 +1358,40 @@ export default class ChatInput {
         return !!music_search_username || !!myMusicIds.length;
       }
     }, {
+      icon: 'location',
+      richMessageAction: 'location',
+      textElement: createAttachPremiumLabel('AttachLocation'),
+      onClick: () => void this.richMessageInput.showMap(attachMenuEditorSelection),
+      verify: () => (
+        !this.editMsgId &&
+        !!this.messageInputEditor &&
+        this.managers.appMessagesManager.isRichMessageMapAvailable()
+      )
+    }, {
+      icon: 'group',
+      richMessageAction: 'groupCollage',
+      textElement: createAttachPremiumLabel('Chat.Input.Editor.Media.GroupAsCollage'),
+      onClick: () => runAttachEditorCommand((editor) => (
+        editor.groupSelectedRichMedia('collage')
+      )),
+      verify: () => (
+        !this.editMsgId &&
+        !!this.messageInputEditor?.canGroupSelectedRichMedia()
+      )
+    }, {
+      icon: 'flip',
+      richMessageAction: 'groupSlideshow',
+      textElement: createAttachPremiumLabel('Chat.Input.Editor.Media.GroupAsSlideshow'),
+      onClick: () => runAttachEditorCommand((editor) => (
+        editor.groupSelectedRichMedia('slideshow')
+      )),
+      verify: () => (
+        !this.editMsgId &&
+        !!this.messageInputEditor?.canGroupSelectedRichMedia()
+      )
+    }, {
       icon: 'brush',
+      richMessageAction: 'editMedia',
       get text() {
         return getEditMediaLangKey(inputThis.editMessage);
       },
@@ -1122,10 +1399,11 @@ export default class ChatInput {
       verify: () => canEditMessageMediaWithEditor(this.editMessage)
     }, {
       icon: 'gift',
+      richMessageAction: 'giftPremium',
       text: 'GiftPremium',
       onClick: () => this.chat.appImManager.giftPremium(this.chat.peerId),
       verify: () => {
-        if(this.editMsgId) return;
+        if(this.editMsgId || this.isWelcomeComposer) return;
         return this.chat && Promise.all([
           this.chat.canGiftPremium(),
           this.managers.apiManager.getAppConfig()
@@ -1133,94 +1411,16 @@ export default class ChatInput {
       }
     }, {
       icon: 'poll',
+      richMessageAction: 'poll',
       text: 'Poll',
-      onClick: async() => {
-        if(this.ephemeralComposer) {
-          return;
-        }
-
-        const pollsAction: ChatRights = 'send_polls';
-
-        if(!(await this.chat.canSend(pollsAction))) {
-          toastNew({langPackKey: POSTING_NOT_ALLOWED_MAP[pollsAction]});
-          return;
-        }
-
-        const {openCreatePollPopup} = await import('@components/popups/createPoll');
-
-        const supportedMediaTypes: SupportedMediaType[] = ['link'];
-
-        const supportedPromises: [Promise<boolean>, SupportedMediaType][] = [
-          [this.chat.canSend('send_photos'), 'photo'],
-          [this.chat.canSend('send_stickers'), 'sticker'],
-          [this.chat.canSend('send_videos'), 'video'],
-          [this.chat.canSend('send_gifs'), 'gif']
-        ];
-
-        for(const [canSendPromise, type] of supportedPromises) {
-          if(await canSendPromise) supportedMediaTypes.push(type);
-        }
-
-        if(this.ephemeralComposer) {
-          return;
-        }
-
-        openCreatePollPopup({
-          isBroadcast: this.chat.isBroadcast,
-          supportedMediaTypes: supportedMediaTypes,
-          onSubmit: async(payload) => {
-            if(this.ephemeralComposer) {
-              return;
-            }
-
-            const attachments = [
-              payload.descriptionAttachment,
-              payload.explanationAttachment,
-              ...payload.pollOptions.map((option) => option.attachment)
-            ];
-
-            const requiredRights = new Set<ChatRights>();
-            for(const attachment of attachments) {
-              if(!attachment) continue;
-              switch(attachment.type) {
-                case 'photo': requiredRights.add('send_photos'); break;
-                case 'sticker': requiredRights.add('send_stickers'); break;
-                case 'video':
-                  requiredRights.add(attachment.isAnimated ? 'send_gifs' : 'send_videos');
-                  break;
-              }
-            }
-
-            for(const right of requiredRights) {
-              if(!(await this.chat.canSend(right))) {
-                toastNew({langPackKey: POSTING_NOT_ALLOWED_MAP[right]});
-                return;
-              }
-            }
-
-            if(this.ephemeralComposer) {
-              return;
-            }
-
-            const sendingParams = this.chat.getMessageSendingParams();
-
-            const preparedPaymentResult = await this.chat.input.paidMessageInterceptor.prepareStarsForPayment(1);
-            if(preparedPaymentResult === PAYMENT_REJECTED) return;
-
-            sendingParams.confirmedPaymentResult = preparedPaymentResult;
-
-            await this.managers.appPollsManager.sendPollMessage(sendingParams, payload);
-          }
-        }, SolidJSHotReloadGuardProvider);
-
-        // PopupElement.createPopup(PopupCreatePoll, this.chat).show();
-      },
+      onClick: () => this.openPollCreation(),
       verify: () => {
-        if(this.editMsgId || this.ephemeralComposer) return;
+        if(this.editMsgId || this.ephemeralComposer || this.isWelcomeComposer) return;
         return (!this.chat.isMonoforum && this.chat.peerId.isAnyChat()) || this.chat.isBot || this.chat.peerId === rootScope.myId;
       }
     }, {
       icon: 'checkround',
+      richMessageAction: 'standaloneChecklist',
       text: 'Checklist',
       onClick: async() => {
         if(this.ephemeralComposer) {
@@ -1246,7 +1446,7 @@ export default class ChatInput {
 
         showChecklistPopup({chat: this.chat});
       },
-      verify: () => !this.editMsgId && !this.chat.isMonoforum && !this.ephemeralComposer
+      verify: () => !this.editMsgId && !this.chat.isMonoforum && !this.ephemeralComposer && !this.isWelcomeComposer
     }];
 
     const attachMenuButtons = this.attachMenuButtons.slice();
@@ -1259,13 +1459,26 @@ export default class ChatInput {
       direction: 'top-right',
       buttons: this.attachMenuButtons,
       onOpenBefore: this.excludeParts.attachMenu ? undefined : async() => {
-        const attachMenuBots = (this.chat.isMonoforum || this.editMsgId) ? [] : await this.managers.appAttachMenuBotsManager.getAttachMenuBots();
-        const buttons = attachMenuButtons.slice();
+        attachMenuEditorSelection = this.messageInputEditor?.captureSelection();
+        const richMessageEditorExpanded = this.messageInputExpanded;
+        const attachMenuBots = (
+          this.chat.isMonoforum ||
+          this.isWelcomeComposer ||
+          this.editMsgId ||
+          !canShowAttachMenuAction('attachBot', richMessageEditorExpanded)
+        ) ? [] : await this.managers.appAttachMenuBotsManager.getAttachMenuBots();
+        const buttons = attachMenuButtons.filter((button) => (
+          canShowAttachMenuAction(
+            button.richMessageAction,
+            richMessageEditorExpanded
+          )
+        ));
         const attachMenuBotsButtons = attachMenuBots.filter((attachMenuBot) => {
           return attachMenuBot.pFlags.show_in_attach_menu;
         }).map((attachMenuBot) => {
           const icon = getAttachMenuBotIcon(attachMenuBot);
           const button: typeof buttons[0] = {
+            richMessageAction: 'attachBot',
             regularText: wrapEmojiText(attachMenuBot.short_name),
             onClick: () => {
               this.chat.openWebApp({attachMenuBot, fromAttachMenu: true});
@@ -1312,12 +1525,12 @@ export default class ChatInput {
     });
     this.attachMenu.classList.add('attach-file');
 
-    this.btnSuggestPost = ButtonIcon('suggested hide');
+    this.btnSuggestPost = ButtonIcon('suggested hide', {ariaLabel: 'SuggestedPosts.SuggestAPost'});
     attachClickEvent(this.btnSuggestPost, wrapAsyncClickHandler(async() => {
       await this.openSuggestPostPopup();
     }));
 
-    this.btnAutoDeletePeriod = ButtonIcon('auto_delete_circle_clock hide');
+    this.btnAutoDeletePeriod = ButtonIcon('auto_delete_circle_clock hide', {ariaLabel: 'AutoDeleteMessages'});
     attachClickEvent(this.btnAutoDeletePeriod, wrapAsyncClickHandler(async() => {
       await this.chat.openAutoDeleteMessagesCustomTimePopup();
     }));
@@ -1327,10 +1540,7 @@ export default class ChatInput {
     this.fileInput.multiple = true;
     this.fileInput.style.display = 'none';
 
-    this.newMessageWrapper.append(...[
-      this.botCommandsToggle,
-      this.attachMenu,
-      this.inputMessageContainer,
+    this.richMessageInput.mountAccessories([this.botCommandsToggle, this.attachMenu].filter(Boolean), [
       this.btnScheduled,
       this.btnToggleReplyMarkup,
       this.btnSuggestPost,
@@ -1353,7 +1563,7 @@ export default class ChatInput {
     this.inlineHelper = new InlineHelper(this.rowsWrapper, this.autocompleteHelperController, this.chat, this.managers);
     this.rowsWrapper.append(this.newMessageWrapper);
 
-    this.btnCancelRecord = this.createButtonIcon('bin_filled btn-circle btn-record-cancel chat-input-secondary-button chat-secondary-button');
+    this.btnCancelRecord = this.createButtonIcon('bin_filled btn-circle btn-record-cancel chat-input-secondary-button chat-secondary-button', {ariaLabel: 'Delete'});
 
     this.btnSendContainer = document.createElement('div');
     this.btnSendContainer.classList.add('btn-send-container');
@@ -1403,6 +1613,7 @@ export default class ChatInput {
       onOpen: () => {
         const good = !this.ephemeralComposer &&
           this.chat.type !== ChatType.Scheduled &&
+          !this.isWelcomeComposer &&
           // the button is a Stop right now, and stopping has no send options
           this.sendBtnIcon !== 'stop' &&
           (this.recording || !this.isInputEmpty() || !!(this.forwarding && Object.keys(this.forwarding).length)) &&
@@ -1456,7 +1667,8 @@ export default class ChatInput {
       }
     }
 
-    this.attachMessageInputField();
+    this.attachMessageInputListeners();
+    if(IS_STICKY_INPUT_BUGGED) fixSafariStickyInputFocusing(this.messageInput);
 
     /* this.attachMenu.addEventListener('mousedown', (e) => {
       const hidden = this.attachMenu.querySelectorAll('.hide');
@@ -1483,7 +1695,7 @@ export default class ChatInput {
         } */
       }
 
-      this.messageInputField?.onFakeInput();
+      this.messageInputField?.measureHeight();
     });
 
     if(this.chat) {
@@ -1498,35 +1710,9 @@ export default class ChatInput {
 
     this.listenerSetter.add(this.fileInput)('change', (e) => {
       const fileList = (e.target as HTMLInputElement & EventTarget).files;
-      const selectedFiles = Array.from(fileList);
-      const ephemeralSnapshot = this.fileSelectionEphemeralSnapshot;
-      this.fileSelectionEphemeralSnapshot = undefined;
-      const isEphemeral = !!ephemeralSnapshot || this.ephemeralComposer;
-      const files = isEphemeral ? selectedFiles.slice(0, 1) : selectedFiles;
-      if(files.length !== selectedFiles.length) {
-        toastNew({langPackKey: 'Ephemeral.SingleAttachment'});
-      }
-      this.fileSelectionPromise.resolve(files);
-      if(!files.length) {
-        return;
-      }
-
-      const newMediaPopup = getCurrentNewMediaPopup();
-      if(newMediaPopup) {
-        newMediaPopup.addFiles(files);
-      } else {
-        showNewMediaPopup(
-          this.chat,
-          files,
-          this.willAttachType,
-          undefined,
-          undefined,
-          ephemeralSnapshot
-        );
-      }
-
-      this.fileInput.value = '';
+      this.handleSelectedFiles(Array.from(fileList));
     }, false);
+    this.listenerSetter.add(this.fileInput)('cancel', () => this.handleSelectedFiles([]));
 
     attachClickEvent(this.btnSend, this.onBtnSendClick, {listenerSetter: this.listenerSetter, touchMouseDown: true});
 
@@ -1553,6 +1739,13 @@ export default class ChatInput {
     frozenText2.classList.add('secondary', 'chat-input-frozen-text-subtitle');
     frozenText.append(frozenText1, frozenText2);
     this.frozenBtn = makeControlButton(frozenText);
+    // a statement, not an action: there is nothing to do about the limit here but delete or edit
+    // what is already there, so it is no (disabled) button, and it says so when the composer goes
+    this.welcomeLimitText = new I18n.IntlElement({key: 'WelcomeMessages.LimitReached', args: [0]});
+    this.welcomeLimitPlate = document.createElement('div');
+    this.welcomeLimitPlate.classList.add('chat-input-plate-button', 'chat-input-welcome-limit');
+    this.welcomeLimitPlate.setAttribute('role', 'status');
+    this.welcomeLimitPlate.append(this.welcomeLimitText.element);
 
     attachClickEvent(this.botStartBtn, this.startBot, {listenerSetter: this.listenerSetter});
     attachClickEvent(this.unblockBtn, this.unblockUser, {listenerSetter: this.listenerSetter});
@@ -1594,7 +1787,7 @@ export default class ChatInput {
 
     // Channel "can't write" plate side buttons: write-in-direct (shown only
     // when the channel has a linked direct-messages chat) and gift.
-    this.directControlBtn = this.createButtonIcon('comments hide');
+    this.directControlBtn = this.createButtonIcon('comments hide', {ariaLabel: 'OpenChat'});
     attachClickEvent(this.directControlBtn, () => {
       const channel = this.chat.peer as MTChat.channel;
       const monoforumId = channel?.linked_monoforum_id;
@@ -1603,7 +1796,7 @@ export default class ChatInput {
       }
     }, {listenerSetter: this.listenerSetter});
 
-    this.giftControlBtn = this.createButtonIcon('gift hide');
+    this.giftControlBtn = this.createButtonIcon('gift hide', {ariaLabel: 'Chat.Menu.SendGift'});
     attachClickEvent(this.giftControlBtn, () => {
       showSendGiftPopup({peerId: this.chat.peerId});
     }, {listenerSetter: this.listenerSetter});
@@ -1621,6 +1814,7 @@ export default class ChatInput {
         this.channelMuteBtn,
         this.onlyPremiumBtn,
         this.frozenBtn,
+        this.welcomeLimitPlate,
         this.pinnedControlBtn,
         this.openChatBtn
       ].filter(Boolean)
@@ -1637,6 +1831,17 @@ export default class ChatInput {
       this.updateGiftButtonVisibility();
     });
 
+    this.listenerSetter.add(rootScope)('welcome_message_new', (message) => {
+      if(this.isWelcomeComposer && message.peerId === this.chat.peerId) void this.updateWelcomeMessagesLimit();
+    });
+
+    this.listenerSetter.add(rootScope)('welcome_messages_delete', ({peerId, mids}) => {
+      if(!this.isWelcomeComposer || peerId !== this.chat.peerId) return;
+      // the template being edited is gone (another admin, or Delete All): there is nothing to save
+      if(mids.includes(this.editMsgId)) this.onMessageSent();
+      void this.updateWelcomeMessagesLimit();
+    });
+
     this.listenerSetter.add(rootScope)('peer_full_update', (peerId) => {
       if(peerId === this.chat?.peerId) {
         this.updateGiftButtonVisibility();
@@ -1649,6 +1854,14 @@ export default class ChatInput {
     });
 
     this.listenerSetter.add(rootScope)('draft_updated', ({peerId, threadId, monoforumThreadId, draft, force}) => {
+      // A local media placeholder cannot be represented in a server draft yet.
+      // Keep it authoritative until the upload resolves instead of letting an
+      // echo of the partial/empty draft remove the visible preview.
+      if(
+        this.chat.peerId === peerId &&
+        this.messageInputEditor?.hasPendingRichMediaUploads()
+      ) return;
+
       // We don't have draft functionality when in the global monoforum chat, but we still need to clear the input right after sending the message
       if(!draft && force && this.chat.peerId === peerId && this.chat.isMonoforum) {
         this.setDraft(draft, true, force);
@@ -1738,34 +1951,132 @@ export default class ChatInput {
     });
   }
 
-  public onAttachClick = async(documents?: boolean, photos?: boolean, videos?: boolean) => {
+  private handleSelectedFiles(selectedFiles: File[]) {
+    const current = this.fileSelectionIsCurrent?.();
+    const ephemeralSnapshot = this.fileSelectionEphemeralSnapshot;
+    const isEphemeral = !!ephemeralSnapshot || this.ephemeralComposer || this.isWelcomeComposer;
+    const files = !current ? [] : isEphemeral ? selectedFiles.slice(0, 1) : selectedFiles;
+    if(current && files.length !== selectedFiles.length) {
+      toastNew({langPackKey: 'Ephemeral.SingleAttachment'});
+    }
+    const selection = this.richMediaInsertSelection;
+    const action = this.richMediaItemAction;
+    this.fileSelectionIsCurrent = undefined;
+    this.fileSelectionEphemeralSnapshot = undefined;
+    this.richMediaInsertSelection = undefined;
+    this.richMediaItemAction = undefined;
+    this.fileInput.multiple = true;
+    this.fileInput.value = '';
+    this.fileSelectionPromise?.resolve(files);
+    if(!files.length) return;
+
+    const newMediaPopup = getCurrentNewMediaPopup();
+    if(selection) {
+      void this.richMessageInput.insertMedia(files, selection, action);
+    } else if(newMediaPopup) {
+      newMediaPopup.addFiles(files);
+    } else {
+      showNewMediaPopup(this.chat, files, this.willAttachType, undefined, undefined, ephemeralSnapshot);
+    }
+  }
+
+  /**
+   * The welcome messages limit when the chat has reached it. `load` asks the server for the list
+   * (shared with the bubbles' own request) instead of counting what is already known.
+   */
+  private async getReachedWelcomeMessagesLimit(load?: boolean) {
+    const {peerId} = this.chat;
+    const [count, limit] = await Promise.all([
+      this.managers.appMessagesManager.getWelcomeMessagesCount(peerId, load),
+      this.managers.appMessagesManager.getWelcomeMessagesLimit()
+    ]);
+    return count >= limit ? limit : undefined;
+  }
+
+  /** Desktop's `checkLimit`: a chat keeps a few welcome messages at most, so a new one may not fit. */
+  private async checkWelcomeMessagesLimit() {
+    if(!this.isWelcomeComposer || this.editMsgId) return true;
+    const limit = await this.getReachedWelcomeMessagesLimit();
+    if(limit === undefined) return true;
+    toastNew({langPackKey: 'WelcomeMessages.LimitReached', langPackArguments: [limit]});
+    return false;
+  }
+
+  /** Desktop's write restriction: at the limit the composer turns into a plate saying so. */
+  private async updateWelcomeMessagesLimit(load?: boolean) {
+    const {peerId} = this.chat;
+    const limit = this.isWelcomeComposer ? await this.getReachedWelcomeMessagesLimit(load) : undefined;
+    if(this.chat.peerId !== peerId || this.welcomeLimitReached === limit) return;
+    this.welcomeLimitReached = limit;
+    if(limit) this.welcomeLimitText.compareAndUpdate({args: [limit]});
+    void this.center(true);
+  }
+
+  public onAttachClick = this.openAttachmentPicker.bind(this);
+
+  private async openAttachmentPicker(
+    documents?: boolean,
+    photos?: boolean,
+    videos?: boolean,
+    richMediaInsertSelection?: ReturnType<ChatInputEditor['captureSelection']>,
+    audios?: boolean,
+    richMediaItemAction?: RichMediaItemInsertAction
+  ) {
+    const middleware = this.getMiddleware();
+    const {peerId, threadId} = this.chat;
+    const editMsgId = this.editMsgId;
+    const editor = this.messageInputEditor;
+    const inputGeneration = this.inputValueGeneration;
+    const isCurrent = () => middleware() && this.chat.peerId === peerId && this.chat.threadId === threadId &&
+      this.editMsgId === editMsgId && this.messageInputEditor === editor && this.inputValueGeneration === inputGeneration;
     const initialEphemeralSnapshot = this.getEphemeralSendingSnapshot();
-    if(!initialEphemeralSnapshot && !this.editMessage && await this.showSlowModeTooltipIfNeeded({
-      element: this.attachMenu,
-      container: this.btnSendContainer.parentElement
-    })) {
-      return;
+    if(
+      !richMediaInsertSelection &&
+      this.messageInputExpanded &&
+      this.messageInputEditor &&
+      !documents &&
+      !!(photos || videos || audios)
+    ) {
+      richMediaInsertSelection = this.messageInputEditor.captureSelection();
     }
 
+    if(
+      !initialEphemeralSnapshot &&
+      !richMediaInsertSelection &&
+      !this.editMessage &&
+      await this.showSlowModeTooltipIfNeeded({
+      element: this.attachMenu,
+      container: this.btnSendContainer.parentElement
+      })
+    ) {
+      return;
+    }
+    if(!(await this.checkWelcomeMessagesLimit()) || !isCurrent()) return;
+
+    this.fileSelectionPromise?.resolve([]);
     const promise = this.fileSelectionPromise = deferredPromise();
+    this.fileSelectionIsCurrent = isCurrent;
+    this.richMediaInsertSelection = richMediaInsertSelection;
+    this.richMediaItemAction = richMediaItemAction;
+    this.fileInput.multiple = richMediaItemAction?.action !== 'replace';
     this.fileInput.value = '';
 
-    promise.finally(() => {
+    promise.then(files => {
       idleController.removeEventListener('change', onIdleChange);
-      if(promise !== this.fileSelectionPromise) {
-        return;
+      if(!files.length && this.fileSelectionPromise === promise && this.fileSelectionIsCurrent) {
+        this.handleSelectedFiles([]);
       }
     });
 
     const onIdleChange = (idle: boolean) => {
       if(promise !== this.fileSelectionPromise) {
-        promise.reject();
+        promise.resolve([]);
         return;
       }
 
       if(!idle) {
         setTimeout(() => {
-          promise.reject();
+          promise.resolve([]);
         }, 1000);
       }
     };
@@ -1778,7 +2089,11 @@ export default class ChatInput {
       const accept = [...new Set([
         ...(photos ? IMAGE_MIME_TYPES_SUPPORTED : []),
         // * .mov is selectable even when not natively playable — the send popup converts it to mp4
-        ...(videos ? [...VIDEO_MIME_TYPES_SUPPORTED, 'video/quicktime'] : [])
+        ...(videos ? [...VIDEO_MIME_TYPES_SUPPORTED, 'video/quicktime'] : []),
+        ...(audios ? [
+          ...RICH_MESSAGE_AUDIO_MIME_TYPES_SUPPORTED,
+          ...RICH_MESSAGE_AUDIO_FILE_EXTENSIONS_SUPPORTED
+        ] : [])
       ])].join(', ');
 
       this.fileInput.setAttribute('accept', accept || '*/*');
@@ -1788,7 +2103,7 @@ export default class ChatInput {
     this.fileSelectionEphemeralSnapshot = initialEphemeralSnapshot || this.getEphemeralSendingSnapshot();
     this.fileInput.click();
     this.onFileSelection?.(this.fileSelectionPromise);
-  };
+  }
 
   public _center(neededFakeContainer: HTMLElement, animate?: boolean) {
     if(!neededFakeContainer && !this.inputContainer.classList.contains('is-centering')) {
@@ -2005,6 +2320,7 @@ export default class ChatInput {
       this.getJoinButtonType() ||
       await this.isChannelControlNeeded() ||
       this.isRepliesChat() ||
+      (this.isWelcomeComposer && this.welcomeLimitReached && !this.editMsgId) ||
       (this.frozenBtn && this.chat.appConfig.freeze_since_date && !(await this.chat.canSend()))
     ) {
       return this.controlContainer;
@@ -2024,7 +2340,6 @@ export default class ChatInput {
   //   if(newContainer === container) {
   //     return;
   //   }
-
 
   // }
 
@@ -2174,11 +2489,19 @@ export default class ChatInput {
     }
   }
 
-  public getCurrentInputAsDraft(ignoreEmptyValue?: boolean) {
+  private getCurrentInputDraft(ignoreEmptyValue?: boolean): {
+    draft?: DraftMessage.draftMessage,
+    richMessage?: ChatInputRichMessage
+  } {
     const {value, entities} = getRichValueWithCaret(this.messageInputField.input, true, false);
+    const {legacyValue, richMessage} = deriveEditorDraftContent(this.messageInputEditor);
+    const trimmed = trimRichText(
+      legacyValue?.value ?? value,
+      legacyValue?.entities ?? entities
+    );
 
     let draft: DraftMessage.draftMessage;
-    if((value.length || ignoreEmptyValue) || this.replyToMsgId || this.willSendWebPage) {
+    if((richMessage || value.length || ignoreEmptyValue) || this.replyToMsgId || this.willSendWebPage) {
       const webPage = this.willSendWebPage as WebPage.webPage;
       const webPageOptions = this.webPageOptions;
       const hasLargeMedia = !!webPage?.pFlags?.has_large_media;
@@ -2187,11 +2510,12 @@ export default class ChatInput {
       draft = {
         _: 'draftMessage',
         date: tsNow(true),
-        message: value.trim(),
-        entities: entities.length ? entities : undefined,
+        message: richMessage ? '' : trimmed.text,
+        entities: !richMessage && trimmed.entities.length ? trimmed.entities : undefined,
+        rich_message: richMessage?.output,
         pFlags: {
-          no_webpage: this.noWebPage,
-          invert_media: this.invertMedia || undefined
+          no_webpage: richMessage ? true : this.noWebPage,
+          invert_media: !richMessage && this.invertMedia || undefined
         },
         reply_to: !isBotforumAllChats && replyTo ? {
           _: 'inputReplyToMessage',
@@ -2206,7 +2530,7 @@ export default class ChatInput {
             quote_offset: replyTo.replyToQuote.offset
           })
         } : undefined,
-        media: webPage ? {
+        media: !richMessage && webPage ? {
           _: 'inputMediaWebPage',
           pFlags: {
             force_large_media: hasLargeMedia && webPageOptions?.largeMedia || undefined,
@@ -2219,7 +2543,21 @@ export default class ChatInput {
       };
     }
 
-    return draft;
+    return {draft, richMessage};
+  }
+
+  public getCurrentInputAsDraft(ignoreEmptyValue?: boolean) {
+    return this.getCurrentInputDraft(ignoreEmptyValue).draft;
+  }
+
+  /**
+   * The unsupported-draft guard below protects the received copy only while the
+   * composer has nothing of its own. A real user edit overrides that intent —
+   * without this, everything typed after the guard armed is dropped without a
+   * trace on the next chat switch.
+   */
+  private acceptUserEditOverUnsupportedRichMessageDraft() {
+    this.suppressDraftSyncForUnsupportedRichMessage = false;
   }
 
   public saveDraft() {
@@ -2227,14 +2565,25 @@ export default class ChatInput {
     if(
       !this.chat.peerId ||
       this.editMsgId ||
+      this.suppressDraftSyncForUnsupportedRichMessage ||
       PEER_EXCEPTIONS.has(this.chat.type) ||
       isMonoforumParent
     ) {
       return;
     }
 
-    const draft = this.getCurrentInputAsDraft();
-    this.managers.appDraftsManager.syncDraft({peerId: this.chat.peerId, threadId: this.chat.threadId, monoforumThreadId: this.chat.monoforumThreadId, localDraft: draft});
+    const {draft, richMessage} = this.getCurrentInputDraft();
+    // Hydration and leaving a chat must not publish the received draft back to
+    // the server. The UI representation may differ from the server's flags.
+    if(this.appliedInputDraft && draftsAreEqual(draft, this.appliedInputDraft.value)) return;
+    this.appliedInputDraft = undefined;
+    this.managers.appDraftsManager.syncDraft({
+      peerId: this.chat.peerId,
+      threadId: this.chat.threadId,
+      monoforumThreadId: this.chat.monoforumThreadId,
+      localDraft: draft,
+      inputRichMessage: richMessage?.input
+    });
   }
 
   public mentionUser(peerId: PeerId, isHelper?: boolean) {
@@ -2271,6 +2620,7 @@ export default class ChatInput {
   public destroy() {
     // this.chat.log.error('Input destroying');
 
+    this.richMessageInput?.destroy();
     this.autocompleteHelperController.destroy();
     this.placeholderParamsMiddlewareHelper.destroy();
     appNavigationController.removeItem(this.inputHelperNavigationItem);
@@ -2294,6 +2644,8 @@ export default class ChatInput {
   }
 
   public cleanup(helperToo = true) {
+    this.setMessageInputExpanded(false);
+
     if(this.chat && !this.chat.peerId) {
       this.chatInput.classList.add('hide');
       this.goDownBtn.classList.add('hide');
@@ -2316,12 +2668,12 @@ export default class ChatInput {
   }
 
   public async setDraft(draft?: MyDraftMessage, fromUpdate = true, force = false) {
-    if(
-      (!force && draft && !isInputEmpty(this.messageInput)) ||
-      PEER_EXCEPTIONS.has(this.chat.type)
-    ) {
-      return false;
-    }
+    if(PEER_EXCEPTIONS.has(this.chat.type)) return false;
+
+    const middleware = this.getMiddleware();
+    const generation = this.inputValueGeneration;
+    const contentIsCurrent = captureInputContent(this.messageInput, this.messageInputEditor);
+    const isCurrent = () => middleware() && generation === this.inputValueGeneration && contentIsCurrent(this.messageInputEditor);
 
     if(!draft) {
       const isMonoforumParent = this.chat.isMonoforum && !this.chat.monoforumThreadId;
@@ -2330,7 +2682,10 @@ export default class ChatInput {
         await this.managers.appDraftsManager.getDraft(this.chat.peerId, this.chat.threadId || this.chat.monoforumThreadId) :
         undefined;
 
+      if(!isCurrent()) return false;
+
       if(!draft) {
+        this.suppressDraftSyncForUnsupportedRichMessage = false;
         if(force) { // this situation can only happen when sending message with clearDraft
           /* const height = this.chatInput.getBoundingClientRect().height;
           const willChangeHeight = 78 - height;
@@ -2339,29 +2694,43 @@ export default class ChatInput {
             this.t();
           }
 
-          this.messageInputField.inputFake.textContent = '';
-          this.messageInputField.onFakeInput(false);
-
           ((this.chat.bubbles.messagesQueuePromise || Promise.resolve()) as Promise<any>).then(() => {
             fastRaf(() => {
+              if(!isCurrent()) return;
               this.onMessageSent(true, undefined, true);
             });
           });
         } else if(fromUpdate && !this.saveDraftDebounced.isDebounced()) {
-          this.clearInput();
+          // This is an authoritative clear, not a local edit or a request to
+          // restore the draft again while another remote update is arriving.
+          this.clearInput(false, false);
           this.clearHelper();
+          this.onMessageInput(undefined, true);
+          this.appliedInputDraft = {value: this.getCurrentInputAsDraft()};
         }
 
         return fromUpdate;
       }
     }
 
-    const wrappedDraft = wrapDraft(draft, {wrappingForPeerId: this.chat.peerId});
     const currentDraft = this.getCurrentInputAsDraft();
+    const receivedDraftIsUnchanged = this.appliedInputDraft &&
+      draftsAreEqual(currentDraft, this.appliedInputDraft.value);
+    if(!force && !isInputEmpty(this.messageInput) && !receivedDraftIsUnchanged) return false;
 
     const replyTo = draft.reply_to as InputReplyTo.inputReplyToMessage;
     const draftReplyToMsgId = replyTo?.reply_to_msg_id;
     if(draftsAreEqual(draft, currentDraft)) {
+      this.suppressDraftSyncForUnsupportedRichMessage = false;
+      return false;
+    }
+
+    if(draft.rich_message && (
+      !this.messageInputEditor ||
+      !canSafelyEditRichMessage(draft.rich_message)
+    )) {
+      toastNew({langPackKey: 'RichMessage.Error.UnsupportedContent'});
+      this.suppressDraftSyncForUnsupportedRichMessage = !!draft.rich_message;
       return false;
     }
 
@@ -2384,8 +2753,15 @@ export default class ChatInput {
       });
     }
 
-    this.setInputValue(wrappedDraft, fromUpdate, fromUpdate, draft);
-    return true;
+    const inputSet = this.setInputValue(
+      draftTextWithEntities(draft),
+      fromUpdate,
+      fromUpdate,
+      draft,
+      draft.rich_message
+    );
+    this.suppressDraftSyncForUnsupportedRichMessage = !inputSet && !!draft.rich_message;
+    return inputSet;
   }
 
   private createSendAs() {
@@ -2429,6 +2805,7 @@ export default class ChatInput {
     const {peerId, startParam, middleware} = options;
 
     this.peerChanging = true;
+    this.welcomeLimitReached = undefined;
 
     const {
       forwardElements,
@@ -2592,6 +2969,13 @@ export default class ChatInput {
         this.giftControlBtn.classList.toggle('hide', !(good && isBroadcast));
       }
 
+      if(this.chat && this.welcomeLimitPlate) {
+        // the plate's only occupant in this section, shown once the limit turns out to be reached
+        const good = !haveSomethingInControl && this.isWelcomeComposer;
+        haveSomethingInControl ||= good;
+        this.welcomeLimitPlate.classList.toggle('hide', !good);
+      }
+
       if(this.chat && this.pinnedControlBtn) {
         const good = !haveSomethingInControl && this.chat.type === ChatType.Pinned;
         haveSomethingInControl ||= good;
@@ -2688,7 +3072,7 @@ export default class ChatInput {
         }
       }
 
-      this.messageInputField?.onFakeInput(undefined, true);
+      this.messageInputField?.measureHeight(undefined, true);
 
       // * testing
       // this.startParam = this.appPeersManager.isBot(peerId) ? '123' : undefined;
@@ -2706,6 +3090,8 @@ export default class ChatInput {
 
       this.peerChanging = false;
       this.refreshStreamStoppable();
+      // after the chat is shown, never on its way: the count comes with the list
+      if(this.isWelcomeComposer) void this.updateWelcomeMessagesLimit(true);
       // console.warn('[input] finishpeerchange ends');
     };
   }
@@ -2789,7 +3175,26 @@ export default class ChatInput {
     const menuButton = botInfo?.menu_button;
     this.hasBotCommands = !!botInfo?.commands?.length;
     this.botMenuButton = menuButton?._ === 'botMenuButton' ? menuButton : undefined;
+    if(this.botMenuButton && this.botCommandsIcon.classList.contains('state-back')) {
+      this.botCommands.toggle(true);
+    }
     replaceContent(this.botCommandsView, this.botMenuButton ? wrapEmojiText(this.botMenuButton.text) : '');
+    this.botCommandsToggle.setAttribute(
+      'aria-label',
+      this.botMenuButton?.text || I18n.format('Chat.BotCommands', true)
+    );
+    if(this.botMenuButton) {
+      this.botCommandsToggle.removeAttribute('aria-haspopup');
+      this.botCommandsToggle.removeAttribute('aria-controls');
+      this.botCommandsToggle.removeAttribute('aria-expanded');
+    } else {
+      this.botCommandsToggle.setAttribute('aria-haspopup', 'listbox');
+      this.botCommandsToggle.setAttribute('aria-controls', this.botCommands.container.id);
+      this.botCommandsToggle.setAttribute(
+        'aria-expanded',
+        '' + this.botCommandsIcon.classList.contains('state-back')
+      );
+    }
     this.botCommandsIcon.classList.toggle('hide', !!this.botMenuButton);
     this.botCommandsView.classList.toggle('hide', !this.botMenuButton);
     this.botCommandsToggle.classList.toggle('is-view', !!this.botMenuButton);
@@ -2803,6 +3208,8 @@ export default class ChatInput {
 
     const isInputEmpty = this.isInputEmpty();
     const show = isNeeded && (isInputEmpty || !!botMenuButton);
+    if(Modes.a11y) botCommandsToggle.tabIndex = show ? 0 : -1;
+    botCommandsToggle.setAttribute('aria-hidden', '' + !show);
     if(!isNeeded) {
       if(!botCommandsToggle.parentElement) {
         return;
@@ -2837,6 +3244,8 @@ export default class ChatInput {
     let key: LangPackKey, args: FormatterArguments, inputStarsCountEl: HTMLElement;
     if(!canSend) {
       key = 'Channel.Persmission.MessageBlock';
+    } else if(type === ChatType.Welcome) {
+      key = 'WelcomeMessages.Placeholder';
     } else if(threadId && !isForum && !peerId.isUser()) {
       key = 'Comment';
     } else if(
@@ -2916,8 +3325,20 @@ export default class ChatInput {
   private filterAttachMenuButtons() {
     if(!this.attachMenuButtons) return;
     return filterAsync(this.attachMenuButtons, (button) => {
+      if(!canShowAttachMenuAction(
+        button.richMessageAction,
+        this.messageInputExpanded
+      )) return false;
       return button.verify ? button.verify() : true;
     });
+  }
+
+  private setMessageInputEditable(editable: boolean) {
+    if(this.messageInputEditor) {
+      this.messageInputEditor.setEditable(editable);
+    } else if(this.messageInput) {
+      this.messageInput.contentEditable = `${editable}`;
+    }
   }
 
   public updateMessageInput(
@@ -2944,24 +3365,24 @@ export default class ChatInput {
     if(isEditingAndLocked) {
       this.restoreInputLock = () => {
         this.updateMessageInputPlaceholder(placeholderParams);
-        this.messageInput.contentEditable = 'false';
+        this.setMessageInputEditable(false);
       };
     } else if(!canSend || !canSendPlain) {
-      messageInput.contentEditable = 'false';
+      this.setMessageInputEditable(false);
 
       if(!canSendPlain) {
-        this.messageInputField.onFakeInput(undefined, true);
+        this.messageInputField.measureHeight(undefined, true);
       }
     } else {
       this.restoreInputLock = undefined;
-      messageInput.contentEditable = 'true';
+      this.setMessageInputEditable(true);
       if(text) {
         this.managers.appDraftsManager.setDraft(this.chat.peerId, undefined, text, entities);
       }
       this.setDraft(undefined, false);
 
       if(!messageInput.innerHTML) {
-        this.messageInputField.onFakeInput(undefined, true);
+        this.messageInputField.measureHeight(undefined, true);
       }
     }
 
@@ -2969,74 +3390,11 @@ export default class ChatInput {
   }
 
   private notifyChatInputHeight() {
+    const baseHeight = 48;
     const helperPx = this.helperVisible ? 48 : 0;
-    this.chat.updateChatInputHeight(this.inputHeightDelta + helperPx);
-  }
-
-  // Single source of truth for `.input-message-input` max-height. The same
-  // value is pushed to InputFieldAnimated, which writes it as inline
-  // style.maxHeight AND uses it to clamp the auto-grow read of
-  // `inputFake.scrollHeight` — so `--chat-input-height-surplus` matches
-  // what the user actually sees.
-  private static MESSAGE_INPUT_MAX_HEIGHT_DEFAULT = 440; // 27.5rem
-  private static MESSAGE_INPUT_MAX_HEIGHT_MOBILE = 160; // 10rem
-  private static MESSAGE_INPUT_MAX_HEIGHT_MIN = 36;
-  private static SHORT_VIEWPORT_HEIGHT = 480; // 30rem
-  private static SHORT_VIEWPORT_RESERVED = 160; // 10rem reserved for chrome
-
-  private computeMessageInputMaxHeight() {
-    if(mediaSizes.isMobile) return ChatInput.MESSAGE_INPUT_MAX_HEIGHT_MOBILE;
-    if(windowSize.height <= ChatInput.SHORT_VIEWPORT_HEIGHT) {
-      // Mirror the old `max(36px, calc(--100vh-inset - 10rem))`. Chat-scope
-      // page-chats-padding is 16 on non-mobile (mobile is handled above).
-      const available = windowSize.height - 2 * 16 - ChatInput.SHORT_VIEWPORT_RESERVED;
-      return Math.max(ChatInput.MESSAGE_INPUT_MAX_HEIGHT_MIN, available);
-    }
-    return ChatInput.MESSAGE_INPUT_MAX_HEIGHT_DEFAULT;
-  }
-
-  private syncMessageInputMaxHeight = () => {
-    this.messageInputField?.setMaxHeight(this.computeMessageInputMaxHeight());
-  };
-
-  private attachMessageInputField() {
-    const oldInputField = this.messageInputField;
-    this.messageInputField = new InputFieldAnimated({
-      placeholder: 'Message',
-      // placeholderAsElement: true,
-      name: 'message',
-      withLinebreaks: true
-    });
-
-    const DEFAULT_INPUT_HEIGHT = 37;
-    this.messageInputField.onChangeHeight = (newHeight) => {
-      this.inputHeightDelta = Math.max(0, newHeight - DEFAULT_INPUT_HEIGHT);
-      this.notifyChatInputHeight();
-    };
-
-    this.messageInputField.input.tabIndex = -1;
-    this.messageInputField.input.classList.replace('input-field-input', 'input-message-input');
-    this.messageInputField.inputFake.classList.replace('input-field-input', 'input-message-input');
-    this.messageInput = this.messageInputField.input;
-    this.attachMessageInputListeners();
-    createMarkdownCache(this.messageInput);
-
-    this.syncMessageInputMaxHeight();
-    if(!oldInputField) {
-      this.listenerSetter.add(mediaSizes)('resize', this.syncMessageInputMaxHeight);
-    }
-
-    if(IS_STICKY_INPUT_BUGGED) {
-      fixSafariStickyInputFocusing(this.messageInput);
-    }
-
-    if(oldInputField) {
-      oldInputField.input.replaceWith(this.messageInputField.input);
-      oldInputField.placeholder.replaceWith(this.messageInputField.placeholder);
-      oldInputField.inputFake.replaceWith(this.messageInputField.inputFake);
-    } else {
-      this.inputMessageContainer.append(this.messageInputField.input, this.messageInputField.placeholder, this.messageInputField.inputFake);
-    }
+    const collapsedHeight = Math.max(baseHeight, this.messageInputNaturalHeight + 8) + helperPx;
+    this.chatInput?.style.setProperty('--message-input-collapsed-height', `${collapsedHeight}px`);
+    this.chat.updateChatInputHeight(collapsedHeight - baseHeight);
   }
 
   public passEventToInput(e: KeyboardEvent): void {
@@ -3049,80 +3407,6 @@ export default class ChatInput {
   }
 
   private attachMessageInputListeners() {
-    this.listenerSetter.add(this.messageInput)('keydown', (e) => {
-      const key = e.key;
-
-      if(isSendShortcutPressed(e)) {
-        cancelEvent(e);
-        this.sendMessage();
-      } else if(e.ctrlKey || e.metaKey) {
-        handleMarkdownShortcut(this.messageInput, e);
-      } else if((key === 'PageUp' || key === 'PageDown') && !e.shiftKey) { // * fix pushing page to left (Chrome Windows)
-        e.preventDefault();
-
-        if(key === 'PageUp') {
-          const range = document.createRange();
-          const sel = window.getSelection();
-
-          range.setStart(this.messageInput.childNodes[0] || this.messageInput, 0);
-          range.collapse(true);
-
-          sel.removeAllRanges();
-          sel.addRange(range);
-        } else {
-          placeCaretAtEnd(this.messageInput);
-        }
-      }
-    });
-
-    attachClickEvent(this.messageInput, (e) => {
-      if(!this.canSendPlain()) {
-        toastNew({
-          langPackKey: this.chat.isTemporaryThread ? 'WaitForTopicCreation' : POSTING_NOT_ALLOWED_MAP['send_plain']
-        });
-        return;
-      }
-
-      // const checkPseudoElementClick = (e: MouseEvent, tag: 'after' | 'before') => {
-      //   const target = (e.currentTarget || e.target) as HTMLElement;
-      //   const pseudo = getComputedStyle(target, `:${tag}`);
-      //   if(!pseudo) {
-      //     return false;
-      //   }
-
-      //   const [atop, aheight, aleft, awidth] = ['top', 'height', 'left', 'width'].map((k) => pseudo.getPropertyValue(k).slice(0, -2));
-
-      //   const ex = (e as any).layerX;
-      //   const ey = (e as any).layerY;
-      //   if(ex > aleft && ex < (aleft + awidth) && ey > atop && ey < (atop + aheight)) {
-      //     return true;
-      //   }
-
-      //   return false;
-      // };
-
-      const checkIconClick = (e: MouseEvent, quote: HTMLElement) => {
-        const rect = quote.getBoundingClientRect();
-        const ex = e.clientX;
-        const ey = e.clientY;
-        const elementWidth = 20;
-        const elementHeight = 20;
-        if(ex > (rect.right - elementWidth) && ex < rect.right && ey > rect.top && ey < (rect.top + elementHeight)) {
-          return true;
-        }
-
-        return false;
-      };
-
-      const quote = findUpClassName(e.target, 'can-send-collapsed');
-      if(quote && checkIconClick(e, quote)) {
-        if(quote.dataset.collapsed) delete quote.dataset.collapsed;
-        else quote.dataset.collapsed = '1';
-        toastNew({langPackKey: quote.dataset.collapsed ? 'Input.Quote.Collapsed' : 'Input.Quote.Expanded'});
-        return;
-      }
-    }, {listenerSetter: this.listenerSetter});
-
     if(IS_TOUCH_SUPPORTED) {
       attachClickEvent(this.messageInput, (e) => {
         if(this.emoticonsDropdown.isActive()) {
@@ -3167,7 +3451,6 @@ export default class ChatInput {
         }
       }
     }); */
-    this.listenerSetter.add(this.messageInput)('input', this.onMessageInput);
     this.listenerSetter.add(this.messageInput)('keyup', (e) => {
       // * a content-changing key already fired an `input` event before this `keyup`, and the
       // * input handler re-parsed + ran checkAutocomplete with the parsed value — re-doing it
@@ -3181,7 +3464,6 @@ export default class ChatInput {
     });
 
     this.listenerSetter.add(this.messageInput)('focusin', () => {
-      this.isFocused = true;
       // this.updateSendBtn();
 
       if((this.chat.type === ChatType.Chat || this.chat.type === ChatType.Discussion) &&
@@ -3193,7 +3475,6 @@ export default class ChatInput {
     });
 
     this.listenerSetter.add(this.messageInput)('focusout', () => {
-      this.isFocused = false;
       // this.updateSendBtn();
 
       this.onFocusChange?.(false);
@@ -3209,7 +3490,8 @@ export default class ChatInput {
   }
 
   public getEphemeralCommandResolution(value: string) {
-    if(!this.chat.isAnyGroup) {
+    // in the welcome messages section a /command is only a template's text
+    if(!this.chat.isAnyGroup || this.isWelcomeComposer) {
       return {state: 'none'} as const;
     }
 
@@ -3257,6 +3539,91 @@ export default class ChatInput {
     }
 
     return true;
+  }
+
+  /**
+   * The attach menu's Poll, and a bot keyboard asking for one (layer 229's `buttonTypeRequestPoll`),
+   * whose `quiz` fixes which kind of poll it will be.
+   */
+  public async openPollCreation(options: {quiz?: boolean} = {}) {
+    if(this.ephemeralComposer) {
+      return;
+    }
+
+    const pollsAction: ChatRights = 'send_polls';
+
+    if(!(await this.chat.canSend(pollsAction))) {
+      toastNew({langPackKey: POSTING_NOT_ALLOWED_MAP[pollsAction]});
+      return;
+    }
+
+    const {openCreatePollPopup} = await import('@components/popups/createPoll');
+
+    const supportedMediaTypes: SupportedMediaType[] = ['link'];
+
+    const supportedPromises: [Promise<boolean>, SupportedMediaType][] = [
+      [this.chat.canSend('send_photos'), 'photo'],
+      [this.chat.canSend('send_stickers'), 'sticker'],
+      [this.chat.canSend('send_videos'), 'video'],
+      [this.chat.canSend('send_gifs'), 'gif']
+    ];
+
+    for(const [canSendPromise, type] of supportedPromises) {
+      if(await canSendPromise) supportedMediaTypes.push(type);
+    }
+
+    if(this.ephemeralComposer) {
+      return;
+    }
+
+    openCreatePollPopup({
+      isBroadcast: this.chat.isBroadcast,
+      supportedMediaTypes: supportedMediaTypes,
+      quiz: options.quiz,
+      onSubmit: async(payload) => {
+        if(this.ephemeralComposer) {
+          return;
+        }
+
+        const attachments = [
+          payload.descriptionAttachment,
+          payload.explanationAttachment,
+          ...payload.pollOptions.map((option) => option.attachment)
+        ];
+
+        const requiredRights = new Set<ChatRights>();
+        for(const attachment of attachments) {
+          if(!attachment) continue;
+          switch(attachment.type) {
+            case 'photo': requiredRights.add('send_photos'); break;
+            case 'sticker': requiredRights.add('send_stickers'); break;
+            case 'video':
+              requiredRights.add(attachment.isAnimated ? 'send_gifs' : 'send_videos');
+              break;
+          }
+        }
+
+        for(const right of requiredRights) {
+          if(!(await this.chat.canSend(right))) {
+            toastNew({langPackKey: POSTING_NOT_ALLOWED_MAP[right]});
+            return;
+          }
+        }
+
+        if(this.ephemeralComposer) {
+          return;
+        }
+
+        const sendingParams = this.chat.getMessageSendingParams();
+
+        const preparedPaymentResult = await this.chat.input.paidMessageInterceptor.prepareStarsForPayment(1);
+        if(preparedPaymentResult === PAYMENT_REJECTED) return;
+
+        sendingParams.confirmedPaymentResult = preparedPaymentResult;
+
+        await this.managers.appPollsManager.sendPollMessage(sendingParams, payload);
+      }
+    }, SolidJSHotReloadGuardProvider);
   }
 
   public getEphemeralSendingParams(): Pick<MessageSendingParams, 'ephemeral' | 'ephemeralReceiverId'> {
@@ -3327,7 +3694,7 @@ export default class ChatInput {
     }
   }
 
-  public onMessageInput = (e?: Event) => {
+  public onMessageInput = (e?: Event, suppressDraftSync = false) => {
     // * validate due to manual formatting through browser's context menu
     /* const inputType = (e as InputEvent).inputType;
     console.log('message input event', e);
@@ -3340,6 +3707,8 @@ export default class ChatInput {
       alert('not single');
     } */
 
+    if(!e) this.richMessageInput?.sync();
+
     // console.log('messageInput input', this.messageInput.innerText);
     // const value = this.messageInput.innerText;
     const {value: richValue, entities: markdownEntities1, caretPos} = getRichValueWithCaret(this.messageInputField.input);
@@ -3351,9 +3720,10 @@ export default class ChatInput {
 
     this.throttledSetMessageCountToBadgeState(richValue);
 
-    maybeClearUndoHistory(this.messageInput);
 
     this.processWebPage(richValue, entities);
+
+    const isUserInput = !!(e?.isTrusted || (e as ChatInputEditorInputEvent)?.chatInputEditorUserInput);
 
     const isEmpty = !richValue.trim();
     if(isEmpty) {
@@ -3365,7 +3735,7 @@ export default class ChatInput {
 
       // * Chrome has a bug - it will preserve the formatting if the input with monospace text is cleared
       // * so have to reset formatting
-      if(document.activeElement === this.messageInput && !IS_MOBILE) {
+      if(!this.messageInputEditor && document.activeElement === this.messageInput && !IS_MOBILE) {
         setTimeout(() => {
           // * re-check emptiness: a replace-style IME (e.g. Vietnamese Telex 'dd' -> 'đ') emits the
           // * delete (empty input) and the insert in the same task, so the input is filled again by
@@ -3379,7 +3749,7 @@ export default class ChatInput {
       }
     } else {
       const time = Date.now();
-      if(!this.ephemeralComposer && (time - this.lastTimeType) >= 6000 && e?.isTrusted) {
+      if(!this.ephemeralComposer && !this.isWelcomeComposer && (time - this.lastTimeType) >= 6000 && isUserInput) {
         this.lastTimeType = time;
         this.managers.appMessagesManager.setTyping(this.chat.peerId, {_: 'sendMessageTypingAction'}, undefined, this.chat.threadId);
       }
@@ -3391,13 +3761,19 @@ export default class ChatInput {
       this.updateBotCommandsToggle();
     }
 
-    if(!this.editMsgId && !this.processingDraftMessage) {
-      this.saveDraftDebounced();
+    if(isUserInput) this.acceptUserEditOverUnsupportedRichMessageDraft();
+
+    if(!this.editMsgId && !this.processingDraftMessage && !suppressDraftSync) {
+      if((e as ChatInputEditorInputEvent)?.chatInputEditorStructuralChange) {
+        this.saveDraftDebounced.clearTimeout();
+        this.saveDraft();
+      } else {
+        this.saveDraftDebounced();
+      }
     }
 
     this.checkAutocomplete(richValue, caretPos, entities);
 
-    processCurrentFormatting(this.messageInput, undefined, (e as InputEvent)?.inputType as any);
 
     this.updateSendBtn();
   };
@@ -3407,6 +3783,19 @@ export default class ChatInput {
     entities: MessageEntity[],
     message: Message.message | DraftMessage.draftMessage = this.processingDraftMessage || this.editMessage
   ) {
+    const editMedia = this.editMessage?.media;
+    const canUseNativeRichMessage = !this.editMessage || !editMedia || editMedia._ === 'messageMediaWebPage';
+    if(canUseNativeRichMessage && this.messageInputEditor?.getMode() === 'rich' && !this.messageInputEditor.isEmpty()) {
+      const hadWebPage = !!(this.lastUrl || this.willSendWebPage || this.getWebPagePromise);
+      this.lastUrl = '';
+      this.getWebPagePromise = undefined;
+      this.willSendWebPage = null;
+      this.noWebPage = true;
+      // Do not replace an edit/reply helper while suppressing its nested preview.
+      if(hadWebPage && !this.helperType) this.clearHelper();
+      return;
+    }
+
     const messageMedia = message?.media;
     const invertMedia = message?.pFlags?.invert_media;
     const webPageUrl = messageMedia?._ === 'inputMediaWebPage' ?
@@ -3466,8 +3855,8 @@ export default class ChatInput {
       this.managers.appWebPagesManager.getWebPage(foundUrl),
       this.chat.canSend('embed_links')
     ]).then(([webPage, canEmbedLinks]) => {
-      if(this.getWebPagePromise === promise) this.getWebPagePromise = undefined;
-      if(this.lastUrl !== foundUrl) return;
+      if(this.getWebPagePromise !== promise || this.lastUrl !== foundUrl) return;
+      this.getWebPagePromise = undefined;
       if(webPage?._  === 'webPage' && canEmbedLinks) {
         const newReply = this.setTopInfo({
           type: 'webpage',
@@ -3514,118 +3903,25 @@ export default class ChatInput {
 
     RichInputHandler.getInstance().makeFocused(this.messageInput);
 
-    const {value: fullValue, caretPos, entities} = getRichValueWithCaret(this.messageInput);
+    const {value: fullValue, caretPos} = getRichValueWithCaret(this.messageInput);
     const pos = caretPos >= 0 ? caretPos : fullValue.length;
     const prefix = fullValue.substr(0, pos);
-    const suffix = fullValue.substr(pos);
 
     const matches = isHelper ? prefix.match(ChatInput.AUTO_COMPLETE_REG_EXP) : null;
 
     const matchIndex = matches ? matches.index + (matches[0].length - matches[2].length) : prefix.length;
-    const newPrefix = prefix.slice(0, matchIndex);
-    const newValue = newPrefix + insertText + suffix;
 
     if(isHelper && caretPos !== -1) {
-      const match = replaceText ?? (matches ? matches[2] : fullValue);
-      // const {node, selection} = getCaretPosNew(this.messageInput);
-
-      const selection = document.getSelection();
-      // const range = document.createRange();
-      // * a typed emoji can be an <img> on platforms without native emoji support, so the
-      // * selected text has to be resolved back to its rich value instead of selection.toString()
-      const getSelectedValue = replaceText !== undefined ?
-        () => getRichValueWithCaret(selection.getRangeAt(0).cloneContents(), false, false).value :
-        () => selection.toString();
-      let counter = 0;
-      while(getSelectedValue() !== match) {
-        if(++counter >= 10000) {
-          throw new Error('lolwhat');
-        }
-
-        // for(let i = 0; i < match.length; ++i) {
-        selection.modify('extend', 'backward', 'character');
-      }
+      const replaceFrom = replaceText === undefined ? matchIndex : Math.max(0, pos - replaceText.length);
+      this.messageInputEditor.replaceTextRange(
+        replaceFrom,
+        pos,
+        insertText,
+        insertEntity ? [insertEntity] : undefined
+      );
+    } else {
+      this.messageInputEditor.replaceSelection(insertText, insertEntity ? [insertEntity] : undefined);
     }
-
-    {
-      // const fragment = wrapDraftText(insertText, {entities: insertEntity ? [insertEntity] : undefined, wrappingForPeerId: this.chat.peerId});
-      insertRichTextAsHTML(this.messageInput, insertText, insertEntity ? [insertEntity] : undefined, this.chat.peerId);
-      // const {node, offset} = getCaretPos(this.messageInput);
-      // const fragmentLastChild = fragment.lastChild;
-      // if(node?.nodeType === node.TEXT_NODE) {
-      //   const prefix = node.nodeValue.slice(0, offset);
-      //   const suffix = node.nodeValue.slice(offset);
-
-      //   const suffixNode = document.createTextNode(suffix);
-
-      //   node.nodeValue = prefix;
-      //   node.parentNode.insertBefore(suffixNode, node.nextSibling);
-      //   node.parentNode.insertBefore(fragment, suffixNode);
-
-      //   setCaretAt(fragmentLastChild.nextSibling);
-
-      //   this.messageInputField.simulateInputEvent();
-      // }
-    }
-    // return;
-
-    // // merge emojis
-    // const hadEntities = parseEntities(fullValue);
-    // mergeEntities(entities, hadEntities);
-
-    // // max for additional whitespace
-    // const insertLength = insertEntity ? Math.max(insertEntity.length, insertText.length) : insertText.length;
-    // const addEntities: MessageEntity[] = [];
-    // if(insertEntity) {
-    //   addEntities.push(insertEntity);
-    //   insertEntity.offset = matchIndex;
-    // }
-
-    // // add offset to entities next to emoji
-    // const diff = matches ? insertLength - matches[2].length : insertLength;
-    // entities.forEach((entity) => {
-    //   if(entity.offset >= matchIndex) {
-    //     entity.offset += diff;
-    //   }
-    // });
-
-    // mergeEntities(entities, addEntities);
-
-    // if(/* caretPos !== -1 && caretPos !== fullValue.length */true) {
-    //   const caretEntity: MessageEntity.messageEntityCaret = {
-    //     _: 'messageEntityCaret',
-    //     offset: matchIndex + insertLength,
-    //     length: 0
-    //   };
-
-    //   let insertCaretAtIndex = 0;
-    //   for(let length = entities.length; insertCaretAtIndex < length; ++insertCaretAtIndex) {
-    //     const entity = entities[insertCaretAtIndex];
-    //     if(entity.offset > caretEntity.offset) {
-    //       break;
-    //     }
-    //   }
-
-    //   entities.splice(insertCaretAtIndex, 0, caretEntity);
-    // }
-
-    // // const saveExecuted = this.prepareDocumentExecute();
-    // // can't exec .value here because it will instantly check for autocomplete
-    // const value = documentFragmentToHTML(wrapDraftText(newValue, {entities}));
-    // this.messageInputField.setValueSilently(value);
-
-    // const caret = this.messageInput.querySelector('.composer-sel');
-    // if(caret) {
-    //   setCaretAt(caret);
-    //   caret.remove();
-    // }
-
-    // // but it's needed to be checked only here
-    // this.onMessageInput();
-
-    // // saveExecuted();
-
-    // // document.execCommand('insertHTML', true, wrapEmojiText(emoji));
   }
 
   public onEmojiSelected = (emoji: ReturnType<typeof getEmojiFromElement>, autocomplete: boolean, replaceText?: string) => {
@@ -3758,12 +4054,14 @@ export default class ChatInput {
       }
     }
 
+    // a welcome message cannot be an inline bot's result (desktop turns inline bots off there)
+    const noInline = this.ephemeralComposer || this.isWelcomeComposer;
     let canSendInline: boolean;
-    if(!this.ephemeralComposer && !foundHelpers.size) {
+    if(!noInline && !foundHelpers.size) {
       canSendInline = await this.chat.canSend('send_inline');
     }
 
-    const inlineResult = !this.ephemeralComposer &&
+    const inlineResult = !noInline &&
       this.checkInlineAutocomplete(value, canSendInline, foundHelpers.values().next().value);
     if(inlineResult === this.inlineHelper) {
       foundHelpers.add(this.inlineHelper);
@@ -3812,6 +4110,8 @@ export default class ChatInput {
 
         if(!this.btnPreloader) {
           this.btnPreloader = this.createButtonIcon('none btn-preloader float show disable-hover', {noRipple: true});
+          this.btnPreloader.tabIndex = -1;
+          this.btnPreloader.setAttribute('aria-hidden', 'true');
           putPreloader(this.btnPreloader, true);
           this.inputMessageContainer.parentElement.insertBefore(this.btnPreloader, this.inputMessageContainer.nextSibling);
         } else {
@@ -4022,8 +4322,9 @@ export default class ChatInput {
       const originalDraft: DraftMessage.draftMessage = {
         _: 'draftMessage',
         date: draft?.date,
-        message: message.message,
-        entities: message.entities,
+        message: message.rich_message ? '' : message.message,
+        entities: message.rich_message ? undefined : message.entities,
+        rich_message: message.rich_message,
         pFlags: {
           invert_media: message.pFlags.invert_media
         },
@@ -4041,6 +4342,17 @@ export default class ChatInput {
           reply_to_msg_id: replyTo.reply_to_msg_id
         }
       };
+
+      // Resolved server resources are transport data, not an edit. The editor reconstructs
+      // resource references from block ids, so ignore these arrays in the no-op comparison.
+      [originalDraft, draft].forEach((draft) => {
+        if(draft?.rich_message?._ !== 'richMessage') return;
+        draft.rich_message = {
+          ...draft.rich_message,
+          documents: [],
+          photos: []
+        };
+      });
 
       if(originalDraft.entities?.length || draft?.entities?.length) {
         const canPassEntitiesTypes = new Set(Object.values(MARKDOWN_ENTITIES));
@@ -4175,7 +4487,13 @@ export default class ChatInput {
     return {replyToMsgId, replyToStoryId, replyToQuote, replyToPollOption, replyToPeerId, replyToMonoforumPeerId};
   }
 
-  public async clearInput(canSetDraft = true, fireEvent = true, clearValue = '') {
+  public async clearInput(
+    canSetDraft = true,
+    fireEvent = true,
+    clearValue: Parameters<InputFieldAnimated['setValueSilently']>[0] = ''
+  ) {
+    this.appliedInputDraft = undefined;
+    ++this.inputValueGeneration;
     if(document.activeElement === this.messageInput && IS_MOBILE_SAFARI) { // fix first char uppercase
       const i = document.createElement('input');
       document.body.append(i);
@@ -4185,15 +4503,6 @@ export default class ChatInput {
       i.remove();
     } else {
       this.messageInputField.setValueSilently(clearValue);
-    }
-
-    if(IS_TOUCH_SUPPORTED) {
-      // this.messageInput.innerText = '';
-    } else {
-      // this.attachMessageInputField();
-      // this.messageInput.innerText = '';
-
-      clearMarkdownExecutions(this.messageInput);
     }
 
     this.setEffect();
@@ -4265,7 +4574,7 @@ export default class ChatInput {
     // Stopping a bot's text stream takes the button over whatever is typed, exactly like in the
     // other clients — saving an edit and finishing a recording still win over it.
     else if(this.streamStoppable && !this.recording) icon = 'stop';
-    else if(!this.recordingController?.hasVoiceRecorder() || this.recording || !isInputEmpty || this.forwarding || this.suggestedPost?.hasMedia) icon = this.chat.type === ChatType.Scheduled ? 'schedule' : 'send';
+    else if(!this.recordingController?.hasVoiceRecorder() || this.recording || !isInputEmpty || this.forwarding || this.suggestedPost?.hasMedia || this.isWelcomeComposer) icon = this.chat.type === ChatType.Scheduled ? 'schedule' : 'send';
     else icon = this.recordingController.getActiveRecordingMediaType() === 'video' ? 'record-video' : 'record';
 
     this.sendBtnIcon = icon;
@@ -4273,21 +4582,33 @@ export default class ChatInput {
       this.btnSend.classList.toggle(i, icon === i);
     });
 
+    const sendBtnLabelKey: {[key in ChatSendBtnIcon]: LangPackKey} = {
+      'send': 'Send',
+      'record': 'UserRestrictionsSendVoices',
+      'record-video': 'UserRestrictionsSendRound',
+      'edit': 'Edit',
+      'schedule': 'Chat.Send.ScheduledMessage',
+      'forward': 'Forward',
+      // the button stops a draft the server is still streaming in
+      'stop': 'ChatAutomation.Stop'
+    };
+    this.btnSend.setAttribute('aria-label', I18n.format(sendBtnLabelKey[icon], true));
+
     this.inputState.set({
       hasSendButton: icon === 'send',
       forwarding: accumulate(Object.values(this.forwarding || {}).map(messages => messages.length), 0)
     });
 
     if(this.btnScheduled) {
-      this.btnScheduled.classList.toggle('show', isInputEmpty && this.chat.type !== ChatType.Scheduled);
+      this.btnScheduled.classList.toggle('show', isInputEmpty && this.chat.type !== ChatType.Scheduled && !this.isWelcomeComposer);
     }
 
     if(this.btnToggleReplyMarkup) {
-      this.btnToggleReplyMarkup.classList.toggle('show', isInputEmpty && this.chat.type !== ChatType.Scheduled);
+      this.btnToggleReplyMarkup.classList.toggle('show', isInputEmpty && this.chat.type !== ChatType.Scheduled && !this.isWelcomeComposer);
     }
 
     if(this.btnSendGift) {
-      this.btnSendGift.classList.toggle('show', isInputEmpty);
+      this.btnSendGift.classList.toggle('show', isInputEmpty && !this.isWelcomeComposer);
     }
 
     // External listeners (e.g. star badge animation) want the icon family, not
@@ -4358,6 +4679,7 @@ export default class ChatInput {
     }
 
     this.resetSendingFlags();
+    this.suppressDraftSyncForUnsupportedRichMessage = false;
 
     const {totalEntities} = this.getValueAndEntities(this.messageInput);
     let nextOffset = 0;
@@ -4375,6 +4697,7 @@ export default class ChatInput {
     });
 
     if(clearInput) {
+      this.richMessageInput?.cancelMedia();
       this.lastUrl = '';
       delete this.noWebPage;
       this.willSendWebPage = null;
@@ -4384,6 +4707,8 @@ export default class ChatInput {
     if(clearReply || clearInput) {
       this.clearHelper();
     }
+
+    this.setMessageInputExpanded(false, true);
 
     this.updateSendBtn();
     this.onMessageSent2?.();
@@ -4412,45 +4737,83 @@ export default class ChatInput {
     ephemeral?: boolean,
     text?: LocalTextWithOptionalEntities
   }) {
-    const {value, entities} = inputField ?
+    forwarding = ephemeral ? undefined : copy(forwarding);
+    let {value, entities} = inputField ?
       getRichValueWithCaret(inputField.input, true, false) :
       text ?
         {value: text.text, entities: text.entities || []} :
         {value: '', entities: [] as MessageEntity[]};
 
+    const editor = inputField && getChatInputEditor(inputField.input);
+    const contentIsCurrent = inputField && captureInputContent(inputField.input, editor);
+    const editorHasContent = editor && !editor.isEmpty();
+    if(editor?.hasPendingRichMediaUploads()) {
+      toastNew({langPackKey: 'RichMessage.Error.MediaUploading'});
+      return false;
+    }
+    if(editorHasContent) {
+      await editor.resolveAutoCodeLanguages();
+      if(!contentIsCurrent(getChatInputEditor(inputField.input))) return false;
+    }
+    const legacyValue = editorHasContent && !sendTextParams.richMessage ?
+      editor.getLegacyValueIfLossless() :
+      undefined;
+    if(legacyValue) {
+      value = legacyValue.value;
+      entities = legacyValue.entities;
+    }
     const trimmedValue = value.trim();
-
-    if(ephemeral) {
-      forwarding = undefined;
+    let richMessage = sendTextParams.richMessage || (
+      editorHasContent && !legacyValue ?
+        editor.getRichMessage() :
+        undefined
+    );
+    if(richMessage) {
+      const postingChoice = await getRichMessagePostingChoice(
+        rootScope.managers,
+        canFallbackRichMessageToPlain(richMessage)
+      );
+      if(postingChoice === 'cancel') return false;
+      if(postingChoice === 'plain') {
+        richMessage = undefined;
+        entities = [];
+      }
+    }
+    if(richMessage && sendingParams.suggestedPost?.hasMedia) {
+      toastNew({langPackKey: 'RichMessage.Error.MediaUnsupported'});
+      return false;
     }
 
-    let messageCount = 0;
-    if(chatType !== ChatType.Scheduled) {
-      if(forwarding) {
-        for(const fromPeerId in forwarding) {
-          messageCount += forwarding[fromPeerId].length;
-        }
-      }
-
-      const config = await rootScope.managers.apiManager.getConfig();
-      const MAX_LENGTH = config.message_length_max;
-      const textOverflow = value.length > MAX_LENGTH;
-
-      messageCount += trimmedValue ?
-        splitStringByLength(value, MAX_LENGTH).length :
-        0;
-
-      if(!ephemeral && await this.showSlowModeTooltipIfNeeded({
-        ...slowModeParams,
-        sendingFew: messageCount > 1,
-        textOverflow
-      })) {
+    if(richMessage?.input._ === 'inputRichMessage') {
+      try {
+        const validation = await rootScope.managers.appMessagesManager.validateRichMessage(richMessage.input);
+        if(showRichMessageValidationError(validation)) return false;
+      } catch{
+        toastNew({langPackKey: 'RichMessage.Error.ResourcesUnavailable'});
         return false;
       }
     }
 
+    let messageCount = 0;
+    if(forwarding) {
+      for(const fromPeerId in forwarding) messageCount += forwarding[fromPeerId].length;
+    }
+    const config = await rootScope.managers.apiManager.getConfig();
+    const MAX_LENGTH = config.message_length_max;
+    const textOverflow = !richMessage && value.length > MAX_LENGTH;
+    messageCount += richMessage ? 1 : trimmedValue ? splitStringByLength(value, MAX_LENGTH).length : 0;
+
+    // Queued sends still need an accurate result so their composer is cleared,
+    // while retaining the scheduled view's existing payment/slow-mode policy.
+    const immediateChecks = chatType !== ChatType.Scheduled && !ephemeral;
+    if(immediateChecks && await this.showSlowModeTooltipIfNeeded({
+      ...slowModeParams,
+      sendingFew: messageCount > 1,
+      textOverflow
+    })) return false;
+
     let preparedPaymentResult: Awaited<ReturnType<PaidMessagesInterceptor['prepareStarsForPayment']>>;
-    if(messageCount && !ephemeral) {
+    if(messageCount && immediateChecks) {
       const promise = paidMessageInterceptor ?
         paidMessageInterceptor.prepareStarsForPayment(messageCount) :
         PaidMessagesInterceptor.prepareStarsForPayment({peerId: sendingParams.peerId, messageCount});
@@ -4460,16 +4823,20 @@ export default class ChatInput {
     if(preparedPaymentResult === PAYMENT_REJECTED) return false;
     sendingParams.confirmedPaymentResult = preparedPaymentResult;
 
-    if(trimmedValue || sendingParams.suggestedPost?.hasMedia) {
+    if(richMessage || trimmedValue || sendingParams.suggestedPost?.hasMedia) {
       rootScope.managers.appMessagesManager.sendText({
         ...sendTextParams,
         ...sendingParams,
         text: value,
-        entities
+        entities,
+        richMessage,
+        noWebPage: richMessage ? true : sendTextParams.noWebPage,
+        webPage: richMessage ? undefined : sendTextParams.webPage,
+        webPageOptions: richMessage ? undefined : sendTextParams.webPageOptions,
+        invertMedia: richMessage ? undefined : sendTextParams.invertMedia
       });
     }
 
-    forwarding = copy(forwarding);
     for(const fromPeerId in forwarding) {
       const mids = forwarding[fromPeerId];
       if(mids.length === 1) {
@@ -4521,6 +4888,15 @@ export default class ChatInput {
     }
 
     const {peerId} = chat;
+    const middleware = this.getMiddleware();
+    const contentIsCurrent = captureInputContent(this.messageInputField.input, this.messageInputEditor);
+    const inputGeneration = this.inputValueGeneration;
+    const isCurrent = () => middleware() && this.editMsgId === editMsgId &&
+      this.inputValueGeneration === inputGeneration && contentIsCurrent(this.messageInputEditor);
+    if(!(await this.checkWelcomeMessagesLimit()) || !isCurrent()) {
+      return;
+    }
+
     const {noWebPage} = this;
     const sendingParams = {
       ...this.chat.getMessageSendingParams(),
@@ -4538,22 +4914,25 @@ export default class ChatInput {
         chatType: chat.type,
         forwarding: this.forwarding,
         forwardParams: this.forwarding ? {
-          dropAuthor: this.forwardElements && this.forwardElements.hideSender.checkboxField.checked,
-          dropCaptions: this.isDroppingCaptions()
+          dropAuthor: !this.forwardingHasProtectedRichMessages &&
+            this.forwardElements &&
+            this.forwardElements.hideSender.checkboxField.checked,
+          dropCaptions: !this.forwardingHasProtectedRichMessages && this.isDroppingCaptions()
         } : undefined,
         sendTextParams: {
           noWebPage,
           webPage: this.getWebPagePromise ? undefined : this.willSendWebPage,
           webPageOptions: this.webPageOptions,
           invertMedia: this.willSendWebPage ? this.invertMedia : undefined,
-          clearDraft: true
+          // the welcome composer keeps no draft, and the one it would clear is the group's own
+          clearDraft: !this.isWelcomeComposer
         },
         slowModeParams: this.getDefaultParamsForSlowModeTooltip(),
         paidMessageInterceptor: this.paidMessageInterceptor,
         ephemeral: isEphemeral
       });
 
-      if(!result || !result.messageCount) {
+      if(!result || !result.messageCount || !isCurrent()) {
         return;
       }
 
@@ -4575,22 +4954,61 @@ export default class ChatInput {
     }
 
     const {value, entities} = getRichValueWithCaret(this.messageInputField.input, true, false);
-    const trimmedValue = value.trim();
     const message = this.editMessage;
-    if(trimmedValue || message.media) {
-      this.managers.appMessagesManager.editMessage(
-        message,
-        value,
-        {
-          entities,
-          noWebPage,
-          webPage: this.getWebPagePromise ? undefined : this.willSendWebPage,
-          webPageOptions: this.webPageOptions,
-          invertMedia: this.willSendWebPage ? this.invertMedia : this.editMessage?.pFlags?.invert_media
-        }
-      );
+    const canUseRichMessage = !message.media || message.media._ === 'messageMediaWebPage';
+    const editorHasContent = !this.messageInputEditor.isEmpty();
+    if(this.messageInputEditor.hasPendingRichMediaUploads()) {
+      toastNew({langPackKey: 'RichMessage.Error.MediaUploading'});
+      return;
+    }
+    if(editorHasContent) await this.messageInputEditor.resolveAutoCodeLanguages();
+    if(!isCurrent()) return;
+    const legacyValue = editorHasContent ?
+      this.messageInputEditor.getLegacyValueIfLossless() :
+      undefined;
+    let editValue = value;
+    let editEntities = entities;
+    if(legacyValue) {
+      editValue = legacyValue.value;
+      editEntities = legacyValue.entities;
+    } else if(editorHasContent && !canUseRichMessage) {
+      toastNew({langPackKey: 'RichMessage.Error.MediaUnsupported'});
+      return;
+    }
+    const richMessage = editorHasContent && canUseRichMessage && !legacyValue ?
+      this.messageInputEditor.getRichMessage() :
+      undefined;
+    if(richMessage) {
+      try {
+        const validation = await this.managers.appMessagesManager.validateRichMessage(richMessage.input);
+        if(showRichMessageValidationError(validation)) return;
+      } catch{
+        toastNew({langPackKey: 'RichMessage.Error.ResourcesUnavailable'});
+        return;
+      }
+    }
+    if(!isCurrent()) return;
+    if(richMessage || editValue.trim() || message.media) {
+      try {
+        await this.managers.appMessagesManager.editMessage(
+          message,
+          editValue,
+          {
+            entities: editEntities,
+            richMessage,
+            noWebPage: richMessage ? true : noWebPage,
+            webPage: richMessage || this.getWebPagePromise ? undefined : this.willSendWebPage,
+            webPageOptions: richMessage ? undefined : this.webPageOptions,
+            invertMedia: richMessage ? undefined :
+              this.willSendWebPage ? this.invertMedia : this.editMessage?.pFlags?.invert_media
+          }
+        );
+      } catch{
+        if(isCurrent()) toastNew({langPackKey: 'Error.AnError'});
+        return;
+      }
 
-      this.onMessageSent();
+      if(isCurrent()) this.onMessageSent();
     } else {
       showDeleteMessagesPopup(peerId, [editMsgId], chat.type);
       return;
@@ -4612,7 +5030,7 @@ export default class ChatInput {
     target?: HTMLElement,
     ignoreNoPremium?: boolean
   }) {
-    if(!this.verifyEphemeralCommand()) {
+    if(!this.verifyEphemeralCommand() || !(await this.checkWelcomeMessagesLimit())) {
       return false;
     }
 
@@ -4709,37 +5127,70 @@ export default class ChatInput {
 
   public initMessageEditing(mid: number) {
     const message = this.chat.getMessage(mid) as Message.message;
-
-    let input = wrapDraftText(message.message, {entities: message.totalEntities, wrappingForPeerId: this.chat.peerId});
+    if(!message) return;
+    const peerId = this.chat.peerId;
+    const threadId = this.chat.threadId;
+    let input: LocalTextWithEntities = {text: message.message, entities: message.totalEntities};
+    let richMessage = message.rich_message;
     const f = async() => {
-      let restoreInputLock: () => void;
-      if(!this.messageInput.isContentEditable) {
-        const placeholderParams = await this.getPlaceholderParams(true);
-        const {contentEditable} = this.messageInput;
-        this.messageInput.contentEditable = 'true';
-        const {oldKey, oldArgs} = this.updateMessageInputPlaceholder(placeholderParams);
+      const middleware = this.getMiddleware();
+      const generation = ++this.messageEditingGeneration;
+      const inputGeneration = this.inputValueGeneration;
+      const contentIsCurrent = captureInputContent(this.messageInput, this.messageInputEditor);
+      const isCurrent = () => middleware() && generation === this.messageEditingGeneration &&
+        this.chat.peerId === peerId && this.chat.threadId === threadId &&
+        inputGeneration === this.inputValueGeneration && contentIsCurrent(this.messageInputEditor);
+      if(!isCurrent()) return;
+      try {
+        if(richMessage?.pFlags.part) {
+          const fullRichMessage = await this.managers.appMessagesManager.getRichMessage(message.peerId, message.mid);
+          if(!isCurrent()) return;
+          if(!fullRichMessage) throw new Error('RICH_MESSAGE_EMPTY');
+          richMessage = fullRichMessage;
+        }
+        if(richMessage && !canSafelyEditRichMessage(richMessage)) {
+          toastNew({langPackKey: 'RichMessage.Error.UnsupportedContent'});
+          return;
+        }
+        const previewMessage = richMessage ? {...message, rich_message: richMessage} : message;
+        const replyFragment = await wrapMessageForReply({message: previewMessage, usingMids: [message.mid]});
+        if(!isCurrent()) return;
+        const needsInputUnlock = !this.messageInput.isContentEditable || !!this.restoreInputLock;
+        const placeholderParams = needsInputUnlock ? await this.getPlaceholderParams(true) : undefined;
+        if(!isCurrent()) return;
 
-        restoreInputLock = () => {
-          this.messageInput.contentEditable = contentEditable;
-          this.updateMessageInputPlaceholder({key: oldKey, args: oldArgs});
-        };
+        // Prepare all asynchronous data before unlocking or replacing the input.
+        // A newer edit, cancellation, chat change or teardown invalidates this run.
+        if(richMessage) message.rich_message = richMessage;
+        this.setTopInfo({
+          type: 'edit',
+          callerFunc: f,
+          title: i18n('AccDescrEditing'),
+          subtitle: replyFragment,
+          input,
+          richMessage,
+          message
+        });
+        let restoreInputLock: () => void;
+        if(placeholderParams && !this.messageInput.isContentEditable) {
+          const wasEditable = this.messageInput.isContentEditable;
+          this.setMessageInputEditable(true);
+          const {oldKey, oldArgs} = this.updateMessageInputPlaceholder(placeholderParams);
+          restoreInputLock = () => {
+            this.setMessageInputEditable(wasEditable);
+            this.updateMessageInputPlaceholder({key: oldKey, args: oldArgs});
+          };
+        }
+        this.editMsgId = mid;
+        this.editMessage = message;
+        input = undefined;
+        richMessage = undefined;
+        // the limit plate steps aside for editing what is already there
+        if(this.welcomeLimitReached) void this.center(true);
+        this.restoreInputLock = restoreInputLock;
+      } catch{
+        if(isCurrent()) toastNew({langPackKey: 'Error.AnError'});
       }
-
-      const replyFragment = await wrapMessageForReply({message, usingMids: [message.mid]});
-      this.setTopInfo({
-        type: 'edit',
-        callerFunc: f,
-        title: i18n('AccDescrEditing'),
-        subtitle: replyFragment,
-        input,
-        message
-      });
-
-      this.editMsgId = mid;
-      this.editMessage = message;
-      input = undefined;
-
-      this.restoreInputLock = restoreInputLock;
     };
     return f();
   }
@@ -4779,7 +5230,7 @@ export default class ChatInput {
     const monoforumThreadId = getPeerId(message.saved_peer_id);
     if(!monoforumThreadId) return;
 
-    const input = wrapDraftText(message.message, {entities: message.totalEntities, wrappingForPeerId: this.chat.peerId});
+    const input: LocalTextWithEntities = {text: message.message, entities: message.totalEntities};
 
     const payload: SuggestedPostPayload = {
       stars: message.suggested_post?.price?._ === 'starsAmount' ? +message.suggested_post.price.amount : undefined,
@@ -4815,6 +5266,7 @@ export default class ChatInput {
       const fromPeerIds = Object.keys(fromPeerIdsMids).map((fromPeerId) => fromPeerId.toPeerId());
       const smth: Set<string> = new Set();
       let length = 0, messagesWithCaptionsLength = 0;
+      let hasRichMessages = false;
 
       const p = fromPeerIds.map(async(fromPeerId) => {
         const mids = fromPeerIdsMids[fromPeerId];
@@ -4825,6 +5277,8 @@ export default class ChatInput {
           } else {
             smth.add('P' + message.fromId);
           }
+
+          hasRichMessages ||= !!message.rich_message;
 
           if(
             message.media &&
@@ -4841,6 +5295,7 @@ export default class ChatInput {
       });
 
       await Promise.all(p);
+      const hasProtectedRichMessages = hasRichMessages && !rootScope.premium;
 
       const onlyFirstName = smth.size > 2;
       const peerTitles = [...smth].map((smth) => {
@@ -4855,10 +5310,16 @@ export default class ChatInput {
       });
 
       const {forwardElements} = this;
-      const form = findUpTag(forwardElements.showCaption.checkboxField.label, 'FORM');
-      form.classList.toggle('hide', !messagesWithCaptionsLength);
+      this.forwardingHasProtectedRichMessages = hasProtectedRichMessages;
+      const authorForm = findUpTag(forwardElements.showSender.checkboxField.label, 'FORM');
+      const captionForm = findUpTag(forwardElements.showCaption.checkboxField.label, 'FORM');
+      authorForm.classList.toggle('hide', hasProtectedRichMessages);
+      captionForm.classList.toggle('hide', hasProtectedRichMessages || !messagesWithCaptionsLength);
       const hideCaption = forwardElements.hideCaption.checkboxField.checked;
-      if(messagesWithCaptionsLength && hideCaption) {
+      if(hasProtectedRichMessages) {
+        forwardElements.showSender.checkboxField.setValueSilently(true);
+        forwardElements.showCaption.checkboxField.setValueSilently(true);
+      } else if(messagesWithCaptionsLength && hideCaption) {
         forwardElements.hideSender.checkboxField.setValueSilently(true);
       } else if(this.forwardWasDroppingAuthor !== undefined) {
         (this.forwardWasDroppingAuthor ? forwardElements.hideSender : forwardElements.showSender).checkboxField.setValueSilently(true);
@@ -5112,6 +5573,7 @@ export default class ChatInput {
   }
 
   public clearHelper(type?: ChatInputHelperType, willHaveHelper?: boolean) {
+    if(type !== 'edit' || !willHaveHelper) ++this.messageEditingGeneration;
     if(this.helperType === 'edit' && type !== 'edit') {
       this.clearInput();
     }
@@ -5125,6 +5587,7 @@ export default class ChatInput {
     if(type !== 'reply') {
       this.setReplyTo(undefined);
       this.forwarding = undefined;
+      this.forwardingHasProtectedRichMessages = false;
     }
 
     if(type !== 'suggested') {
@@ -5141,6 +5604,7 @@ export default class ChatInput {
 
     this.editMsgId = this.editMessage = undefined;
     this.helperType = this.helperFunc = undefined;
+    if(this.welcomeLimitReached) void this.center(true);
     this.setCurrentHover();
     this.saveDraftDebounced();
 
@@ -5181,21 +5645,46 @@ export default class ChatInput {
     value: Parameters<InputFieldAnimated['setValueSilently']>[0],
     clear = true,
     focus = true,
-    draftMessage?: DraftMessage.draftMessage
+    draftMessage?: DraftMessage.draftMessage,
+    richMessage?: RichMessage
   ) {
     value ||= '';
+    this.appliedInputDraft = undefined;
 
-    if(clear) this.clearInput(false, false, value as string);
-    else this.messageInputField.setValueSilently(value);
+    let richMessageSet = false;
+    if(richMessage && this.messageInputEditor) {
+      if(!canSafelyEditRichMessage(richMessage)) {
+        toastNew({langPackKey: 'RichMessage.Error.UnsupportedContent'});
+        return false;
+      }
+      richMessageSet = this.messageInputEditor.setRichMessage(richMessage);
+      if(!richMessageSet) {
+        toastNew({langPackKey: 'RichMessage.Error.UnsupportedContent'});
+        return false;
+      }
+      this.messageInputField.syncFromInput();
+    }
 
+    if(!richMessageSet) {
+      if(clear) this.clearInput(false, false, value);
+      else this.messageInputField.setValueSilently(value);
+    }
+
+    if(draftMessage) this.appliedInputDraft = {value: this.getCurrentInputAsDraft()};
+    const contentIsCurrent = captureInputContent(this.messageInput, this.messageInputEditor);
+    const middleware = this.getMiddleware();
+    const generation = ++this.inputValueGeneration;
     fastRaf(() => {
+      if(!middleware() || generation !== this.inputValueGeneration || !contentIsCurrent(this.messageInputEditor)) return;
       focus && placeCaretAtEnd(this.messageInput);
       this.processingDraftMessage = draftMessage;
       if(draftMessage) this.setEffect(draftMessage.effect);
       this.onMessageInput();
       this.processingDraftMessage = undefined;
+      if(draftMessage) this.appliedInputDraft = {value: this.getCurrentInputAsDraft()};
       this.messageInput.scrollTop = this.messageInput.scrollHeight;
     });
+    return true;
   }
 
   public setTopInfo({
@@ -5205,12 +5694,14 @@ export default class ChatInput {
     subtitle,
     setColorPeerId,
     input,
+    richMessage,
     message,
     quote
   }: {
     type: ChatInputHelperType,
     callerFunc: () => void,
     input?: Parameters<InputFieldAnimated['setValueSilently']>[0],
+    richMessage?: RichMessage,
     message?: any
   } & Pick<Parameters<typeof wrapReply>[0], 'title' | 'subtitle' | 'setColorPeerId' | 'quote'>) {
     if(this.willSendWebPage && type === 'reply') {
@@ -5236,7 +5727,11 @@ export default class ChatInput {
     const oldReply = replyParent.lastElementChild.previousElementSibling;
     const haveReply = oldReply.classList.contains('reply');
 
-    this.replyElements.iconBtn.replaceWith(this.replyElements.iconBtn = this.createButtonIcon((type === 'webpage' ? 'link' : type) + ' reply-icon', {noRipple: true}));
+    this.replyElements.iconBtn.replaceWith(this.replyElements.iconBtn = this.createButtonIcon((type === 'webpage' ? 'link' : type) + ' reply-icon', {
+      noRipple: true
+    }));
+    this.replyElements.iconBtn.tabIndex = -1;
+    this.replyElements.iconBtn.setAttribute('aria-hidden', 'true');
     const {container} = wrapReply({
       title,
       subtitle,
@@ -5272,8 +5767,8 @@ export default class ChatInput {
       });
     }
 
-    if(input !== undefined) {
-      this.setInputValue(input);
+    if(input !== undefined || richMessage) {
+      this.setInputValue(input || '', true, true, undefined, richMessage);
     }
 
     setTimeout(() => {

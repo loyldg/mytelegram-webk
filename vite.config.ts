@@ -8,6 +8,7 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 import autoprefixer from 'autoprefixer';
 import {resolve} from 'path';
 import {existsSync, copyFileSync, readFileSync, realpathSync} from 'fs';
+import {createHash} from 'crypto';
 import {ServerOptions} from 'vite';
 import {watchLangFile} from './watch-lang.js';
 import {watchScssTypes} from './scss-types.js';
@@ -30,6 +31,12 @@ if(existsSync(NODE_MODULES_PATH)) {
 }
 
 const isDEV = process.env.NODE_ENV === 'development';
+const generateDevCssModuleScopedName = (name: string, filename: string) => {
+  const relativePath = path.relative(rootDir, filename).split(path.sep).join('/');
+  const fileHash = createHash('sha1').update(relativePath).digest('hex').slice(0, 10);
+  return `_${name}_${fileHash}`;
+};
+
 if(!existsSync(LANG_PACK_LOCAL_FILE_PATH)) {
   copyFileSync(path.join(rootDir, 'src', 'langPackLocalVersion.example.ts'), LANG_PACK_LOCAL_FILE_PATH);
 }
@@ -84,7 +91,15 @@ const serverOptions: ServerOptions = {
   host,
   port: USE_SSL ? 443 : 8080,
   fs: {
-    allow: [...SERVER_FS_ALLOW]
+    allow: [...SERVER_FS_ALLOW],
+    // Vite's defaults plus tmp/: it holds auth seeds and other credentials, and bundles that boot
+    // already authorized, while a dev server behind a proxy answers any path under the root. The dep
+    // caches some configs keep in tmp/ must stay servable, and a deny pattern can't be negated —
+    // hence the extglob.
+    deny: [
+      '.env', '.env.*', '*.{crt,pem,key,p12,pfx,cer,der}', '.npmrc', '.yarnrc.yml', '**/.git/**',
+      '**/tmp/*', '**/tmp/!(vite-preview-cache|vite-e2e-cache)/**'
+    ]
   },
   watch: {
     // NB: anchor on rootDir. A worktree checkout's own path contains
@@ -100,6 +115,12 @@ const serverOptions: ServerOptions = {
       // in here (642 of 1157 when measured), i.e. a whole foreign worktree's
       // worth of fs watches on top of the store's own tree.
       resolve(rootDir, '.pnpm-store') + '/**',
+      // Scratch, and — since start-preview.sh builds a static bundle for remote
+      // requests into tmp/preview-dist — written to constantly. Watching it
+      // means every rebuild (this preview's or ANOTHER preview's) full-reloads
+      // the pages of every dev server in the repo: observed as
+      // `page reload tmp/preview-dist/<other id>/index.html`.
+      resolve(rootDir, 'tmp') + '/**',
       // nothing imports the generated `*.module.scss` types, but a rewritten one still wakes the
       // watcher — and anything listening for updates (the popup sandbox reloads on them) reacts
       '**/*.module.d.scss.ts'
@@ -268,6 +289,12 @@ export default defineConfig({
   },
   css: {
     devSourcemap: true,
+    // Vite's default CSS Modules name hashes the entire stylesheet and its line
+    // numbers. Every SCSS edit would therefore rename all classes while
+    // imperative DOM (for example ProseMirror node views) kept the old names.
+    modules: isDEV ? {
+      generateScopedName: generateDevCssModuleScopedName
+    } : undefined,
     postcss: {
       plugins: [
         autoprefixer({}) // add options if needed

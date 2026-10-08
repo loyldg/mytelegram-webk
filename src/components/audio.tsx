@@ -14,7 +14,8 @@ import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import ListenerSetter, {Listener} from '@helpers/listenerSetter';
 import noop from '@helpers/noop';
 import findUpClassName from '@helpers/dom/findUpClassName';
-import {joinElementsWith} from '@lib/langPack';
+import I18n, {joinElementsWith} from '@lib/langPack';
+import Modes from '@config/modes';
 import {MiddleEllipsisElement} from '@components/middleEllipsis';
 import {formatFullSentTime} from '@helpers/date';
 import throttleWithRaf from '@helpers/schedulers/throttleWithRaf';
@@ -198,6 +199,19 @@ function AudioRow(props: {
   ref: (toggle: HTMLElement) => void,
   playIconRef: (container: HTMLElement) => void
 }) {
+  // Built once, up here: JSX written straight into the `element` prop compiles to a getter, and
+  // every read of it builds another button — Row would dress one and mount a bare other.
+  // A native button only with the a11y layer: it takes focus on a click and brings the UA button look.
+  const toggle = (Modes.a11y ? (
+    <button type="button" class="audio-toggle" ref={props.ref} aria-label={I18n.format('Play', true)}>
+      <div class="audio-play-icon" ref={props.playIconRef} aria-hidden="true" />
+    </button>
+  ) : (
+    <div class="audio-toggle" ref={props.ref}>
+      <div class="audio-play-icon" ref={props.playIconRef} />
+    </div>
+  )) as HTMLElement;
+
   return (
     <Row
       noRipple
@@ -217,9 +231,7 @@ function AudioRow(props: {
       }}
     >
       {/* The play button IS the row's media: same 48x48 slot every other Row puts an avatar in. */}
-      <Row.Media size="big" class="audio-toggle" ref={props.ref}>
-        <div class="audio-play-icon" ref={props.playIconRef} />
-      </Row.Media>
+      <Row.Media size="big" element={toggle} />
       {/* Row.Title / Row.Subtitle read RowContext, so their JSX has to be evaluated inside Row —
         hence a factory rather than ready-made nodes. */}
       {props.content()}
@@ -679,6 +691,7 @@ export default async function createAudioElement(options: AudioElementOptions): 
   const syncPlayState = (animate?: boolean) => {
     const playing = !!el.audio && !el.audio.paused;
     toggle.classList.toggle('playing', playing);
+    toggle.setAttribute('aria-label', I18n.format(playing ? 'Pause' : 'Play', true));
     setPlayIcon(playing, animate);
   };
 

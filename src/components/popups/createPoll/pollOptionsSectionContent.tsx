@@ -8,19 +8,20 @@ import Row from '@components/rowTsx';
 import SimpleFormField from '@components/simpleFormField';
 import Space from '@components/space';
 import {StaticCheckbox} from '@components/staticCheckbox';
+import Modes from '@config/modes';
 import lastItem from '@helpers/array/lastItem';
 import blurActiveElement from '@helpers/dom/blurActiveElement';
 import focusInput from '@helpers/dom/focusInput';
+import attachPlainMessageEditor from '@components/chat/inputEditor/plainField';
 import getRichValueWithCaret from '@helpers/dom/getRichValueWithCaret';
 import {createDelayed} from '@helpers/solid/createDelayed';
-import createMiddleware from '@helpers/solid/createMiddleware';
 import {createSortableList} from '@helpers/solid/createSortableList';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
 import {I18nTsx} from '@helpers/solid/i18n';
 import {subscribeOn} from '@helpers/solid/subscribeOn';
 import classNames from '@helpers/string/classNames';
 import I18n from '@lib/langPack';
-import wrapDraftText from '@lib/richTextProcessor/wrapDraftText';
-import {batch, children, createEffect, createMemo, createSignal, For, JSX, mapArray, Match, on, Ref, Show, Switch} from 'solid-js';
+import {batch, children, createEffect, createMemo, createSignal, For, JSX, mapArray, Match, on, onCleanup, Ref, Show, Switch} from 'solid-js';
 import {Transition, TransitionGroup} from 'solid-transition-group';
 import {EmojiButtonWithOpacity as EmojiDropdownButton} from './emojiButtonWithOpacity';
 import {MediaAttachment} from './mediaAttachment';
@@ -154,7 +155,6 @@ const PollOptionFullField = (props: {
   optionsLeft: number;
 }) => {
   const {store, setStore} = useCreatePollContext();
-  const middleware = createMiddleware().get();
 
   const [container, setContainer] = createSignal<HTMLElement>();
   const value = () => props.mappedItem.option.text;
@@ -219,7 +219,15 @@ const PollOptionFullField = (props: {
               </Row>
             </Show>
             <Show when={store.allowMultipleAnswers}>
-              <div class={styles.checkButtonWrapper} onClick={() => setStore('pollOptions', props.index, 'checked', (v) => !v)}>
+              <div
+                class={styles.checkButtonWrapper}
+                role='checkbox'
+                tabindex={Modes.a11y ? (canBeReordered() ? 0 : -1) : undefined}
+                aria-checked={!!props.mappedItem.option.checked}
+                aria-label={I18n.format('NewPoll.SetCorrectAnswer', true)}
+                onClick={() => setStore('pollOptions', props.index, 'checked', (v) => !v)}
+                onKeyDown={buttonKeyDown}
+              >
                 <StaticCheckbox checked={props.mappedItem.option.checked} />
               </div>
             </Show>
@@ -244,7 +252,7 @@ const PollOptionFullField = (props: {
         inputFieldRef={(inputField) => {
           props.mappedItem.inputField = inputField;
           if(import.meta.hot) {
-            inputField.setValueSilently(wrapDraftText(value(), {entities: props.mappedItem.option.entities, middleware}));
+            inputField.setValueSilently({text: value(), entities: props.mappedItem.option.entities});
           }
         }}
         onChange={(option) => {
@@ -315,6 +323,12 @@ const PollOptionInputField = (props: {
       element.update({key: props.isAdd ? 'NewPoll.OptionsAddOption' : 'NewPoll.Option'});
     }
   }, {defer: true}));
+
+  // An option travels as text plus entities and holds one line; the composer's
+  // engine on that schema gives it the same clipboard and custom emoji as the
+  // chat input.
+  const inputFieldEditor = attachPlainMessageEditor(inputField.input);
+  onCleanup(() => inputFieldEditor.destroy());
 
   props.inputFieldRef?.(inputField);
 

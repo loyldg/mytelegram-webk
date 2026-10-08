@@ -18,6 +18,7 @@ vi.mock('@helpers/dom/createContextMenu', () => ({
 import RadioFieldTsx from '@components/radioFieldTsx';
 import CheckboxFieldTsx from '@components/checkboxFieldTsx';
 import Row from '@components/rowTsx';
+import '@/tests/helpers/a11yLayer';
 
 describe('Row.RadioField interaction', () => {
   let dispose: VoidFunction;
@@ -25,6 +26,28 @@ describe('Row.RadioField interaction', () => {
   afterEach(() => {
     dispose?.();
     document.body.replaceChildren();
+  });
+
+  it('keeps a compound row primary action reachable without nesting its trailing button', () => {
+    const open = vi.fn();
+    const remove = vi.fn();
+    dispose = render(() => (
+      <Row clickable={open} noRipple>
+        <Row.Title>Open details</Row.Title>
+        <Row.RightContent>
+          <button type="button" onClick={(event) => {event.stopPropagation(); remove();}}>Remove</button>
+        </Row.RightContent>
+      </Row>
+    ), document.body);
+    const row = document.querySelector('.row');
+    const title = row.querySelector<HTMLElement>('.row-title');
+    expect(row.getAttribute('role')).toBeNull();
+    expect(title.getAttribute('role')).toBe('button');
+    title.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true, cancelable: true}));
+    expect(open).toHaveBeenCalledOnce();
+    (row.querySelector('button') as HTMLButtonElement).click();
+    expect(remove).toHaveBeenCalledOnce();
+    expect(open).toHaveBeenCalledOnce();
   });
 
   it('selects a radio when its row title is clicked', () => {

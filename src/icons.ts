@@ -637,7 +637,10 @@ const Icons = {
   message_text: 'eb7b',
   replace_squares: 'eb7c',
   table_filled: 'eb7d',
-  blockquote: 'eb7e'
+  blockquote: 'eb7e',
+  sort_name: 'eb7f',
+  sort_online: 'eb80',
+  ai_letters_plain: 'eb81'
 };
 
 export default Icons;

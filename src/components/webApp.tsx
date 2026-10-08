@@ -12,6 +12,7 @@ import internalLinkProcessor from '@lib/internalLinkProcessor';
 import {AppManagers} from '@lib/managers';
 import getAttachMenuBotIcon from '@appManagers/utils/attachMenuBots/getAttachMenuBotIcon';
 import I18n, {LangPackKey} from '@lib/langPack';
+import Modes from '@config/modes';
 import wrapEmojiText, {EmojiTextTsx} from '@lib/richTextProcessor/wrapEmojiText';
 import rootScope from '@lib/rootScope';
 import {TelegramWebViewEventMap, AnyFunction, TelegramWebViewSendEventMap} from '@types';
@@ -339,7 +340,8 @@ export default class WebApp {
             secondaryButtonState().is_active && 'is-active',
             secondaryButtonState().has_shine_effect && 'shimmer'
           )}
-          disabled={!secondaryButtonState().is_active}
+          disabled={!secondaryButtonState().is_active || (Modes.a11y && !secondaryButtonState().is_visible)}
+          aria-hidden={!secondaryButtonState().is_visible}
           onClick={() => this.telegramWebView.dispatchWebViewEvent('secondary_button_pressed', undefined)}
         >
           <ButtonContent state={secondaryButtonState} />
@@ -353,7 +355,8 @@ export default class WebApp {
             mainButtonState().is_visible && 'is-visible',
             mainButtonState().has_shine_effect && 'shimmer'
           )}
-          disabled={!mainButtonState().is_active}
+          disabled={!mainButtonState().is_active || (Modes.a11y && !mainButtonState().is_visible)}
+          aria-hidden={!mainButtonState().is_visible}
           onClick={() => this.telegramWebView.dispatchWebViewEvent('main_button_pressed', undefined)}
         >
           <ButtonContent state={mainButtonState} />
@@ -1449,6 +1452,7 @@ export default class WebApp {
     }
 
     const telegramWebView = this.createWebView();
+    telegramWebView.iframe.title = this.title.textContent;
 
     this.setBodyColor(bodyColorFromSettings ? rgbIntToHex(bodyColorFromSettings) : this.getThemeParams().bg_color);
     this.setHeaderColor(headerColorFromSettings ? {color: rgbIntToHex(headerColorFromSettings)} : {color_key: 'bg_color'});

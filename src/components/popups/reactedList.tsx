@@ -1,3 +1,5 @@
+import I18n from '@lib/langPack';
+import Modes from '@config/modes';
 import PopupElement, {createPopup} from '@components/popups/indexTsx';
 import {Message, Reaction, ReactionCount} from '@layer';
 import ReactionsElement from '@components/chat/reactions';
@@ -330,7 +332,9 @@ export default async function showReactedListPopup(message$: Message.message, in
 
 
   const selectTab = horizontalMenu(reactionsElement, tabsContainer, (id, tabContent) => {
-    if(id >= (reactionsElement.childElementCount - (reactionsElement.customEmojiRenderer ? 2 : 1))) {
+    if(Modes.a11y ?
+      id >= tabsContainer.childElementCount :
+      id >= (reactionsElement.childElementCount - (reactionsElement.customEmojiRenderer ? 2 : 1))) {
       return false;
     }
 
@@ -356,7 +360,7 @@ export default async function showReactedListPopup(message$: Message.message, in
 
     onMount(() => {
       // the close button rides inside the reactions strip, as it did before
-      reactionsElement.append(headerEl.querySelector('.popup-close'));
+      if(!Modes.a11y) reactionsElement.append(headerEl.querySelector('.popup-close'));
       headerEl.append(reactionsElement);
       bodyEl.append(tabsContainer);
     });
@@ -367,7 +371,7 @@ export default async function showReactedListPopup(message$: Message.message, in
     });
 
     return (
-      <PopupElement class="popup-reacted-list" closable show={show()}>
+      <PopupElement class="popup-reacted-list" closable show={show()} containerProps={{'aria-label': I18n.format('Reactions', true)}}>
         <PopupElement.Header ref={(element) => headerEl = element}>
           <PopupElement.CloseButton />
         </PopupElement.Header>

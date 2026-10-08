@@ -1,4 +1,7 @@
 import type {PeerAvailableReactions} from '@appManagers/appReactionsManager';
+import Button from '@components/button';
+import Modes from '@config/modes';
+import {attachPickerGrid} from '@helpers/dom/attachListNavigation';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import {IS_MOBILE, IS_SAFARI} from '@environment/userAgent';
 import filterUnique from '@helpers/array/filterUnique';
@@ -128,6 +131,11 @@ export class ChatReactionsMenu {
 
     const reactionsContainer = this.container = document.createElement('div');
     reactionsContainer.classList.add(REACTIONS_CLASS_NAME/* , 'btn-menu-transition' */);
+    this.middlewareHelper.get().onDestroy(attachPickerGrid(
+      reactionsContainer,
+      `.${REACTION_CLASS_NAME}`,
+      (element) => element.getAttribute('aria-label')
+    ));
 
     // const shadow = document.createElement('div');
     // shadow.classList.add('inner-shadow');
@@ -182,7 +190,7 @@ export class ChatReactionsMenu {
     }
 
     if(hasMore && !this.noMoreButton) {
-      const moreButton = ButtonIcon(`${this.openSide === 'bottom' ? 'down' : 'up'} ${REACTIONS_CLASS_NAME}-more`, {noRipple: true});
+      const moreButton = ButtonIcon(`${this.openSide === 'bottom' ? 'down' : 'up'} ${REACTIONS_CLASS_NAME}-more`, {noRipple: true, ariaLabel: 'MultiAccount.More'});
       this.container.append(moreButton);
       attachClickEvent(
         moreButton,
@@ -521,10 +529,18 @@ export class ChatReactionsMenu {
       warmUpReactionEffect(availableReaction);
     }
 
-    const reactionDiv = document.createElement('div');
-    reactionDiv.classList.add(REACTION_CLASS_NAME);
+    // a native button only with the keyboard layer: it takes the focus on click
+    const reactionDiv = Button(REACTION_CLASS_NAME, {
+      noRipple: true,
+      ariaLabel: reaction._ === 'reactionPaid' ? 'StarsReactionTitle' : 'Reactions',
+      asDiv: !Modes.a11y
+    });
+    if(availableReaction?.title || reaction._ === 'reactionEmoji') {
+      reactionDiv.setAttribute('aria-label', availableReaction?.title || (reaction as Reaction.reactionEmoji).emoticon);
+    }
 
     const scaleContainer = document.createElement('div');
+    scaleContainer.setAttribute('aria-hidden', 'true');
     scaleContainer.classList.add(REACTION_CLASS_NAME + '-scale');
 
     const appearWrapper = document.createElement('div');
@@ -605,6 +621,7 @@ export class ChatReactionsMenu {
       delete options.withThumb;
 
       const wrap = () => {
+        if(doc?.stickerEmojiRaw) reactionDiv.setAttribute('aria-label', doc.stickerEmojiRaw);
         wrapSticker({
           doc,
           div: appearWrapper,

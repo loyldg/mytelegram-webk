@@ -34,6 +34,8 @@ import {getOverlayRoot} from '@helpers/appWindow';
 import {changeTitleEmojiColor} from '@components/peerTitle';
 import ProgressivePreloader from '@components/preloader';
 import {avatarUploads} from '@stores/avatarUpload';
+import Button from '@components/button';
+import Modes from '@config/modes';
 
 const LOAD_NEAREST = 3;
 export const SHOW_NO_AVATAR = true;
@@ -101,13 +103,14 @@ export default class PeerProfileAvatars {
     this.tabs = document.createElement('div');
     this.tabs.classList.add(PeerProfileAvatars.BASE_CLASS + '-tabs');
 
-    this.arrowPrevious = document.createElement('div');
+    // native buttons only with the keyboard layer: they take the focus on click
+    this.arrowPrevious = Button('', {noRipple: true, ariaLabel: 'KeyboardShortcuts.Action.PreviousMedia', asDiv: !Modes.a11y});
     this.arrowPrevious.classList.add(PeerProfileAvatars.BASE_CLASS + '-arrow');
     this.arrowPrevious.append(Icon('avatarprevious', PeerProfileAvatars.BASE_CLASS + '-arrow-icon'));
 
     this.middlewareHelper = getMiddleware();
 
-    this.arrowNext = document.createElement('div');
+    this.arrowNext = Button('', {noRipple: true, ariaLabel: 'KeyboardShortcuts.Action.NextMedia', asDiv: !Modes.a11y});
     this.arrowNext.classList.add(PeerProfileAvatars.BASE_CLASS + '-arrow', PeerProfileAvatars.BASE_CLASS + '-arrow-next');
     this.arrowNext.append(Icon('avatarnext', PeerProfileAvatars.BASE_CLASS + '-arrow-icon'));
 
@@ -199,7 +202,11 @@ export default class PeerProfileAvatars {
 
       // const e = (_e as TouchEvent).touches ? (_e as TouchEvent).touches[0] : _e as MouseEvent;
       const e = _e;
-      const x = e.pageX;
+      // A native keyboard click has no pointer coordinates. The arrows still
+      // enter the same paging path as pointer clicks, including wraparound.
+      const arrow = (e.target as HTMLElement).closest('.' + PeerProfileAvatars.BASE_CLASS + '-arrow');
+      const x = arrow ?
+        (arrow === this.arrowNext ? rect.right : rect.left) : e.pageX;
 
       const clickX = x - rect.left;
       if((!this.listLoader.previous.length && !this.listLoader.next.length) ||

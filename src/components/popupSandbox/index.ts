@@ -207,12 +207,18 @@ export function startPopupSandbox() {
     ownsLocationHash = true;
     watchForEdits();
     const close = await mountPanel();
+    const {default: MarkupTooltip} = await import('@components/chat/markupTooltip');
+    const {default: showDatePickerPopup} = await import('@components/popups/datePicker');
+    MarkupTooltip.getInstance().handleSelection();
+    MarkupTooltip.showDatePickerPopup = showDatePickerPopup;
 
     // Deep-link straight into a story: ?popups=1#deleteMessages/private. Editing the hash on an
     // open sandbox switches stories too — a same-document hash change never reloads the page.
     const openFromHash = () => {
       const story = getStory(decodeURIComponent(location.hash.slice(1)));
-      return story && openStory(story);
+      // Closing nested menus can restore the current hash through browser
+      // history. It must not reopen the same story the user is closing.
+      return story && story.id !== activeId() && openStory(story);
     };
 
     window.addEventListener('hashchange', openFromHash);

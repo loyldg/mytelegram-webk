@@ -17,6 +17,12 @@ $color-inactive: rgba(255, 255, 255, .5);
   justify-content: center;
   visibility: visible;
 
+  // the dialog itself takes the initial focus (a landing spot, not a tab stop) — a ring around the
+  // whole screen would say nothing; `:root` outranks the global `:root :focus-visible`
+  :root:global(:where(.a11y)) &:focus-visible {
+    outline: none;
+  }
+
   &.isInvisible {
     visibility: hidden;
 
@@ -182,6 +188,10 @@ $color-inactive: rgba(255, 255, 255, .5);
       &.small :global(.stories-input) {
         opacity: 0;
         pointer-events: none;
+
+        :global(:where(.a11y)) & {
+          visibility: hidden;
+        }
       }
     }
 
@@ -1020,4 +1030,12 @@ $color-inactive: rgba(255, 255, 255, .5);
   //   align-items: center;
   //   // justify-content: center;
   // }
+}
+:global(:where(.a11y)) {
+  .ViewerStoryHeaderLeft,
+  .ViewerStoryFooterLeft,
+  .ViewerStoryFooterReaction {
+    color: inherit;
+    text-align: inherit;
+  }
 }

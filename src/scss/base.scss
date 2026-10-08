@@ -128,6 +128,8 @@
   --section-box-shadow-big: 0px 1px 8px 0px var(--section-box-shadow-big-color);
   --column-box-shadow: 0px 0px 4px 0px var(--column-box-shadow-color);
   --font-regular: "Roboto", -apple-system, apple color emoji, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+  --font-serif: "Roboto Serif", Georgia, "Times New Roman", serif;
+  --font-heading: "Merriweather", "Roboto Serif", Georgia, "Times New Roman", serif;
   --font-monospace: 'Roboto Mono', monospace;
   --font-rounded: -ui-rounded, "Numbers Rounded", "Roboto", "Helvetica Neue", sans-serif;
   --font-weight-bold: 500;
@@ -181,9 +183,6 @@
 
   --peer-avatar-saved-top: var(--light-filled-saved-color);
   --peer-avatar-saved-bottom: var(--saved-color);
-
-  --peer-color: var(--primary-color);
-  --peer-color-rgb: var(--primary-color-rgb);
 
   --avatar-color-story-unread-from: #34c76f;
   --avatar-color-story-unread-to: #3da1fd;
@@ -285,6 +284,15 @@
   --gc-right-column-width: 26.25rem;
 
   // * Day theme end
+}
+
+// * A var() is substituted where the property is declared, so these follow the theme only if
+// * re-declared on every element that carries one — a chat with its own theme included
+:root,
+.night,
+.chat {
+  --peer-color: var(--primary-color);
+  --peer-color-rgb: var(--primary-color-rgb);
 }
 
 .night {
@@ -799,6 +807,12 @@ b {
 }
 
 .avatar-edit {
+  // AvatarEdit's container is a <button>: undo the inline-block and the UA chrome it brings,
+  // or `margin: auto` stops centering it
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
   position: relative;
   border-radius: 50%;
   cursor: pointer;
@@ -806,6 +820,12 @@ b {
 
   &.is-forum {
     border-radius: var(--avatar-border-radius-forum);
+  }
+
+  // the placeholder avatar is positioned over the whole circle and hides the global ring, which is
+  // drawn inside the edge — draw it just outside instead
+  :root:where(.a11y) &:focus-visible {
+    outline-offset: var(--focus-ring-width);
   }
 
   &-canvas {
@@ -1769,6 +1789,11 @@ hr {
     height: 100%;
     border-radius: inherit;
   }
+
+  &-thumbnail-preview {
+    filter: blur(20px);
+    transform: scale(1.08);
+  }
 }
 
 .accordion {
@@ -1978,6 +2003,7 @@ hr {
 }
 
 .code {
+  --code-content-padding: .25rem .625rem;
   --font-size: var(--messages-secondary-text-size);
   display: block;
   margin: .25rem 0;
@@ -1985,7 +2011,7 @@ hr {
   font-size: var(--font-size);
 
   &-header {
-    background-color: rgba(var(--primary-color-rgb), .2);
+    background-color: transparent;
     color: var(--primary-color);
     font-family: var(--font-regular);
     font-weight: var(--font-weight-bold);
@@ -1995,6 +2021,7 @@ hr {
     cursor: pointer;
     line-height: 1;
     padding: .0625rem .625rem;
+    user-select: none;
 
     // .night & {
     //   background-color: rgba(0, 0, 0, .2);
@@ -2006,14 +2033,18 @@ hr {
     }
 
     &-button {
-      font-size: calc(var(--font-size) + 4px);
+      align-items: center;
+      color: inherit;
+      display: inline-flex;
+      flex: 0 0 20px;
+      font-size: 16px;
+      height: 20px;
+      justify-content: center;
+      line-height: 1;
       pointer-events: all;
       border-radius: 50%;
-      padding: .25rem;
-
-      @include hover() {
-        background-color: rgba(var(--primary-color-rgb), .16);
-      }
+      padding: 0;
+      width: 20px;
     }
 
     &-toggle-wrap {
@@ -2028,7 +2059,7 @@ hr {
 
   &-code {
     display: block;
-    padding: .25rem .625rem;
+    padding: var(--code-content-padding);
   }
 
   &.is-scrollable &-code {

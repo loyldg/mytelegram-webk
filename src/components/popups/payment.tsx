@@ -241,7 +241,10 @@ export type PopupPaymentOptions = {
   boost?: Boost,
   giftPeerId?: PeerId,
   noShowIfStars?: boolean,
-  purpose?: Parameters<typeof showStarsPopup>[0]['purpose']
+  purpose?: Parameters<typeof showStarsPopup>[0]['purpose'],
+  // * the price the user agreed to (stars, or nanotons for TON): a form priced differently is
+  // * confirmed again before paying
+  expectedPrice?: {amount: Long, currency: string}
 };
 
 export default function showPaymentPopup(options: PopupPaymentOptions): PopupPaymentHandle {
@@ -463,6 +466,7 @@ export default function showPaymentPopup(options: PopupPaymentOptions): PopupPay
 
     if(canTip) {
       inputRightNumber.input.classList.add('input-clear', `${className}-tips-input`);
+      inputRightNumber.input.setAttribute('aria-label', i18n('PaymentTipOptional').textContent);
       inputRightNumber.input.addEventListener('input', () => {
         setTip(+inputRightNumber.value.replace(/\D/g, ''));
       });
@@ -516,6 +520,7 @@ export default function showPaymentPopup(options: PopupPaymentOptions): PopupPay
                   <button
                     class={`${className}-tips-tip`}
                     classList={{active: tipAmount() === +suggested}}
+                    aria-pressed={tipAmount() === +suggested}
                     onClick={() => setTip(tipAmount() === +suggested ? 0 : +suggested)}
                   >{wrapAmount(suggested)}</button>
                 )}

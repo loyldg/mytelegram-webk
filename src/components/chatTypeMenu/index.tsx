@@ -1,6 +1,7 @@
 import {createEffect, createMemo, createRenderEffect, onCleanup} from 'solid-js';
 import type {RequestHistoryOptions} from '@appManagers/appMessagesManager';
 import {i18n, LangPackKey} from '@lib/langPack';
+import Modes from '@config/modes';
 import defineSolidElement, {PassedProps} from '@lib/solidjs/defineSolidElement';
 import {ButtonMenuItemOptions} from '@components/buttonMenu';
 import ButtonMenuToggle from '@components/buttonMenuToggle';
@@ -41,11 +42,23 @@ const ChatTypeMenu = defineSolidElement({
       }
     }));
 
+    // a11y: this is a single-select (radio-style) menu, so each item is a
+    // menuitemradio and the active one carries aria-checked. Elements are rebuilt
+    // every time the menu opens, so apply on open and whenever selected() changes.
+    const applyRadioState = () => {
+      options.forEach((option) => {
+        if(!option.element) return;
+        option.element.setAttribute('role', 'menuitemradio');
+        option.element.setAttribute('aria-checked', '' + (option.id === selected()));
+      });
+    };
+
     createEffect(() => {
       const option = options.find(({id}) => id === selected());
       if(!option) return;
 
       option.icon = 'check';
+      applyRadioState();
       onCleanup(() => {
         option.icon = undefined;
       });
@@ -56,6 +69,8 @@ const ChatTypeMenu = defineSolidElement({
       classList={{
         [styles.hidden]: !!props.hidden
       }}
+      role="button"
+      tabindex={Modes.a11y ? (props.hidden ? -1 : 0) : undefined}
     >{i18n(langKeyMap[selected()])}</span> as HTMLSpanElement;
 
     const buttonMenu = ButtonMenuToggle({
@@ -64,6 +79,7 @@ const ChatTypeMenu = defineSolidElement({
       direction: 'bottom-left',
       onOpen: (_, element) => {
         element.style.bottom = 'unset';
+        applyRadioState();
       }
     });
 

@@ -3,10 +3,15 @@ import {FormatterArguments, i18n, LangPackKey} from '@lib/langPack';
 import {IconTsx} from '@components/iconTsx';
 import classNames from '@helpers/string/classNames';
 import RippleElement from '@components/rippleElement';
+import iconButtonLabel from '@helpers/dom/iconButtonLabel';
+import Modes from '@config/modes';
 
 type ButtonAccessibilityProps = Pick<JSX.ButtonHTMLAttributes<HTMLButtonElement>,
+  | 'aria-hidden'
   | 'aria-label'
   | 'aria-pressed'
+  | 'aria-expanded'
+  | 'aria-controls'
   // Native, non-delegated listeners. Needed wherever an ancestor cancels the
   // event before it reaches the document listener Solid delegates from — a row
   // inside `AppSelectPeers`, say (appSelectPeers.ts:420).
@@ -33,7 +38,7 @@ const Button = (props: Partial<{
   noRipple: boolean,
   rippleSquare: boolean,
   onlyMobile: boolean,
-  tabIndex: number,
+  tabIndex: number
 }> & ButtonAccessibilityProps = {}): JSX.Element => {
   let disabled: Accessor<boolean>, setDisabled: Setter<boolean>;
   if(props.disabled !== undefined) {
@@ -46,6 +51,7 @@ const Button = (props: Partial<{
     <RippleElement
       ref={props.ref as Ref<any>}
       component={props.as || 'button'}
+      type={!props.as || props.as === 'button' ? 'button' : undefined}
       class={classNames(
         props.class,
         props.primaryFilled && 'btn-primary btn-color-primary',
@@ -71,8 +77,11 @@ const Button = (props: Partial<{
       noRipple={props.noRipple}
       rippleSquare={props.rippleSquare}
       tabIndex={props.tabIndex}
+      aria-hidden={props['aria-hidden']}
       aria-label={props['aria-label']}
       aria-pressed={props['aria-pressed']}
+      aria-expanded={props['aria-expanded']}
+      aria-controls={props['aria-controls']}
       on:click={props['on:click']}
       on:keydown={props['on:keydown']}
     >
@@ -96,7 +105,7 @@ Button.Corner = (props: Partial<{
     <Button
       {...props}
       class={classNames('btn-circle', 'btn-corner', 'z-depth-1', props.class)}
-      tabIndex={props.tabIndex ?? -1}
+      tabIndex={props.tabIndex ?? (Modes.a11y ? undefined : -1)}
     />
   );
 };
@@ -114,9 +123,10 @@ Button.Icon = (props: {icon: Icon} & Partial<{
     <Button
       {...props}
       class={classNames('btn-icon', props.icon, props.class)}
-      tabIndex={props.tabIndex ?? -1}
+      aria-label={props['aria-label'] || iconButtonLabel(props.icon)}
+      tabIndex={props.tabIndex ?? (Modes.a11y ? undefined : -1)}
     />
-  )
+  );
 };
 
 export default Button;

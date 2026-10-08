@@ -1,12 +1,13 @@
 import {Component, createSignal} from 'solid-js';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
+import Modes from '@config/modes';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import {makeMediaSize} from '@helpers/mediaSize';
 import copy from '@helpers/object/copy';
 import deepEqual from '@helpers/object/deepEqual';
 import {ForumTopic} from '@layer';
 import {GENERAL_TOPIC_ID, TOPIC_COLORS} from '@appManagers/constants';
-import {i18n} from '@lib/langPack';
+import I18n, {i18n} from '@lib/langPack';
 import getAbbreviation from '@lib/richTextProcessor/getAbbreviation';
 import ButtonIcon from '@components/buttonIcon';
 import CheckboxFieldTsx from '@components/checkboxFieldTsx';
@@ -144,6 +145,11 @@ const EditTopic: Component = () => {
     {
       iconDiv = document.createElement('div');
       iconDiv.classList.add('edit-topic-icon-container');
+      if(!threadId) {
+        iconDiv.setAttribute('role', 'button');
+        if(Modes.a11y) iconDiv.tabIndex = 0;
+        iconDiv.setAttribute('aria-label', I18n.format('AccDescr.ChangeTopicColor', true));
+      }
 
       !threadId && attachClickEvent(iconDiv, () => {
         if(topic.icon_emoji_id) {
@@ -173,7 +179,7 @@ const EditTopic: Component = () => {
         nameInputField.setOriginalValue(topic.title, true);
       }
 
-      confirmBtn = ButtonIcon('check btn-confirm blue hide', {noRipple: true});
+      confirmBtn = ButtonIcon('check btn-confirm blue hide', {noRipple: true, ariaLabel: 'Save'});
       tab.header.append(confirmBtn);
 
       attachClickEvent(confirmBtn, () => {

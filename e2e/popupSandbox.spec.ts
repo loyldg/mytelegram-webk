@@ -1,4 +1,13 @@
-import {expect, Page, test} from '@playwright/test';
+import {expect, Page} from '@playwright/test';
+import {trackBrowserErrors} from './accessibility.helpers';
+import {closeStory, openStory, preparePopupSandbox, takeStoryPart} from './popupSandbox.helpers';
+import {test} from './workerContext';
+
+const SHOWN_TIMEOUT = 10_000;
+const LAYOUT_SETTLE = 300;
+// The sweep is split into parts that run in parallel (takeStoryPart): walked in one piece it was
+// most of this suite's time.
+const PARTS = Number(process.env.POPUP_STORY_PARTS) || 8;
 
 /*
  * Opens every popup the sandbox knows about and asserts it actually renders.
@@ -12,63 +21,6 @@ import {expect, Page, test} from '@playwright/test';
  * run against the real managers — needs an authorized preview and has no e2e yet; its write guard is
  * covered by `src/tests/popupSandboxLiveManagers.test.ts` instead.
  */
-
-type Story = {id: string, title: string, group: string, surface?: string};
-
-declare global {
-  interface Window {
-    popupSandbox: {
-      ready(): Promise<void>,
-      list(): Story[],
-      open(id: string): Promise<void>,
-      closePopups(): void,
-      unhandled(): Array<{manager: string, method: string}>
-    };
-    /** Where `openStory` parks the outcome for the poller below to pick up. */
-    popupSandboxOutcome: {error: string} | undefined;
-  }
-}
-
-// A popup reveals itself a couple of frames after construction, and some wait on a lottie decode.
-const SHOWN_TIMEOUT = 10_000;
-// A second look, for content that settles after the popup is already on screen.
-const LAYOUT_SETTLE = 300;
-// Generous: the slowest story builds its popup in well under a second.
-const OPEN_TIMEOUT = 30_000;
-
-/**
- * Opens one story and returns the message it threw with, or null.
- *
- * Deliberately not `page.evaluate(async ...)`. An async evaluate hands the returned promise to
- * Chromium's inspector, which holds it with a WEAK handle (`Runtime.callFunctionOn` with
- * `awaitPromise`). Opening a popup allocates enough for a GC to land inside that window, and the
- * handle is then collected before the resolution is reported: the protocol answers
- * `-32000 Promise was collected`, which Playwright rewrites into the thoroughly misleading
- * "Execution context was destroyed, most likely because of a navigation." Nothing navigates and
- * nothing hangs — the story opens and its promise resolves (a few ms BEFORE that error arrives);
- * only the trip back to the test is lost. It used to take out `transaction/history-stars-self`,
- * the heaviest open in the registry, on nearly every full run.
- *
- * So: start the work from a synchronous evaluate that parks the outcome on the page, then poll for
- * it with short synchronous evaluates that never leave a pending promise with the debugger.
- */
-async function openStory(page: Page, id: string): Promise<string> {
-  await page.evaluate((storyId) => {
-    window.popupSandboxOutcome = undefined;
-    window.popupSandbox.open(storyId).then(
-      () => {window.popupSandboxOutcome = {error: null};},
-      (err) => {window.popupSandboxOutcome = {error: (err as Error)?.message || String(err)};}
-    );
-  }, id);
-
-  const deadline = Date.now() + OPEN_TIMEOUT;
-  for(;;) {
-    const outcome = await page.evaluate(() => window.popupSandboxOutcome);
-    if(outcome) return outcome.error;
-    if(Date.now() > deadline) return `did not settle within ${OPEN_TIMEOUT}ms`;
-    await page.waitForTimeout(50);
-  }
-}
 
 /**
  * What the popup shell promises about the layout it assembles, asserted on whatever popup is open.
@@ -185,25 +137,15 @@ async function layoutComplaints(page: Page): Promise<string[]> {
   return await page.evaluate(collectLayoutComplaints);
 }
 
-test('every popup story opens and becomes visible', async({page}) => {
-  // One test walks the whole registry, so it needs far more than the config's per-test default.
-  test.setTimeout(5 * 60_000);
+for(let part = 0; part < PARTS; ++part) test(`every popup story opens and becomes visible (part ${part + 1}/${PARTS})`, async({page}) => {
+  // A part still walks a slice of the registry, more than the config's per-test default allows.
+  test.setTimeout(3 * 60_000);
 
-  const pageErrors: string[] = [];
-  const renderErrors: string[] = [];
-  page.on('pageerror', (error) => pageErrors.push(error.stack || error.message || String(error)));
-  // Our Solid fork reports render failures through console.error rather than window.onerror.
-  page.on('console', (message) => {
-    if(message.type() === 'error' && message.text().startsWith('solid error')) {
-      renderErrors.push(message.text().split('\n')[0]);
-    }
-  });
+  const {pageErrors, renderErrors} = trackBrowserErrors(page);
 
-  await page.goto('/?popups=1');
-  await page.waitForFunction(() => !!window.popupSandbox, null, {timeout: 30_000});
-  await page.evaluate(() => window.popupSandbox.ready());
+  await preparePopupSandbox(page);
 
-  const stories = await page.evaluate(() => window.popupSandbox.list());
+  const stories = takeStoryPart(await page.evaluate(() => window.popupSandbox.list()), part, PARTS);
   expect(stories.length).toBeGreaterThan(0);
 
   const failed: string[] = [];
@@ -221,7 +163,9 @@ test('every popup story opens and becomes visible', async({page}) => {
       try {
         await expect.poll(
           () => page.evaluate((selector) => document.querySelectorAll(selector).length, shown),
-          {timeout: SHOWN_TIMEOUT}
+          // a popup turns active a frame after it opens: the default 100/250/500ms steps waited
+          // out most of a step on nearly every story
+          {timeout: SHOWN_TIMEOUT, intervals: [20]}
         ).toBeGreaterThan(0);
       } catch{
         failed.push(`${story.id}: never became visible`);
@@ -239,9 +183,9 @@ test('every popup story opens and becomes visible', async({page}) => {
     // Teardown is deliberately outside the assertion window (errors reset at the top of the loop):
     // several popups model "cancelled" as a rejected promise, and closing one from a script rather
     // than through the caller's own flow leaves that rejection unhandled — the sandbox's doing.
-    await page.evaluate(() => window.popupSandbox.closePopups());
-    // Longer than the 250ms hide timeout, after which a closed popup fires `closeAfterTimeout`.
-    await page.waitForTimeout(400);
+    if(!(await closeStory(page, story, {timeout: SHOWN_TIMEOUT}))) {
+      failed.push(`${story.id}: still in the DOM after closing`);
+    }
     if(renderErrors.length) {
       failed.push(`${story.id}: render error — ${renderErrors.join(' | ')}`);
     }

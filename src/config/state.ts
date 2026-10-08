@@ -14,6 +14,7 @@ import {ColoredBrushType} from '@components/mediaEditor/context';
 import {FontKey} from '@components/mediaEditor/types';
 import type {BotConnectionReview} from '@appManagers/appBusinessManager';
 import type {UnconfirmedAuthorization} from '@appManagers/appAccountManager';
+import type {ContactsSortMode} from '@appManagers/utils/users/sortContacts';
 
 // Factory tinted ("Dark") collapses onto the first base-color preset (blue) so the accent picker
 // can omit a separate "default" swatch — resetting to factory now reaches the same state the user
@@ -96,6 +97,7 @@ export type StateSettings = {
   background?: Background, // ! DEPRECATED
   themes: AppTheme[],
   theme: AppTheme['name'],
+  increaseContrast: boolean,
   // Last explicitly-picked theme variant on each side. The burger-menu Dark-Mode toggle uses
   // these so toggling away and back returns to the same variant (e.g. tinted ↔ classic ↔ tinted)
   // instead of always flipping to the legacy night/classic pair. Updated in themeController on
@@ -194,6 +196,9 @@ export type StateSettings = {
   // clicking the button itself (when input is empty), matches the per-client
   // toggle in tdesktop / iOS / Android.
   recordingMediaType: 'voice' | 'video',
+  // The order the contacts tab lists them in, kept between visits the way Android and iOS keep it
+  // (tdesktop opens its contacts by last seen every time)
+  contactsSortMode: ContactsSortMode,
   // My QR-code popup: remembers the user's last picked chat-theme + brightness
   // so reopens land back where they left off. `nightMode` falls back to the
   // global theme's brightness when unset; `selectedThemeId` empty = the
@@ -264,6 +269,8 @@ export type State = {
   },
   accountContentSettings: CacheSomething<AccountContentSettings>,
   unconfirmedAuthorizations: UnconfirmedAuthorization[],
+  /** When the session this client runs on was created — see FRESH_AUTHORIZATION_PERIOD */
+  currentAuthorizationDate: number,
 
 
   // playbackParams?: StateSettings['playbackParams'], // ! MIGRATED TO SETTINGS
@@ -497,6 +504,7 @@ export const SETTINGS_INIT: StateSettings = {
     makeDefaultAppTheme('light')
   ],
   theme: 'system',
+  increaseContrast: false,
   lastThemeNames: {
     dark: 'night',
     light: 'day'
@@ -591,6 +599,7 @@ export const SETTINGS_INIT: StateSettings = {
     noiseSuppression: true
   },
   recordingMediaType: 'voice',
+  contactsSortMode: 'online',
   qrCode: {
     selectedThemeId: ''
   }
@@ -631,7 +640,8 @@ export const STATE_INIT: State = {
   birthdayContactsDismissedDayKey: undefined,
   dontShowPaidMessageWarningFor: [],
   accountContentSettings: {} as any,
-  unconfirmedAuthorizations: []
+  unconfirmedAuthorizations: [],
+  currentAuthorizationDate: 0
 };
 
 export const COMMON_STATE_INIT: CommonState = {

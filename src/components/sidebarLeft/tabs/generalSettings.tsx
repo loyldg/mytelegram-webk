@@ -4,6 +4,8 @@ import Section from '@components/section';
 import Row from '@components/rowTsx';
 import RangeSettingSelector from '@components/rangeSettingSelector';
 import RadioFieldTsx from '@components/radioFieldTsx';
+import CheckboxFieldTsx from '@components/checkboxFieldTsx';
+import Modes from '@config/modes';
 import {i18n, LangPackKey} from '@lib/langPack';
 import I18n from '@lib/langPack';
 import rootScope from '@lib/rootScope';
@@ -65,6 +67,15 @@ const SettingsSection = () => {
         <Row.Icon icon="appearance_filled" />
         <Row.Title>{i18n('ChatBackground')}</Row.Title>
       </Row>
+      <Show when={Modes.a11y}>
+        <Row>
+          <Row.CheckboxFieldToggle>
+            <CheckboxFieldTsx stateKey={joinDeepPath('settings', 'increaseContrast')} toggle />
+          </Row.CheckboxFieldToggle>
+          <Row.Title>{i18n('GeneralSettings.IncreaseContrast')}</Row.Title>
+          <Row.Subtitle>{i18n('GeneralSettings.IncreaseContrastInfo')}</Row.Subtitle>
+        </Row>
+      </Show>
       {/* <Row
         clickable={() => {
           if(liteMode.isEnabled()) {

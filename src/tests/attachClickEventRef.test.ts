@@ -64,9 +64,12 @@ describe('attachClickEventRef', () => {
   // mousedown where touch is supported. jsdom is never touch-capable, so force
   // it and re-import — otherwise a regression to a plain click listener would
   // sail through the cases above.
-  it('handles mousedown, not click, where touch is supported', async() => {
+  it('handles pointer mousedown once and preserves keyboard clicks where touch is supported', async() => {
     vi.resetModules();
     vi.doMock('@environment/touchSupport', () => ({default: true}));
+    // the keyboard click (detail 0) belongs to the a11y layer, off unless ?a11y=1
+    const {default: Modes} = await import('@config/modes');
+    Modes.a11y = true;
 
     const {attachClickEvent: attachTouch} = await import('@helpers/dom/clickEvent');
     const {default: attachTouchRef} = await import('@helpers/solid/attachClickEventRef');
@@ -78,11 +81,15 @@ describe('attachClickEventRef', () => {
       attachTouchRef(onControlClick)(control);
     });
 
-    control.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+    control.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, detail: 1}));
     expect(onControlClick).not.toHaveBeenCalled();
 
     control.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
     expect(onControlClick).toHaveBeenCalledTimes(1);
+    expect(onAncestorClick).not.toHaveBeenCalled();
+
+    control.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, detail: 0}));
+    expect(onControlClick).toHaveBeenCalledTimes(2);
     expect(onAncestorClick).not.toHaveBeenCalled();
   });
 });

@@ -20,6 +20,8 @@ import appSidebarRight from '@components/sidebarRight';
 import {StackedAvatarsTsx} from '@components/stackedAvatars';
 import {wrapAdaptiveCustomEmoji} from '@components/wrappers/customEmojiSimple';
 import wrapRichText from '@lib/richTextProcessor/wrapRichText';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
 
 export function UnknownUserBubble(props: {
   peerId: PeerId,
@@ -90,9 +92,13 @@ export function UnknownUserBubble(props: {
             {props.userFull.common_chats_count && (
               <div
                 class={/* @once */ styles.commonChats}
+                role="button"
+                tabindex={Modes.a11y ? 0 : undefined}
+                aria-label={I18n.format('UnknownUserSharedGroups', true)}
                 onClick={() => {
                   appSidebarRight.toggleSidebar(true);
                 }}
+                onKeyDown={buttonKeyDown}
               >
                 <I18nTsx
                   key="RequestPeer.MultipleLimit.Groups"

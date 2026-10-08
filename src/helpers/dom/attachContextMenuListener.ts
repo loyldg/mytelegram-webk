@@ -3,6 +3,8 @@ import {IS_APPLE} from '@environment/userAgent';
 import contextMenuController from '@helpers/contextMenuController';
 import ListenerSetter, {ListenerOptions} from '@helpers/listenerSetter';
 import cancelEvent from '@helpers/dom/cancelEvent';
+import {TOUCH_HOLD_DURATION} from '@helpers/dom/touchHold';
+import Modes from '@config/modes';
 
 let _cancelContextMenuOpening = false, _cancelContextMenuOpeningTimeout = 0;
 export function cancelContextMenuOpening() {
@@ -13,7 +15,7 @@ export function cancelContextMenuOpening() {
   _cancelContextMenuOpeningTimeout = window.setTimeout(() => {
     _cancelContextMenuOpeningTimeout = 0;
     _cancelContextMenuOpening = false;
-  }, .4e3);
+  }, TOUCH_HOLD_DURATION);
 
   _cancelContextMenuOpening = true;
 }
@@ -32,8 +34,30 @@ export function attachContextMenuListener({
   const add = listenerSetter ? listenerSetter.add(element) : element.addEventListener.bind(element);
   const remove = listenerSetter ? listenerSetter.removeManual.bind(listenerSetter, element) : element.removeEventListener.bind(element);
 
+  if(Modes.a11y) add('keydown', (event: KeyboardEvent) => {
+    if(event.defaultPrevented || event.repeat ||
+      event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+    const target = event.target as HTMLElement;
+    if(target.closest('input, textarea, [contenteditable="true"]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = target.getBoundingClientRect();
+    const win = target.ownerDocument.defaultView;
+    target.dispatchEvent(new win.MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2
+    }));
+  });
+
   // can't cancel further events coming after 'contextmenu' event
   if((IS_APPLE && IS_TOUCH_SUPPORTED) || listenerOptions) {
+    // The keyboard path above also exists on touch-capable devices. Their
+    // long-press listener must not swallow the synthetic contextmenu event.
+    if(Modes.a11y) add('contextmenu', (event: MouseEvent) => {
+      if(!event.isTrusted && event.button === 0) callback(event);
+    }, listenerOptions);
     let timeout: number;
 
     const options: EventListenerOptions = {
@@ -73,7 +97,7 @@ export function attachContextMenuListener({
         if(contextMenuController.isOpened()) {
           add('touchend', cancelEvent, {once: true}); // * fix instant closing
         }
-      }, .4e3);
+      }, TOUCH_HOLD_DURATION);
     }, listenerOptions);
 
     /* if(!isSafari) {

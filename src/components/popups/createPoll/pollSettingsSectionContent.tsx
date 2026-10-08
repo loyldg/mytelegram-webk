@@ -2,6 +2,7 @@ import editableFieldStyles from '@/scss/modulePartials/editableFieldContent.modu
 import {createAutoDeleteIcon} from '@components/autoDeleteIcon';
 import {getOverlayRoot} from '@helpers/appWindow';
 import getPollCountryName from '@helpers/getPollCountryName';
+import attachPlainMessageEditor from '@components/chat/inputEditor/plainField';
 import InputField from '@components/inputField';
 import showDatePickerPopup from '@components/popups/datePicker';
 import showPickCountryPopup from '@components/popups/pickCountry';
@@ -21,14 +22,14 @@ import {requestRAF} from '@helpers/solid/requestRAF';
 import classNames from '@helpers/string/classNames';
 import {useIsCleaned} from '@hooks/useIsCleaned';
 import {oneDayInSeconds, oneHourInSeconds, oneWeekInSeconds} from '@lib/constants';
-import {LangPackKey, i18n} from '@lib/langPack';
+import I18n, {LangPackKey, i18n} from '@lib/langPack';
 import {useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
 import {FilterBooleanKeys} from '@types';
 import {Accessor, createEffect, createSignal, on, onCleanup, Show} from 'solid-js';
 import {supportedDescriptionFormattingTypes} from './config';
 import {EmojiButtonWithOpacity as EmojiDropdownButton} from './emojiButtonWithOpacity';
 import {MediaAttachment} from './mediaAttachment';
-import {CreatePollStore, useCreatePollContext} from './storeContext';
+import {CreatePollStore, QUIZ_POLL_SETTINGS, useCreatePollContext} from './storeContext';
 import styles from './styles.module.scss';
 import {useCreatePollLimits} from './useCreatePollLimits';
 import {createFormFieldClickHandler, interactableClass, useSupportsMedia} from './utils';
@@ -82,7 +83,13 @@ export const PollSettingsSectionContent = (props: {
     }
   });
 
+  // The description travels as text plus entities; the composer's engine on
+  // the plain schema gives it the same formatting as the chat input.
+  const explanationInputEditor = attachPlainMessageEditor(explanationInput.input);
+  onCleanup(() => explanationInputEditor.destroy());
+
   explanationInput.input.classList.replace('input-field-input', editableFieldStyles.editableFieldContent);
+  explanationInput.input.setAttribute('aria-label', I18n.format('NewPoll.Explanation.Placeholder', true));
 
   const formatTimeInSpan = (timestamp: number) => {
     // Without the span, solid will throw an error when the state is updated
@@ -165,13 +172,10 @@ export const PollSettingsSectionContent = (props: {
         subtitle={context.store.allowMultipleAnswers ? 'NewPoll.SetMultipleCorrectAnswerSubtitle' : 'NewPoll.SetCorrectAnswerSubtitle'}
         icon='checklist_done'
         checked={context.store.hasCorrectAnswer}
+        disabled={context.quiz !== undefined}
         onClick={() => {
           if(!context.store.hasCorrectAnswer) {
-            context.setStore({
-              hasCorrectAnswer: true,
-              allowAddingOptions: false,
-              allowRevoting: false
-            });
+            context.setStore(QUIZ_POLL_SETTINGS);
           } else {
             context.setStore({
               hasCorrectAnswer: false

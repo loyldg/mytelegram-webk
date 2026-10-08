@@ -1,12 +1,14 @@
 import {Show, createSignal} from 'solid-js';
 import '@components/rtmp/rtmpData.css';
+import Modes from '@config/modes';
 import {IconTsx} from '@components/iconTsx';
 import {Skeleton} from '@components/skeleton';
 import {ButtonIconTsx} from '@components/buttonIconTsx';
 import {copyTextToClipboard} from '@helpers/clipboard';
 import {toastNew} from '@components/toast';
 import classNames from '@helpers/string/classNames';
-import {LangPackKey, i18n} from '@lib/langPack';
+import I18n, {LangPackKey, i18n} from '@lib/langPack';
+import A11yButton from '@components/a11yButton';
 
 export interface RtmpDataProps {
   key: string;
@@ -32,6 +34,7 @@ export const RtmpData = (props: RtmpDataProps) => {
   };
 
   const onCopy = (str: string, langPackKey: LangPackKey) => {
+    if(Modes.a11y && props.loading) return;
     copyTextToClipboard(str);
     toastNew({
       langPackKey
@@ -43,8 +46,10 @@ export const RtmpData = (props: RtmpDataProps) => {
       [cnRtmpData()]: true,
       [cnRtmpData('_contrast')]: props.contrast
     }}>
-      <div
+      <A11yButton
+        disabled={props.loading}
         onClick={() => onCopy(props.url, 'Rtmp.StreamPopup.URLCopied')}
+        aria-label={I18n.format('AccDescr.CopyStreamURL', true)}
         class={cnRtmpData('-row')}
       >
         <IconTsx icon="link" class={cnRtmpData('-row-icon')} />
@@ -59,7 +64,7 @@ export const RtmpData = (props: RtmpDataProps) => {
           </div>
         </div>
         <IconTsx icon="copy" class={cnRtmpData('-row-icon')} />
-      </div>
+      </A11yButton>
 
       <div
         onClick={() => onCopy(props.key, 'Rtmp.StreamPopup.KeyCopied')}
@@ -67,7 +72,7 @@ export const RtmpData = (props: RtmpDataProps) => {
       >
         <IconTsx icon="lock" class={cnRtmpData('-row-icon')} />
         <div class={cnRtmpData('-row-item')}>
-          <div classList={{
+          <div aria-hidden={!keyVisible()} classList={{
             [cnRtmpData('-row-item-text')]: true,
             [cnRtmpData('-row-item-text_hidden')]: !keyVisible()
           }}>
@@ -80,17 +85,26 @@ export const RtmpData = (props: RtmpDataProps) => {
 
             <ButtonIconTsx
               icon={keyVisible() ? 'eye2_filled' : 'eye1_filled'}
+              aria-label={I18n.format('AccDescr.ShowStreamKey', true)}
+              aria-pressed={keyVisible()}
+              disabled={Modes.a11y ? props.loading : undefined}
               onClick={toggleKeyVisible}
               class={cnRtmpData('-row-item-show')}
             />
           </div>
         </div>
-        <IconTsx icon="copy" class={cnRtmpData('-row-icon')} />
+        {Modes.a11y ? (
+          <button type="button" class={cnRtmpData('-row-copy')} disabled={props.loading} aria-label={I18n.format('AccDescr.CopyStreamKey', true)}>
+            <IconTsx icon="copy" class={cnRtmpData('-row-icon')} />
+          </button>
+        ) : <IconTsx icon="copy" class={cnRtmpData('-row-icon')} />}
       </div>
 
       <Show when={props.showRevoke}>
-        <div
+        <A11yButton
+          disabled={props.loading}
           onClick={props.onRevoke}
+          aria-label={I18n.format('Rtmp.StreamPopup.RevokeStreamKey', true)}
           class={classNames(cnRtmpData('-row'), cnRtmpData('-row_danger'))}
         >
           <IconTsx icon="rotate_left" class={cnRtmpData('-row-icon')} />
@@ -99,7 +113,7 @@ export const RtmpData = (props: RtmpDataProps) => {
               {i18n('Rtmp.StreamPopup.RevokeStreamKey')}
             </div>
           </div>
-        </div>
+        </A11yButton>
       </Show>
     </div>
   );

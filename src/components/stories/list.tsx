@@ -16,6 +16,7 @@ import appSidebarLeft from '@components/sidebarLeft';
 import {AppMyStoriesTab} from '@components/solidJsTabs/tabs';
 import {toastNew} from '@components/toast';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
+import removeStoriesFromRecent from '@components/stories/removeFromRecent';
 import {ChatType} from '@components/chat/chatType';
 import {subscribeOn} from '@helpers/solid/subscribeOn';
 import {useCollapsable} from '@hooks/useCollapsable';
@@ -23,6 +24,8 @@ import createMiddleware from '@helpers/solid/createMiddleware';
 import ListenerSetter from '@helpers/listenerSetter';
 import {PeerTitleTsx} from '@components/peerTitleTsx';
 import showStoriesStealthModePopup from '@components/popups/storiesStealthMode';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
 
 const TEST_COUNT = 0;
 const ITEM_MARGIN = 0;
@@ -186,6 +189,15 @@ function _StoriesList(props: {
 
     const isMyStory = peer.peerId === rootScope.myId;
 
+    const [ariaLabel, setAriaLabel] = createSignal(I18n.format('OpenStory', true));
+    if(isMyStory) {
+      setAriaLabel(`${I18n.format('OpenStory', true)}, ${I18n.format('MyStory', true)}`);
+    } else {
+      wrapPeerTitle({peerId: peer.peerId, onlyFirstName: true}).then((el) => {
+        setAriaLabel(`${I18n.format('OpenStory', true)}, ${el.textContent}`);
+      });
+    }
+
     const ret = (
       <div
         ref={(el) => (items.set(peer, el), itemsTarget.set(el, peer))}
@@ -197,6 +209,10 @@ function _StoriesList(props: {
             return movement && !movement.isOut && !movement.isLastIn;
           })()
         }}
+        role="button"
+        tabindex={Modes.a11y ? 0 : undefined}
+        aria-label={ariaLabel()}
+        onKeyDown={buttonKeyDown}
         onClick={onClick}
         style={{
           ...calculateMovement()?.cssProperties,
@@ -352,7 +368,7 @@ function _StoriesList(props: {
       });
     };
 
-    let peer: PeerStories, isSelf: boolean;
+    let peer: PeerStories, isSelf: boolean, removal: 'hide' | 'remove';
     createContextMenu({
       buttons: [{
         icon: 'stories',
@@ -420,7 +436,12 @@ function _StoriesList(props: {
         icon: 'archive',
         text: 'ArchivePeerStories',
         onClick: () => toggleHidden(true),
-        verify: () => !isSelf && !props.archive
+        verify: () => !isSelf && !props.archive && removal === 'hide'
+      }, {
+        icon: 'delete',
+        text: 'StoriesRemoveFromRecent',
+        onClick: () => removeStoriesFromRecent(peer.peerId),
+        verify: () => !isSelf && !props.archive && removal === 'remove'
       }, {
         icon: 'unarchive',
         text: 'UnarchiveStories',
@@ -432,9 +453,10 @@ function _StoriesList(props: {
       findElement: (e) => {
         return !folded() && findUpClassName(e.target, styles.ListItem);
       },
-      onOpen: (e, target) => {
+      onOpen: async(e, target) => {
         peer = itemsTarget.get(target as HTMLDivElement);
         isSelf = peer.peerId === rootScope.myId;
+        removal = await rootScope.managers.appStoriesManager.getPeerStoriesRemoval(peer.peerId);
       },
       onClose: () => {
         peer = undefined;

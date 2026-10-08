@@ -29,6 +29,9 @@ import classNames from '@helpers/string/classNames';
 import ripple from '@components/ripple';
 import Button from '@components/buttonTsx';
 import RippleElement from '@components/rippleElement';
+import I18n from '@lib/langPack';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
 
 const BASE = 'pinned-container';
 
@@ -37,6 +40,7 @@ type PlateContextValue = {
 };
 
 const PlateContext = createContext<PlateContextValue>();
+const PlateBodyContext = createContext(false);
 
 const useModifier = () => useContext(PlateContext)!.modifier;
 const baseCls = (suffix: string) => `${BASE}-${suffix}`;
@@ -77,6 +81,7 @@ TopbarPlate.Body = (props: {
 }) => {
   const modifier = useModifier();
   return (
+    <PlateBodyContext.Provider value={!!props.onClick}>
     <RippleElement
       component="div"
       noRipple={props.noRipple}
@@ -85,18 +90,25 @@ TopbarPlate.Body = (props: {
     >
       {props.children}
     </RippleElement>
+    </PlateBodyContext.Provider>
   );
 };
 
 TopbarPlate.Content = (props: {
   class?: string,
   children: JSX.Element,
-  ripple?: boolean
+  ripple?: boolean,
+  clickable?: boolean,
+  disabled?: boolean
 }) => {
   const modifier = useModifier();
+  // a native button only with the keyboard layer: it takes the focus on click and brings the button's text styling
+  const clickable = Modes.a11y && (props.clickable ?? useContext(PlateBodyContext));
   return (
     <RippleElement
-      component="div"
+      component={clickable ? 'button' : 'div'}
+      type={clickable ? 'button' : undefined}
+      disabled={Modes.a11y ? props.disabled : undefined}
       noRipple={!props.ripple}
       class={classNames(baseCls('content'), modCls(modifier, 'content'), props.class)}
     >
@@ -140,6 +152,7 @@ TopbarPlate.CloseButton = (props: {
       ref={props.ref}
       icon="close"
       class={classNames(baseCls('close'), modCls(modifier, 'close'), props.class)}
+      aria-label={I18n.format('Close', true)}
       onClick={props.onClick}
       noRipple
     />
@@ -167,6 +180,9 @@ TopbarPlate.ActionButton = (props: {
     <a
       ref={props.ref as Ref<HTMLAnchorElement>}
       class={className()}
+      role="button"
+      tabindex={Modes.a11y ? 0 : undefined}
+      onKeyDown={buttonKeyDown}
       onClick={props.onClick}
     >
       {props.children}

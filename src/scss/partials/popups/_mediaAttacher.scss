@@ -293,9 +293,26 @@
 
   transition: .2s;
 
+  // a11y: the actions are native buttons with the layer on
+  :where(.a11y) & {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
+  }
+
   &:hover {
     color: #ffffff;
   }
+}
+
+:where(.a11y) .popup-item-media-more {
+  position: absolute;
+  top: .25rem;
+  inset-inline-end: .25rem;
+  z-index: 3;
+  color: #fff;
+  background-color: rgba(0, 0, 0, .5);
 }
 
 .spoiler-toggle {

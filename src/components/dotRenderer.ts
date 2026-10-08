@@ -212,8 +212,8 @@ export default class DotRenderer implements AnimationItemWrapper {
       underLyingCtx: CanvasRenderingContext2D
     };
 
-    const x = getUnsafeRandomInt(0, instance.canvas.width - canvas.width);
-    const y = getUnsafeRandomInt(0, instance.canvas.height - canvas.height);
+    const x = getUnsafeRandomInt(0, Math.max(0, instance.canvas.width - canvas.width));
+    const y = getUnsafeRandomInt(0, Math.max(0, instance.canvas.height - canvas.height));
 
     const draw = () => {
       const {width, height} = canvas;
@@ -224,7 +224,7 @@ export default class DotRenderer implements AnimationItemWrapper {
       context.clearRect(0, 0, width, height);
 
       if(!revealAnimation) {
-        context.drawImage(instance.canvas, x, y, width, height, 0, 0, width, height);
+        drawImageFromSource(context, instance.canvas, x, y, width, height, 0, 0, width, height);
       } else {
         const {
           progress,
@@ -237,7 +237,7 @@ export default class DotRenderer implements AnimationItemWrapper {
 
         // Zoom (push) the particles
         const scaledProgress = progress ** 2 /* * Math.sqrt(progress) */ * 0.5;
-        context.drawImage(instance.canvas,
+        drawImageFromSource(context, instance.canvas,
           x + transformedCoords.x * scaledProgress, y + transformedCoords.y * scaledProgress, width * (1 - scaledProgress), height * (1 - scaledProgress),
           0, 0, width, height
         );
@@ -491,8 +491,8 @@ export default class DotRenderer implements AnimationItemWrapper {
     const id = this.createdIndex;
 
     const simSize = IMAGE_SPOILER_SIZE * dpr;
-    const x = getUnsafeRandomInt(0, simSize - canvas.width);
-    const y = getUnsafeRandomInt(0, simSize - canvas.height);
+    const x = getUnsafeRandomInt(0, Math.max(0, simSize - canvas.width));
+    const y = getUnsafeRandomInt(0, Math.max(0, simSize - canvas.height));
 
     const offscreen = canvas.transferControlToOffscreen();
     connection.postMessage({
@@ -743,10 +743,14 @@ export default class DotRenderer implements AnimationItemWrapper {
   private static inlineSpoilerUpdates = new Map<HTMLElement, () => void>();
   private static onInlineAppearanceUpdate = () => this.inlineSpoilerUpdates.forEach((update) => update());
 
-  private static watchInlineSpoiler(element: HTMLElement, update: () => void) {
+  private static watchInlineSpoiler(element: HTMLElement, canvas: HTMLCanvasElement, update: () => void) {
     const wasEmpty = !this.inlineSpoilerUpdates.size;
     this.inlineSpoilerUpdates.set(element, update);
-    const unobserve = observeResize(element, update);
+    // * the spoiler is an inline box, and a ResizeObserver never reports one once it is laid out.
+    // * The canvas inside it is a block box that gets a size the moment it is rendered, so that
+    // * is what measures text inserted later than the frame it was wrapped in (an auth card
+    // * waits out the previous card's exit first) - otherwise it stays blank for good
+    const unobserve = observeResize(canvas, update);
     if(wasEmpty) {
       rootScope.addEventListener('theme_changed', this.onInlineAppearanceUpdate);
       rootScope.addEventListener('chat_background_set', this.onInlineAppearanceUpdate);
@@ -828,7 +832,7 @@ export default class DotRenderer implements AnimationItemWrapper {
       const state = this.getBluffTextSpoilerState(element, canvas, target.dpr);
       if(state) target.overlay.update(state);
     };
-    const unwatch = this.watchInlineSpoiler(element, update);
+    const unwatch = this.watchInlineSpoiler(element, canvas, update);
 
     callbackify(target.readyResult, () => {
       if(destroyed) return;
@@ -885,7 +889,7 @@ export default class DotRenderer implements AnimationItemWrapper {
         element.classList.remove('is-visible');
       }
     });
-    const unwatch = this.watchInlineSpoiler(element, update);
+    const unwatch = this.watchInlineSpoiler(element, canvas, update);
 
     callbackify(target.readyResult, () => !destroyed && update());
 

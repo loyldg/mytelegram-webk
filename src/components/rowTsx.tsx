@@ -1,8 +1,10 @@
 import {
   children,
   createRenderEffect,
+  createSignal,
   JSX,
   onCleanup,
+  onMount,
   Ref,
   Show,
   splitProps,
@@ -17,6 +19,9 @@ import {hasMouseMovedSinceDown} from '@helpers/dom/clickEvent';
 import ListenerSetter from '@helpers/listenerSetter';
 import {getRowIconBackgroundImage} from '@helpers/rowIconBackground';
 import {attachHotClassName} from '@helpers/solid/classname';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import labelControl from '@helpers/dom/labelControl';
+import Modes from '@config/modes';
 import {
   RADIO_FIELD_RIGHT_CLASS,
   ROW_CHECKBOX_FIELD_CLASS,
@@ -109,11 +114,57 @@ const Row = (props: {children: JSX.Element} & Partial<{
   };
 
   const {store} = value;
+  const [hasNestedControl, setHasNestedControl] = createSignal(false);
+  let containerElement: HTMLElement;
 
   const isCheckbox = () => !!(
     store.checkboxField || store.checkboxFieldToggle || store.radioField || store.radioFieldRight
   );
   const isClickable = () => !!(props.clickable || isCheckbox() || props.contextMenu);
+  const inferredButton = () => isClickable() && !isCheckbox() && !props.as && !hasNestedControl();
+  const role = () => props.role || (inferredButton() ? 'button' : undefined);
+
+  const setupAccessibility = () => {
+    if(!isClickable()) return;
+    let primaryTarget: HTMLElement;
+    const clearPrimaryTarget = () => {
+      if(!primaryTarget) return;
+      primaryTarget.removeEventListener('keydown', buttonKeyDown);
+      primaryTarget.removeAttribute('role');
+      primaryTarget.removeAttribute('tabindex');
+      primaryTarget.removeAttribute('aria-disabled');
+      primaryTarget = undefined;
+    };
+    const update = () => {
+      const title = containerElement.querySelector<HTMLElement>('.row-title');
+      containerElement.querySelectorAll<HTMLElement>('input[type="checkbox"], input[type="radio"]').forEach((control) => labelControl(control, title));
+      const nested = Array.from(containerElement.querySelectorAll<HTMLElement>(
+        'button, a[href], input, select, textarea, [contenteditable="true"], [role="button"], [tabindex]'
+      )).filter((element) => element !== primaryTarget);
+      setHasNestedControl(!!nested.length);
+      // A row with a separate trailing action needs a separate primary target,
+      // rather than an interactive ancestor or a mouse-only title.
+      const needsPrimaryTarget = !props.as && !props.role && !isCheckbox() && nested.length &&
+        title && !nested.some((element) => title.contains(element) || element.matches('input, select, textarea, [contenteditable="true"]'));
+      if(!needsPrimaryTarget || primaryTarget !== title) clearPrimaryTarget();
+      if(needsPrimaryTarget) {
+        primaryTarget = title;
+        primaryTarget.setAttribute('role', 'button');
+        if(Modes.a11y) primaryTarget.tabIndex = props.disabled ? -1 : 0;
+        primaryTarget.setAttribute('aria-disabled', String(!!props.disabled));
+        primaryTarget.addEventListener('keydown', buttonKeyDown);
+      }
+    };
+    createRenderEffect(update);
+    // following the row's controls as they come and go is a subtree observer on every row: without
+    // the a11y layer, where all this sets is ARIA, the marks made on mount have to do
+    const observer = Modes.a11y ? new MutationObserver(update) : undefined;
+    observer?.observe(containerElement, {childList: true, subtree: true});
+    onCleanup(() => {
+      observer?.disconnect();
+      clearPrimaryTarget();
+    });
+  };
   const haveRipple = () => !!(!props.noRipple && isClickable());
   const havePadding = () => !!(
     props.havePadding ||
@@ -130,6 +181,7 @@ const Row = (props: {children: JSX.Element} & Partial<{
 
   let openContextMenu: ReturnType<typeof createContextMenu>['open'];
   const ref = (container: HTMLElement) => {
+    containerElement = container;
     const listenerSetter = new ListenerSetter();
 
     if(props.contextMenu) {
@@ -153,7 +205,17 @@ const Row = (props: {children: JSX.Element} & Partial<{
       props.ref(container);
     }
   };
+  // Without the a11y layer only a row its caller made focusable answers to Enter/Space.
+  const onLegacyKeyDown = (event: KeyboardEvent) => {
+    if(event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+
+    event.preventDefault();
+    (event.currentTarget as HTMLElement).click();
+  };
   const onClick: JSX.EventHandlerUnion<HTMLElement, MouseEvent> = (event) => {
+    if(Modes.a11y && (props.disabled || props['aria-disabled'])) return;
     const clickable = props.clickable;
     if(typeof(clickable) === 'function') {
       if(!hasMouseMovedSinceDown(event)) {
@@ -165,12 +227,12 @@ const Row = (props: {children: JSX.Element} & Partial<{
     openContextMenu?.(event);
   };
 
-  return (
+  const element = (
     <RippleElement
       ref={ref}
       component={props.as === 'a' ? 'a' : (props.as === 'label' || isCheckbox() ? 'label' : 'div')}
-      role={props.role}
-      tabIndex={props.tabIndex}
+      role={role()}
+      tabIndex={props.tabIndex ?? (Modes.a11y && role() === 'button' ? props.disabled ? -1 : 0 : undefined)}
       aria-checked={props['aria-checked']}
       aria-disabled={props['aria-disabled'] || props.disabled ? true : undefined}
       classList={{
@@ -190,14 +252,9 @@ const Row = (props: {children: JSX.Element} & Partial<{
       onClick={typeof(props.clickable) === 'function' || props.contextMenu ? onClick : undefined}
       aria-label={props['aria-label']}
       style={props.style}
-      onKeyDown={!props['on:keydown'] && props.tabIndex !== undefined && props.clickable ? (event: KeyboardEvent) => {
-        if(event.key !== 'Enter' && event.key !== ' ') {
-          return;
-        }
-
-        event.preventDefault();
-        (event.currentTarget as HTMLElement).click();
-      } : undefined}
+      onKeyDown={props['on:keydown'] ? undefined : Modes.a11y ?
+        (!isCheckbox() && isClickable() ? buttonKeyDown : undefined) :
+        (props.tabIndex !== undefined && props.clickable ? onLegacyKeyDown : undefined)}
       on:keydown={props['on:keydown']}
       noRipple={!haveRipple()}
     >
@@ -214,6 +271,8 @@ const Row = (props: {children: JSX.Element} & Partial<{
       {store.media}
     </RippleElement>
   );
+  onMount(setupAccessibility);
+  return element;
 };
 
 Row.RowPart = (props: {

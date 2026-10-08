@@ -29,19 +29,28 @@ export default function createSubmenuTrigger<T = {}>({
 }: CreateSubmenuTriggerArgs<T>) {
   let
     isDisabled = false,
-    currentMiddleware: MiddlewareHelper
+    currentMiddleware: MiddlewareHelper,
+    detachTriggerListeners: () => void
   ;
 
   const onOpen = () => {
     if(!menuBtnOptions.element) return;
+    // Menu item nodes are reused by several context-menu implementations.
+    // Re-opening must replace the prior hover/keyboard listeners instead of
+    // stacking another async submenu creator on the same trigger.
+    detachTriggerListeners?.();
+    currentMiddleware?.destroy();
     currentMiddleware = getMiddleware();
 
-    menuBtnOptions.element.addEventListener(CLICK_EVENT_NAME, (e) => {
+    const stopPropagation = (e: Event) => {
       e.stopPropagation();
-    }, true);
+    };
+    menuBtnOptions.element.addEventListener(CLICK_EVENT_NAME, stopPropagation, true);
     menuBtnOptions.element.classList.add('submenu-trigger');
+    menuBtnOptions.element.setAttribute('aria-haspopup', 'menu');
+    menuBtnOptions.element.setAttribute('aria-expanded', 'false');
 
-    attachFloatingButtonMenu({
+    const detachFloatingMenu = attachFloatingButtonMenu({
       element: menuBtnOptions.element,
       direction,
       createMenu: async() => {
@@ -51,10 +60,14 @@ export default function createSubmenuTrigger<T = {}>({
       },
       offset: [-5, -5],
       level: 2,
-      triggerEvent: 'mouseenter',
+      triggerEvent: ['mouseenter', CLICK_EVENT_NAME],
       canOpen: () => !isDisabled,
       onClose: onClose
     });
+    detachTriggerListeners = () => {
+      menuBtnOptions.element?.removeEventListener(CLICK_EVENT_NAME, stopPropagation, true);
+      detachFloatingMenu();
+    };
   };
 
   const onClose = async() => {
@@ -67,6 +80,7 @@ export default function createSubmenuTrigger<T = {}>({
 
   const menuBtnOptions: ButtonMenuItemOptionsVerifiable & T = {
     ...options,
+    keepOpen: true,
 
     // * fix langpack
     get regularText() {
@@ -81,6 +95,12 @@ export default function createSubmenuTrigger<T = {}>({
     onClick: noop,
     onOpen,
     onClose,
+    dispose: () => {
+      detachTriggerListeners?.();
+      detachTriggerListeners = undefined;
+      currentMiddleware?.destroy();
+      currentMiddleware = undefined;
+    },
     id: submenuHelperIdSeed++
   };
 

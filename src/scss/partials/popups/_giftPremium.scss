@@ -28,6 +28,11 @@
     line-height: 20px;
     font-weight: var(--font-weight-bold);
     font-size: var(--font-size-13);
+
+    // the contrast-checked fill, with the a11y layer (Increase Contrast is part of it)
+    :where(.a11y) & {
+      background-color: var(--primary-button-color, var(--primary-color));
+    }
   }
 
   &-confirm {

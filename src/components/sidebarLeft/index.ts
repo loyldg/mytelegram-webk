@@ -23,8 +23,10 @@ import appNavigationController, {NavigationItem} from '@components/appNavigation
 import findUpClassName from '@helpers/dom/findUpClassName';
 import findUpTag from '@helpers/dom/findUpTag';
 import App from '@config/app';
+import Modes from '@config/modes';
 import ButtonMenuToggle from '@components/buttonMenuToggle';
 import sessionStorage from '@lib/sessionStorage';
+import focusWhenSettled from '@helpers/dom/focusWhenSettled';
 import {attachClickEvent, CLICK_EVENT_NAME, simulateClickEvent} from '@helpers/dom/clickEvent';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import ButtonIcon from '@components/buttonIcon';
@@ -154,17 +156,21 @@ export class AppSidebarLeft extends SidebarSlider {
     this.managers = managers;
 
     this.chatListContainer = document.getElementById('chatlist-container');
-    this.inputSearch = new InputSearch({oldStyle: true});
-    (this.inputSearch.input as HTMLInputElement).placeholder = ' ';
+    // the placeholder up front names the field; without the keyboard layer the connection status sets it, as it always did
+    this.inputSearch = new InputSearch({oldStyle: true, placeholder: Modes.a11y ? 'Search' : undefined});
+    if(!Modes.a11y) (this.inputSearch.input as HTMLInputElement).placeholder = ' ';
     const sidebarHeader = this.sidebarEl.querySelector('.item-main .sidebar-header');
     sidebarHeader.append(this.inputSearch.container);
 
     this.backBtn = this.sidebarEl.querySelector('.sidebar-back-button') as HTMLButtonElement;
+    this.backBtn.setAttribute('aria-label', I18n.format('StarsRating.Back', true));
 
     this.toolsBtn = this.createToolsMenu();
     // .is-visible is owned by the Solid effect below (see "burger element
     // has two visual states") — don't seed it here.
     this.toolsBtn.classList.add('sidebar-tools-button');
+    this.toolsBtn.setAttribute('role', 'button');
+    if(Modes.a11y) this.toolsBtn.tabIndex = 0;
     this.totalNotificationsCount = createBadge('span', 20, 'primary');
     this.totalNotificationsCount.classList.add('sidebar-tools-button-notifications');
     this.toolsBtn.append(this.totalNotificationsCount);
@@ -256,7 +262,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
     let statusMiddlewareHelper: MiddlewareHelper, fireOnNew: boolean;
     const premiumMiddlewareHelper = this.getMiddleware().create();
-    const statusBtnIcon = ButtonIcon(' sidebar-emoji-status', {noRipple: true});
+    const statusBtnIcon = ButtonIcon(' sidebar-emoji-status', {noRipple: true, ariaLabel: 'SetAsEmojiStatus'});
 
     const lockButton = createLockButton();
 
@@ -390,7 +396,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
     this.searchTriggerWhenCollapsed = document.createElement('div');
     this.searchTriggerWhenCollapsed.className = 'sidebar-header-search-trigger';
-    this.searchTriggerWhenCollapsed.append(ButtonIcon('search'));
+    this.searchTriggerWhenCollapsed.append(ButtonIcon('search', {ariaLabel: 'Search'}));
     this.searchTriggerWhenCollapsed.addEventListener('click', () => {
       this.initSearch().open();
     });
@@ -501,6 +507,7 @@ export class AppSidebarLeft extends SidebarSlider {
     this.chatListContainer.parentElement.classList.toggle('fade', this.isCollapsed());
     this.chatListContainer.parentElement.classList.toggle('zoom-fade', !this.isCollapsed());
     appDialogsManager.xd.toggleAvatarUnreadBadges(this.isCollapsed(), undefined);
+    appDialogsManager.onChatListNarrowChange();
 
     const [hasFoldersSidebar] = useHasFoldersSidebar();
 
@@ -769,6 +776,7 @@ export class AppSidebarLeft extends SidebarSlider {
       direction: 'bottom-right',
       buttons: filteredButtons,
       container: mountTo,
+      buttonOptions: {ariaLabel: 'MultiAccount.More'},
       positionPadding,
       onOpenBefore: async() => {
         const emptyAttachMenuBots: AttachMenuBot[] = [];
@@ -1110,25 +1118,23 @@ export class AppSidebarLeft extends SidebarSlider {
       direction: 'top-left',
       buttons: this.createNewChatsMenuOptions(false),
       noIcon: true,
-      positionPadding: {bottom: 10},
-      // Runs before the shared toggle's short-lived cached-menu fast path, so
-      // a rapid close/reopen cannot leave the trigger announced as collapsed.
-      onOpenBefore: () => btnMenu.setAttribute('aria-expanded', 'true'),
-      onClose: () => btnMenu.setAttribute('aria-expanded', 'false')
+      buttonOptions: {ariaLabel: 'ChatAutomation.NewChats'},
+      positionPadding: {bottom: 10}
     });
     btnMenu.className = 'btn-new-menu btn-circle rp btn-corner z-depth-1 btn-menu-toggle animated-button-icon';
     btnMenu.tabIndex = 0;
     btnMenu.setAttribute('role', 'button');
-    btnMenu.setAttribute('aria-label', I18n.format('ChatAutomation.NewChats', true));
-    btnMenu.setAttribute('aria-expanded', 'false');
-    btnMenu.addEventListener('keydown', (e: KeyboardEvent) => {
-      if(e.key !== 'Enter' && e.key !== ' ') return;
+    // The keyboard layer activates it through attachClickEvent; without the layer it does so itself, as before.
+    if(!Modes.a11y) {
+      btnMenu.addEventListener('keydown', (e: KeyboardEvent) => {
+        if(e.key !== 'Enter' && e.key !== ' ') return;
 
-      cancelEvent(e);
-      // Use the same synthetic event as pointer activation. On touch-capable
-      // desktops the shared click helper listens to mousedown, not click.
-      simulateClickEvent(btnMenu);
-    });
+        cancelEvent(e);
+        // Use the same synthetic event as pointer activation. On touch-capable
+        // desktops the shared click helper listens to mousedown, not click.
+        simulateClickEvent(btnMenu);
+      });
+    }
     const icons: Icon[] = ['newchat_filled', 'close'];
     btnMenu.prepend(...icons.map((icon, idx) => Icon(icon, 'animated-button-icon-icon', 'animated-button-icon-icon-' + (idx === 0 ? 'first' : 'last'))));
     btnMenu.id = 'new-menu';
@@ -1621,6 +1627,21 @@ export class AppSidebarLeft extends SidebarSlider {
       this.buttonsContainer.classList.remove('is-visible');
       this.isSearchActive = false;
       this.onSomethingOpenInsideChange();
+
+      // Whatever held focus is on its way out: the back button itself is being
+      // hidden, and closing with Escape blurs the search field without giving
+      // the focus to anything. Either way the keyboard would be left on the
+      // document with no place in the sidebar, and the next Escape would land
+      // back in the search field and reopen the search it just closed. Focus
+      // moves to the control that takes the back button's place instead — once
+      // that control is actually there, since the classes that reveal it are
+      // set by an effect a frame or more from now.
+      const claimed = (): boolean => {
+        const focused = document.activeElement;
+        return !!focused && focused !== document.body && focused !== this.backBtn &&
+          focused !== this.inputSearch.input && !searchContainer.contains(focused);
+      };
+      if(Modes.a11y && !claimed()) focusWhenSettled(this.toolsBtn, () => !claimed());
 
       chatTypeMenu.props.selected = 'all';
     }, {listenerSetter: searchListenerSetter});
