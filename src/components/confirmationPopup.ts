@@ -1,12 +1,6 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import classNames from '@helpers/string/classNames';
-import PopupElement, {addCancelButton} from '@components/popups';
-import PopupPeer, {PopupPeerCheckboxOptions, PopupPeerOptions} from '@components/popups/peer';
+import {addCancelButton} from '@components/popups/indexTsx';
+import showPeerPopup, {PopupPeerButton, PopupPeerCheckboxOptions, PopupPeerHandle, PopupPeerOptions} from '@components/popups/peer';
 
 export type ConfirmationPopupRejectReason = 'canceled' | 'closed';
 
@@ -17,13 +11,15 @@ export type PopupConfirmationOptions = PopupPeerOptions & {
   inputField?: PopupPeerOptions['inputField'],
   rejectWithReason?: boolean,
   className?: string;
+  cancelButton?: PopupPeerButton;
+  onPopup?: (popup: PopupPeerHandle) => void;
 };
 
 export default function confirmationPopup<T extends PopupConfirmationOptions>(
   options: T
 ): Promise<T['checkboxes'] extends PopupPeerCheckboxOptions[] ? Array<boolean> : (T['checkbox'] extends PopupPeerCheckboxOptions ? boolean : void)> {
   return new Promise<any>((resolve, reject: (reason?: ConfirmationPopupRejectReason) => void) => {
-    const {button, checkbox, rejectWithReason} = options;
+    const {button, cancelButton: customCancelButton, checkbox, rejectWithReason} = options;
     button.callback = (e, set) => {
       if(checkbox || !set) {
         resolve(set ? !!set.size : undefined);
@@ -32,20 +28,27 @@ export default function confirmationPopup<T extends PopupConfirmationOptions>(
       }
     };
 
-    const buttons = addCancelButton(options.buttons || [button]);
+    const buttons = options.buttons || [button];
+    if(customCancelButton && !buttons.some((button) => button.isCancel)) {
+      customCancelButton.isCancel = true;
+      buttons.push(customCancelButton);
+    }
+    addCancelButton(buttons);
     const cancelButton = buttons.find((button) => button.isCancel);
-    cancelButton.callback = () => {
+    const cancelCallback = cancelButton.callback;
+    cancelButton.callback = (event, checkboxes) => {
+      cancelCallback?.(event, checkboxes);
       reject(rejectWithReason ? 'canceled' : undefined);
     };
 
     options.buttons = buttons;
     options.checkboxes ??= checkbox && [checkbox];
 
-    const popup = PopupElement.createPopup(PopupPeer, classNames('popup-confirmation', options.className), options);
-    popup.addEventListener('closeAfterTimeout', () => {
+    options.onCloseAfterTimeout = () => {
       reject(rejectWithReason ? 'closed' : undefined);
-    });
+    };
 
-    popup.show();
+    const popup = showPeerPopup(classNames('popup-confirmation', options.className), options);
+    options.onPopup?.(popup);
   });
 }

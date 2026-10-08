@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import renderMediaWithFadeIn from '@helpers/dom/renderMediaWithFadeIn';
 import mediaSizes from '@helpers/mediaSizes';
 import {InputWebFileLocation, Message, PhotoSize, VideoSize, WebDocument} from '@layer';
@@ -28,12 +22,13 @@ import liteMode from '@helpers/liteMode';
 import isWebFileLocation from '@appManagers/utils/webFiles/isWebFileLocation';
 import apiManagerProxy from '@lib/apiManagerProxy';
 
-export default async function wrapPhoto({photo, message, container, boxWidth, boxHeight, withTail, isOut, lazyLoadQueue, middleware, size, withoutPreloader, loadPromises, autoDownloadSize, noBlur, noThumb, noFadeIn, blurAfter, managers = rootScope.managers, processUrl, fadeInElement, onRender, onRenderFinish, useBlur, useRenderCache, canHaveVideoPlayer, uploadingFileName}: {
+export default async function wrapPhoto({photo, message, container, boxWidth, boxHeight, fillBox, withTail, isOut, lazyLoadQueue, middleware, size, withoutPreloader, loadPromises, autoDownloadSize, noBlur, noThumb, noFadeIn, blurAfter, managers = rootScope.managers, processUrl, fadeInElement, onRender, onRenderFinish, useBlur, useRenderCache, canHaveVideoPlayer, uploadingFileName}: {
   photo: MyPhoto | MyDocument | WebDocument | InputWebFileLocation,
   message?: Message.message | Message.messageService,
   container?: HTMLElement,
   boxWidth?: number,
   boxHeight?: number,
+  fillBox?: boolean,
   withTail?: boolean,
   isOut?: boolean,
   lazyLoadQueue?: LazyLoadQueue | false,
@@ -135,6 +130,11 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
     });
     size = set.photoSize;
     isFit = set.isFit;
+    if(fillBox) {
+      container.style.width = boxWidth + 'px';
+      container.style.height = boxHeight + 'px';
+      isFit = false;
+    }
     cacheContext = apiManagerProxy.getCacheContext(photo, size.type);
 
     if(!isFit && !isWebDoc) {
@@ -154,6 +154,7 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
         loadThumbPromise = gotThumb.loadPromise;
         const thumbImage = gotThumb.image; // local scope
         thumbImage.classList.add('media-photo');
+        thumbImage.setAttribute('alt', '');
         container.append(thumbImage);
       } else {
         const res = await wrapPhoto({
@@ -178,6 +179,7 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
         });
         const thumbImage = res.images.full;
         thumbImage.classList.add('media-photo', 'thumbnail');
+        thumbImage.setAttribute('alt', '');
         // container.append(thumbImage);
       }
 
@@ -204,6 +206,7 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
       ret.loadPromises.thumb = ret.loadPromises.full = loadThumbPromise;
       thumbImage = ret.images.thumb = gotThumb.image;
       thumbImage.classList.add('media-photo');
+      thumbImage.setAttribute('alt', '');
       aspecter.append(thumbImage);
     }
   }
@@ -225,6 +228,7 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
   } else {
     media = ret.images.full = new Image();
     media.classList.add('media-photo');
+    media.setAttribute('alt', '');
   }
 
   // console.log('wrapPhoto downloaded:', photo, photo.downloaded, container);
@@ -287,7 +291,9 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
     }
 
     if(blurAfter) {
-      const result = blur(url, 12);
+      // downscale to a tiny thumbnail before blurring so the upscaled side-fill looks like
+      // frosted glass (matches the official clients), instead of a weak blur on the full image
+      const result = blur(url, 10, 2, 48);
       return result.promise.then(() => {
         // image = result.canvas;
         return renderOnLoad(result.canvas.toDataURL());
@@ -360,4 +366,3 @@ export default async function wrapPhoto({photo, message, container, boxWidth, bo
 
   return ret;
 }
-

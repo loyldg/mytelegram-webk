@@ -20,6 +20,8 @@ import appSidebarRight from '@components/sidebarRight';
 import {StackedAvatarsTsx} from '@components/stackedAvatars';
 import {wrapAdaptiveCustomEmoji} from '@components/wrappers/customEmojiSimple';
 import wrapRichText from '@lib/richTextProcessor/wrapRichText';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
 
 export function UnknownUserBubble(props: {
   peerId: PeerId,
@@ -52,7 +54,7 @@ export function UnknownUserBubble(props: {
     return (
       <div class={/* @once */ styles.footer}>
         <span class={/* @once */ styles.footerIcon}>{props.icon}</span>
-        <span class={/* @once */ styles.footerText}>{props.text}</span>
+        <span>{props.text}</span>
       </div>
     );
   };
@@ -90,9 +92,13 @@ export function UnknownUserBubble(props: {
             {props.userFull.common_chats_count && (
               <div
                 class={/* @once */ styles.commonChats}
+                role="button"
+                tabindex={Modes.a11y ? 0 : undefined}
+                aria-label={I18n.format('UnknownUserSharedGroups', true)}
                 onClick={() => {
                   appSidebarRight.toggleSidebar(true);
                 }}
+                onKeyDown={buttonKeyDown}
               >
                 <I18nTsx
                   key="RequestPeer.MultipleLimit.Groups"
@@ -109,7 +115,7 @@ export function UnknownUserBubble(props: {
         </div>
         {!props.user.pFlags.verified && !props.user.pFlags.support && !props.user.bot_verification_icon && (
           <Footer
-            icon={<IconTsx icon="info2" />}
+            icon={<IconTsx icon="info2_filled" />}
             text={<I18nTsx key="UnknownUserUnofficial" />}
           />
         )}

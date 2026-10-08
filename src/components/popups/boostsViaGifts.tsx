@@ -1,112 +1,112 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import PopupElement from '.';
+import PopupElement, {createPopup} from '@components/popups/indexTsx';
+import {ScrollableContextValue} from '@components/scrollable2';
 import I18n, {FormatterArguments, LangPackKey, _i18n, i18n, join} from '@lib/langPack';
-import Row from '@components/row';
 import CheckboxField from '@components/checkboxField';
 import Section from '@components/section';
 import RangeStepsSelector from '@components/rangeStepsSelector';
-import {Accessor, For, JSX, createEffect, createMemo, createSignal, untrack} from 'solid-js';
+import {Accessor, For, JSX, createEffect, createMemo, createSignal, onCleanup, onMount, untrack} from 'solid-js';
 import tsNow from '@helpers/tsNow';
-import PopupSchedule from '@components/popups/schedule';
+import showDatePickerPopup from '@components/popups/datePicker';
 import {formatFullSentTime, formatMonthsDuration} from '@helpers/date';
 import renderImageFromUrl from '@helpers/dom/renderImageFromUrl';
 import Icon from '@components/icon';
 import {AvatarNew} from '@components/avatarNew';
 import Button from '@components/button';
 import PeerTitle from '@components/peerTitle';
-import {HelpCountry, InputInvoice, InputStorePaymentPurpose, PremiumGiftCodeOption, PrepaidGiveaway, StarsGiveawayOption, StarsGiveawayWinnersOption} from '@layer';
+import {InputInvoice, InputStorePaymentPurpose, PremiumGiftCodeOption, PrepaidGiveaway, StarsGiveawayOption, StarsGiveawayWinnersOption} from '@layer';
 import cancelEvent from '@helpers/dom/cancelEvent';
-import PopupPremium from '@components/popups/premium';
-import {premiumOptionsForm} from '@components/premium/promoSlideTab';
-import PopupPickUser from '@components/popups/pickUser';
+import showPremiumPopup from '@components/popups/premium';
+import PremiumOptionsForm from '@components/premium/premiumOptionsForm';
+import showPickUserPopup from '@components/popups/pickUser';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import getChatMembersString from '@components/wrappers/getChatMembersString';
-import findUpClassName from '@helpers/dom/findUpClassName';
-import {filterCountries} from '@components/countryInputField';
-import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
-import {getCountryEmoji} from '@vendor/emoji';
 import {toastNew} from '@components/toast';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
 import confirmationPopup from '@components/confirmationPopup';
 import {randomLong} from '@helpers/random';
-import PopupPayment from '@components/popups/payment';
+import {createPaymentPopup} from '@components/popups/payment';
 import shake from '@helpers/dom/shake';
 import anchorCallback from '@helpers/dom/anchorCallback';
 import {IconTsx} from '@components/iconTsx';
+import {ROW_SELECTION_CHECKBOX_CLASS, ROW_SELECTION_MEDIA_CLASS, ROW_WITH_CHECKBOX_AND_MEDIA_CLASS} from '@components/rowFieldClasses';
 import {CPrepaidGiveaway} from '@components/sidebarRight/tabs/boosts';
-import isObject from '@helpers/object/isObject';
 import classNames from '@helpers/string/classNames';
 import RowTsx from '@components/rowTsx';
+import CheckboxFieldTsx from '@components/checkboxFieldTsx';
 import {StarsStackedStars} from '@components/popups/stars';
 import numberThousandSplitter, {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import paymentsWrapCurrencyAmount from '@helpers/paymentsWrapCurrencyAmount';
 import flatten from '@helpers/array/flatten';
+import isGiveawayUntilDateValid from '@helpers/giveaway/isGiveawayUntilDateValid';
+import showPickCountryPopup from '@components/popups/pickCountry';
+import createBoostsViaGiftsState from '@components/popups/boostsViaGiftsState';
 
 export const BoostsBadge = (props: {boosts: number}) => {
   return (
     <span class="popup-boosts-badge">
-      <IconTsx icon="boost" class="popup-boosts-badge-icon" />
+      <IconTsx icon="boost_filled" class="popup-boosts-badge-icon" />
       {props.boosts}
     </span>
   );
 };
 
 export const BoostsConfirmButton = (props: {
-  button: HTMLElement,
   langKey: Accessor<LangPackKey>,
   langArgs?: Accessor<FormatterArguments>,
-  boosts: Accessor<number>
+  boosts: Accessor<number>,
+  disabled?: boolean,
+  callback: Parameters<typeof PopupElement['FooterButton']>[0]['callback']
 }) => {
-  let s: HTMLSpanElement, ssss: HTMLSpanElement;
-  const ss = (<span ref={s} class="popup-boosts-button-text">{i18n(props.langKey(), props.langArgs?.())}</span>);
-  const sss = (<span ref={ssss} class={classNames('popup-boosts-button-badge', !props.boosts() && 'hide')}><IconTsx icon="boost" class="popup-boosts-button-badge-icon" />{props.boosts()}</span>);
-  props.button.classList.add('popup-boosts-button');
-  props.button.append(s, ssss);
+  return (
+    <PopupElement.FooterButton
+      class="popup-boosts-button"
+      disabled={props.disabled}
+      callback={props.callback}
+    >
+      <span class="popup-boosts-button-text">{i18n(props.langKey(), props.langArgs?.())}</span>
+      <span class={classNames('popup-boosts-button-badge', !props.boosts() && 'hide')}><IconTsx icon="boost_filled" class="popup-boosts-button-badge-icon" />{props.boosts()}</span>
+    </PopupElement.FooterButton>
+  );
 };
 
-export default class PopupBoostsViaGifts extends PopupElement {
-  private premiumGiftCodeOptions: PremiumGiftCodeOption[];
-  private starsOptions: StarsGiveawayOption[];
-  private appConfig: MTAppConfig;
-  private channelsLimit: number;
-  private subscribersLimit: number;
-  private countriesLimit: number;
+import {getMiddleware} from '@helpers/middleware';
+import rootScope from '@lib/rootScope';
+import ListenerSetter from '@helpers/listenerSetter';
+import MediaHeader from '@components/mediaHeader';
 
-  constructor(
-    private peerId: PeerId,
-    private prepaidGiveaway?: PrepaidGiveaway,
-    private onCreated?: () => void
-  ) {
-    super('popup-boosts', {
-      closable: true,
-      overlayClosable: true,
-      body: true,
-      scrollable: true,
-      title: 'BoostsViaGifts.Title',
-      floatingHeader: true,
-      footer: true,
-      withConfirm: true
-    });
+export default async function showBoostsViaGiftsPopup(
+  peerId: PeerId,
+  prepaidGiveaway?: PrepaidGiveaway,
+  onCreated?: () => void
+) {
+  const middlewareHelper = getMiddleware();
+  const middleware = middlewareHelper.get();
+  const listenerSetter = new ListenerSetter();
+  const [show, setShow] = createSignal(false);
+  const [scrollableRef, setScrollableRef] = createSignal<ScrollableContextValue>();
 
-    this.construct();
-  }
+  const [premiumGiftCodeOptions, appConfig, starsOptions]: [PremiumGiftCodeOption[], MTAppConfig, StarsGiveawayOption[]] = await Promise.all([
+    rootScope.managers.appPaymentsManager.getPremiumGiftCodeOptions(peerId),
+    rootScope.managers.apiManager.getAppConfig(),
+    rootScope.managers.appPaymentsManager.getStarsGiveawayOptions()
+  ]);
+  const subscribersLimit = appConfig.giveaway_add_peers_max ?? 10;
+  const channelsLimit = subscribersLimit;
+  const countriesLimit = appConfig.giveaway_countries_max ?? 10;
 
-  private _construct() {
+  const Content = () => {
     const [subscriptionsCount, setSubscriptionsCount] = createSignal(10);
     const [expiration, setExpiration] = createSignal(tsNow(true) + 3 * 86400);
-    const [peerIds, setPeerIds] = createSignal<PeerId[]>([this.peerId]);
+    const [peerIds, setPeerIds] = createSignal<PeerId[]>([peerId]);
     const [specificPeerIds, setSpecificPeerIds] = createSignal<PeerId[]>([]);
-    const [stars, setStars] = createSignal(this.prepaidGiveaway?._ === 'prepaidStarsGiveaway');
-    const [starsOption, setStarsOption] = createSignal<StarsGiveawayOption>(this.starsOptions?.[0]);
+    const giveawayState = createBoostsViaGiftsState(
+      prepaidGiveaway?._ === 'prepaidStarsGiveaway' ? 'stars' : 'premium'
+    );
+    const {stars, specific} = giveawayState;
+    const [starsOption, setStarsOption] = createSignal<StarsGiveawayOption>(starsOptions?.[0]);
     const [starsWinner, setStarsWinner] = createSignal<StarsGiveawayWinnersOption>(starsOption() && starsOption().winners[0]);
-    const [specific, setSpecific] = createSignal(false);
     const [durationForm, setDurationForm] = createSignal<JSX.Element>();
     const [option, setOption] = createSignal<PremiumGiftCodeOption>();
     const [countries, setCountries] = createSignal<string[]>();
@@ -114,13 +114,14 @@ export default class PopupBoostsViaGifts extends PopupElement {
     const [additionalPrizes, setAdditionalPrizes] = createSignal(false);
     const [additionalPrize, setAdditionalPrize] = createSignal('');
     const [showPrizes, setShowPrizes] = createSignal(true);
-    const isPrepaid = createMemo(() => !!this.prepaidGiveaway);
+    const isPrepaid = createMemo(() => !!prepaidGiveaway);
     const count = createMemo(() => stars() ? starsWinner().users : subscriptionsCount());
-    const boosts = createMemo(() => stars() ? starsOption().yearly_boosts : count() * (this.appConfig.giveaway_boosts_per_premium ?? 1));
+    const boosts = createMemo(() => stars() ? starsOption().yearly_boosts : count() * (appConfig.giveaway_boosts_per_premium ?? 1));
 
     let range: RangeStepsSelector<number>;
     if(!isPrepaid()) {
       range = new RangeStepsSelector({
+        ariaLabel: 'BoostsViaGifts.Quantity',
         generateStep: (value) => ['' + value, value],
         onValue: (value) => {
           if(stars()) {
@@ -129,7 +130,7 @@ export default class PopupBoostsViaGifts extends PopupElement {
             setSubscriptionsCount(value);
           }
         },
-        middleware: this.middlewareHelper.get(),
+        middleware: middleware,
         noFirstLast: true
       });
 
@@ -148,14 +149,14 @@ export default class PopupBoostsViaGifts extends PopupElement {
           return;
         }
 
-        // const stepValues = filterUnique(this.premiumGiftCodeOptions.map((o) => o.users));
-        const stepValues = [1, 3, 5, 7, 10, 25, 50, 100].filter((v) => this.premiumGiftCodeOptions.some((o) => o.users === v));
+        // const stepValues = filterUnique(premiumGiftCodeOptions.map((o) => o.users));
+        const stepValues = [1, 3, 5, 7, 10, 25, 50, 100].filter((v) => premiumGiftCodeOptions.some((o) => o.users === v));
         const steps = range.generateSteps(stepValues);
         const focusValue = untrack(subscriptionsCount);
-        range.setSteps(steps, stepValues.indexOf(focusValue));
+        range.setSteps(steps, Math.max(0, stepValues.indexOf(focusValue)));
       });
     } else {
-      setSubscriptionsCount(this.prepaidGiveaway.quantity);
+      setSubscriptionsCount(prepaidGiveaway.quantity);
     }
 
     const radioOptions: ConstructorParameters<typeof CheckboxField>[0] = {
@@ -163,153 +164,135 @@ export default class PopupBoostsViaGifts extends PopupElement {
       asRadio: true
     };
 
-    const expirationRow = new Row({
-      titleLangKey: 'Ends',
-      titleRightSecondary: true,
-      clickable: () => {
-        const maxDate = new Date(Date.now() + (this.appConfig.giveaway_period_max ?? 604800) * 1000);
-        const initDate = new Date(expiration() * 1000);
-        const popup = new PopupSchedule({
-          initDate,
-          onPick: (timestamp) => {
-            setExpiration(timestamp);
-          },
-          btnConfirmLangKey: 'Save',
-          maxDate
-        });
-        popup.show();
-      },
-      listenerSetter: this.listenerSetter
-    });
-
-    expirationRow.titleRight.classList.add('primary');
-
-    createEffect(() => {
-      expirationRow.titleRight.replaceChildren(formatFullSentTime(expiration()));
-    });
-
-    const updateSpecific = (specific: boolean) => {
-      setSubscriptionsCount(specific ? specificPeerIds().length : range?.value);
-      setSpecific(specific);
-      this.scrollable.updateThumb();
+    let expirationRow: HTMLElement;
+    const onExpirationClick = () => {
+      const now = tsNow(true);
+      const minTimeDate = new Date(now * 1000);
+      const minDate = new Date(minTimeDate);
+      minDate.setHours(0, 0, 0, 0);
+      const maxDate = new Date((now + (appConfig.giveaway_period_max ?? 604800)) * 1000);
+      const initDate = new Date(expiration() * 1000);
+      showDatePickerPopup({
+        initDate,
+        withTime: true,
+        minDate,
+        minTimeDate,
+        onPick: (timestamp) => {
+          setExpiration(timestamp);
+        },
+        btnConfirmLangKey: 'Save',
+        maxDate
+      });
     };
 
-    let img: HTMLImageElement;
-
-    let prepaidRowContainer: HTMLElement,
-      createRowContainer: HTMLElement,
-      starsRowContainer: HTMLElement;
-    if(this.prepaidGiveaway) {
-      prepaidRowContainer = CPrepaidGiveaway({
-        giveaway: this.prepaidGiveaway,
-        appConfig: this.appConfig
-      });
-    } else {
-      const createRow = new Row({
-        titleLangKey: 'BoostingPremium',
-        subtitle: true,
-        clickable: (e) => {
-          if(stars()) {
-            setStars(false);
-            return;
-          }
-
-          cancelEvent(e);
-          const popup = PopupElement.createPopup(
-            PopupPickUser,
-            {
-              peerType: ['channelParticipants'],
-              peerId: this.peerId,
-              onMultiSelect: (peerIds) => {
-                setSpecificPeerIds(peerIds);
-                updateSpecific(true);
-                starsRow.checkboxField.setValueSilently(true);
-              },
-              placeholder: 'SearchPlaceholder',
-              exceptSelf: true,
-              titleLangKey: 'Giveaway.Type.Specific.Modal.SelectUsers',
-              initial: specificPeerIds()
-            }
-          );
-
-          popup.selector.setLimit(this.subscribersLimit, () => {
-            toastNew({langPackKey: 'Giveaway.MaximumSubscribers', langPackArguments: [this.subscribersLimit]});
-          });
-        },
-        checkboxField: new CheckboxField({
-          ...radioOptions,
-          checked: !stars(),
-          name: 'giveaway-type'
-        }),
-        listenerSetter: this.listenerSetter
-      });
-
-      const createMedia = createRow.createMedia('abitbigger');
-      const createAvatar = AvatarNew({size: 42});
-      createAvatar.set({icon: 'gift_premium', color: 'premium'});
-      createMedia.append(createAvatar.node);
-      createRowContainer = createRow.container;
-
-      const starsRow = new Row({
-        titleLangKey: 'BoostingStars',
-        subtitleLangKey: 'BoostsViaGifts.CreateSubtitle',
-        clickable: (e) => {
-          setStars(true);
-        },
-        checkboxField: new CheckboxField({
-          ...radioOptions,
-          checked: stars(),
-          name: 'giveaway-type'
-        }),
-        listenerSetter: this.listenerSetter
-      });
-
-      createEffect(() => {
-        const peerIds = specificPeerIds();
-        const showTitles = !(!peerIds.length || peerIds.length > 2);
-        createRow.subtitle.classList.toggle('is-flex', !showTitles);
-        if(!showTitles) {
-          createRow.subtitle.replaceChildren(
-            i18n(peerIds.length > 2 ? 'Recipient' : 'BoostsViaGifts.CreateSubtitle', [peerIds.length]),
-            createNextIcon()
-          );
-        } else {
-          createRow.subtitle.classList.remove('is-flex');
-          const titles = peerIds.map((peerId) => {
-            const peerTitle = new PeerTitle({
-              peerId
-            });
-
-            return peerTitle.element;
-          });
-
-          createRow.subtitle.replaceChildren(...join(titles, false));
-        }
-      });
-
-      createRow.subtitle.classList.add('primary');
-
-      const specificMedia = starsRow.createMedia('abitbigger');
-      const specificAvatar = AvatarNew({size: 42});
-      specificAvatar.set({icon: 'star', color: 'stars'});
-      specificMedia.append(specificAvatar.node);
-      starsRowContainer = starsRow.container;
-
-      starsRowContainer.classList.add('popup-boosts-type');
-      createRowContainer.classList.add('popup-boosts-type', 'popup-boosts-specific');
-    }
+    const selectSpecific = () => {
+      setSubscriptionsCount(specificPeerIds().length);
+      giveawayState.selectSpecific();
+      scrollableRef()?.onSizeChange();
+    };
 
     const createNextIcon = () => Icon('next', 'popup-boosts-specific-next');
+    let img: HTMLImageElement;
+
+    let prepaidRowContainer: JSX.Element, giveawayTypeRows: JSX.Element;
+    if(prepaidGiveaway) {
+      prepaidRowContainer = (
+        <CPrepaidGiveaway
+          giveaway={prepaidGiveaway}
+          appConfig={appConfig}
+        />
+      );
+    } else {
+      // the selection control leads the row and the avatar follows it, like in the peer selector
+      const createTypeCheckbox = (checked: boolean) => {
+        const field = new CheckboxField({...radioOptions, checked, name: 'giveaway-type'});
+        field.label.classList.add(ROW_SELECTION_CHECKBOX_CLASS);
+        return field;
+      };
+
+      const premiumCheckboxField = createTypeCheckbox(!stars());
+      const createAvatar = AvatarNew({size: 42});
+      createAvatar.set({icon: 'gift_premium_filled', color: 'premium'});
+      const starsCheckboxField = createTypeCheckbox(stars());
+      const specificAvatar = AvatarNew({size: 42});
+      specificAvatar.set({icon: 'star', color: 'stars'});
+
+      listenerSetter.add(premiumCheckboxField.input)('change', () => {
+        giveawayState.selectPremium();
+      });
+      listenerSetter.add(premiumCheckboxField.input)('click', (e) => {
+        if(stars()) {
+          return;
+        }
+
+        cancelEvent(e);
+        const popup = showPickUserPopup({
+          peerType: ['channelParticipants'],
+          peerId: peerId,
+          onSelect: (arr) => {
+            setSpecificPeerIds(arr.map(({peerId}) => peerId));
+            selectSpecific();
+          },
+          multiSelect: true,
+          placeholder: 'SearchPlaceholder',
+          exceptSelf: true,
+          titleLangKey: 'Giveaway.Type.Specific.Modal.SelectUsers',
+          initial: specificPeerIds()
+        });
+
+        popup.selector.setLimit(subscribersLimit, () => {
+          toastNew({langPackKey: 'Giveaway.MaximumSubscribers', langPackArguments: [subscribersLimit]});
+        });
+      });
+      listenerSetter.add(starsCheckboxField.input)('change', () => {
+        giveawayState.selectStars();
+      });
+
+      const getPremiumSubtitle = () => {
+        const peerIds = specificPeerIds();
+        const showTitles = !(!peerIds.length || peerIds.length > 2);
+        if(!showTitles) {
+          return (
+            <>
+              {i18n(peerIds.length > 2 ? 'Recipient' : 'BoostsViaGifts.CreateSubtitle', [peerIds.length])}
+              {createNextIcon()}
+            </>
+          );
+        }
+
+        const titles = peerIds.map((peerId) => new PeerTitle({peerId}).element);
+        return join(titles, false);
+      };
+
+      giveawayTypeRows = (
+        <form>
+          <RowTsx class={`popup-boosts-type popup-boosts-specific ${ROW_WITH_CHECKBOX_AND_MEDIA_CLASS}`}>
+            <RowTsx.Title>{i18n('BoostingPremium')}</RowTsx.Title>
+            <RowTsx.Subtitle class={specificPeerIds().length === 1 || specificPeerIds().length === 2 ? 'primary' : 'primary is-flex'}>
+              {getPremiumSubtitle()}
+            </RowTsx.Subtitle>
+            <RowTsx.CheckboxField>{premiumCheckboxField.label}</RowTsx.CheckboxField>
+            <RowTsx.Media size="abitbigger" class={ROW_SELECTION_MEDIA_CLASS}>{createAvatar.node}</RowTsx.Media>
+          </RowTsx>
+          <RowTsx class={`popup-boosts-type ${ROW_WITH_CHECKBOX_AND_MEDIA_CLASS}`}>
+            <RowTsx.Title>{i18n('BoostingStars')}</RowTsx.Title>
+            <RowTsx.Subtitle>{i18n('BoostsViaGifts.CreateSubtitle')}</RowTsx.Subtitle>
+            <RowTsx.CheckboxField>{starsCheckboxField.label}</RowTsx.CheckboxField>
+            <RowTsx.Media size="abitbigger" class={ROW_SELECTION_MEDIA_CLASS}>{specificAvatar.node}</RowTsx.Media>
+          </RowTsx>
+        </form>
+      );
+    }
 
     const premiumPromoAnchor = anchorCallback(() => {
-      PopupPremium.show();
+      showPremiumPopup();
     });
 
     let lastOptionIndex: number;
     createEffect(() => {
       const _count = subscriptionsCount();
       const periods = new Map<number, PremiumGiftCodeOption>();
-      this.premiumGiftCodeOptions.forEach((option, _, arr) => {
+      premiumGiftCodeOptions.forEach((option, _, arr) => {
         const months = option.months;
         if(periods.has(months)) {
           return;
@@ -322,18 +305,20 @@ export default class PopupBoostsViaGifts extends PopupElement {
       });
 
       const options = [...periods.values()].sort((a, b) => b.months - a.months);
-      const durationForm = premiumOptionsForm({
-        periodOptions: options,
-        onOption: (option) => {
-          lastOptionIndex = options.indexOf(option);
-          setOption(option);
-        },
-        checked: lastOptionIndex,
-        users: _count,
-        discountInTitle: true
-      });
+      const durationForm = (
+        <PremiumOptionsForm
+          periodOptions={options}
+          onOption={(option) => {
+            lastOptionIndex = options.indexOf(option);
+            setOption(option);
+          }}
+          checked={lastOptionIndex}
+          users={_count}
+          discountInTitle
+        />
+      );
 
-      setDurationForm(durationForm);
+      setDurationForm(() => durationForm);
     });
 
     const addChannelButton = Button('btn btn-primary btn-transparent primary', {
@@ -343,25 +328,22 @@ export default class PopupBoostsViaGifts extends PopupElement {
 
     attachClickEvent(addChannelButton, async() => {
       const toggle = toggleDisability(addChannelButton, true);
-      const popup = PopupElement.createPopup(
-        PopupPickUser,
-        {
-          filterPeerTypeBy: ['isBroadcast'],
-          onMultiSelect: (peerIds) => {
-            setPeerIds([this.peerId, ...peerIds]);
-          },
-          placeholder: 'SearchPlaceholder',
-          titleLangKey: 'AddChannels',
-          initial: peerIds().filter((peerId) => peerId !== this.peerId),
-          excludePeerIds: new Set([this.peerId])
-        }
-      );
-
-      popup.selector.setLimit(this.channelsLimit, () => {
-        toastNew({langPackKey: 'BoostingSelectUpToWarningChannelsPlural', langPackArguments: [this.channelsLimit]});
+      const popup = showPickUserPopup({
+        filterPeerTypeBy: ['isBroadcast'],
+        onSelect: (arr) => {
+          setPeerIds([peerId, ...arr.map(({peerId}) => peerId)]);
+        },
+        multiSelect: true,
+        placeholder: 'SearchPlaceholder',
+        titleLangKey: 'AddChannels',
+        initial: peerIds().filter((peerId) => peerId !== peerId),
+        excludePeerIds: new Set([peerId]),
+        onCloseAfterTimeout: () => toggle()
       });
 
-      popup.addEventListener('closeAfterTimeout', () => toggle(), {once: true});
+      popup.selector.setLimit(channelsLimit, () => {
+        toastNew({langPackKey: 'BoostingSelectUpToWarningChannelsPlural', langPackArguments: [channelsLimit]});
+      });
 
       const _add = popup.selector.add.bind(popup.selector);
       let ignorePrivatePeerId: PeerId;
@@ -371,7 +353,7 @@ export default class PopupBoostsViaGifts extends PopupElement {
         if(
           !getPeerActiveUsernames(chat)[0] &&
           ignorePrivatePeerId !== peerId &&
-          popup.selector.getSelected().length < this.channelsLimit
+          popup.selector.getSelected().length < channelsLimit
         ) {
           confirmationPopup({
             titleLangKey: 'BoostingGiveawayPrivateChannel',
@@ -382,7 +364,7 @@ export default class PopupBoostsViaGifts extends PopupElement {
           }).then(() => {
             ignorePrivatePeerId = peerId;
             popup.selector.add({key: peerId});
-            popup.selector.toggleElementCheckboxByPeerId(peerId, true);
+            popup.selector.toggleElementCheckboxByKey(peerId, true);
             ignorePrivatePeerId = undefined;
           });
           return false;
@@ -390,7 +372,7 @@ export default class PopupBoostsViaGifts extends PopupElement {
 
         return _add(options);
       };
-    }, {listenerSetter: this.listenerSetter});
+    }, {listenerSetter: listenerSetter});
 
     const getCountriesSubtitle = () => {
       return (
@@ -400,81 +382,38 @@ export default class PopupBoostsViaGifts extends PopupElement {
       ) as HTMLElement;
     };
 
-    const onCountriesClick = (e: MouseEvent) => {
-      const container = findUpClassName(e.target, 'row');
-      const checkbox = container.querySelector('.checkbox-field-input') as HTMLInputElement;
-
-      if(!checkbox.checked) {
+    const onSubscriberTypeClick = (onlyNew: boolean) => {
+      const wasSelected = onlyNewSubscribers() === onlyNew;
+      setOnlyNewSubscribers(onlyNew);
+      if(!wasSelected) {
         return;
       }
 
-      let lastFiltered: Map<string, HelpCountry>;
-      const popup = PopupElement.createPopup(
-        PopupPickUser,
-        {
-          peerType: ['custom'],
-          renderResultsFunc: (iso2s) => {
-            iso2s.forEach((iso2) => {
-              const country = lastFiltered.get(iso2 as any as string);
-              const emoji = getCountryEmoji(country.iso2);
-              const title = document.createDocumentFragment();
-              const emojiContainer = document.createElement('span');
-              emojiContainer.classList.add('selector-countries-emoji');
-              emojiContainer.append(wrapEmojiText(emoji))
-              title.append(emojiContainer, ' ', i18n(country.default_name as any));
-              const row = new Row({
-                title,
-                clickable: true,
-                havePadding: true
-              });
-
-              row.container.append(popup.selector.checkbox(popup.selector.selected.has(iso2)));
-              row.container.dataset.peerId = '' + iso2;
-              popup.selector.list.append(row.container);
-            });
-          },
-          placeholder: 'Search',
-          onMultiSelect: (iso2s) => {
-            setCountries(iso2s as any as string[]);
-          },
-          getMoreCustom: async(q) => {
-            const filtered = filterCountries(q, true);
-            lastFiltered = new Map();
-            return {
-              result: filtered.map((country) => {
-                lastFiltered.set(country.iso2, country);
-                return country.iso2;
-              }) as any,
-              isEnd: true
-            };
-          },
-          titleLangKey: 'BoostingSelectCountry',
-          checkboxSide: 'left',
-          noPlaceholder: true
-        }
-      );
-
-      const _add = popup.selector.add.bind(popup.selector);
-      popup.selector.add = ({key, scroll}) => {
-        const country = I18n.countriesList.find((country) => country.iso2 === key);
-        const ret = _add({
-          key: key,
-          title: i18n(country.default_name as any),
-          scroll
-        });
-        if(isObject(ret)) {
-          ret.avatar.render({peerTitle: getCountryEmoji(country.iso2)});
-        }
-        return ret;
-      };
-
-      popup.selector.searchSection.container.classList.add('is-countries');
-      popup.selector.container.classList.add('is-countries');
-      popup.selector.addInitial(countries());
-      popup.selector.setLimit(this.countriesLimit, () => {
-        toastNew({langPackKey: 'BoostingSelectUpToWarningCountriesPlural', langPackArguments: [this.countriesLimit]});
+      showPickCountryPopup({
+        excludeVirtual: true,
+        initial: countries(),
+        limit: countriesLimit,
+        limitReachedLangKey: 'BoostingSelectUpToWarningCountriesPlural',
+        onSelect: setCountries,
+        titleLangKey: 'BoostingSelectCountry'
       });
     };
+
+    const allSubscribersCheckboxField = new CheckboxField({
+      ...radioOptions,
+      checked: true,
+      name: 'giveaway-users'
+    });
+    const newSubscribersCheckboxField = new CheckboxField({
+      ...radioOptions,
+      name: 'giveaway-users'
+    });
+    listenerSetter.add(allSubscribersCheckboxField.input)('click', () => {
+      onSubscriberTypeClick(false);
+    });
+    listenerSetter.add(newSubscribersCheckboxField.input)('click', () => {
+      onSubscriberTypeClick(true);
+    });
 
     const notSpecific = (
       <>
@@ -482,15 +421,17 @@ export default class PopupBoostsViaGifts extends PopupElement {
           <Section
             name="BoostingStarsOptions"
             caption="BoostingStarsOptionsInfo"
-            captionOld={true}
           >
             <form>
-              <For each={this.starsOptions}>
+              <For each={starsOptions}>
                 {(option) => {
                   const checkboxField = new CheckboxField({
                     ...radioOptions,
                     checked: starsOption() === option,
                     name: 'giveaway-stars-quantity'
+                  });
+                  listenerSetter.add(checkboxField.input)('change', () => {
+                    setStarsOption(option);
                   });
 
                   const subtitle = createMemo(() => {
@@ -506,9 +447,6 @@ export default class PopupBoostsViaGifts extends PopupElement {
                     <RowTsx
                       class="popup-boosts-stars-row"
                       noRipple
-                      clickable={() => {
-                        setStarsOption(option);
-                      }}
                     >
                       <RowTsx.Title>
                         <span class="popup-boosts-stars-amount text-bold">
@@ -532,7 +470,6 @@ export default class PopupBoostsViaGifts extends PopupElement {
             name={stars() ? 'BoostingStarsQuantityPrizes' : 'BoostsViaGifts.Quantity'}
             nameRight={!stars() && <BoostsBadge boosts={boosts()} />}
             caption={stars() ? 'BoostingStarsQuantityPrizesInfo' : 'BoostsViaGifts.QuantitySubtitle'}
-            captionOld={true}
           >
             {range.container}
           </Section>
@@ -549,59 +486,41 @@ export default class PopupBoostsViaGifts extends PopupElement {
                 {idx() !== 0 && getChatMembersString(peerId.toChatId(), undefined, undefined, true) as HTMLElement}
               </span>
             );
-            const row = new Row({
-              title: peerTitle.element,
-              subtitle: subtitleElement,
-              ...(peerId !== this.peerId && {
-                clickable: (e) => {
-                  row.openContextMenu(e);
-                },
-                contextMenu: {
-                  buttons: [{
-                    icon: 'delete',
-                    danger: true,
-                    text: 'Remove',
-                    onClick: () => {
-                      setPeerIds((peerIds) => peerIds.filter((_peerId) => _peerId !== peerId));
-                    }
-                  }]
+            const contextMenu = peerId !== peerId ? {
+              buttons: [{
+                icon: 'delete' as Icon,
+                danger: true,
+                text: 'Remove' as LangPackKey,
+                onClick: () => {
+                  setPeerIds((peerIds) => peerIds.filter((_peerId) => _peerId !== peerId));
                 }
-              })
-            });
-            row.container.classList.add('popup-boosts-channel');
-            row.createMedia('abitbigger').append(AvatarNew({peerId, size: 42}).node);
-            return row.container;
+              }]
+            } : undefined;
+            return (
+              <RowTsx class="popup-boosts-channel" contextMenu={contextMenu}>
+                <RowTsx.Title>{peerTitle.element}</RowTsx.Title>
+                <RowTsx.Subtitle>{subtitleElement}</RowTsx.Subtitle>
+                <RowTsx.Media size="abitbigger">{AvatarNew({peerId, size: 42}).node}</RowTsx.Media>
+              </RowTsx>
+            );
           }}</For>
-          {/* (peerIds().length - 1) < this.channelsLimit &&  */addChannelButton}
+          {/* (peerIds().length - 1) < channelsLimit &&  */addChannelButton}
         </Section>
         <Section
           name="BoostsViaGifts.Users"
           caption="BoostsViaGifts.UsersSubtitle"
-          captionOld={true}
         >
           <form>
-            {new Row({
-              titleLangKey: 'AllSubscribers',
-              clickable: (e) => (setOnlyNewSubscribers(false), onCountriesClick(e)),
-              checkboxField: new CheckboxField({
-                ...radioOptions,
-                checked: true/* !onlyNewSubscribers() */,
-                name: 'giveaway-users'
-              }),
-              subtitle: getCountriesSubtitle(),
-              listenerSetter: this.listenerSetter
-            }).container}
-            {new Row({
-              titleLangKey: 'OnlyNewSubscribers',
-              clickable: (e) => (setOnlyNewSubscribers(true), onCountriesClick(e)),
-              checkboxField: new CheckboxField({
-                ...radioOptions,
-                // checked: onlyNewSubscribers(),
-                name: 'giveaway-users'
-              }),
-              subtitle: getCountriesSubtitle(),
-              listenerSetter: this.listenerSetter
-            }).container}
+            <RowTsx>
+              <RowTsx.Title>{i18n('AllSubscribers')}</RowTsx.Title>
+              <RowTsx.Subtitle>{getCountriesSubtitle()}</RowTsx.Subtitle>
+              <RowTsx.CheckboxField>{allSubscribersCheckboxField.label}</RowTsx.CheckboxField>
+            </RowTsx>
+            <RowTsx>
+              <RowTsx.Title>{i18n('OnlyNewSubscribers')}</RowTsx.Title>
+              <RowTsx.Subtitle>{getCountriesSubtitle()}</RowTsx.Subtitle>
+              <RowTsx.CheckboxField>{newSubscribersCheckboxField.label}</RowTsx.CheckboxField>
+            </RowTsx>
           </form>
         </Section>
       </>
@@ -647,61 +566,53 @@ export default class PopupBoostsViaGifts extends PopupElement {
               [subscriptionsCount(), additionalPrize(), formatMonthsDuration(option().months, true)].filter(Boolean)
             )
           ]) : undefined}
-          captionOld={true}
         >
-          {new Row({
-            titleLangKey: 'BoostsViaGifts.AdditionalPrizes',
-            clickable: () => {
-              setAdditionalPrizes((value) => !value);
-            },
-            checkboxField: new CheckboxField({
-              toggle: true,
-              checked: untrack(additionalPrizes)
-            }),
-            listenerSetter: this.listenerSetter
-          }).container}
+          <RowTsx>
+            <RowTsx.CheckboxFieldToggle>
+              <CheckboxFieldTsx signal={[additionalPrizes, setAdditionalPrizes]} toggle />
+            </RowTsx.CheckboxFieldToggle>
+            <RowTsx.Title>{i18n('BoostsViaGifts.AdditionalPrizes')}</RowTsx.Title>
+          </RowTsx>
           {additionalPrizes() && additionalPrizeDiv}
         </Section>
         <Section
           caption="BoostsViaGifts.ShowWinnersSubtitle"
-          captionOld={true}
         >
-          {new Row({
-            titleLangKey: 'BoostsViaGifts.ShowWinners',
-            clickable: () => {
-              setShowPrizes((value) => !value);
-            },
-            checkboxField: new CheckboxField({
-              toggle: true,
-              checked: untrack(showPrizes)
-            }),
-            listenerSetter: this.listenerSetter
-          }).container}
+          <RowTsx>
+            <RowTsx.CheckboxFieldToggle>
+              <CheckboxFieldTsx signal={[showPrizes, setShowPrizes]} toggle />
+            </RowTsx.CheckboxFieldToggle>
+            <RowTsx.Title>{i18n('BoostsViaGifts.ShowWinners')}</RowTsx.Title>
+          </RowTsx>
         </Section>
         <Section
           name="BoostsViaGifts.End"
           caption={stars() ? 'BoostsViaGifts.Stars.EndSubtitle' : 'BoostsViaGifts.EndSubtitle'}
           captionArgs={[count()]}
-          captionOld={true}
         >
-          {expirationRow.container}
+          <RowTsx ref={expirationRow} clickable={onExpirationClick}>
+            <RowTsx.Title
+              titleRight={formatFullSentTime(expiration())}
+              titleRightClass="primary"
+              titleRightSecondary
+            >
+              {i18n('Ends')}
+            </RowTsx.Title>
+          </RowTsx>
         </Section>
       </>
     );
 
     const ret = (
       <>
-        <Section noDelimiter={true}>
-          <div class="popup-boosts-star-container"><img class="popup-boosts-star" ref={img} /></div>
-          <div class="popup-boosts-title">{i18n('BoostsViaGifts.Title')}</div>
-          <div class="popup-boosts-subtitle">{i18n(isPrepaid() && this.prepaidGiveaway._ === 'prepaidGiveaway' ? 'BoostingGetMoreBoosts' : 'BoostingGetMoreBoosts2')}</div>
+        <MediaHeader marginTop marginBottom>
+          <div class="popup-boosts-star-container"><img alt="" class="popup-boosts-star" ref={img} /></div>
+          <MediaHeader.Title size={20}>{i18n('BoostsViaGifts.Title')}</MediaHeader.Title>
+          <MediaHeader.Subtitle>{i18n(isPrepaid() && prepaidGiveaway._ === 'prepaidGiveaway' ? 'BoostingGetMoreBoosts' : 'BoostingGetMoreBoosts2')}</MediaHeader.Subtitle>
+        </MediaHeader>
+        <Section>
           {isPrepaid() && prepaidRowContainer}
-          {!isPrepaid() && (
-            <form>
-              {createRowContainer}
-              {starsRowContainer}
-            </form>
-          )}
+          {!isPrepaid() && giveawayTypeRows}
         </Section>
         {!specific() && notSpecific}
         {!isPrepaid() && !stars() && (
@@ -709,7 +620,6 @@ export default class PopupBoostsViaGifts extends PopupElement {
             name="BoostsViaGifts.Duration"
             caption="BoostsViaGifts.DurationSubtitle"
             captionArgs={[premiumPromoAnchor]}
-            captionOld={true}
           >
             {durationForm()}
           </Section>
@@ -718,19 +628,13 @@ export default class PopupBoostsViaGifts extends PopupElement {
       </>
     );
 
-    renderImageFromUrl(img, `assets/img/premiumboostsstar${window.devicePixelRatio > 1 ? '@2x' : ''}.png`);
-
-    BoostsConfirmButton({
-      button: this.btnConfirm,
-      langKey: () => 'BoostsViaGifts.Start',
-      boosts
+    // after mount: `decode()` on an image still being moved into the tree rejects as "broken"
+    onMount(() => {
+      renderImageFromUrl(img, `assets/img/premiumboostsstar${window.devicePixelRatio > 1 ? '@2x' : ''}.png`);
     });
-    this.footer.append(this.btnConfirm);
-    this.body.after(this.footer);
-    this.footer.classList.add('abitlarger');
 
     const createGiveawayStoreInput = async(): Promise<InputStorePaymentPurpose> => {
-      const peers = await Promise.all(peerIds().map((peerId) => this.managers.appPeersManager.getInputPeerById(peerId)));
+      const peers = await Promise.all(peerIds().map((peerId) => rootScope.managers.appPeersManager.getInputPeerById(peerId)));
 
       const common = {
         pFlags: {
@@ -763,12 +667,12 @@ export default class PopupBoostsViaGifts extends PopupElement {
 
     const createSpecificStoreInput = async(): Promise<InputStorePaymentPurpose> => {
       const {amount, currency} = option();
-      const users = await Promise.all(specificPeerIds().map((peerId) => this.managers.appUsersManager.getUserInput(peerId.toUserId())));
+      const users = await Promise.all(specificPeerIds().map((peerId) => rootScope.managers.appUsersManager.getUserInput(peerId.toUserId())));
       return {
         _: 'inputStorePaymentPremiumGiftCode',
         amount,
         currency,
-        boost_peer: await this.managers.appPeersManager.getInputPeerById(this.peerId),
+        boost_peer: await rootScope.managers.appPeersManager.getInputPeerById(peerId),
         users
       };
     };
@@ -780,9 +684,9 @@ export default class PopupBoostsViaGifts extends PopupElement {
         button: {langKey: 'Start'}
       });
 
-      return this.managers.appPaymentsManager.launchPrepaidGiveaway(
-        this.peerId,
-        this.prepaidGiveaway.id,
+      return rootScope.managers.appPaymentsManager.launchPrepaidGiveaway(
+        peerId,
+        prepaidGiveaway.id,
         purpose
       );
     };
@@ -797,7 +701,7 @@ export default class PopupBoostsViaGifts extends PopupElement {
         option: option()
       };
 
-      const popup = await PopupPayment.create({inputInvoice});
+      const popup = await createPaymentPopup({inputInvoice});
       await new Promise<void>((resolve, reject) => {
         popup.addEventListener('finish', (result) => {
           if(result === 'cancelled' || result === 'failed') {
@@ -809,43 +713,71 @@ export default class PopupBoostsViaGifts extends PopupElement {
       });
     };
 
-    attachClickEvent(this.btnConfirm, async() => {
-      const toggle = toggleDisability(this.btnConfirm, true);
+    // the footer's button reads this component's state, so the whole shell is rendered from here
+    return (
+      <>
+        <PopupElement.Header floating>
+          <PopupElement.CloseButton />
+          <PopupElement.Title title="BoostsViaGifts.Title" />
+        </PopupElement.Header>
+        <PopupElement.Scrollable contextRef={setScrollableRef}>
+          <PopupElement.Body>
+            {ret}
+          </PopupElement.Body>
+        </PopupElement.Scrollable>
+        <PopupElement.Footer>
+          <BoostsConfirmButton
+            langKey={() => 'BoostsViaGifts.Start'}
+            boosts={boosts}
+            callback={async() => {
+              if(!specific()) {
+                const now = tsNow(true);
+                const periodMax = appConfig.giveaway_period_max ?? 604800;
+                if(!isGiveawayUntilDateValid(expiration(), now, periodMax)) {
+                  toastNew({langPackKey: 'BoostsViaGifts.InvalidEndDate'});
+                  shake(expirationRow);
+                  return false;
+                }
+              }
 
-      try {
-        const purpose = await (specific() ? createSpecificStoreInput : createGiveawayStoreInput)();
-        let promise: Promise<any>;
-        if(isPrepaid()) {
-          promise = continueWithPrepaid(purpose);
-        } else {
-          promise = continueWithCreating(purpose);
-        }
+              try {
+                const purpose = await giveawayState.getPurposeFactory({
+                  giveaway: createGiveawayStoreInput,
+                  specific: createSpecificStoreInput
+                })();
+                const promise = isPrepaid() ?
+                  continueWithPrepaid(purpose) :
+                  continueWithCreating(purpose);
 
-        await promise;
+                await promise;
 
-        this.onCreated?.();
-        this.hide();
-      } catch(err) {
-        console.error('boosts via gifts error', err);
-        toggle();
-      }
-    }, {listenerSetter: this.listenerSetter});
+                onCreated?.();
+                setShow(false);
+              } catch(err) {
+                console.error('boosts via gifts error', err);
+              }
 
-    return ret;
-  }
+              // the popup closes through `show`, never on the button resolving
+              return false;
+            }}
+          />
+        </PopupElement.Footer>
+      </>
+    );
+  };
 
-  private async construct() {
-    const [giftCodeOptions, appConfig, starsOptions] = await Promise.all([
-      this.managers.appPaymentsManager.getPremiumGiftCodeOptions(this.peerId),
-      this.managers.apiManager.getAppConfig(),
-      this.managers.appPaymentsManager.getStarsGiveawayOptions()
-    ]);
-    this.premiumGiftCodeOptions = giftCodeOptions;
-    this.appConfig = appConfig;
-    this.starsOptions = starsOptions;
-    this.subscribersLimit = this.channelsLimit = appConfig.giveaway_add_peers_max ?? 10;
-    this.countriesLimit = appConfig.giveaway_countries_max ?? 10;
-    this.appendSolid(() => this._construct());
-    this.show();
-  }
+  createPopup(() => {
+    onCleanup(() => {
+      listenerSetter.removeAll();
+      middlewareHelper.destroy();
+    });
+
+    return (
+      <PopupElement class="popup-boosts" closable show={show()}>
+        <Content />
+      </PopupElement>
+    );
+  });
+
+  setShow(true);
 }

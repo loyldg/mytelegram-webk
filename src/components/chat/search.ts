@@ -1,12 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type ChatTopbar from '@components/chat/topbar';
-import AppSearch, {SearchGroup} from '@components/appSearch';
-import PopupDatePicker from '@components/popups/datePicker';
+import AppSearch from '@components/appSearch';
+import {createSearchGroup, SearchGroup} from '@components/searchGroup';
+import showDatePickerPopup from '@components/popups/datePicker';
 import ripple from '@components/ripple';
 import InputSearch from '@components/inputSearch';
 import type Chat from '@components/chat/chat';
@@ -19,7 +14,6 @@ import ListenerSetter from '@helpers/listenerSetter';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import appNavigationController, {NavigationItem} from '@components/appNavigationController';
 import {IS_MOBILE_SAFARI} from '@environment/userAgent';
-import PopupElement from '@components/popups';
 import {DIALOG_LIST_ELEMENT_TAG} from '@lib/appDialogsManager';
 import {MiddlewareHelper, getMiddleware} from '@helpers/middleware';
 import ButtonIcon from '@components/buttonIcon';
@@ -55,7 +49,7 @@ export default class ChatSearch {
     this.element = document.createElement('div');
     this.element.classList.add('sidebar-header', 'chat-search', 'chatlist-container');
 
-    this.backBtn = ButtonIcon('left sidebar-close-button');
+    this.backBtn = ButtonIcon('left sidebar-close-button', {ariaLabel: 'Close'});
 
     const listenerSetter = this.listenerSetter = new ListenerSetter();
 
@@ -73,7 +67,7 @@ export default class ChatSearch {
     this.results = document.createElement('div');
     this.results.classList.add('chat-search-results', 'chatlist-container');
 
-    this.searchGroup = new SearchGroup(false, 'messages', undefined, '', false);
+    this.searchGroup = createSearchGroup({type: 'messages', className: '', clickable: false, middleware: this.middlewareHelper.get()});
     attachClick(this.searchGroup.list, this.onResultsClick);
 
     this.appSearch = new AppSearch(
@@ -92,6 +86,7 @@ export default class ChatSearch {
           replaceContent(this.foundCountEl, value ? i18n('NoResult') : '');
           this.results.classList.remove('active');
           this.chat.bubbles.container.classList.remove('search-results-active');
+          this.chat.bubbles.updateGoDownVisibility();
           this.upBtn.setAttribute('disabled', 'true');
           this.downBtn.setAttribute('disabled', 'true');
         } else {
@@ -113,14 +108,15 @@ export default class ChatSearch {
 
     this.foundCountEl = document.createElement('span');
     this.foundCountEl.classList.add('chat-search-count', 'empty');
+    this.foundCountEl.setAttribute('role', 'status');
 
-    this.dateBtn = ButtonIcon('calendar chat-search-calendar', {noRipple: true});
+    this.dateBtn = ButtonIcon('calendar chat-search-calendar', {noRipple: true, ariaLabel: 'JumpToDate'});
 
     this.controls = document.createElement('div');
     this.controls.classList.add('chat-search-controls');
 
-    this.upBtn = ButtonIcon('up', {noRipple: true});
-    this.downBtn = ButtonIcon('down', {noRipple: true});
+    this.upBtn = ButtonIcon('up', {noRipple: true, ariaLabel: 'Chat.Search.PreviousResult'});
+    this.downBtn = ButtonIcon('down', {noRipple: true, ariaLabel: 'Chat.Search.NextResult'});
 
     this.upBtn.setAttribute('disabled', 'true');
     this.downBtn.setAttribute('disabled', 'true');
@@ -167,6 +163,7 @@ export default class ChatSearch {
     this.footer.remove();
     this.listenerSetter.removeAll();
     this.chat.bubbles.container.classList.remove('search-results-active');
+    this.chat.bubbles.updateGoDownVisibility();
     this.chat.search = undefined;
     appNavigationController.removeItem(this.navigationItem);
   }
@@ -177,7 +174,7 @@ export default class ChatSearch {
 
   private onDateClick = (e: MouseEvent) => {
     cancelEvent(e);
-    PopupElement.createPopup(PopupDatePicker, new Date(), this.chat.bubbles.onDatePick).show();
+    showDatePickerPopup({initDate: new Date(), onPick: this.chat.bubbles.onDatePick});
   };
 
   private selectResult(elem: HTMLElement) {
@@ -202,6 +199,7 @@ export default class ChatSearch {
 
     this.results.classList.remove('active');
     this.chat.bubbles.container.classList.remove('search-results-active');
+    this.chat.bubbles.updateGoDownVisibility();
 
     const res = this.chat.setPeer({peerId, lastMsgId});
     this.setPeerPromise = ((res instanceof Promise ? res : Promise.resolve(res)) as Promise<any>).then(() => {
@@ -227,6 +225,7 @@ export default class ChatSearch {
   private onFooterClick = (e: MouseEvent) => {
     if(this.foundCount) {
       this.chat.bubbles.container.classList.toggle('search-results-active');
+      this.chat.bubbles.updateGoDownVisibility();
       this.results.classList.toggle('active');
     }
   };

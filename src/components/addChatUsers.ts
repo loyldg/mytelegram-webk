@@ -1,19 +1,12 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {MissingInvitee} from '@layer';
 import {FormatterArguments, LangPackKey, i18n, join} from '@lib/langPack';
 import rootScope from '@lib/rootScope';
 import Button from '@components/button';
 import {DelimiterWithText} from '@components/chat/giveaway';
-import PopupElement from '@components/popups';
-import PopupPeer, {PopupPeerButtonCallbackCheckboxes, PopupPeerCheckboxOptions} from '@components/popups/peer';
-import PopupPickUser from '@components/popups/pickUser';
-import PopupPremium from '@components/popups/premium';
+import showPeerPopup, {PopupPeerButtonCallbackCheckboxes, PopupPeerCheckboxOptions} from '@components/popups/peer';
+import showPickUserPopup from '@components/popups/pickUser';
+import showPremiumPopup from '@components/popups/premium';
 import {AppAddMembersTab} from '@components/solidJsTabs';
 import SidebarSlider from '@components/slider';
 import {toastNew} from '@components/toast';
@@ -49,7 +42,7 @@ export async function handleMissingInvitees(chatId: ChatId, missingInvitees: Mis
   const cantSendMessages = premiumRequireIds.size === missingInviteeIds.length;
 
   const onPremiumClick = () => {
-    PopupPremium.show();
+    showPremiumPopup();
     popup.hide();
   };
 
@@ -58,12 +51,12 @@ export async function handleMissingInvitees(chatId: ChatId, missingInvitees: Mis
     footerButton.replaceChildren(i18n(cantSendMessages ? 'InviteViaLink.Premium.Subscribe' : (count ? 'InviteViaLink.Send' : 'InviteViaLink.Skip')));
   };
   const initial = missingInviteeIds.filter((peerId) => !premiumRequireIds.has(peerId));
-  const popup = PopupElement.createPopup(
-    PopupPickUser,
+  const popup = showPickUserPopup(
     {
       peerType: ['custom'],
       getMoreCustom: async() => ({result: missingInviteeIds, isEnd: true}),
-      onMultiSelect: async(peerIds) => {
+      onSelect: async(chosen) => {
+        const peerIds = chosen.map((c) => c.peerId);
         if(cantSendMessages) {
           onPremiumClick();
           return;
@@ -87,11 +80,12 @@ export async function handleMissingInvitees(chatId: ChatId, missingInvitees: Mis
         });
       },
       onChange: onCountUpdate,
+      multiSelect: true,
       titleLangKey: hasPremiumSection ? 'InviteViaLink.Premium' : 'InviteViaLink.Title',
       initial,
       headerSearch: false,
       noSearch: true,
-      footerButton: /* cantSendMessages ? undefined :  */(element) => footerButton = element,
+      footerButtonProps: /* cantSendMessages ? undefined :  */{ref: (element) => footerButton = element},
       chatRightsActions: ['send_messages'],
       autoHeight: cantSendMessages
     }
@@ -194,7 +188,7 @@ export default async function addChatUsers({
 
     descriptionLangArgs.push(await wrapPeerTitle({peerId}));
 
-    PopupElement.createPopup(PopupPeer, 'popup-add-members', {
+    showPeerPopup('popup-add-members', {
       peerId,
       titleLangKey,
       titleLangArgs,
@@ -205,7 +199,7 @@ export default async function addChatUsers({
         callback
       }],
       checkboxes
-    }).show();
+    });
   };
 
   const onError = (err: ApiError) => {

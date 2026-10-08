@@ -1,14 +1,9 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import EventListenerBase from '@helpers/eventListenerBase';
 import ListenerSetter from '@helpers/listenerSetter';
 import safeAssign from '@helpers/object/safeAssign';
 import findUpClassName from '@helpers/dom/findUpClassName';
+import Modes from '@config/modes';
 
 export default class ControlsHover extends EventListenerBase<{
   toggleControls: (show: boolean) => void
@@ -20,7 +15,7 @@ export default class ControlsHover extends EventListenerBase<{
   protected canShowControls: () => boolean;
   protected element: HTMLElement;
   protected listenerSetter: ListenerSetter;
-  protected showOnLeaveToClassName: string;
+  protected showOnLeaveToClassName: string | string[];
   protected ignoreClickClassName: string;
 
   constructor() {
@@ -33,12 +28,21 @@ export default class ControlsHover extends EventListenerBase<{
     listenerSetter: ListenerSetter,
     canHideControls?: () => boolean,
     canShowControls?: () => boolean,
-    showOnLeaveToClassName?: string,
+    showOnLeaveToClassName?: string | string[],
     ignoreClickClassName?: string
   }) {
     safeAssign(this, options);
 
     const {listenerSetter, element} = this;
+    if(Modes.a11y) {
+      listenerSetter.add(element.ownerDocument)('focusin', () => {
+        if(this.hasKeyboardFocus()) this.showControls(false);
+      });
+      listenerSetter.add(element.ownerDocument)('focusout', () => {
+        if(element.classList.contains('show-controls')) this.hideControls(true);
+      });
+    }
+    listenerSetter.addCleanup(() => clearTimeout(this.hideControlsTimeout));
 
     if(IS_TOUCH_SUPPORTED) {
       listenerSetter.add(element)('click', (e) => {
@@ -68,7 +72,11 @@ export default class ControlsHover extends EventListenerBase<{
       });
 
       listenerSetter.add(element)('mouseleave', (e) => {
-        if(e.relatedTarget && this.showOnLeaveToClassName && findUpClassName(e.relatedTarget, this.showOnLeaveToClassName)) {
+        // Leaving onto floating chrome (caption / topbar) must not start the hide —
+        // those elements live outside the player, so hiding here would yank them from
+        // under the cursor and bounce mouseenter↔mouseleave forever.
+        const showOnLeaveClassNames = Array.isArray(this.showOnLeaveToClassName) ? this.showOnLeaveToClassName : [this.showOnLeaveToClassName];
+        if(e.relatedTarget && showOnLeaveClassNames.some((className) => className && findUpClassName(e.relatedTarget, className))) {
           this.showControls(false);
           return;
         }
@@ -89,6 +97,7 @@ export default class ControlsHover extends EventListenerBase<{
 
     clearTimeout(this.hideControlsTimeout);
     this.hideControlsTimeout = 0;
+    if(this.controlsLocked !== false && this.hasKeyboardFocus()) return;
 
     const isShown = this.element.classList.contains('show-controls');
     if(this.controlsLocked !== false) {
@@ -102,6 +111,14 @@ export default class ControlsHover extends EventListenerBase<{
     this.dispatchEvent('toggleControls', false);
     this.element.classList.remove('show-controls');
   };
+
+  private hasKeyboardFocus() {
+    if(!Modes.a11y) return false;
+    const active = this.element.ownerDocument.activeElement as HTMLElement;
+    if(!active?.matches(':focus-visible')) return false;
+    const controls = Array.isArray(this.showOnLeaveToClassName) ? this.showOnLeaveToClassName : [this.showOnLeaveToClassName];
+    return this.element.contains(active) || controls.some((className) => className && !!findUpClassName(active, className));
+  }
 
   public showControls = (setHideTimeout = true) => {
     if(!(this.canShowControls?.() ?? true)) return;

@@ -1,34 +1,64 @@
 
-import {children, createEffect, createSignal, For, onCleanup, onMount, Show, JSX} from 'solid-js';
+import {
+  createEffect,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+  untrack,
+  JSX
+} from 'solid-js';
 import SwipeHandler from '@components/swipeHandler';
 import styles from '@components/slideshow.module.scss';
 import classNames from '@helpers/string/classNames';
 import {fastRaf} from '@helpers/schedulers';
 import findUpClassName from '@helpers/dom/findUpClassName';
-import IS_PARALLAX_SUPPORTED from '@environment/parallaxSupport';
 import {IconTsx} from '@components/iconTsx';
 
 export type SlideshowProps<T> = {
+  aspectRatio?: number;
   class?: string;
   items?: T[];
+  getItemKey?: (item: T) => unknown;
   children?: (item: T, index: number) => JSX.Element;
   initialIndex?: number;
   activeIndex?: number;
+  hideArrows?: boolean;
+  keepItemsMounted?: boolean;
   onIndexChange?: (index: number) => void;
   onClick?: (index: number) => void;
 };
 
-const SCALE = IS_PARALLAX_SUPPORTED ? 2 : 1;
-const TRANSLATE_TEMPLATE = IS_PARALLAX_SUPPORTED ? `translate3d({x}, 0, -1px) scale(${SCALE})` : 'translate({x}, 0)';
+const SCALE = 1;
+const TRANSLATE_TEMPLATE = 'translate({x}, 0)';
 
 export default function Slideshow<T>(props: SlideshowProps<T>) {
   let container: HTMLDivElement;
   let itemsContainer: HTMLDivElement;
   let swipeHandler: SwipeHandler;
 
-  const [index, setIndex] = createSignal(props.initialIndex || 0);
+  const clampIndex = (value: number) => Math.max(0, Math.min(value, Math.max(0, props.items.length - 1)));
+  const getItemKey = (item: T) => props.getItemKey ? props.getItemKey(item) : item;
+  const initialIndex = clampIndex(props.initialIndex || 0);
+  const [index, setIndex] = createSignal(initialIndex);
   const [isSwiping, setIsSwiping] = createSignal(false);
   const [noTransition, setNoTransition] = createSignal(false);
+  let selectedKey = props.items.length ? getItemKey(props.items[initialIndex]) : undefined;
+  let hasSelectedKey = !!props.items.length;
+
+  const selectIndex = (value: number) => {
+    const nextIndex = clampIndex(value);
+    setIndex(nextIndex);
+    if(props.items.length) {
+      selectedKey = getItemKey(props.items[nextIndex]);
+      hasSelectedKey = true;
+    } else {
+      selectedKey = undefined;
+      hasSelectedKey = false;
+    }
+    return nextIndex;
+  };
 
   const getCount = () => props.items.length;
 
@@ -73,7 +103,7 @@ export default function Slideshow<T>(props: SlideshowProps<T>) {
           if(newIndex < 0) newIndex = 0;
           if(newIndex >= getCount()) newIndex = getCount() - 1;
 
-          setIndex(newIndex);
+          setActiveIndex(newIndex);
           setIsSwiping(false);
         });
       }
@@ -86,7 +116,25 @@ export default function Slideshow<T>(props: SlideshowProps<T>) {
 
   createEffect(() => {
     if(props.activeIndex !== undefined && props.activeIndex !== index()) {
-      setIndex(props.activeIndex);
+      selectIndex(props.activeIndex);
+    }
+  });
+
+  createEffect(() => {
+    const keys = props.items.map(getItemKey);
+    const currentIndex = index();
+    let nextIndex = props.activeIndex === undefined && hasSelectedKey ?
+      keys.findIndex((key) => Object.is(key, selectedKey)) :
+      -1;
+    if(nextIndex === -1) nextIndex = clampIndex(currentIndex);
+
+    if(nextIndex !== currentIndex) setIndex(nextIndex);
+    if(keys.length) {
+      selectedKey = keys[nextIndex];
+      hasSelectedKey = true;
+    } else {
+      selectedKey = undefined;
+      hasSelectedKey = false;
     }
   });
 
@@ -118,22 +166,20 @@ export default function Slideshow<T>(props: SlideshowProps<T>) {
     }
   };
 
+  const setActiveIndex = (newIndex: number) => {
+    if(newIndex === index() || newIndex < 0 || newIndex >= getCount()) return;
+    selectIndex(newIndex);
+    props.onIndexChange?.(newIndex);
+  };
+
   const handlePrev = (e: Event) => {
     e.stopPropagation();
-    if(index() > 0) {
-      const newIndex = index() - 1;
-      setIndex(newIndex);
-      props.onIndexChange?.(newIndex);
-    }
+    setActiveIndex(index() - 1);
   };
 
   const handleNext = (e: Event) => {
     e.stopPropagation();
-    if(index() < (getCount() - 1)) {
-      const newIndex = index() + 1;
-      setIndex(newIndex);
-      props.onIndexChange?.(newIndex);
-    }
+    setActiveIndex(index() + 1);
   };
 
   return (
@@ -143,9 +189,13 @@ export default function Slideshow<T>(props: SlideshowProps<T>) {
         styles.Slideshow,
         isSwiping() && styles.IsSwiping,
         getCount() <= 1 && styles.IsSingle,
+        props.hideArrows && styles.NoArrows,
         noTransition() && styles.NoTransition,
         props.class
       )}
+      style={{
+        '--slideshow-aspect-ratio': `${props.aspectRatio || 16 / 9}`
+      }}
       onClick={handleClick}
     >
       <div
@@ -154,20 +204,32 @@ export default function Slideshow<T>(props: SlideshowProps<T>) {
       >
         <For each={props.items}>{(item, i) => (
           <div class={styles.Item}>
-            <Show when={Math.abs(i() - index()) < 5}>
-              {props.children?.(item, i())}
-            </Show>
+            {props.keepItemsMounted ?
+              untrack(() => props.children?.(item, i())) :
+              <Show when={Math.abs(i() - index()) < 5}>
+                {props.children?.(item, i())}
+              </Show>
+            }
           </div>
         )}</For>
       </div>
 
-      <div class={styles.Tabs}>
+      <div class={styles.Dots}>
         <For each={new Array(getCount())}>{(_, i) => (
-          <div class={classNames(styles.Tab, i() === index() && styles.Active)} />
+          <button
+            type="button"
+            class={classNames(styles.Dot, i() === index() && styles.Active)}
+            aria-label={`${i() + 1} / ${getCount()}`}
+            aria-current={i() === index() ? 'true' : undefined}
+            onClick={(event) => {
+              event.stopPropagation();
+              setActiveIndex(i());
+            }}
+          />
         )}</For>
       </div>
 
-      <div class={classNames(styles.Arrow, styles.ArrowPrev)} onClick={handlePrev}>
+      <div class={styles.Arrow} onClick={handlePrev}>
         <IconTsx icon="avatarprevious" class={styles.ArrowIcon} />
       </div>
       <div class={classNames(styles.Arrow, styles.ArrowNext)} onClick={handleNext}>

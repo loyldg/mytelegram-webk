@@ -5,6 +5,7 @@ import styles from '@components/genericTable.module.scss';
 
 export type GenericTableCell = {
   content?: JSX.Element;
+  renderContent?: () => JSX.Element;
   header?: boolean;
   colspan?: number;
   rowspan?: number;
@@ -30,6 +31,7 @@ export default function GenericTable(props: {
         class={classNames(
           styles.genericTable,
           props.bordered && styles.bordered,
+          props.striped && styles.striped,
           props.class
         )}
       >
@@ -37,12 +39,9 @@ export default function GenericTable(props: {
           <div class={styles.border} />
         </Show>
         <tbody>
-          <For each={props.rows}>{(row, idx) => (
+          <For each={props.rows}>{(row) => (
             <tr
-              class={classNames(
-                styles.genericRow,
-                props.striped && !(idx() % 2) && styles.striped
-              )}
+              class={styles.genericRow}
             >
               <For each={row.cells}>{(cell) => (
                 <Dynamic
@@ -57,7 +56,7 @@ export default function GenericTable(props: {
                     cell.valignBottom && styles.cellValignBottom
                   )}
                 >
-                  {cell.content}
+                  {cell.renderContent ? cell.renderContent() : cell.content}
                 </Dynamic>
               )}</For>
             </tr>

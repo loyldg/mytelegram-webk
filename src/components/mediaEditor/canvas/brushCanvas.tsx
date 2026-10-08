@@ -4,7 +4,7 @@ import SwipeHandler from '@components/swipeHandler';
 import {adjustmentsConfig, AdjustmentsConfig} from '@components/mediaEditor/adjustments';
 import {HistoryItem, useMediaEditorContext} from '@components/mediaEditor/context';
 import {NumberPair} from '@components/mediaEditor/types';
-import {cleanupWebGl, distance} from '@components/mediaEditor/utils';
+import {cleanupWebGl, distance, snapToAngle} from '@components/mediaEditor/utils';
 import {draw} from '@components/mediaEditor/webgl/draw';
 import {initWebGL, RenderingPayload} from '@components/mediaEditor/webgl/initWebGL';
 import BrushPainter, {BrushDrawnLine} from '@components/mediaEditor/canvas/brushPainter';
@@ -39,6 +39,7 @@ export default function BrushCanvas() {
 
   const normalizePoint = useNormalizePoint();
   const processPoint = useProcessPoint();
+  const processScreenPoint = useProcessPoint(false);
 
   function processLine(line: BrushDrawnLine): BrushDrawnLine {
     const transform = editorState.finalTransform;
@@ -95,7 +96,8 @@ export default function BrushCanvas() {
   onMount(async() => {
     if(mediaType !== 'image') return;
     const middleware = createMiddleware().get();
-    setFullImageGLPayload(await initWebGL({gl, mediaSrc, mediaType, videoTime: 0, middleware}));
+    const payload = await initWebGL({gl, mediaSrc, mediaType, videoTime: 0, middleware});
+    if(middleware() && payload) setFullImageGLPayload(payload);
   });
 
   onCleanup(() => {
@@ -221,6 +223,12 @@ export default function BrushCanvas() {
 
     let builtUpDistance = 0;
 
+    // Holding Shift keeps the stroke straight, like in other graphic editors: the points from
+    // `straightAnchorIndex` (where Shift went down) onwards collapse into a single segment that snaps
+    // to a multiple of 45° — measured on screen, so the snapped angle is the one the user sees
+    let isShiftPressed = false;
+    let straightAnchorIndex: number;
+
     function saveLastLine() {
       mediaState.brushDrawnLines.push(lastLine());
       actions.pushToHistory({
@@ -240,6 +248,9 @@ export default function BrushCanvas() {
 
     function startSwipe(x: number, y: number) {
       const bcr = canvas.getBoundingClientRect();
+
+      isShiftPressed = false;
+      straightAnchorIndex = undefined;
 
       initialPosition = [x - bcr.left, y - bcr.top];
       const point = normalizePoint(initialPosition);
@@ -276,17 +287,35 @@ export default function BrushCanvas() {
       element: canvas,
       cursor: '',
       onSwipe: (xDiff, yDiff, _e) => {
-        const point = normalizePoint([initialPosition[0] + xDiff, initialPosition[1] + yDiff]);
+        const position: NumberPair = [initialPosition[0] + xDiff, initialPosition[1] + yDiff];
 
-        if(points.length > 0) {
-          const lastPoint = points[points.length - 1];
-          builtUpDistance += distance(processPoint(lastPoint), processPoint(point));
+        const shiftKey = !!(_e as any as MouseEvent).shiftKey;
+        if(shiftKey !== isShiftPressed) {
+          isShiftPressed = shiftKey;
+          straightAnchorIndex = undefined;
         }
-        if(builtUpDistance < Math.min(lastLine().size, 12) * editorState.pixelRatio && points.length > 1) {
-          points[points.length - 1] = point;
-        } else {
+
+        if(isShiftPressed) {
+          straightAnchorIndex ??= Math.max(points.length - 1, 0);
+          const anchor = points[straightAnchorIndex];
+          const point = normalizePoint(snapToAngle(processScreenPoint(anchor), position));
+
+          points.length = straightAnchorIndex + 1;
           points.push(point);
           builtUpDistance = 0;
+        } else {
+          const point = normalizePoint(position);
+
+          if(points.length > 0) {
+            const lastPoint = points[points.length - 1];
+            builtUpDistance += distance(processPoint(lastPoint), processPoint(point));
+          }
+          if(builtUpDistance < Math.min(lastLine().size, 12) * editorState.pixelRatio && points.length > 1) {
+            points[points.length - 1] = point;
+          } else {
+            points.push(point);
+            builtUpDistance = 0;
+          }
         }
 
         setLastLine((prev) => ({...prev, points}));

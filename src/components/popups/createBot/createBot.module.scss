@@ -1,0 +1,59 @@
+.popup {
+  --popup-min-width: 26.25rem;
+  --popup-max-width: 26.25rem;
+
+  &Body {
+    padding-top: 1rem;
+  }
+}
+
+.usernameField {
+  position: relative;
+
+  &HiddenPrefix {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+.usernameInput {
+  color: transparent !important;
+  caret-color: var(--primary-color);
+}
+
+.usernameOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 1rem;
+  font-size: 1rem;
+  pointer-events: none;
+  white-space: pre;
+  color: var(--primary-text-color);
+}
+
+.usernameOverlayPrefix,
+.usernameOverlaySuffix {
+  color: var(--secondary-text-color);
+}
+
+.usernameOverlayValue {
+  color: var(--primary-text-color);
+}
+
+.linkInfoLink {
+  color: var(--primary-color);
+}
+
+.statusError {
+  color: var(--danger-color);
+}
+
+.statusSuccess {
+  color: var(--message-out-primary-color, var(--primary-color));
+}
+
+.statusLoading {
+  color: var(--secondary-text-color);
+}

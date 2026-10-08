@@ -1,21 +1,20 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import replaceContent from '@helpers/dom/replaceContent';
 import OverlayClickHandler from '@helpers/overlayClickHandler';
+import {getOverlayRoot} from '@helpers/appWindow';
 import {FormatterArguments, i18n, LangPackKey} from '@lib/langPack';
 
 const toastsContainer = document.createElement('div');
 toastsContainer.classList.add('toasts-container');
+// Live region so screen readers announce toast text as it appears.
+toastsContainer.setAttribute('role', 'status');
+toastsContainer.setAttribute('aria-live', 'polite');
 
 const toastEl = document.createElement('div');
 toastEl.classList.add('toast');
 let timeout: number;
 
-const x = new OverlayClickHandler('toast');
+// a click anywhere hides the toast; a keyboard press still reaches its control
+const x = new OverlayClickHandler('toast', false, true);
 x.addEventListener('toggle', (open) => {
   if(!open) {
     hideToast();
@@ -34,14 +33,14 @@ export function hideToast() {
   }, 200);
 }
 
-export function toast(content: string | Node, onClose?: () => void) {
+export function toast(content: string | Node, onClose?: () => void, duration = 3000) {
   x.close();
 
   replaceContent(toastEl, content);
 
   if(!toastEl.parentElement) {
     if(!toastsContainer.parentNode) {
-      document.body.append(toastsContainer);
+      getOverlayRoot().append(toastsContainer);
     }
 
     toastsContainer.append(toastEl);
@@ -53,7 +52,7 @@ export function toast(content: string | Node, onClose?: () => void) {
   timeout && clearTimeout(+timeout);
   x.open(toastEl);
 
-  timeout = window.setTimeout(hideToast, 3000);
+  timeout = window.setTimeout(hideToast, duration);
 
   if(onClose) {
     x.addEventListener('toggle', onClose, {once: true});
@@ -63,7 +62,8 @@ export function toast(content: string | Node, onClose?: () => void) {
 export function toastNew(options: Partial<{
   langPackKey: LangPackKey,
   langPackArguments: FormatterArguments,
-  onClose: () => void
+  onClose: () => void,
+  duration: number
 }>) {
-  toast(i18n(options.langPackKey, options.langPackArguments), options.onClose);
+  toast(i18n(options.langPackKey, options.langPackArguments), options.onClose, options.duration);
 }

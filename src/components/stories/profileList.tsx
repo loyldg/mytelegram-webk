@@ -1,19 +1,17 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {createEffect, createSignal, For, JSX, createMemo, onCleanup, untrack, createReaction, Show, Switch, Match} from 'solid-js';
+import {getOverlayRoot} from '@helpers/appWindow';
 import {Portal} from 'solid-js/web';
-import {createStoriesViewer} from '@components/stories/viewer';
+import {createStoriesViewer, createStoriesViewerWithPeer} from '@components/stories/viewer';
 import {Document, MessageMedia, Photo, StoryItem} from '@layer';
 import {wrapStoryMedia} from '@components/stories/preview';
 import getMediaThumbIfNeeded from '@helpers/getStrippedThumbIfNeeded';
 import {StoriesContext, useStories, createStoriesStore, StoriesContextState} from '@components/stories/store';
 import Icon from '@components/icon';
 import {ChipTab, ChipTabs} from '@components/chipTabs';
-import {i18n} from '@lib/langPack';
+import I18n, {i18n} from '@lib/langPack';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
+import {formatFullSentTime} from '@helpers/date';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
 import {PreloaderTsx} from '@components/putPreloader';
 import fastSmoothScroll from '@helpers/fastSmoothScroll';
@@ -34,17 +32,18 @@ import ListenerSetter from '@helpers/listenerSetter';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import cancelClickOrNextIfNotClick from '@helpers/dom/cancelClickOrNextIfNotClick';
 import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
-import AppMyStoriesTab from '../sidebarLeft/tabs/myStories';
+import {AppMyStoriesTab} from '@components/solidJsTabs/tabs';
 import SidebarSlider from '../slider';
 import InputField from '@components/inputField';
 import confirmationPopup from '@components/confirmationPopup';
-import PopupElement from '@components/popups';
-import PopupChooseStory from '@components/popups/chooseStoryPopup';
+import showChooseStoryPopup from '@components/popups/chooseStoryPopup';
 import createSubmenuTrigger from '@components/createSubmenuTrigger';
+import showStoriesStealthModePopup from '@components/popups/storiesStealthMode';
 import {toastNew} from '@components/toast';
 import {IconTsx} from '@components/iconTsx';
 import LottieAnimation from '@components/lottieAnimation';
-import lottieLoader from '@lib/rlottie/lottieLoader';
+import Tabs from '@components/tabs';
+import lottieLoader from '@lib/lottie/lottieLoader';
 import {copyTextToClipboard} from '@helpers/clipboard';
 import {handleShareStory} from './share';
 import wrapPeerTitle from '../wrappers/peerTitle';
@@ -85,11 +84,11 @@ class StoriesContextMenu {
 
         if(!item) return;
 
-        if(e instanceof MouseEvent) e.preventDefault();
+        if(!('touches' in e)) e.preventDefault(); // cross-realm-safe mouse check (Document PiP window)
         if(this.element.classList.contains('active')) {
           return false;
         }
-        if(e instanceof MouseEvent) e.cancelBubble = true;
+        if(!('touches' in e)) e.cancelBubble = true;
 
         const r = async() => {
           this.target = item;
@@ -249,6 +248,19 @@ class StoriesContextMenu {
         return !!story.pFlags.public && (!story.pFlags.noforwards || !!username)
       }
     }, {
+      icon: 'eyecross',
+      text: 'Stories.StealthMode.View',
+      onClick: () => {
+        const {peerId} = this;
+        const id = this.storyItem.id;
+        showStoriesStealthModePopup({
+          onActivate: () => {
+            createStoriesViewerWithPeer({peerId, id});
+          }
+        });
+      },
+      verify: () => this.peerId !== rootScope.myId
+    }, {
       icon: 'select',
       text: 'Message.Context.Select',
       onClick: () => this.selection.toggleByElement(this.target),
@@ -268,7 +280,7 @@ class StoriesContextMenu {
 
     this.element = ButtonMenuSync({buttons: this.buttons, listenerSetter: this.listenerSetter});
     this.element.classList.add('search-contextmenu', 'contextmenu');
-    document.body.append(this.element);
+    getOverlayRoot().append(this.element);
 
     this.buttons.forEach((button) => button.onOpen?.());
   }
@@ -428,11 +440,8 @@ function StoriesAlbums(props: {
 }
 
 async function openAddToAlbumPopup(peerId: PeerId, albumId: number) {
-  const popup = PopupElement.createPopup(PopupChooseStory, {peerId, albumId});
-  popup.show();
-
   const result = await new Promise<{added: number[], removed: number[]} | null>((resolve) => {
-    popup.addEventListener('finish', resolve);
+    showChooseStoryPopup({peerId, albumId, onFinish: resolve});
   });
 
   if(!result) return;
@@ -501,7 +510,12 @@ function StoriesGrid(props: {
         // @ts-ignore
         'data-mid': storyItem.id,
         'data-peer-id': stories.peer.peerId,
+        'data-timestamp': (storyItem as StoryItem.storyItem).date,
         'class': 'grid-item search-super-item',
+        'role': 'button',
+        'tabindex': Modes.a11y ? 0 : undefined,
+        'aria-label': `${I18n.format('OpenStory', true)}, ${formatFullSentTime((storyItem as StoryItem.storyItem).date).textContent}`,
+        'onKeyDown': buttonKeyDown,
         'onClick': () => {
           setViewerId(storyItem.id);
         }
@@ -535,24 +549,27 @@ function StoriesGrid(props: {
           ignoreCache: true,
           onlyStripped: true
         });
-        const thumb = gotThumb.image as HTMLCanvasElement;
-        element.parentElement.prepend(thumb);
+        if(gotThumb && element.parentElement) {
+          const thumb = gotThumb.image as HTMLCanvasElement;
+          element.parentElement.prepend(thumb);
 
-        // need img for clone animation to work
-        gotThumb.loadPromise.then(() => {
-          const img = document.createElement('img');
-          img.className = thumb.className;
-          img.src = thumb.toDataURL();
-          thumb.replaceWith(img);
-        });
+          // need img for clone animation to work
+          gotThumb.loadPromise.then(() => {
+            const img = document.createElement('img');
+            img.alt = '';
+            img.className = thumb.className;
+            img.src = thumb.toDataURL();
+            thumb.replaceWith(img);
+          });
 
-        onCleanup(() => {
-          thumb.remove();
-        });
+          onCleanup(() => {
+            thumb.remove();
+          });
+        }
       }
 
       if(element.parentElement && props.pinned && !stories.albumId && (storyItem as StoryItem.storyItem).pinnedIndex !== undefined) {
-        icon ??= Icon('pin2', 'grid-item-pin');
+        icon ??= Icon('pin2_filled', 'grid-item-pin');
         element.parentElement.append(icon);
       } else if(icon) {
         icon.remove();
@@ -638,7 +655,10 @@ function StoriesGrid(props: {
           element: searchSuper,
           container: scrollable,
           position: 'center',
-          axis: 'y'
+          axis: 'y',
+          getElementPosition: ({elementPosition}) => {
+            return elementPosition - 24;
+          }
         });
       }
     }
@@ -711,6 +731,7 @@ function StoriesSelectionToolbar(props: {
       <ButtonTsx
         icon="close"
         class="search-super-selection-cancel btn-icon"
+        aria-label={I18n.format('Close', true)}
         onClick={() => props.selection.cancelSelection()}
       />
       <div class="search-super-selection-count">
@@ -720,6 +741,7 @@ function StoriesSelectionToolbar(props: {
         <ButtonTsx
           icon="crossround"
           class="search-super-selection-remove btn-icon"
+          aria-label={I18n.format('Stories.Albums.RemoveFromAlbum', true)}
           onClick={() => {
             const mids = props.selection.selectedMids.get(props.peerId);
             if(mids?.size) {
@@ -738,6 +760,7 @@ function StoriesSelectionToolbar(props: {
         <ButtonTsx
           icon="pin"
           class="search-super-selection-pintotop btn-icon"
+          aria-label={I18n.format('PinMessage', true)}
           onClick={() => props.selection.onPinStoriesToTopClick(undefined, true)}
         />
       </Show>
@@ -745,6 +768,7 @@ function StoriesSelectionToolbar(props: {
         <ButtonTsx
           icon={props.selection.isStoriesArchive ? 'unarchive' : 'archive'}
           class="search-super-selection-pin btn-icon"
+          aria-label={I18n.format(props.selection.isStoriesArchive ? 'Unarchive' : 'Archive', true)}
           onClick={() => props.selection.onPinStoriesClick(undefined, props.selection.isStoriesArchive)}
         />
       </Show>
@@ -752,6 +776,7 @@ function StoriesSelectionToolbar(props: {
         <ButtonTsx
           icon="delete"
           class="search-super-selection-delete btn-icon danger"
+          aria-label={I18n.format('Delete', true)}
           onClick={() => props.selection.onDeleteStoriesClick()}
         />
       </Show>
@@ -767,13 +792,14 @@ function StoriesSelectionToolbar(props: {
     return <Portal mount={props.mount}>{content}</Portal>;
   }
 
+  // with nowhere to mount into, the toolbar brings the plate the search tabs would have sat on
   return (
-    <div
-      class="search-super-tabs-scrollable menu-horizontal-scrollable sticky is-single"
+    <Tabs.MenuShell
+      class="search-super-tabs-scrollable sticky is-single"
       classList={{'is-selecting': props.selection.selecting(), 'backwards': !props.selection.selecting()}}
     >
       {content}
-    </div>
+    </Tabs.MenuShell>
   );
 }
 
@@ -789,12 +815,11 @@ export function profileStoriesButtonMenu(props: {
     icon: 'archive',
     text: 'MyStories.ShowArchive',
     onClick: () => {
-      const tab = props.slider.createTab(AppMyStoriesTab);
-      tab.isArchive = true;
-      if(props.peerId.isAnyChat()) {
-        tab.chatId = props.peerId.toChatId();
-      }
-      tab.open();
+      props.slider.createTab(AppMyStoriesTab).open({
+        ...AppMyStoriesTab.getInitArgs(),
+        isArchive: true,
+        chatId: props.peerId.isAnyChat() ? props.peerId.toChatId() : undefined
+      });
     },
     verify: () => Promise.resolve(props.canEdit?.() ?? true).then((canEdit) => (
       props.verify() &&

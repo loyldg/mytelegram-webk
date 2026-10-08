@@ -3,7 +3,7 @@ import {i18n} from '@lib/langPack';
 import {useAppConfig} from '@stores/appState';
 import {wrapStoriesStealthModeDuration} from '@components/wrappers/wrapDuration';
 import usePremium from '@stores/premium';
-import PopupPremium from '@components/popups/premium';
+import showPremiumPopup from '@components/popups/premium';
 import rootScope from '@lib/rootScope';
 import tsNow from '@helpers/tsNow';
 import {slowModeTimer} from '@components/chat/utils';
@@ -25,7 +25,7 @@ export default async function showStoriesStealthModePopup(props: {
       return {
         text: i18n('Stories.StealthMode.Unlock'),
         onClick: () => {
-          PopupPremium.show({feature: 'stories'});
+          showPremiumPopup({feature: 'stories'});
         }
       };
     } else if(getLeftCooldown() > 0) {
@@ -67,7 +67,7 @@ export default async function showStoriesStealthModePopup(props: {
       }
     ],
     sticker: {
-      element: createFeatureDetailsIconSticker('eye2', 'background-gradient-stories')
+      element: createFeatureDetailsIconSticker('eye2_filled', 'background-gradient-stories')
     },
     title: i18n('Stories.StealthMode.Title'),
     subtitle: i18n('Stories.StealthMode.Subtitle'),

@@ -1,7 +1,7 @@
 @use "sass:math";
 @use "../shared" as *;
 
-$chat-helper-size: 45px;
+$chat-helper-size: 3rem;
 $chat-input-box-shadow: 0px 1px 8px 1px rgb(0 0 0 / 12%);
 
 $input-transition-time: .2s;
@@ -13,6 +13,9 @@ $bubble-margin: .125rem;
 $bubble-margin-big: .375rem;
 $bubble-overflow: math.max(math.div($bubble-margin-big, 8), .0625rem);
 $bubble-overflow-big: math.div($bubble-margin-big, 2);
+$reply-markup-margin-top: .0625rem;
+$reply-markup-row-min-height: 2.5rem;
+$reply-markup-row-height: $reply-markup-row-min-height + $bubble-margin;
 $bubble-beside-button-width: 38px;
 $bubble-border-radius-medium: 5px;
 $bubble-border-radius-big: 15px;

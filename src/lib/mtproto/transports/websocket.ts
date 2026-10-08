@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {logger, LogTypes} from '@lib/logger';
 import Modes from '@config/modes';
 import EventListenerBase from '@helpers/eventListenerBase';
@@ -120,6 +114,6 @@ export default class Socket extends EventListenerBase<{
   public send = (body: Uint8Array) => {
     this.debug && this.log.debug('-> body length to send:', body.length);
 
-    this.ws.send(body);
+    this.ws.send(body as Uint8Array<ArrayBuffer>);
   };
 }

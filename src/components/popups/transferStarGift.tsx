@@ -1,8 +1,8 @@
 import type {MyStarGift} from '@appManagers/appGiftsManager';
 import deferredPromise from '@helpers/cancellablePromise';
 import rootScope from '@lib/rootScope';
-import PopupPayment from '@components/popups/payment';
-import PopupPickUser from '@components/popups/pickUser';
+import {createPaymentPopup} from '@components/popups/payment';
+import showPickUserPopup from '@components/popups/pickUser';
 import confirmationPopup from '@components/confirmationPopup';
 import {numberThousandSplitterForStars} from '@helpers/number/numberThousandSplitter';
 import {MessageAction, StarGift} from '@layer';
@@ -10,8 +10,8 @@ import {toastNew} from '@components/toast';
 import {wrapFormattedDuration} from '@components/wrappers/wrapDuration';
 import formatDuration from '@helpers/formatDuration';
 import tsNow from '@helpers/tsNow';
-import PopupElementOld from '@components/popups/index';
-import Row from '@components/row';
+import RowTsx from '@components/rowTsx';
+import {wrapSolidComponent} from '@helpers/solid/wrapSolidComponent';
 import {getCollectibleName} from '@appManagers/utils/gifts/getCollectibleName';
 import {passwordPopup} from '@components/popups/password';
 import safeWindowOpen from '@helpers/dom/safeWindowOpen';
@@ -19,9 +19,10 @@ import {createMemo, createSignal} from 'solid-js';
 import PopupElement, {createPopup} from '@components/popups/indexTsx';
 
 import styles from '@components/popups/transferStarGift.module.scss'
-import {i18n} from '@lib/langPack';
+import I18n, {i18n} from '@lib/langPack';
 import {StarGiftTransferPreview} from '@components/stargifts/transferPreview';
 import {I18nTsx} from '@helpers/solid/i18n';
+import MediaHeader from '@components/mediaHeader';
 import {PeerTitleTsx} from '@components/peerTitleTsx';
 import Table, {TableRow} from '@components/table';
 import {AttributeValue} from '@components/popups/starGiftInfo';
@@ -72,7 +73,8 @@ export function transferStarGiftConfirmationPopup(options: {
     if(gift.value_amount) {
       rows.push([
         'StarGiftValue',
-        `~${paymentsWrapCurrencyAmount(gift.value_amount, gift.value_currency)}`
+        // stars and TON come back as a styled element, so the value cannot be built by interpolation
+        <>~{paymentsWrapCurrencyAmount(gift.value_amount, gift.value_currency)}</>
       ]);
     }
 
@@ -98,29 +100,31 @@ export function transferStarGiftConfirmationPopup(options: {
       }
 
       return (
-        <I18nTsx
-          class={styles.text}
-          key="StarGiftOffer.AcceptOfferText"
-          args={[
-            getCollectibleName(options.gift.raw as StarGift.starGiftUnique),
-            <PeerTitleTsx peerId={options.recipient} onlyFirstName />,
-            amount,
-            amountAfterComission
-          ]}
-        />
+        <MediaHeader.Subtitle>
+          <I18nTsx
+            key="StarGiftOffer.AcceptOfferText"
+            args={[
+              getCollectibleName(options.gift.raw as StarGift.starGiftUnique),
+              <PeerTitleTsx peerId={options.recipient} onlyFirstName />,
+              amount,
+              amountAfterComission
+            ]}
+          />
+        </MediaHeader.Subtitle>
       )
     }
 
     return (
-      <I18nTsx
-        class={styles.text}
-        key={isFreeTransfer ? 'StarGiftConfirmFreeTransferText' : 'StarGiftConfirmTransferPopupText'}
-        args={[
-          getCollectibleName(options.gift.raw as StarGift.starGiftUnique),
-          <PeerTitleTsx peerId={options.recipient} onlyFirstName />,
-          i18n('Stars', [numberThousandSplitterForStars(options.gift.saved.transfer_stars)])
-        ]}
-      />
+      <MediaHeader.Subtitle>
+        <I18nTsx
+          key={isFreeTransfer ? 'StarGiftConfirmFreeTransferText' : 'StarGiftConfirmTransferPopupText'}
+          args={[
+            getCollectibleName(options.gift.raw as StarGift.starGiftUnique),
+            <PeerTitleTsx peerId={options.recipient} onlyFirstName />,
+            i18n('Stars', [numberThousandSplitterForStars(options.gift.saved.transfer_stars)])
+          ]}
+        />
+      </MediaHeader.Subtitle>
     )
   }
 
@@ -154,12 +158,14 @@ export function transferStarGiftConfirmationPopup(options: {
       <PopupElement
         class={styles.popup}
         containerClass={styles.popupContainer}
+        containerProps={{'aria-label': I18n.format('StarGiftTransfer', true)}}
         show={show()}
         onClose={() => {
           if(!submitted) {
             options.handleCancel?.()
           }
         }}
+        old
       >
         <FloatingStarsBalance class={styles.starsBalance} />
         <PopupElement.Body>
@@ -256,7 +262,7 @@ export default function transferStarGift(gift: MyStarGift, toPeerId?: PeerId): P
           await rootScope.managers.appGiftsManager.transferStarGift(gift.input, peerId, gift.ownerId);
           deferred.resolve(true)
         } else {
-          const popup = await PopupPayment.create({
+          const popup = await createPaymentPopup({
             inputInvoice: {
               _: 'inputInvoiceStarGiftTransfer',
               stargift: gift.input,
@@ -289,31 +295,32 @@ export default function transferStarGift(gift: MyStarGift, toPeerId?: PeerId): P
 
   const isOwnedByChannel = gift.ownerId && gift.ownerId.isAnyChat();
 
-  const popup = PopupElementOld.createPopup(PopupPickUser, {
+  const popup = showPickUserPopup({
     placeholder: 'StarGiftTransferTo',
-    onSelect: handleSelection,
+    onSelect: ([{peerId}]) => handleSelection(peerId),
     exceptSelf: !isOwnedByChannel,
     selfPresence: 'StarGiftTransferToMyself',
-    filterPeerTypeBy: ['isRegularUser', 'isBroadcast']
+    filterPeerTypeBy: ['isRegularUser', 'isBroadcast'],
+    titleLangKey: 'StarGiftTransferTo',
+    onClose: () => {
+      if(!peerSelectorResolved) {
+        deferred.resolve(false);
+      }
+    }
   });
 
   if(saved.can_export_at !== undefined && saved.can_export_at < now) {
-    const fragmentRow = new Row({
-      titleLangKey: 'StarGiftFragmentTransferItem',
-      icon: 'ton',
-      clickable: () => {
+    const fragmentRow = wrapSolidComponent(() => (
+      <RowTsx clickable={() => {
         handleSelection('fragment');
         popup.hide();
-      }
-    });
-    popup.selector.list.before(fragmentRow.container);
+      }}>
+        <RowTsx.Icon icon="ton" />
+        <RowTsx.Title>{i18n('StarGiftFragmentTransferItem')}</RowTsx.Title>
+      </RowTsx>
+    ), popup.middleware);
+    popup.selector.list.before(fragmentRow);
   }
-
-  popup.addEventListener('close', () => {
-    if(!peerSelectorResolved) {
-      deferred.resolve(false);
-    }
-  }, {once: true});
 
   return deferred;
 }

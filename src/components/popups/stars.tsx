@@ -1,12 +1,6 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 /* @refresh reload */
 
-import PopupElement from '.';
+import PopupElement, {createPopup} from '@components/popups/indexTsx';
 import maybe2x from '@helpers/maybe2x';
 import {InputInvoice, MessageMedia, PaymentsPaymentForm, Photo, Document, StarsTopupOption, StarsTransaction, StarsTransactionPeer, MessageExtendedMedia, ChatInvite, StarsSubscription, StarsGiftOption, InputStorePaymentPurpose, WebDocument} from '@layer';
 import I18n, {i18n, LangPackKey} from '@lib/langPack';
@@ -14,14 +8,14 @@ import Section from '@components/section';
 import {createMemo, createRoot, createSignal, For, JSX, Show, untrack} from 'solid-js';
 import paymentsWrapCurrencyAmount, {formatNanoton} from '@helpers/paymentsWrapCurrencyAmount';
 import classNames from '@helpers/string/classNames';
-import PopupPayment from '@components/popups/payment';
+import {createPaymentPopup} from '@components/popups/payment';
 import useStars, {prefetchStars} from '@stores/stars';
 import safeAssign from '@helpers/object/safeAssign';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
 import {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
-import {Tabs} from '@components/sidebarRight/tabs/boosts';
 import {createLoadableList} from '@components/sidebarRight/tabs/statistics';
 import Row from '@components/rowTsx';
+import showSendGiftPicker from '@components/popups/sendGiftPicker';
 import {formatFullSentTime} from '@helpers/date';
 import {avatarNew} from '@components/avatarNew';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
@@ -31,22 +25,37 @@ import {Middleware} from '@helpers/middleware';
 import generatePhotoForExtendedMediaPreview from '@appManagers/utils/photos/generatePhotoForExtendedMediaPreview';
 import wrapMediaSpoiler from '@components/wrappers/mediaSpoiler';
 import wrapPhoto from '@components/wrappers/photo';
+import isWebDocument from '@appManagers/utils/webDocs/isWebDocument';
 import currencyStarIcon from '@components/currencyStarIcon';
 import {wrapChatInviteAvatar, wrapChatInviteTitle} from '@components/popups/joinChatInvite';
+import MediaHeader from '@components/mediaHeader';
 import tsNow from '@helpers/tsNow';
+import {wrapCallDuration as wrapDuration} from '@components/wrappers/wrapDuration';
+import {getStarsSubscriptionPresentation} from '@appManagers/utils/payments/starsSubscription';
+import {useUser} from '@stores/peers';
 import Button from '@components/buttonTsx';
-import PopupPickUser from '@components/popups/pickUser';
+import showPickUserPopup, {showContactPickerPopup} from '@components/popups/pickUser';
 import anchorCallback from '@helpers/dom/anchorCallback';
 import rootScope from '@lib/rootScope';
 import appImManager from '@lib/appImManager';
 import {toastNew} from '@components/toast';
 import toggleDisability from '@helpers/dom/toggleDisability';
 import {MoreButton} from '@components/sidebarRight/tabs/statistics';
-import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
+import formatStarsAmount, {formatStarsAmountExact} from '@appManagers/utils/payments/formatStarsAmount';
+import {getStarsTransactionPresentation, starsTransactionProviders} from '@appManagers/utils/payments/starsTransaction';
+import wrapSticker from '@components/wrappers/sticker';
 import wrapLocalSticker from '@components/wrappers/localSticker';
 import bigInt from 'big-integer';
 import safeWindowOpen from '@helpers/dom/safeWindowOpen';
 import {IconTsx} from '@components/iconTsx';
+import Tabs from '@components/tabs';
+import {GrowHeightReveal} from '@helpers/solid/animations';
+import getStarsSpendPurposePeerId from '@helpers/getStarsSpendPurposePeerId';
+import confirmationPopup from '@components/confirmationPopup';
+import {getMiddleware} from '@helpers/middleware';
+import ListenerSetter from '@helpers/listenerSetter';
+import {ScrollableContextValue} from '@components/scrollable2';
+import {onCleanup} from 'solid-js';
 
 export function StarsStrokeStar(props: {stroke?: boolean, style?: JSX.HTMLAttributes<HTMLDivElement>['style']}) {
   return (
@@ -117,12 +126,12 @@ export function StarsStar() {
   return currencyStarIcon();
 }
 
-export function StarsBalance() {
-  const stars = useStars();
+export function StarsBalance(props: {ton?: boolean} = {}) {
+  const stars = useStars(props.ton);
   return (
     <div class="stars-balance">
       <div class="stars-balance-title">{i18n('StarsBalance')}</div>
-      <div class="stars-balance-subtitle"><StarsStar />{'' + (stars() ?? 0)}</div>
+      <div class="stars-balance-subtitle">{props.ton ? <IconTsx icon="ton" /> : <StarsStar />}{props.ton ? formatNanoton(stars() ?? 0, 9) : '' + (stars() ?? 0)}</div>
     </div>
   );
 }
@@ -145,7 +154,7 @@ export function StarsChange(props: {
   ton?: boolean
 }) {
   return (
-    <div class={classNames('popup-stars-pay-amount', +props.stars > 0 ? 'green' : 'danger', props.reverse && 'reverse', props.inline && 'inline')}>
+    <div class={classNames('popup-stars-pay-amount', +props.stars >= 0 ? 'green' : 'danger', props.reverse && 'reverse', props.inline && 'inline')}>
       {`${+props.stars > 0 && !props.noSign ? '+' : ''}${props.stars}`}
       {props.ton ? <IconTsx icon="ton" /> : <StarsStar />}
       {props.isRefund && <span class="popup-stars-pay-amount-status">{i18n('StarsRefunded')}</span>}
@@ -154,23 +163,8 @@ export function StarsChange(props: {
 }
 
 export function getStarsTransactionTitle(transaction: StarsTransaction) {
-  if(transaction.subscription_period) {
-    return i18n('Stars.Subscription.Title');
-  }
-
-  if(transaction.pFlags.gift) {
-    return i18n('StarsGiftReceived');
-  }
-
-  const map: {[key in StarsTransactionPeer['_']]?: LangPackKey} = {
-    starsTransactionPeerFragment: 'Stars.Via.Fragment',
-    starsTransactionPeerPremiumBot: 'Stars.Via.Bot',
-    starsTransactionPeerAppStore: 'Stars.Via.App',
-    starsTransactionPeerPlayMarket: 'Stars.Via.App'
-  };
-
-  const key = map[transaction.peer._] ?? 'Stars.Via.Unsupported';
-  return i18n(key);
+  const presentation = getStarsTransactionPresentation(transaction);
+  return i18n(presentation.titleKey, presentation.titleArgs);
 }
 
 export function getExamplesAnchor(hide: (callback: () => void) => void) {
@@ -181,10 +175,10 @@ export function getExamplesAnchor(hide: (callback: () => void) => void) {
     loading = true;
     const {userIds: botIds} = await popularAppBotsPromise;
     loading = false;
-    PopupElement.createPopup(PopupPickUser, {
-      onSelect: (peerId) => {
+    showPickUserPopup({
+      onSelect: ([obj]) => {
         hide(() => {
-          appImManager.setInnerPeer({peerId});
+          appImManager.setInnerPeer(obj);
         });
       },
       peerType: ['custom'],
@@ -194,12 +188,22 @@ export function getExamplesAnchor(hide: (callback: () => void) => void) {
           isEnd: true
         };
       },
-      headerLangPackKey: 'SearchAppsExamples'
+      titleLangKey: 'SearchAppsExamples'
     });
   });
   anchor.append(i18n('GiftStarsSubtitleLinkName'));
   return anchor;
 }
+
+const starsTransactionPeerIcons: Partial<Record<StarsTransactionPeer['_'], Icon>> = {
+  starsTransactionPeerAppStore: 'apple_filled',
+  starsTransactionPeerPlayMarket: 'android_filled',
+  starsTransactionPeerPremiumBot: 'premium',
+  starsTransactionPeerFragment: 'ton',
+  starsTransactionPeerAds: 'ads',
+  starsTransactionPeerAPI: 'bots',
+  starsTransactionPeerUnsupported: 'info'
+};
 
 export async function getStarsTransactionTitleAndMedia({
   transaction,
@@ -220,6 +224,7 @@ export async function getStarsTransactionTitleAndMedia({
   subscription?: StarsSubscription,
   photo?: WebDocument.webDocument
 }) {
+  const presentation = transaction && getStarsTransactionPresentation(transaction);
   const [title, media] = await Promise.all([
     (() => {
       if(subscription) {
@@ -230,8 +235,14 @@ export async function getStarsTransactionTitleAndMedia({
         return wrapChatInviteTitle(chatInvite, middleware);
       }
 
-      if(paidMedia || transaction?.extended_media) {
+      if(paidMedia?.extended_media?.length || transaction?.extended_media?.length) {
         return wrapPeerTitle({peerId: paidMediaPeerId || getPeerId((transaction.peer as StarsTransactionPeer.starsTransactionPeer).peer)});
+      }
+
+      if(transaction?.stargift) {
+        const gift = transaction.stargift;
+        const title = gift._ === 'starGiftUnique' ? `${gift.title} #${gift.num}` : gift.title;
+        if(title) return wrapEmojiText(title);
       }
 
       if(!transaction || transaction.peer._ === 'starsTransactionPeer') {
@@ -240,9 +251,18 @@ export async function getStarsTransactionTitleAndMedia({
         });
       }
 
-      return getStarsTransactionTitle(transaction);
+      if(getStarsTransactionPresentation(transaction).anonymousGift) return i18n('Stars.Transaction.UnknownPeer');
+      const provider = starsTransactionProviders[transaction.peer._];
+      return i18n(provider || 'Stars.Transaction.Unsupported');
     })(),
     (async() => {
+      const renderIcon = () => {
+        const container = document.createElement('div');
+        container.classList.add('popup-stars-transaction-media');
+        const icon = presentation?.anonymousGift ? 'gift' : presentation?.kind === 'search' ? 'search' : presentation?.kind === 'api' ? 'bots' : presentation?.kind === 'adsProceeds' ? 'ads' : starsTransactionPeerIcons[transaction?.peer._] || presentation?.icon || 'star';
+        container.append(Icon(icon));
+        return container;
+      };
       const _wrapPhoto = async(container: HTMLElement, photo: Parameters<typeof wrapPhoto>[0]['photo']) => {
         const loadPromises: Promise<any>[] = [];
         wrapPhoto({
@@ -253,16 +273,18 @@ export async function getStarsTransactionTitleAndMedia({
           middleware,
           loadPromises,
           withoutPreloader: true,
-          size: photo._ === 'webDocument' ? {_: 'photoSizeEmpty', type: ''} : undefined
+          size: isWebDocument(photo) ? {_: 'photoSizeEmpty', type: ''} : undefined
         });
 
         await Promise.all(loadPromises);
       };
 
-      if(photo) {
+      const itemPhoto = photo || subscription?.photo;
+      if(itemPhoto) {
         const container = document.createElement('div');
-        container.classList.add('popup-stars-pay-item');
-        await _wrapPhoto(container, photo);
+        container.classList.add('popup-stars-transaction-media');
+        container.style.width = container.style.height = size + 'px';
+        await _wrapPhoto(container, itemPhoto);
         return container;
       }
 
@@ -271,7 +293,7 @@ export async function getStarsTransactionTitleAndMedia({
         return avatar.node;
       }
 
-      if(paidMedia || transaction?.extended_media) {
+      if(paidMedia?.extended_media?.length || transaction?.extended_media?.length) {
         const array = paidMedia?.extended_media || transaction.extended_media;
         let media: Photo.photo | Document.document;
 
@@ -284,6 +306,7 @@ export async function getStarsTransactionTitleAndMedia({
             (extendedMedia as MessageMedia.messageMediaDocument).document as Document.document;
         }
 
+        if(!media) return renderIcon();
         const container = document.createElement('div');
         container.classList.add('popup-stars-transaction-media', 'is-paid-media');
 
@@ -311,12 +334,26 @@ export async function getStarsTransactionTitleAndMedia({
         return container;
       }
 
+      if(transaction?.stargift) {
+        const container = document.createElement('div');
+        container.classList.add('popup-stars-transaction-media');
+        const gift = await rootScope.managers.appGiftsManager.wrapGift(transaction.stargift);
+        if(gift?.sticker) {
+          await wrapSticker({doc: gift.sticker, div: container, width: size, height: size, middleware, play: false, loop: false});
+        } else {
+          container.append(Icon('gift'));
+        }
+        return container;
+      }
+
       if(transaction?.photo) {
         const container = document.createElement('div');
         container.classList.add('popup-stars-transaction-media', 'is-paid-media');
         await _wrapPhoto(container, transaction?.photo);
         return container;
       }
+
+      if(presentation && ['search', 'api', 'adsProceeds'].includes(presentation.kind)) return renderIcon();
 
       let peerId: PeerId;
       if(subscription) {
@@ -333,105 +370,223 @@ export async function getStarsTransactionTitleAndMedia({
         return avatar.node;
       }
 
-      const div = document.createElement('div');
-      div.classList.add('popup-stars-transaction-media');
-      div.append(Icon('star'));
-      return div;
+      return renderIcon();
     })()
   ]);
 
   return {title, media};
 }
 
-export default class PopupStars extends PopupElement {
-  private options: (StarsTopupOption | StarsGiftOption)[];
-  private paymentForm: PaymentsPaymentForm.paymentsPaymentFormStars;
-  private itemPrice: Long;
-  private onTopup: (amount: number) => void;
-  private onCancel: () => void;
-  private purpose: 'reaction' | 'stargift' | (string & {});
-  private giftPeerId: PeerId;
-  private peerId: PeerId;
-  private appConfig: MTAppConfig;
-  private toppedUp: boolean;
-  private ton: boolean;
-  private spendPurposePeerId: PeerId;
+/**
+ * Picks who the stars are for, then opens the top-up for them — the row inside
+ * this popup and `tg://settings/stars/gift` are the same thing.
+ */
+export function showGiftStarsPicker() {
+  return showSendGiftPicker({
+    titleLangKey: 'TelegramStarsGift',
+    onSelect: ([{peerId}]) => {
+      showStarsPopup({giftPeerId: peerId});
+    }
+  });
+}
 
-  constructor(options: {
-    paymentForm?: PaymentsPaymentForm.paymentsPaymentFormStars,
-    itemPrice?: Long,
-    onTopup?: (amount: number) => void,
-    onCancel?: () => void,
-    purpose?: PopupStars['purpose'],
-    giftPeerId?: PeerId,
-    peerId?: PeerId,
-    ton?: boolean,
-    spendPurposePeerId?: PeerId
-  } = {}) {
-    super('popup-stars', {
-      closable: true,
-      overlayClosable: true,
-      floatingHeader: true,
-      body: true,
-      title: 'TelegramStars',
-      scrollable: true
-    });
+export async function renderStarsTransaction(transaction: StarsTransaction, middleware: Middleware, ledgerPeerId?: PeerId) {
+  const {title, media} = await getStarsTransactionTitleAndMedia({
+    transaction,
+    middleware,
+    size: 42
+  });
 
-    safeAssign(this, options);
+  return createRoot((dispose) => {
+    middleware.onDestroy(dispose);
 
-    this.construct();
-  }
+    const presentation = getStarsTransactionPresentation(transaction);
+    const operation = getStarsTransactionTitle(transaction);
+    const useOperationTitle = ['media', 'search', 'api', 'adsProceeds', 'business'].includes(presentation.kind);
+    const productTitle = ['payment', 'subscription'].includes(presentation.kind) && transaction.title;
+    const _title = useOperationTitle ? operation : productTitle ? wrapEmojiText(productTitle) : title;
+    const midtitle = useOperationTitle || productTitle ? title : operation;
+    const subtitle = formatFullSentTime(transaction.date);
+    const amount = formatStarsAmountExact(transaction.amount);
+    const subtitleStatus = presentation.statusKey && i18n(presentation.statusKey);
 
-  private renderTransaction = async(transaction: StarsTransaction) => {
-    const middleware = this.middlewareHelper.get();
-    const {title, media} = await getStarsTransactionTitleAndMedia({
-      transaction,
-      middleware,
-      size: 42
-    });
+    let container: HTMLDivElement;
+    (
+      <Row
+        ref={container}
+        class="popup-stars-transaction-row"
+        noWrap
+        role="button"
+        tabIndex={0}
+        style={{
+          'grid-template-columns': amount.length > 14 ? '3.5rem minmax(0, 1fr)' : '3.5rem minmax(0, 1fr) auto',
+          'grid-template-areas': amount.length > 14 ? '"left title" "left midtitle" "left subtitle" "right right"' : undefined
+        }}
+        clickable={() => {
+          createPaymentPopup({
+            transaction,
+            ledgerPeerId
+          });
+        }}
+      >
+        <Row.Title><b>{_title}</b></Row.Title>
+        <Row.Midtitle>{midtitle}</Row.Midtitle>
+        <Row.Subtitle>{subtitleStatus ? [subtitle, ' — ', subtitleStatus] : subtitle}</Row.Subtitle>
+        <Row.RightContent><StarsChange stars={amount} ton={transaction.amount._ === 'starsTonAmount'} /></Row.RightContent>
+        <Row.Media size="abitbigger">{media}</Row.Media>
+      </Row>
+    );
+
+    return container;
+  });
+}
+
+export function StarsTransactionsList(props: {
+  peerId?: PeerId,
+  ton?: boolean,
+  middleware: Middleware,
+  setLoadMore: (callback: () => void) => void
+}) {
+  const [tab, setTab] = createSignal(0);
+  const lists = [undefined, true, false].map((inbound) => {
+    const [rows, setRows] = createSignal<HTMLElement[]>([]);
+    const [loading, setLoading] = createSignal(false);
+    const [error, setError] = createSignal(false);
+    const [ended, setEnded] = createSignal(false);
+    let offset = '';
+    const seen = new Set<string>();
+    const key = (transaction: StarsTransaction) => `${transaction.id}:${!!transaction.pFlags.refund}:${getStarsTransactionPresentation(transaction).incoming}`;
+    const load = async() => {
+      if(loading() || ended()) return;
+      setLoading(true);
+      setError(false);
+      try {
+        const status = await rootScope.managers.appPaymentsManager.getStarsTransactions(offset, inbound, props.ton, props.peerId);
+        if(!props.middleware()) return;
+        const transactions = (status.history || []).filter((transaction) => !seen.has(key(transaction)));
+        const rendered = await Promise.all(transactions.map((transaction) => renderStarsTransaction(transaction, props.middleware, props.peerId)));
+        if(!props.middleware()) return;
+        transactions.forEach((transaction) => seen.add(key(transaction)));
+        setRows((rows) => [...rows, ...rendered]);
+        setEnded(!status.next_offset || status.next_offset === offset);
+        offset = status.next_offset;
+      } catch(err) {
+        if(props.middleware()) setError(true);
+      } finally {
+        if(props.middleware()) setLoading(false);
+      }
+    };
+    return {rows, loading, error, ended, load};
+  });
+  void lists[0].load();
+  props.setLoadMore(() => {
+    const list = lists[tab()];
+    if(!list.error()) void list.load();
+  });
+  return (
+    <Tabs.Simple
+      tab={tab}
+      onChange={(index) => {
+        setTab(index);
+        if(!lists[index].rows().length) void lists[index].load();
+      }}
+      class="popup-stars-transactions"
+      menu={[i18n('StarsTransactionsAll'), i18n('StarsTransactionsIncoming'), i18n('StarsTransactionsOutgoing')]}
+      contentWrapper={(content) => (
+        <Section class="popup-stars-transactions-section">{content}</Section>
+      )}
+      content={lists.map((list) => (
+        <div>
+          {list.rows()}
+          <Show when={list.error()}><Button class="btn-primary btn-transparent" text="Stars.Transaction.Retry" onClick={() => void list.load()} /></Show>
+          <Show when={list.ended() && !list.rows().length}><div class="popup-stars-empty text-center">{i18n('Stars.Transaction.Empty')}</div></Show>
+          <Show when={!list.ended() && !list.error()}><Button class="btn-primary btn-transparent" text={list.loading() ? 'Loading' : 'ShowMoreOptions'} disabled={list.loading()} onClick={() => void list.load()} /></Show>
+        </div>
+      ))}
+    />
+  );
+}
+
+/** So `starsPay` can take away whichever Stars popup is open when it finishes. */
+export const STARS_POPUP_KIND = Symbol('stars-popup');
+
+export type PopupStarsOptions = {
+  paymentForm?: PaymentsPaymentForm.paymentsPaymentFormStars,
+  itemPrice?: Long,
+  onTopup?: (amount: number) => void,
+  onCancel?: () => void,
+  purpose?: 'reaction' | 'stargift' | (string & {}),
+  giftPeerId?: PeerId,
+  peerId?: PeerId,
+  ton?: boolean,
+  historyPeerId?: PeerId,
+  spendPurposePeerId?: PeerId
+};
+
+export default function showStarsPopup(options: PopupStarsOptions = {}) {
+  const middlewareHelper = getMiddleware();
+  const middleware = middlewareHelper.get();
+  const listenerSetter = new ListenerSetter();
+  const [show, setShow] = createSignal(false);
+  const purposePeerId = getStarsSpendPurposePeerId(options.spendPurposePeerId);
+  const handle = {hide: () => setShow(false)};
+
+  let options$: (StarsTopupOption | StarsGiftOption)[];
+  let appConfig$: MTAppConfig;
+  let purchaseBlocked: boolean;
+  let toppedUp: boolean;
+  let content: JSX.Element;
+  let scrollableRef: ScrollableContextValue;
+  // the transactions list asks for more as the popup scrolls
+  let onScrolledBottom: () => void;
+  const setLoadMore = (load: () => void) => onScrolledBottom = load;
+
+  const deferredCloseCallbacks: (() => void)[] = [];
+  const hideWithCallback = (callback: () => void) => {
+    deferredCloseCallbacks.push(callback);
+    setShow(false);
+  };
+
+  const renderSubscription = async(subscription: StarsSubscription) => {
+    const peerId = getPeerId(subscription.peer);
+    const title = await wrapPeerTitle({peerId});
+    title.classList.add('text-bold');
+    const {media} = await getStarsTransactionTitleAndMedia({transaction: undefined, subscription, middleware, size: 42});
+    const user = peerId.isUser() && useUser(peerId.toUserId());
+    const business = user && user._ === 'user' && !user.pFlags.bot;
+    const presentation = getStarsSubscriptionPresentation(subscription, tsNow(true), business);
 
     return createRoot((dispose) => {
       middleware.onDestroy(dispose);
-
-      const _title = transaction.extended_media ? i18n('StarMediaPurchase') : title;
-      let midtitle: HTMLElement | DocumentFragment;
-      if(transaction.extended_media) {
-        midtitle = title;
-      } else if(transaction.description) {
-        midtitle = wrapEmojiText(transaction.description);
-      } else if(transaction.pFlags.reaction) {
-        midtitle = i18n('StarsReactionTitle');
-      } else if(transaction.giveaway_post_id) {
-        midtitle = i18n('StarsGiveawayPrizeReceived');
-      } else if(transaction.paid_messages) {
-        midtitle = i18n('PaidMessages.FeeForMessages', [transaction.paid_messages]);
-      } else if(formatStarsAmount(transaction.amount) > 0) {
-        midtitle = transaction.pFlags.gift ? i18n('StarsGiftReceived') : i18n('Stars.TopUp');
-      } else if(transaction.subscription_period) {
-        midtitle = i18n('Stars.Subscription.Title');
-      }
-
-      const subtitle = formatFullSentTime(transaction.date);
-
-      let subtitleStatus: HTMLElement;
-      if(transaction.pFlags.refund) subtitleStatus = i18n('StarsRefunded');
-      else if(transaction.pFlags.failed) subtitleStatus = i18n('StarsFailed');
-      else if(transaction.pFlags.pending) subtitleStatus = i18n('StarsPending');
 
       let container: HTMLDivElement;
       (
         <Row
           ref={container}
-          clickable={() => {
-            PopupPayment.create({
-              transaction
+          class="popup-stars-transaction-row"
+          noWrap
+          clickable={async() => {
+            const popup = await createPaymentPopup({
+              subscription,
+              noPaymentForm: true
+            });
+
+            popup.addEventListener('finish', (result) => {
+              if(result === 'paid') {
+                setShow(false);
+              }
             });
           }}
         >
-          <Row.Title><b>{_title}</b></Row.Title>
-          <Row.Midtitle>{midtitle}</Row.Midtitle>
-          <Row.Subtitle>{subtitleStatus ? [subtitle, ' — ', subtitleStatus] : subtitle}</Row.Subtitle>
-          <Row.RightContent><StarsChange stars={formatStarsAmount(transaction.amount)} ton={transaction.amount._ === 'starsTonAmount'} /></Row.RightContent>
+          {/* each line carries its own right-hand note — the price, the state, the period — so they
+              line up in a column instead of one of them squeezing the copy on every line */}
+          <Row.Title titleRight={presentation.showPrice && (<StarsAmount stars={subscription.pricing.amount} />)}>{title}</Row.Title>
+          <Row.Midtitle midtitleRight={presentation.statusKey && (<span class="popup-stars-cancelled danger">{i18n(presentation.statusKey)}</span>)}>
+            {subscription.title && wrapEmojiText(subscription.title)}
+          </Row.Midtitle>
+          <Row.Subtitle subtitleRight={presentation.showPrice && (subscription.pricing.period === 2592000 ? i18n('Stars.Subscriptions.PerMonth') : i18n('Stars.Subscription.PerPeriod', [wrapDuration(subscription.pricing.period)]))}>{
+            i18n(presentation.dateKey, [formatFullSentTime(subscription.until_date, undefined, true)])
+          }</Row.Subtitle>
           <Row.Media size="abitbigger">{media}</Row.Media>
         </Row>
       );
@@ -440,81 +595,28 @@ export default class PopupStars extends PopupElement {
     });
   };
 
-  private renderSubscription = async(subscription: StarsSubscription) => {
-    const middleware = this.middlewareHelper.get();
-
-    const peerId = getPeerId(subscription.peer);
-    const title = await wrapPeerTitle({peerId});
-    title.classList.add('text-bold');
-    const avatar = untrack(() => avatarNew({peerId, size: 42, middleware}));
-    await avatar.readyThumbPromise;
-
-    const isCancelled = !!subscription.pFlags.canceled;
-    const isExpired = tsNow(true) > subscription.until_date;
-
-    return createRoot((dispose) => {
-      middleware.onDestroy(dispose);
-
-      let container: HTMLDivElement;
-      (
-        <Row
-          ref={container}
-          clickable={async() => {
-            const popup = await PopupPayment.create({
-              subscription,
-              noPaymentForm: true
-            });
-
-            popup.addEventListener('finish', (result) => {
-              if(result === 'paid') {
-                this.hide();
-              }
-            });
-          }}
-        >
-          <Row.Title titleRight={!isCancelled && (<StarsAmount stars={subscription.pricing.amount} />)}>{title}</Row.Title>
-          <Row.Subtitle subtitleRight={!isCancelled && i18n('Stars.Subscriptions.PerMonth')}>{
-            i18n(
-              isExpired ? 'Stars.Subscriptions.Expired' : isCancelled ?
-                'Stars.Subscriptions.Expires' :
-                'Stars.Subscriptions.Renews',
-              [formatFullSentTime(subscription.until_date, undefined, true)]
-            )}</Row.Subtitle>
-          <Row.RightContent>{isCancelled && (<span class="popup-stars-cancelled danger">{i18n('Stars.Subscriptions.Cancelled')}</span>)}</Row.RightContent>
-          <Row.Media size="abitbigger">{avatar.node}</Row.Media>
-        </Row>
-      );
-
-      return container;
-    });
-  };
-
-  private _construct(
+  function renderContent(
     image: HTMLElement,
     peerTitle?: HTMLElement,
     avatar?: HTMLElement
   ) {
-    if(!this.ton) {
-      this.header.append(StarsBalance() as HTMLElement);
-    }
-
-    const stars = useStars(this.ton);
+    const stars = useStars(options.ton);
     const starsNeeded = createMemo(() => {
-      if(!this.itemPrice) return bigInt.zero;
-      return bigInt(this.itemPrice.toString()).minus(stars());
+      if(!options.itemPrice) return bigInt.zero;
+      return bigInt(options.itemPrice.toString()).minus(stars());
     });
     const topupOptions = createMemo(() => {
-      if(this.ton) return [];
-      if(this.itemPrice) {
-        const filtered = this.options.filter((option) => starsNeeded().lt(option.stars));
+      if(options.ton) return [];
+      if(options.itemPrice) {
+        const filtered = options$.filter((option) => starsNeeded().lt(option.stars));
         if(!filtered.length) {
-          return [this.options[this.options.length - 1]];
+          return [options$[options$.length - 1]];
         }
 
         return filtered;
       }
 
-      return this.options;
+      return options$;
     });
     const alwaysVisible = topupOptions().length > 3 ? topupOptions().filter((option) => !option.pFlags.extended) : topupOptions();
     const [extended, setExtended] = createSignal(topupOptions().length <= 3);
@@ -523,39 +625,41 @@ export default class PopupStars extends PopupElement {
     let busy = false;
 
     let title: JSX.Element;
-    if(this.giftPeerId && !this.itemPrice) {
+    if(options.giftPeerId && !options.itemPrice) {
       title = i18n('GiftStarsTitle');
-    } else if(this.itemPrice) {
-      if(this.ton) {
+    } else if(options.itemPrice) {
+      if(options.ton) {
         title = i18n('TonNeededTitle', [formatNanoton(starsNeeded().toString())]);
       } else {
         title = i18n('StarsNeededTitle', [starsNeeded().toJSNumber()]);
       }
+    } else if(options.ton) {
+      title = i18n('GramBalance');
     } else {
       title = i18n('TelegramStars');
     }
 
     let subtitle: JSX.Element;
-    if(this.giftPeerId && !this.purpose) {
+    if(options.giftPeerId && !options.purpose) {
       subtitle = (
         <>
           {i18n('GiftStarsSubtitle', [peerTitle])}
           {' '}
-          {getExamplesAnchor(this.hideWithCallback)}
+          {getExamplesAnchor(hideWithCallback)}
         </>
       );
-    } else if(this.ton) {
+    } else if(options.ton) {
       subtitle = i18n('TonNeededText');
-    } else if(this.purpose) {
+    } else if(options.purpose) {
       let langPackKey: LangPackKey;
-      if(this.purpose === 'reaction') {
+      if(options.purpose === 'reaction') {
         langPackKey = 'Stars.TopUp.Reaction';
       } else {
         const key = `Stars.TopUp.Label_`;
         // @ts-ignore
-        if(I18n.strings.get(key + this.purpose)) {
+        if(I18n.strings.get(key + options.purpose)) {
           // @ts-ignore
-          langPackKey = key + this.purpose;
+          langPackKey = key + options.purpose;
         } else {
           // @ts-ignore
           langPackKey = key + 'default';
@@ -563,25 +667,21 @@ export default class PopupStars extends PopupElement {
       }
 
       subtitle = i18n(langPackKey as LangPackKey, [peerTitle]);
-    } else if(this.itemPrice) {
-      subtitle = i18n(this.paymentForm ? 'StarsNeededText' : 'Stars.Subscribe.Need', [peerTitle]);
+    } else if(options.itemPrice) {
+      subtitle = i18n(options.paymentForm ? 'StarsNeededText' : 'Stars.Subscribe.Need', [peerTitle]);
     } else {
-      subtitle = i18n('TelegramStarsInfo');
+      subtitle = i18n(purchaseBlocked ? 'StarsPurchaseUnavailable' : 'TelegramStarsInfo');
     }
 
-    const firstSection = (
-      <Section caption="Stars.TOS">
-        {image}
-        {avatar}
-        <div class="popup-stars-title">{title}</div>
-        <div class="popup-stars-subtitle">{subtitle}</div>
+    const firstSection = !purchaseBlocked && (
+      <Section caption={options.ton ? 'Stars.Transaction.GramTOS' : 'Stars.TOS'}>
         <div class="popup-stars-options" style={{height: (displayingRows() * 79 + (displayingRows() - 1) * 8) + 'px'}}>
-          <Show when={this.ton}>
+          <Show when={options.ton}>
             <Button
               class="btn-primary btn-color-primary"
               text="FragmentTopUp"
               onClick={() => {
-                safeWindowOpen(this.appConfig.ton_topup_url);
+                safeWindowOpen(appConfig$.ton_topup_url);
               }}
             />
           </Show>
@@ -615,19 +715,19 @@ export default class PopupStars extends PopupElement {
 
                   busy = true;
 
-                  const purpose: InputStorePaymentPurpose = this.giftPeerId ? {
+                  const purpose: InputStorePaymentPurpose = options.giftPeerId ? {
                     _: 'inputStorePaymentStarsGift',
                     amount: option.amount,
                     currency: option.currency,
                     stars: option.stars,
-                    user_id: await this.managers.appUsersManager.getUserInput(this.giftPeerId.toUserId())
+                    user_id: await rootScope.managers.appUsersManager.getUserInput(options.giftPeerId.toUserId())
                   } : {
                     _: 'inputStorePaymentStarsTopup',
                     amount: option.amount,
                     currency: option.currency,
                     stars: option.stars,
-                    spend_purpose_peer: this.spendPurposePeerId && this.spendPurposePeerId !== rootScope.myId ?
-                      await this.managers.appPeersManager.getInputPeerById(this.spendPurposePeerId) :
+                    spend_purpose_peer: purposePeerId ?
+                      await rootScope.managers.appPeersManager.getInputPeerById(purposePeerId) :
                       undefined
                   };
 
@@ -636,19 +736,19 @@ export default class PopupStars extends PopupElement {
                     purpose
                   };
                   try {
-                    const paymentForm = await this.managers.appPaymentsManager.getPaymentForm(inputInvoice);
-                    const popup = await PopupPayment.create({
+                    const paymentForm = await rootScope.managers.appPaymentsManager.getPaymentForm(inputInvoice);
+                    const popup = await createPaymentPopup({
                       inputInvoice,
                       paymentForm
                     });
 
                     popup.addEventListener('finish', (result) => {
                       if(result === 'paid') {
-                        this.toppedUp = true;
+                        toppedUp = true;
 
-                        if(this.onTopup) {
-                          this.hide();
-                          this.onTopup(+option.amount);
+                        if(options.onTopup) {
+                          setShow(false);
+                          options.onTopup(+option.amount);
                         }
                       }
                     });
@@ -665,71 +765,25 @@ export default class PopupStars extends PopupElement {
             );
           }}</For>
         </div>
-        <Button
-          class={classNames('btn-primary btn-transparent primary popup-stars-more', !extended() && 'is-visible')}
-          icon="down"
-          text="ShowMoreOptions"
-          onClick={() => setExtended((v) => !v)}
-        />
+        <GrowHeightReveal when={!extended()} appear={false}>
+          <Button
+            class="btn-primary btn-transparent primary popup-stars-more"
+            icon="down"
+            text="ShowMoreOptions"
+            onClick={() => setExtended((v) => !v)}
+          />
+        </GrowHeightReveal>
       </Section>
     );
 
-    const createLoader = (inbound?: boolean) => {
-      const middleware = this.middlewareHelper.get();
-      let offset = '', loading = false;
-      const loadMore = async() => {
-        if(loading) {
-          return;
-        }
-
-        loading = true;
-        const starsStatus = await this.managers.appPaymentsManager.getStarsTransactions(offset, inbound, this.ton);
-        if(!middleware()) return;
-
-        const promises = (starsStatus.history || []).map(this.renderTransaction);
-        const rendered = await Promise.all(promises);
-        if(!middleware()) return;
-
-        setF((value) => {
-          // value.count = starsStatus.count;
-          offset = starsStatus.next_offset;
-          if(!offset) {
-            value.loadMore = undefined;
-          }
-
-          value.rendered.push(...rendered);
-          return value;
-        });
-
-        loading = false;
-      };
-
-      const [f, setF] = createLoadableList({loadMore});
-      return f;
-    };
-
-    const lists = [undefined, true, false].map((inbound) => {
-      const list = createLoader(inbound);
-      list().loadMore();
-      return list;
-    });
-
-    const [tab, setTab] = createSignal(0);
-
-    this.scrollable.onScrolledBottom = () => {
-      const list = lists[tab()];
-      list().loadMore?.();
-    };
-
-    const middleware = this.middlewareHelper.get();
     let subscriptionsOffset: string;
     const loadMoreSubscriptions = async() => {
-      const starsStatus = await this.managers.appPaymentsManager.getStarsSubscriptions(subscriptionsOffset);
+      const starsStatus = await rootScope.managers.appPaymentsManager.getStarsSubscriptions(subscriptionsOffset);
       if(!middleware()) {
         return;
       }
 
-      const promises = (starsStatus.subscriptions || []).map(this.renderSubscription);
+      const promises = (starsStatus.subscriptions || []).map(renderSubscription);
       const rendered = await Promise.all(promises);
       if(!middleware()) return;
 
@@ -749,7 +803,7 @@ export default class PopupStars extends PopupElement {
       loadMore: loadMoreSubscriptions
     });
 
-    subscriptionsLoader().loadMore();
+    if(!options.ton) subscriptionsLoader().loadMore();
     const subscriptionsSection = (
       <Section class="popup-stars-subscriptions-section" name="Stars.Subscriptions">
         <div>{subscriptionsLoader().rendered}</div>
@@ -762,35 +816,19 @@ export default class PopupStars extends PopupElement {
       </Section>
     );
 
-    const transactionsSection = (
-      <Section class="popup-stars-transactions-section">
-        <Tabs
-          tab={tab}
-          onChange={setTab}
-          class="popup-stars-transactions"
-          menu={[
-            i18n('StarsTransactionsAll'),
-            i18n('StarsTransactionsIncoming'),
-            i18n('StarsTransactionsOutgoing')
-          ]}
-          content={lists.map((list) => {
-            return <div>{list().rendered}</div>
-          })}
-        />
-      </Section>
-    );
+    const transactionsSection = <StarsTransactionsList ton={options.ton} middleware={middleware} setLoadMore={(load) => setLoadMore(load)} />;
 
     const restSection = (
       <>
-        {this.appConfig.stars_gifts_enabled && !this.ton && (
+        {appConfig$.stars_gifts_enabled && !options.ton && !purchaseBlocked && (
           <Section>
             <Button
               class="btn-primary btn-transparent primary"
               text="TelegramStarsGift"
               onClick={async() => {
-                this.hide();
-                const peerId = await PopupPickUser.createContactPicker();
-                PopupElement.createPopup(PopupStars, {
+                setShow(false);
+                const peerId = await showContactPickerPopup();
+                showStarsPopup({
                   giftPeerId: peerId,
                   onTopup: async(stars) => {
                     toastNew({
@@ -808,18 +846,93 @@ export default class PopupStars extends PopupElement {
       </>
     );
 
+    // Gifting stars is buying them for someone else, so it goes with the top-up
+    // options and is out when buying is blocked or this popup is already a gift.
+    const giftSection = !purchaseBlocked && !options.ton && !options.giftPeerId && !options.itemPrice && (
+      <Section>
+        <Row clickable={showGiftStarsPicker}>
+          <Row.Icon icon="gift" />
+          <Row.Title>{i18n('TelegramStarsGift')}</Row.Title>
+        </Row>
+      </Section>
+    );
+
     return (
       <>
+        <MediaHeader class="popup-stars-intro">
+          {image}
+          {avatar}
+          <MediaHeader.Title>{title}</MediaHeader.Title>
+          <MediaHeader.Subtitle>{subtitle}</MediaHeader.Subtitle>
+        </MediaHeader>
         {firstSection}
-        {starsNeeded() === bigInt.zero && !this.giftPeerId && restSection}
+        {giftSection}
+        {starsNeeded() === bigInt.zero && !options.giftPeerId && restSection}
       </>
     );
   }
 
-  private async construct() {
-    const [image, peerTitle, options, avatar, appConfig, _] = await Promise.all([
+  function openPopup() {
+    createPopup(() => {
+      onCleanup(() => {
+        listenerSetter.removeAll();
+        middlewareHelper.destroy();
+      });
+
+      return (
+        <PopupElement
+          class="popup-stars"
+          kind={STARS_POPUP_KIND}
+          closable
+          show={show()}
+          onClose={() => {
+            if(!toppedUp && options.onCancel) {
+              options.onCancel();
+            }
+          }}
+          onCloseAfterTimeout={() => deferredCloseCallbacks.splice(0).forEach((callback) => callback())}
+        >
+          <PopupElement.Header floating>
+            <PopupElement.CloseButton />
+            <PopupElement.Title title={options.ton ? 'GramBalance' : 'TelegramStars'} />
+            {!options.historyPeerId && <StarsBalance ton={options.ton} />}
+          </PopupElement.Header>
+          <PopupElement.Scrollable
+            contextRef={(ref) => scrollableRef = ref}
+            onScrolledBottom={() => onScrolledBottom?.()}
+          >
+            <PopupElement.Body>
+              {content}
+            </PopupElement.Body>
+          </PopupElement.Scrollable>
+        </PopupElement>
+      );
+    });
+
+    setShow(true);
+  }
+
+  async function construct() {
+    if(options.historyPeerId) {
+        const title = await wrapPeerTitle({peerId: options.historyPeerId});
+      if(!middleware()) return;
+      content = (
+        <>
+          <MediaHeader class="popup-stars-intro">
+            <MediaHeader.Title class="popup-stars-history-title">{title}</MediaHeader.Title>
+            <MediaHeader.Subtitle>{i18n('Stars.Transaction.History')}</MediaHeader.Subtitle>
+          </MediaHeader>
+          <StarsTransactionsList peerId={options.historyPeerId} ton={options.ton} middleware={middleware} setLoadMore={setLoadMore} />
+        </>
+      );
+      openPopup();
+      setShow(true);
+      return;
+    }
+
+    const [image, peerTitle, topupOptions, avatar, appConfig, _] = await Promise.all([
       (async() => {
-        if(this.ton) {
+        if(options.ton) {
           const stickerDiv = document.createElement('div');
           stickerDiv.classList.add('popup-stars-image');
           stickerDiv.style.width = stickerDiv.style.height = '100px';
@@ -827,7 +940,7 @@ export default class PopupStars extends PopupElement {
             assetName: 'Diamond',
             width: 100,
             height: 100,
-            middleware: this.middlewareHelper.get(),
+            middleware: middleware,
             loop: true,
             autoplay: true
           }).then(({container}) => {
@@ -836,29 +949,50 @@ export default class PopupStars extends PopupElement {
           });
         }
         const img = document.createElement('img');
+        img.alt = '';
         img.classList.add('popup-stars-image');
-        await renderImageFromUrlPromise(img, `assets/img/${maybe2x(this.giftPeerId ? 'stars_pay' : 'stars')}.png`);
+        await renderImageFromUrlPromise(img, `assets/img/${maybe2x(options.giftPeerId ? 'stars_pay' : 'stars')}.png`);
         return img;
       })(),
-      this.peerId || this.paymentForm?.bot_id || this.giftPeerId ? wrapPeerTitle({peerId: this.peerId || this.giftPeerId || this.paymentForm.bot_id.toPeerId(false)}) : undefined,
-      this.giftPeerId ? this.managers.appPaymentsManager.getStarsGiftOptions(this.giftPeerId.toUserId()) : this.managers.appPaymentsManager.getStarsTopupOptions(),
-      this.giftPeerId && (async() => {
-        const avatar = avatarNew({peerId: this.giftPeerId, size: 100, middleware: this.middlewareHelper.get()});
+      options.peerId || options.paymentForm?.bot_id || options.giftPeerId ? wrapPeerTitle({peerId: options.peerId || options.giftPeerId || options.paymentForm.bot_id.toPeerId(false)}) : undefined,
+      options.giftPeerId ? rootScope.managers.appPaymentsManager.getStarsGiftOptions(options.giftPeerId.toUserId()) : rootScope.managers.appPaymentsManager.getStarsTopupOptions(),
+      options.giftPeerId && (async() => {
+        const avatar = avatarNew({peerId: options.giftPeerId, size: 100, middleware: middleware});
         await avatar.readyThumbPromise;
         avatar.node.classList.add('popup-stars-gift-avatar');
         return avatar.node;
       })(),
-      this.managers.apiManager.getAppConfig(),
-      this.itemPrice && prefetchStars(this.middlewareHelper.get())
+      rootScope.managers.apiManager.getAppConfig(),
+      options.itemPrice && prefetchStars(middleware)
     ]);
-    this.options = options;
-    this.appConfig = appConfig;
-    this.appendSolid(() => this._construct(image, peerTitle, avatar));
-    this.addEventListener('close', () => {
-      if(!this.toppedUp && this.onCancel) {
-        this.onCancel();
-      }
-    });
-    this.show();
+    options$ = topupOptions;
+    appConfig$ = appConfig;
+
+    // * stars can be unavailable for purchase at all, then only the balance and the history are left
+    purchaseBlocked = !options.ton && !!appConfig.stars_purchase_blocked;
+    if(purchaseBlocked && (options.itemPrice || options.giftPeerId)) {
+      confirmationPopup({
+        titleLangKey: 'StarsNotAvailableTitle',
+        descriptionLangKey: 'StarsNotAvailableText',
+        button: {langKey: 'OK', isCancel: true}
+      }).catch(() => {});
+      setShow(false);
+      options.onCancel?.();
+      return;
+    }
+
+    // * topping up for a spend on a bot or a channel can be forbidden, then there's nothing to offer
+    if(!options.ton && purposePeerId && appConfig.stars_spend_topup_invoice_disabled) {
+      toastNew({langPackKey: 'PaymentInvoiceDisabledStarsText'});
+      setShow(false);
+      options.onCancel?.();
+      return;
+    }
+
+    content = renderContent(image, peerTitle, avatar);
+    openPopup();
   }
+
+  void construct();
+  return handle;
 }

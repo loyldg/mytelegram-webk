@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import randomize from '@helpers/array/randomize';
 
 const arrays = {
@@ -23,4 +17,9 @@ export function randomLong() {
 
 export function randomBytes(length: number) {
   return randomize(new Uint8Array(length));
+}
+
+/** Non-crypto fallback using Math.random. */
+export function randomUint32Fast(): number {
+  return (Math.random() * 0x100000000) >>> 0;
 }

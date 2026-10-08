@@ -1,13 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type ChatInput from '@components/chat/input';
 import callbackify from '@helpers/callbackify';
 import AutocompletePeerHelper from '@components/chat/autocompletePeerHelper';
-import {processPeerFullForCommands} from '@components/chat/commandsHelper';
+import processPeerFullForCommands from '@components/chat/processPeerFullForCommands';
 import {AppManagers} from '@lib/managers';
 import {Middleware} from '@helpers/middleware';
 
@@ -21,13 +15,13 @@ export default class ChatBotCommands extends AutocompletePeerHelper {
     private managers: AppManagers
   ) {
     super(appendTo, undefined, CLASS_NAME, (target) => {
-      const innerHTML = target.querySelector(`.${AutocompletePeerHelper.BASE_CLASS_LIST_ELEMENT}-name`).innerHTML;
+      const text = target.querySelector(`.${AutocompletePeerHelper.BASE_CLASS_LIST_ELEMENT}-name`).textContent;
       return chatInput.getReadyToSend(() => {
-        chatInput.messageInput.innerHTML = innerHTML;
+        chatInput.messageInputField.setValueSilently(text);
         chatInput.sendMessage(true);
         this.toggle(true);
       });
-    });
+    }, 'Chat.BotCommands');
   }
 
   public setUserId(userId: UserId, middleware: Middleware) {

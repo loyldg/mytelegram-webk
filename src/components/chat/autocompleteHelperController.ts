@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {getMiddleware} from '@helpers/middleware';
 import AutocompleteHelper from '@components/chat/autocompleteHelper';
 
@@ -40,14 +34,17 @@ export default class AutocompleteHelperController {
     this.helpers.add(helper);
   }
 
-  public hideOtherHelpers(preserveHelper?: AutocompleteHelper) {
+  public hideOtherHelpers(
+    preserveHelpers?: Set<AutocompleteHelper>,
+    skipAnimation = false
+  ) {
     this.helpers.forEach((helper) => {
-      if(helper !== preserveHelper) {
-        helper.toggle(true, true);
+      if(!preserveHelpers?.has(helper)) {
+        helper.toggle(true, true, skipAnimation);
       }
     });
 
-    if(!preserveHelper) {
+    if(!preserveHelpers?.size) {
       this.middleware.clean();
     }
   }

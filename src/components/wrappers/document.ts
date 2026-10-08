@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {isIpRevealingExtension, isIpRevealingMimeType} from '@environment/ipRevealingDocuments';
 import MEDIA_MIME_TYPES_SUPPORTED from '@environment/mediaMimeTypesSupport';
 import {CancellablePromise} from '@helpers/cancellablePromise';
@@ -22,14 +16,17 @@ import appImManager from '@lib/appImManager';
 import {AppManagers} from '@lib/managers';
 import getDownloadMediaDetails from '@appManagers/utils/download/getDownloadMediaDetails';
 import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
-import {joinElementsWith} from '@lib/langPack';
+import I18n, {joinElementsWith} from '@lib/langPack';
+import Button from '@components/button';
+import Modes from '@config/modes';
 import {MAX_FILE_SAVE_SIZE} from '@appManagers/constants';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import wrapPlainText from '@lib/richTextProcessor/wrapPlainText';
 import rootScope from '@lib/rootScope';
 import type {ThumbCache} from '@lib/storages/thumbs';
 import {MediaSearchContext} from '@components/appMediaPlaybackController';
-import AudioElement from '@components/audio';
+import createAudioElement, {AudioElement} from '@components/audio';
+import {emptyMediaListLoaderFactory} from '@components/emptyMediaListLoader';
 import confirmationPopup from '@components/confirmationPopup';
 import LazyLoadQueue from '@components/lazyLoadQueue';
 import {MiddleEllipsisElement} from '@components/middleEllipsis';
@@ -38,6 +35,9 @@ import wrapPhoto from '@components/wrappers/photo';
 import wrapSenderToPeer from '@components/wrappers/senderToPeer';
 import wrapSentTime from '@components/wrappers/sentTime';
 import {Middleware} from '@helpers/middleware';
+import readBlobAsText from '@helpers/blob/readBlobAsText';
+import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
+import {openMarkdownInstantView} from '@components/markdownInstantView';
 
 rootScope.addEventListener('document_downloading', (docId) => {
   const elements = Array.from(document.querySelectorAll(`.document[data-doc-id="${docId}"]`)) as HTMLElement[];
@@ -66,10 +66,13 @@ export default async function wrapDocument({
   getSize,
   canTranscribeVoice,
   isOut,
+  clickable,
   uploadingFileName,
   shouldWrapAsVoice,
   customAudioToTextButton,
-  globalMedia
+  globalMedia,
+  doc: docOverride,
+  slot
 }: {
   message: Message.message,
   middleware: Middleware,
@@ -88,46 +91,61 @@ export default async function wrapDocument({
   getSize?: () => number,
   canTranscribeVoice?: boolean,
   isOut?: boolean,
+  /** Keep the duration out of the subtitle until the row plays. See `AudioElementOptions`. */
+  /** Give an audio row the hover of a clickable Row. See `AudioElementOptions`. */
+  clickable?: boolean,
   uploadingFileName?: string,
   customAudioToTextButton?: HTMLElement,
   shouldWrapAsVoice?: boolean,
-  globalMedia?: HTMLMediaElement
+  globalMedia?: HTMLMediaElement,
+  /**
+   * Optional pre-extracted document. When provided, it overrides the
+   * default extraction from `message.media` (or its webpage). Useful when
+   * the document lives in a sibling field of the message (e.g. poll
+   * `solution_media` / `attached_media`).
+   */
+  doc?: MyDocument,
+  /**
+   * Optional storage-key disambiguator forwarded to the underlying
+   * AudioElement / `appMediaPlaybackController.addMedia`. See
+   * `AddMediaArgs.slot`.
+   */
+  slot?: number
 }): Promise<HTMLElement> {
   fontWeight ??= 500;
   sizeType ??= '' as any;
   fontSize ??= 16;
   const noAutoDownload = autoDownloadSize === 0;
 
-  const doc = ((message.media as MessageMedia.messageMediaDocument).document || ((message.media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage).document) as MyDocument;
+  const doc = docOverride ?? (((message.media as MessageMedia.messageMediaDocument).document || ((message.media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage).document) as MyDocument);
   uploadingFileName ??= message?.uploadingFileName?.[0];
   if(doc.type === 'audio' || doc.type === 'voice' || doc.type === 'round') {
-    const audioElement = new AudioElement();
-    audioElement.withTime = withTime;
-    audioElement.message = message;
-    audioElement.noAutoDownload = noAutoDownload;
-    audioElement.lazyLoadQueue = lazyLoadQueue;
-    audioElement.loadPromises = loadPromises;
-    audioElement.uploadingFileName = uploadingFileName;
-    audioElement.shouldWrapAsVoice = shouldWrapAsVoice;
-    audioElement.customAudioToTextButton = customAudioToTextButton;
-    audioElement.middleware = middleware;
-
-    audioElement.audio = globalMedia as any;
-    if(globalMedia) audioElement.dataset.toBeSkipped = '1';
-
-    if(canTranscribeVoice && doc.type === 'voice') audioElement.transcriptionState = 0;
-    (audioElement as any).getSize = getSize;
-
-    if(voiceAsMusic) audioElement.voiceAsMusic = voiceAsMusic;
-    if(searchContext) audioElement.searchContext = searchContext;
-    if(showSender) audioElement.showSender = showSender;
-
-    audioElement.dataset.fontWeight = '' + fontWeight;
-    audioElement.dataset.fontSize = '' + fontSize;
-    audioElement.dataset.sizeType = sizeType;
-    if(isOut) audioElement.classList.add('is-out');
-    await audioElement.render();
-    return audioElement;
+    return createAudioElement({
+      message,
+      middleware,
+      doc: docOverride,
+      // Slotted audio (e.g. poll description / explanation) should not participate in any chat-wide
+      // playlist. Use an empty list loader so next/previous navigation is a no-op.
+      ...(slot !== undefined ? {mediaSlot: slot, listLoaderFactory: emptyMediaListLoaderFactory} : {}),
+      withTime,
+      voiceAsMusic,
+      searchContext,
+      showSender,
+      noAutoDownload,
+      clickable,
+      lazyLoadQueue,
+      loadPromises,
+      uploadingFileName,
+      shouldWrapAsVoice,
+      customAudioToTextButton,
+      globalMedia,
+      isOut,
+      canTranscribe: canTranscribeVoice && doc.type === 'voice',
+      fontWeight,
+      fontSize,
+      sizeType,
+      getSize
+    });
   }
 
   const extSplitted = doc.file_name ? doc.file_name.split('.') : '';
@@ -143,7 +161,9 @@ export default async function wrapDocument({
 
   // return docDiv;
 
-  const icoDiv = document.createElement('div');
+  const canActivate = !(!uploadingFileName && message.pFlags.is_outgoing && !message.mid);
+  const icoDiv = canActivate && Modes.a11y ? Button('', {noRipple: true}) : document.createElement('div');
+  if(canActivate && Modes.a11y) icoDiv.setAttribute('aria-label', I18n.format('AccDescr.OpenDocument', true, [doc.file_name || 'Unknown.file']));
   icoDiv.classList.add('document-ico');
   let icoTextEl: HTMLElement;
 
@@ -161,8 +181,11 @@ export default async function wrapDocument({
     const imgs: (HTMLImageElement | HTMLCanvasElement | HTMLVideoElement)[] = [];
     // ! WARNING, use thumbs for check when thumb will be generated for media
     if(message.pFlags.is_outgoing && ['photo', 'video'].includes(doc.type) && cacheContext.url) {
-      icoDiv.innerHTML = `<img src="${cacheContext.url}">`;
-      imgs.push(icoDiv.firstElementChild as HTMLImageElement);
+      const image = document.createElement('img');
+      image.src = cacheContext.url;
+      image.alt = '';
+      icoDiv.append(image);
+      imgs.push(image);
     } else {
       const perf = performance.now();
       const wrapped = await wrapPhoto({
@@ -249,7 +272,7 @@ export default async function wrapDocument({
 
   docDiv.prepend(icoDiv);
 
-  if(!uploadingFileName && message.pFlags.is_outgoing && !message.mid) {
+  if(!canActivate) {
     return docDiv;
   }
 
@@ -325,6 +348,14 @@ export default async function wrapDocument({
     const queueId = appImManager.chat.bubbles ? appImManager.chat.bubbles.lazyLoadQueue.queueId : undefined;
     if(!save) {
       download = appDownloadManager.downloadToDisc({media: doc, queueId}, true);
+    } else if(ext === 'md' || ext === 'markdown' || /^text\/(x-)?markdown\b/i.test(doc.mime_type || '')) {
+      download = appDownloadManager.downloadMedia({media: doc, queueId});
+      download.then(readBlobAsText).then((raw) => {
+        openMarkdownInstantView({
+          raw,
+          HotReloadGuardProvider: SolidJSHotReloadGuardProvider
+        });
+      }).catch(noop);
     } else if(doc.type === 'pdf' && false) {
       const canOpenAfter = /* managers.appDocsManager.downloading.has(doc.id) ||  */!preloader || preloader.detached;
       download = appDownloadManager.downloadMediaURL({media: doc, queueId});

@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {MyDialogFilter} from '@lib/storages/filters';
 
 /**
@@ -27,6 +21,8 @@ export const TOPIC_COLORS = [0x6FB9F0, 0xFFD67E, 0xCB86DB, 0x8EEE98, 0xFF93B2, 0
 export const ATTACH_MENU_BOT_ICON_NAME = 'default_static';
 export const MESSAGES_ALBUM_MAX_SIZE = 10;
 export const MESSAGE_ID_OFFSET = 0x100000000;
+export const EPHEMERAL_MESSAGE_ID_OFFSET = MESSAGE_ID_OFFSET * 2;
+export const EPHEMERAL_MESSAGE_ID_LIMIT = MESSAGE_ID_OFFSET * 3;
 export const GENERAL_TOPIC_ID = MESSAGE_ID_OFFSET + 1;
 export const CAN_HIDE_TOPIC = false;
 export const T_ME_PREFIXES = new Set(['web', 'k', 'z', 'a']);
@@ -39,6 +35,11 @@ export const SEND_PAID_REACTION_ANONYMOUS_PEER_ID: PeerId = -1;
 export const SUGGESTED_POST_WAIT_FOR_REWARD_HOURS = 24;
 export const SUGGESTED_POST_DEFAULT_STARS_COMMISSION = 850;
 export const PEER_FULL_TTL = 3 * 60e3;
+// A request that raced updateChannelAvailableMessages is reissued so its answer cannot describe
+// history the client has already purged. The cutoff generation only moves when available_min_id
+// really changes, so this normally costs at most one extra round trip; the cap turns a peer whose
+// cutoff keeps moving into a stale answer instead of an unbounded request loop.
+export const CHANNEL_CUTOFF_RETRY_LIMIT = 5;
 
 export const FOLDER_ID_ALL: REAL_FOLDER_ID = 0;
 export const FOLDER_ID_ARCHIVE: REAL_FOLDER_ID = 1;

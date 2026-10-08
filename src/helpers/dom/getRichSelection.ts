@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {ChatInputReplyTo} from '@components/chat/input';
 import {MessageEntity} from '@layer';
 import cancelSelection from '@helpers/dom/cancelSelection';
@@ -11,7 +5,7 @@ import findUpClassName from '@helpers/dom/findUpClassName';
 import getRichValueWithCaret from '@helpers/dom/getRichValueWithCaret';
 
 export default function getRichSelection(target: HTMLElement) {
-  const selection = document.getSelection();
+  const selection = target.ownerDocument.defaultView.getSelection();
   const range = selection.getRangeAt(0);
   const {startContainer, startOffset, endContainer, endOffset} = range;
   const startValue = startContainer.nodeValue;

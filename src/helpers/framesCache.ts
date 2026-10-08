@@ -1,11 +1,5 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {MOUNT_CLASS_TO} from '@config/debug';
-import type {RLottieColor} from '@lib/rlottie/rlottiePlayer';
+import type {LottieColor} from '@lib/lottie/lottiePlayer';
 
 export type FramesCacheMap = Map<number, Uint8ClampedArray>;
 export type FramesCacheMapNew = Map<number, HTMLCanvasElement | ImageBitmap>;
@@ -50,7 +44,7 @@ export class FramesCache {
     if(!cache) {
       this.cache.set(name, cache = FramesCache.createCache());
     } else {
-      // console.warn('[RLottieCache] cache will be reused', cache);
+      // console.warn('[LottieCache] cache will be reused', cache);
     }
 
     ++cache.counter;
@@ -62,7 +56,7 @@ export class FramesCache {
     if(cache && !--cache.counter) {
       cache.clearCache();
       this.cache.delete(name);
-      // console.warn('[RLottieCache] released cache', cache);
+      // console.warn('[LottieCache] released cache', cache);
     }
   }
 
@@ -71,7 +65,7 @@ export class FramesCache {
     return cache?.counter;
   }
 
-  public generateName(name: string, width: number, height: number, color: RLottieColor, toneIndex: number) {
+  public generateName(name: string, width: number, height: number, color: LottieColor, toneIndex: number) {
     return [
       name,
       width,

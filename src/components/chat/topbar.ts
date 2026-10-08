@@ -1,22 +1,16 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {Channel} from '@appManagers/appChatsManager';
 import type {AppSidebarRight} from '@components/sidebarRight';
 import type Chat from '@components/chat/chat';
 import {RIGHT_COLUMN_ACTIVE_CLASSNAME} from '@components/sidebarRight';
 import mediaSizes, {ScreenSize} from '@helpers/mediaSizes';
-import {IS_SAFARI} from '@environment/userAgent';
 import rootScope, {BroadcastEvents} from '@lib/rootScope';
-import Button, {replaceButtonIcon} from '@components/button';
 import ButtonIcon from '@components/buttonIcon';
 import ButtonMenuToggle from '@components/buttonMenuToggle';
-import ChatPinnedMessage from '@components/chat/pinnedMessage';
+import createChatPinnedMessage, {ChatPinnedMessageController} from '@components/chat/pinnedMessage';
+import getPinnedMessagesKey from '@appManagers/utils/messages/getPinnedMessagesKey';
 import ListenerSetter from '@helpers/listenerSetter';
-import PopupDeleteDialog from '@components/popups/deleteDialog';
+import showDeleteDialogPopup from '@components/popups/deleteDialog';
+import {showPeerReport} from '@components/popups/reportAd';
 import appNavigationController from '@components/appNavigationController';
 import {LEFT_COLUMN_ACTIVE_CLASSNAME} from '@components/sidebarLeft';
 import PeerTitle from '@components/peerTitle';
@@ -27,14 +21,14 @@ import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import {toastNew} from '@components/toast';
 import replaceContent from '@helpers/dom/replaceContent';
-import {ChatFull, Chat as MTChat, GroupCall, Dialog, InputGroupCall, UserFull} from '@layer';
-import PopupPickUser from '@components/popups/pickUser';
-import PopupPeer, {PopupPeerCheckboxOptions} from '@components/popups/peer';
-import AppEditContactTab from '@components/sidebarRight/tabs/editContact';
+import {ChatFull, Chat as MTChat, GroupCall, Dialog, InputGroupCall, User, UserFull} from '@layer';
+import {showSharingPickerPopup} from '@components/popups/pickUser';
+import showPeerPopup, {PopupPeerCheckboxOptions} from '@components/popups/peer';
+import {AppEditBotTab, AppEditContactTab} from '@components/solidJsTabs/tabs';
 import IS_GROUP_CALL_SUPPORTED from '@environment/groupCallSupport';
 import IS_CALL_SUPPORTED from '@environment/callSupport';
 import {CallType} from '@lib/calls/types';
-import PopupMute from '@components/popups/mute';
+import showMutePopup from '@components/popups/mute';
 import {AppManagers} from '@lib/managers';
 import hasRights from '@appManagers/utils/chats/hasRights';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
@@ -43,35 +37,30 @@ import apiManagerProxy from '@lib/apiManagerProxy';
 import {makeMediaSize} from '@helpers/mediaSize';
 import {FOLDER_ID_ALL} from '@appManagers/constants';
 import formatNumber from '@helpers/number/formatNumber';
-import PopupElement from '@components/popups';
-import ChatRequests from '@components/chat/requests';
 import {modifyAckedPromise} from '@helpers/modifyAckedResult';
 import callbackify from '@helpers/callbackify';
-import ChatActions from '@components/chat/actions';
 import confirmationPopup from '@components/confirmationPopup';
+import noop from '@helpers/noop';
+import clearHistoryWithConfirmation from '@components/clearHistory';
+import canClearHistory from '@appManagers/utils/chats/canClearHistory';
+import IS_LIVE_STREAM_SUPPORTED from '@environment/liveStreamSupport';
 import {avatarNew, findUpAvatar} from '@components/avatarNew';
 import {Middleware, MiddlewareHelper, getMiddleware} from '@helpers/middleware';
 import setBadgeContent from '@helpers/setBadgeContent';
 import createBadge from '@helpers/createBadge';
 import AppStatisticsTab from '@components/sidebarRight/tabs/statistics';
 import {ChatType} from './chatType';
-import AppBoostsTab from '@components/sidebarRight/tabs/boosts';
-import ChatLive from '@components/chat/topbarLive/container';
-import {RtmpStartStreamPopup} from '@components/rtmp/adminPopup';
-import assumeType from '@helpers/assumeType';
-import PinnedContainer from '@components/chat/pinnedContainer';
-import IS_LIVE_STREAM_SUPPORTED from '@environment/liveStreamSupport';
-import ChatTranslation from '@components/chat/translation';
-import PopupSendGift from '@components/popups/sendGift';
+import {showRtmpStartStreamPopup} from '@components/rtmp/adminPopup';
+import showSendGiftPopup from '@components/popups/sendGift';
 import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '@components/chat/paidMessagesInterceptor';
-import ChatRemoveFee, {openRemoveFeePopup} from '@components/chat/removeFee';
-import ChatTopbarSponsored from '@components/chat/topbarSponsored';
+import {openRemoveFeePopup} from '@components/chat/removeFee';
+import {createTopbarPlates, TopbarPlates} from '@components/chat/topbarPlates';
 import pause from '@helpers/schedulers/pause';
 import appImManager from '@lib/appImManager';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import namedPromises from '@helpers/namedPromises';
 import appDialogsManager from '@lib/appDialogsManager';
-import {createEffect, createRoot, on} from 'solid-js';
+import {createEffect, createRoot, on, untrack} from 'solid-js';
 import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
 import {AppAdminRecentActionsTab} from '@components/solidJsTabs/tabs';
 import {setAppSettings} from '@stores/appSettings';
@@ -79,19 +68,23 @@ import {wrapAsyncClickHandler} from '@helpers/wrapAsyncClickHandler';
 import liteMode from '@helpers/liteMode';
 import createSubmenuTrigger from '@components/createSubmenuTrigger';
 import ButtonMenu, {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
+import {getCachedFullPeer} from '@stores/fullPeers';
 import Icon from '@components/icon';
 import {getDefaultOptions} from '@components/sidebarLeft/tabs/autoDeleteMessages/options';
-import {createAutoDeleteIcon} from '@components/chat/utils';
-import PopupBoost from '@components/popups/boost';
-import PopupPremium from '@components/popups/premium';
+import {createAutoDeleteIcon} from '@components/autoDeleteIcon';
+import showPremiumPopup from '@components/popups/premium';
 import showNoForwardsPopup from '@components/popups/noForwards';
+import showAddBotToChat from '@components/popups/addBotToChat';
+import openBoosts from '@components/openBoosts';
+import getAddBotToChatAction from '@appManagers/utils/bots/getAddBotToChatAction';
+import canReportBot from '@appManagers/utils/bots/canReportBot';
+import joinChat from '@components/chat/joinChat';
 
 type ButtonToVerify = {element?: HTMLElement, verify: () => boolean | Promise<boolean>};
 
-const PINNED_ALWAYS_FLOATING = false;
-
 export default class ChatTopbar {
   public container: HTMLDivElement;
+  public floatingPlatesWrapper: HTMLDivElement;
   private btnBack: HTMLButtonElement;
   private btnBackBadge: HTMLElement;
   private chatInfo: HTMLDivElement;
@@ -100,29 +93,20 @@ export default class ChatTopbar {
   private title: HTMLDivElement;
   private subtitle: HTMLDivElement;
   private chatUtils: HTMLDivElement;
-  private btnJoin: HTMLButtonElement;
-  private btnPinned: HTMLButtonElement;
   private btnCall: HTMLButtonElement;
   private btnGroupCall: HTMLButtonElement;
   private btnGroupCallMenu: HTMLElement;
-  private btnMute: HTMLButtonElement;
   private btnSearch: HTMLButtonElement;
   private btnLogFilters: HTMLButtonElement;
   private btnMore: HTMLElement;
-  private btnDirectMessages: HTMLElement;
 
   private autoDeleteBtnMenuOptions: ButtonMenuItemOptionsVerifiable;
+  /** The chat's own Delete, whose text depends on what the chat is (Delete Group, Leave Channel…). */
+  private deleteChatBtnMenuOptions: ButtonMenuItemOptionsVerifiable;
 
-  private chatActions: ChatActions;
-  private chatRequests: ChatRequests;
-  private chatRemoveFee: ChatRemoveFee;
-  private chatLive: ChatLive;
-  private chatTranslation: ChatTranslation;
-  private chatSponsored: ChatTopbarSponsored;
-  public pinnedMessage: ChatPinnedMessage;
-  private pinnedContainers: PinnedContainer[];
+  public plates: TopbarPlates;
+  public pinnedMessage: ChatPinnedMessageController;
 
-  private setUtilsRAF: number;
 
   public listenerSetter: ListenerSetter;
 
@@ -152,10 +136,16 @@ export default class ChatTopbar {
     this.container.classList.add('sidebar-header', 'topbar', 'hide');
     this.container.dataset.floating = '0';
 
-    this.btnBack = ButtonIcon('left sidebar-close-button', {noRipple: true});
-    this.btnBackBadge = createBadge('span', 20, 'primary');
-    this.btnBackBadge.classList.add('back-unread-badge');
-    this.btnBack.append(this.btnBackBadge);
+    // Preview mode swaps the back arrow for a close icon — the popup wires this up to its
+    // own hide() via `chat.onPreviewClose`, and the folder back-unread badge is irrelevant
+    // here (there's no folder navigation behind a floating preview).
+    const backIcon = this.chat.isPreview ? 'close' : 'left';
+    this.btnBack = ButtonIcon(`${backIcon} sidebar-close-button`, {noRipple: true, ariaLabel: 'Close'});
+    if(!this.chat.isPreview) {
+      this.btnBackBadge = createBadge('span', 20, 'primary');
+      this.btnBackBadge.classList.add('back-unread-badge');
+      this.btnBack.append(this.btnBackBadge);
+    }
 
     // * chat info section
     this.chatInfoContainer = document.createElement('div');
@@ -194,18 +184,15 @@ export default class ChatTopbar {
     this.chatUtils = document.createElement('div');
     this.chatUtils.classList.add('chat-utils');
 
-    this.chatRequests = new ChatRequests(this, this.chat, this.managers);
-    this.chatActions = new ChatActions(this, this.chat, this.managers);
-    this.chatRemoveFee = new ChatRemoveFee(this, this.chat, this.managers);
-    if(IS_LIVE_STREAM_SUPPORTED) this.chatLive = new ChatLive(this, this.chat, this.managers);
-    this.chatTranslation = new ChatTranslation(this, this.chat, this.managers);
-    this.chatSponsored = new ChatTopbarSponsored(this, this.chat, this.managers);
+    this.plates = createTopbarPlates(this, this.chat, this.managers);
 
     if(this.menuButtons.length) {
       this.btnMore = ButtonMenuToggle({
+        buttonOptions: {ariaLabel: 'MultiAccount.More'},
         listenerSetter: this.listenerSetter,
         direction: 'bottom-left',
         buttons: this.menuButtons,
+        positionPadding: {top: 7},
         onOpenBefore: async() => {
           const hasAutoDeleteButton = await this.chat.canManageAutoDelete();
           if(!hasAutoDeleteButton) return;
@@ -214,7 +201,7 @@ export default class ChatTopbar {
           this.autoDeleteBtnMenuOptions.iconElement = createAutoDeleteIcon(period);
         },
         onOpen: async(e, element) => {
-          const deleteButton = this.menuButtons[this.menuButtons.length - 1];
+          const deleteButton = this.deleteChatBtnMenuOptions;
           if(deleteButton?.element) {
             const deleteButtonText = await this.managers.appPeersManager.getDeleteButtonText(this.chat.monoforumThreadId || this.peerId);
             deleteButton.element.lastChild.replaceWith(i18n(deleteButtonText));
@@ -231,13 +218,10 @@ export default class ChatTopbar {
     this.chatUtils.append(...[
       // this.chatAudio ? this.chatAudio.divAndCaption.container : null,
       // this.pinnedMessage ? this.pinnedMessage.pinnedMessageContainer.divAndCaption.container : null,
-      this.btnJoin,
-      this.btnDirectMessages,
-      this.btnPinned,
+      // btnJoin / btnMute / btnDirectMessages moved into the chat-input control plate (see input.ts).
       this.btnCall,
       this.btnGroupCall,
       this.btnGroupCallMenu,
-      this.btnMute,
       this.btnSearch,
       this.btnLogFilters,
       this.btnMore
@@ -246,24 +230,24 @@ export default class ChatTopbar {
     this.pushButtonToVerify(this.btnCall, this.verifyCallButton.bind(this, 'voice'));
     this.pushButtonToVerify(this.btnGroupCall, this.verifyVideoChatButton.bind(this, 'nonadmin'));
     this.pushButtonToVerify(this.btnGroupCallMenu, this.verifyRtmpButton.bind(this));
-    this.pushButtonToVerify(this.btnDirectMessages, this.verifyDirectMessagesButton.bind(this));
 
-    this.chatInfoContainer.append(this.btnBack, this.chatInfo, this.chatUtils);
+    // Preview keeps only the basic header — avatar + title + subtitle. The chat-utils
+    // pane (search / menu buttons) and the floating-plates wrapper (call / pinned /
+    // translation / action bar) are built so the rest of the JS can call methods on
+    // them, but never attached to the live DOM tree. They sit detached, so nothing
+    // visible leaks into the popup.
+    this.chatInfoContainer.append(this.btnBack, this.chatInfo);
+    if(!this.chat.isPreview) this.chatInfoContainer.append(this.chatUtils);
     this.container.append(this.chatInfoContainer);
 
-    if(this.pinnedMessage) {
-      this.appendPinnedMessage(this.pinnedMessage);
-    }
+    this.floatingPlatesWrapper = document.createElement('div');
+    this.floatingPlatesWrapper.classList.add('topbar-floating-plates', 'hide');
+    if(!this.chat.isPreview) this.container.append(this.floatingPlatesWrapper);
 
-    const pinnedContainers = this.pinnedContainers = [
-      this.chatRequests,
-      this.chatActions,
-      this.chatLive,
-      this.chatTranslation,
-      this.chatRemoveFee,
-      this.chatSponsored
-    ].filter(Boolean);
-    this.container.append(...pinnedContainers.map((pinnedContainer) => pinnedContainer.container));
+    // the pinned plate is prepended here by `revealPreparedPinnedMessage`, in the
+    // same frame as the bubbles it belongs to
+
+    this.plates.mount(this.floatingPlatesWrapper);
 
     // * construction end
 
@@ -276,7 +260,6 @@ export default class ChatTopbar {
       if(
         findUpClassName(e.target, 'topbar-search-container') ||
         !(e.target as HTMLElement).isConnected ||
-        findUpClassName(e.target, 'pinned-translation') ||
         findUpClassName(e.target, 'chat-search-top')
       ) {
         return;
@@ -285,18 +268,7 @@ export default class ChatTopbar {
       const container = findUpClassName(e.target, 'pinned-container');
       blurActiveElement();
       if(container) {
-        cancelEvent(e);
-
-        if(findUpClassName(e.target, 'progress-line') || findUpClassName(e.target, 'pinned-container-wrapper-utils')) {
-          return;
-        }
-
-        const mid = +container.dataset.mid;
-        if(container.classList.contains('pinned-message')) {
-          // if(!this.pinnedMessage.locked) {
-          this.pinnedMessage.followPinnedMessage(mid);
-          // }
-        }
+        return;
       } else {
         const avatar = findUpAvatar(e.target);
         if(mediaSizes.activeScreen === ScreenSize.medium && document.body.classList.contains(LEFT_COLUMN_ACTIVE_CLASSNAME)) {
@@ -316,6 +288,11 @@ export default class ChatTopbar {
     const onBtnBackClick = (e?: Event) => {
       if(e) {
         cancelEvent(e);
+      }
+
+      if(this.chat.isPreview) {
+        this.chat.onPreviewClose?.();
+        return;
       }
 
       if(this.chat.type === ChatType.Search) {
@@ -353,7 +330,7 @@ export default class ChatTopbar {
       }));
 
       results.forEach(({button, result}) => {
-        button.element.classList.toggle('hide', !result);
+        button.element?.classList.toggle('hide', !result);
       });
     };
 
@@ -417,6 +394,9 @@ export default class ChatTopbar {
     }
 
     const fullChat = await this.managers.appProfileManager.getChatFull(chatId);
+    if(!('call' in fullChat) || !fullChat.call) {
+      return false;
+    }
     const inputGroupCall = fullChat.call as InputGroupCall.inputGroupCall;
     const groupCall = await this.managers.appGroupCallsManager.getGroupCallFull(
       inputGroupCall.id
@@ -434,13 +414,36 @@ export default class ChatTopbar {
     return !!userFull && !!(type === 'voice' ? userFull.pFlags.phone_calls_available : userFull.pFlags.video_calls_available);
   };
 
-  private verifyDirectMessagesButton = async() => {
-    if(!this.peerId.isAnyChat()) return false;
-    const chat = this.chat.peer;
-    if(chat._ !== 'channel') return false;
+  private verifyIfCanReportChat = () => {
+    if(
+      this.chat.type !== ChatType.Chat ||
+      this.chat.threadId ||
+      this.chat.isMonoforum
+    ) {
+      return false;
+    }
 
-    return !!(!chat.admin_rights && !chat.pFlags.monoforum && chat.linked_monoforum_id);
+    const peer = this.chat.peer;
+    if(peer?._ === 'user') {
+      return canReportBot(this.peerId, peer);
+    }
+
+    return !!peer && (peer._ === 'chat' || peer._ === 'channel') && !peer.pFlags.creator;
   };
+
+  private verifyIfCanClearHistory = async() => {
+    if(
+      this.chat.type !== ChatType.Chat ||
+      this.chat.threadId ||
+      this.chat.monoforumThreadId ||
+      this.chat.isMonoforum
+    ) {
+      return false;
+    }
+
+    return canClearHistory(this.chat.peer) &&
+      !!(await this.managers.appMessagesManager.getDialogOnly(this.peerId));
+  }
 
   private verifyIfCanDeleteChat = async() => {
     if(this.chat.isMonoforum) {
@@ -467,15 +470,14 @@ export default class ChatTopbar {
       direction: 'left-start'
     });
 
-    const onBoostClick = async() => {
-      const {peerId} = this;
-      if(await this.managers.appProfileManager.canViewStatistics(peerId)) {
-        this.appSidebarRight.createTab(AppBoostsTab).open(this.peerId);
-        this.appSidebarRight.toggleSidebar(true);
-      } else {
-        PopupElement.createPopup(PopupBoost, this.peerId);
-      }
-    };
+    const onBoostClick = () => openBoosts({peerId: this.peerId, slider: this.appSidebarRight});
+
+    const getBotAddToChatAction = () => this.peerId.isUser() && getAddBotToChatAction(
+      this.chat.peer as User.user,
+      this.chat.fullPeer() as UserFull.userFull
+    );
+    const onAddBotToChat = () => showAddBotToChat({botId: this.peerId.toUserId()});
+    const verifyAddBotToChat = (text: LangPackKey) => () => getBotAddToChatAction()?.text === text;
 
     this.menuButtons = [this.autoDeleteBtnMenuOptions, {
       icon: 'search',
@@ -490,7 +492,7 @@ export default class ChatTopbar {
       onClick: () => {
         this.onFilterActionsClick();
       },
-      verify: () => mediaSizes.isMobile
+      verify: () => mediaSizes.isMobile && this.chat.type === ChatType.Logs
     }, /* {
       icon: 'pinlist',
       text: 'Pinned Messages',
@@ -550,6 +552,11 @@ export default class ChatTopbar {
         this.chat.appImManager.toggleViewAsMessages(this.peerId, false);
       },
       verify: async() => {
+        // the flag outlives the forum it was set for, so ask the peer too
+        if(!apiManagerProxy.isForum(this.peerId)) {
+          return false;
+        }
+
         const dialog = await this.managers.appMessagesManager.getDialogOnly(this.peerId);
         return !!(dialog && (dialog as Dialog.dialog).pFlags.view_forum_as_messages);
       }
@@ -602,12 +609,28 @@ export default class ChatTopbar {
       },
       verify: async() => !this.chat.isBot && (this.chat.monoforumThreadId || this.peerId).isUser() && !(await this.managers.appPeersManager.isContact(this.chat.monoforumThreadId || this.peerId))
     }, {
+      icon: 'adduser',
+      text: 'AddToGroup',
+      onClick: onAddBotToChat,
+      verify: verifyAddBotToChat('AddToGroup')
+    }, {
+      icon: 'adduser',
+      text: 'BotAddToGroupOrChannel',
+      onClick: onAddBotToChat,
+      verify: verifyAddBotToChat('BotAddToGroupOrChannel')
+    }, {
+      icon: 'adduser',
+      text: 'AddToChannel',
+      onClick: onAddBotToChat,
+      verify: verifyAddBotToChat('AddToChannel')
+    }, {
       icon: 'forward',
       text: 'ShareContact',
       onClick: () => {
         const contactPeerId = this.peerId;
-        PopupPickUser.createSharingPicker({
-          onSelect: async(peerId, _, monoforumThreadId) => {
+        showSharingPickerPopup({
+          onSelect: async(chosen) => {
+            const {peerId, monoforumThreadId} = chosen[0];
             const preparedPaymentResult = await PaidMessagesInterceptor.prepareStarsForPayment({messageCount: 1, peerId});
             if(preparedPaymentResult === PAYMENT_REJECTED) throw new Error();
 
@@ -619,7 +642,7 @@ export default class ChatTopbar {
             if(preparedPaymentResult) return void send();
 
             return new Promise((resolve, reject) => {
-              PopupElement.createPopup(PopupPeer, '', {
+              showPeerPopup('', {
                 titleLangKey: 'SendMessageTitle',
                 descriptionLangKey: 'SendContactToGroupText',
                 descriptionLangArgs: [new PeerTitle({peerId, dialog: true}).element],
@@ -636,9 +659,8 @@ export default class ChatTopbar {
                   },
                   isCancel: true
                 }],
-                peerId,
-                overlayClosable: true
-              }).show();
+                peerId
+              });
             });
           }
         });
@@ -647,7 +669,7 @@ export default class ChatTopbar {
     }, {
       icon: 'gift',
       text: 'Chat.Menu.SendGift',
-      onClick: () => PopupElement.createPopup(PopupSendGift, {peerId: this.peerId}),
+      onClick: () => showSendGiftPopup({peerId: this.peerId}),
       verify: async() => (
         this.chat.isChannel || (this.chat.peerId.isUser() && !this.chat.isBot && (await this.managers.appUsersManager.isRegularUser(this.peerId)))
       ) && !(this.chat.type === ChatType.Logs)
@@ -657,7 +679,7 @@ export default class ChatTopbar {
       onClick: () => this.onDirectMessagesClick(),
       verify: () => this.chat.isChannel && this.chat.canManageDirectMessages && !this.chat.isMonoforum && !!(this.chat.peer as MTChat.channel).linked_monoforum_id && this.chat.type !== ChatType.Logs
     }, {
-      icon: 'statistics',
+      icon: 'statistics_chart',
       text: 'Statistics',
       onClick: () => {
         this.appSidebarRight.createTab(AppStatisticsTab).open(this.peerId.toChatId());
@@ -708,7 +730,7 @@ export default class ChatTopbar {
         }
 
         const fullPeer = await this.managers.appProfileManager.getCachedProfileByPeerId(this.peerId);
-        return fullPeer && !!fullPeer.pFlags.translations_disabled;
+        return fullPeer && 'pFlags' in fullPeer && !!fullPeer.pFlags.translations_disabled;
       }
     }, {
       icon: 'lock',
@@ -738,7 +760,7 @@ export default class ChatTopbar {
       text: 'DisableSharing',
       onClick: () => {
         if(!rootScope.premium) {
-          PopupPremium.show({feature: 'pm_noforwards'});
+          showPremiumPopup({feature: 'pm_noforwards'});
           return;
         }
 
@@ -816,12 +838,25 @@ export default class ChatTopbar {
       }),
       verify: () => this.chat.type === ChatType.Logs
     }, {
+      icon: 'flag',
+      text: 'ReportChat',
+      onClick: () => {
+        showPeerReport(this.peerId);
+      },
+      verify: this.verifyIfCanReportChat
+    }, {
+      icon: 'message_crossed',
+      text: 'ClearHistory',
+      onClick: () => {
+        clearHistoryWithConfirmation({peerId: this.peerId, managers: this.managers});
+      },
+      verify: this.verifyIfCanClearHistory
+    }, {
       icon: 'delete',
       danger: true,
       text: 'Delete',
       onClick: () => {
-        PopupElement.createPopup(
-          PopupDeleteDialog,
+        showDeleteDialogPopup(
           this.chat.monoforumThreadId || this.peerId,
           undefined,
           undefined,
@@ -831,13 +866,36 @@ export default class ChatTopbar {
       },
       verify: this.verifyIfCanDeleteChat
     }];
+    this.deleteChatBtnMenuOptions = this.menuButtons[this.menuButtons.length - 1];
 
-    this.btnSearch = ButtonIcon('search');
+    // the welcome messages section has one thing to offer: clearing them all (desktop's menu)
+    this.menuButtons.forEach((button) => {
+      const verify = button.verify;
+      button.verify = () => this.chat.type !== ChatType.Welcome && (verify ? verify() : true);
+    });
+    this.menuButtons.push({
+      icon: 'delete',
+      danger: true,
+      text: 'WelcomeMessages.DeleteAll',
+      onClick: () => {
+        const peerId = this.peerId;
+        confirmationPopup({
+          descriptionLangKey: 'WelcomeMessages.DeleteAllSure',
+          button: {langKey: 'Delete', isDanger: true}
+        }).then(() => {
+          this.managers.appMessagesManager.deleteAllWelcomeMessages(peerId);
+        }, noop);
+      },
+      verify: async() => this.chat.type === ChatType.Welcome &&
+        !!(await this.managers.appMessagesManager.getWelcomeMessagesCount(this.peerId))
+    });
+
+    this.btnSearch = ButtonIcon('search', {ariaLabel: 'Search'});
     this.attachClickEvent(this.btnSearch, (e) => {
       this.chat.initSearch();
     }, true);
 
-    this.btnLogFilters = ButtonIcon('filter');
+    this.btnLogFilters = ButtonIcon('filter', {ariaLabel: 'AdminRecentActionsFilters.ByType'});
     this.attachClickEvent(this.btnLogFilters, () => {
       this.onFilterActionsClick();
     });
@@ -845,9 +903,16 @@ export default class ChatTopbar {
 
   public addContact() {
     if(!this.appSidebarRight.isTabExists(AppEditContactTab)) {
-      const tab = this.appSidebarRight.createTab(AppEditContactTab);
-      tab.peerId = this.peerId;
-      tab.open();
+      this.appSidebarRight.createTab(AppEditContactTab).open(this.peerId);
+
+      this.appSidebarRight.toggleSidebar(true);
+    }
+  }
+
+  /** Bot we manage — opens the same tab as the profile's edit button. */
+  public editBot() {
+    if(!this.appSidebarRight.isTabExists(AppEditBotTab)) {
+      this.appSidebarRight.createTab(AppEditBotTab).open(this.peerId);
 
       this.appSidebarRight.toggleSidebar(true);
     }
@@ -933,9 +998,9 @@ export default class ChatTopbar {
   };
 
   private onFilterActionsClick = wrapAsyncClickHandler(async() => {
-    const {default: LogFiltersPopup} = await import('./logFiltersPopup');
+    const {default: showLogFiltersPopup} = await import('./logFiltersPopup');
 
-    new LogFiltersPopup({
+    showLogFiltersPopup({
       channelId: this.peerId.toChatId(),
       isBroadcast: this.chat.isBroadcast,
       committedFilters: this.chat.bubbles.committedLogsFilters,
@@ -943,8 +1008,20 @@ export default class ChatTopbar {
       onFinish: ({committedFilters}) => {
         this.chat.bubbles.setLogFilters(committedFilters);
       }
-    }).show();
+    });
   })
+
+  /**
+   * The welcome section's menu holds one action, "Delete All": the button is there while there is
+   * something to delete. `load` asks the server on opening (shared with the list's own request).
+   */
+  private async updateWelcomeMoreButton(load?: boolean) {
+    const {peerId, btnMore} = this;
+    if(this.chat.type !== ChatType.Welcome || !btnMore) return;
+    const count = await this.managers.appMessagesManager.getWelcomeMessagesCount(peerId, load);
+    if(this.peerId !== peerId || this.chat.type !== ChatType.Welcome) return;
+    btnMore.classList.toggle('hide', !count);
+  }
 
   private get peerId() {
     return this.chat.peerId;
@@ -954,13 +1031,15 @@ export default class ChatTopbar {
     this.subtitle = document.createElement('div');
     this.subtitle.classList.add('info');
 
-    this.pinnedMessage = new ChatPinnedMessage(this, this.chat, this.managers);
+    // No plate here: `setupPinnedMessageForPeer` builds one per peer/thread and
+    // installs it in `revealPreparedPinnedMessage`. Creating one eagerly only
+    // produced a throwaway plate (rendered, listened, then destroyed on the
+    // first peer change) whose `isStatic` was decided before the chat had a type.
 
-    this.btnJoin = Button('btn-primary btn-color-primary chat-join hide');
-    this.btnDirectMessages = ButtonIcon('message force-show-on-mobile');
-    this.btnCall = ButtonIcon('phone');
-    this.btnGroupCall = ButtonIcon('videochat');
+    this.btnCall = ButtonIcon('phone', {ariaLabel: 'Call'});
+    this.btnGroupCall = ButtonIcon('videochat', {ariaLabel: 'PeerInfo.Action.VoiceChat'});
     this.btnGroupCallMenu = ButtonMenuToggle({
+      buttonOptions: {ariaLabel: 'PeerInfo.Action.VoiceChat'},
       listenerSetter: this.listenerSetter,
       direction: 'bottom-left',
       buttons: [{
@@ -971,37 +1050,25 @@ export default class ChatTopbar {
         icon: 'link',
         text: 'Rtmp.Topbar.StreamWith',
         onClick: () => {
-          PopupElement.createPopup(RtmpStartStreamPopup, {peerId: this.peerId}).show();
+          showRtmpStartStreamPopup({peerId: this.peerId});
         },
         verify: () => IS_LIVE_STREAM_SUPPORTED
       }],
       icon: 'videochat'
     });
-    this.btnPinned = ButtonIcon('pinlist chat-pinlist');
-    this.btnMute = ButtonIcon('mute');
-
     this.attachClickEvent(this.btnCall, this.onCallClick.bind(this, 'voice'));
     this.attachClickEvent(this.btnGroupCall, this.onJoinGroupCallClick);
 
-    this.attachClickEvent(this.btnPinned, () => {
-      this.openPinned(true);
+    this.listenerSetter.add(rootScope)('welcome_message_new', (message) => {
+      if(message.peerId === this.peerId) void this.updateWelcomeMoreButton();
     });
 
-    this.attachClickEvent(this.btnMute, () => {
-      const muted = !!+this.btnMute.dataset.muted;
-      if(muted) {
-        this.onUnmuteClick();
-      } else {
-        this.onMuteClick();
-      }
+    this.listenerSetter.add(rootScope)('welcome_messages_delete', ({peerId}) => {
+      if(peerId === this.peerId) void this.updateWelcomeMoreButton();
     });
-
-    this.attachClickEvent(this.btnJoin, this.onJoinClick.bind(this, this.btnJoin));
-
-    this.attachClickEvent(this.btnDirectMessages, this.onDirectMessagesClick.bind(this));
 
     this.listenerSetter.add(rootScope)('folder_unread', (folder) => {
-      if(folder.id !== FOLDER_ID_ALL) {
+      if(!this.btnBackBadge || folder.id !== FOLDER_ID_ALL) {
         return;
       }
 
@@ -1018,15 +1085,7 @@ export default class ChatTopbar {
           return;
         }
 
-        this.btnJoin.classList.toggle('hide', !(chat as Channel)?.pFlags?.left);
-        this.setUtilsWidth();
         this.verifyButtons();
-      }
-    });
-
-    this.listenerSetter.add(rootScope)('dialog_notify_settings', (dialog) => {
-      if(dialog.peerId === this.peerId) {
-        this.setMutedState();
       }
     });
 
@@ -1042,7 +1101,7 @@ export default class ChatTopbar {
       }
 
       const middleware = this.chat.bubbles.getMiddleware();
-      this.chatRequests.set(
+      this.plates.requests.set(
         this.peerId,
         recentRequesters.map((userId) => userId.toPeerId(false)),
         requestsPending
@@ -1060,8 +1119,12 @@ export default class ChatTopbar {
         return;
       }
 
-      const callback = this.chatActions.set(peerId, settings);
+      const callback = this.plates.actions.set(peerId, settings);
       callback();
+    });
+
+    this.listenerSetter.add(rootScope)('chat_automation_update', (connectedBot) => {
+      this.plates.automation.handleConnectedBotUpdate(connectedBot?.bot_id as UserId);
     });
 
     this.listenerSetter.add(rootScope)('right_sidebar_toggle', () => {
@@ -1072,12 +1135,12 @@ export default class ChatTopbar {
       const middleware = this.chat.bubbles.getMiddleware();
       if(!middleware() || !this.pinnedMessage) return;
 
-      this.pinnedMessage.hidden = !!this.chat.appState.hiddenPinnedMessages[this.chat.peerId];
+      this.pinnedMessage.setUserHidden(!!this.chat.appState.hiddenPinnedMessages[getPinnedMessagesKey(this.chat.peerId, this.chat.threadId)]);
 
       if(isTopMessage) {
         this.pinnedMessage.unsetScrollDownListener();
         this.pinnedMessage.testMid(mid, 0); // * because slider will not let get bubble by document.elementFromPoint
-      } else if(!this.pinnedMessage.locked) {
+      } else if(!this.pinnedMessage.isLocked()) {
         this.pinnedMessage.handleFollowingPinnedMessage();
         this.pinnedMessage.testMid(mid);
       }
@@ -1099,7 +1162,7 @@ export default class ChatTopbar {
       const found = dialogs.find(dialog => dialog.parentPeerId === this.chat.peerId && dialog.peerId === this.chat.monoforumThreadId);
       if(!found) return;
 
-      const callback = await (await this.chatRemoveFee.setPeerId(this.chat.peerId)).result;
+      const callback = await (await this.plates.removeFee.setPeerId(this.chat.peerId)).result;
       callback();
     });
 
@@ -1112,9 +1175,13 @@ export default class ChatTopbar {
   }
 
   public openPinned(byCurrent: boolean) {
+    const currentMid = byCurrent ? +this.pinnedMessage.container.dataset.mid : 0;
     this.chat.appImManager.setInnerPeer({
       peerId: this.peerId,
-      lastMsgId: byCurrent ? +this.pinnedMessage.pinnedMessageContainer.container.dataset.mid : 0,
+      // the pinned list is per-topic in a forum — without the thread the tab
+      // would list every pin of the forum instead of this topic's
+      threadId: this.chat.threadId,
+      lastMsgId: currentMid || 0,
       type: ChatType.Pinned
     });
   }
@@ -1123,24 +1190,10 @@ export default class ChatTopbar {
     const middleware = this.chat.bubbles.getMiddleware();
     button.setAttribute('disabled', 'true');
 
-    const chatId = this.peerId.toChatId();
-    let promise: Promise<any>;
-    if(await this.managers.appChatsManager.isChannel(chatId)) {
-      promise = this.managers.appChatsManager.joinChannel(chatId);
-    } else {
-      promise = this.managers.appChatsManager.addChatUser(chatId, rootScope.myId);
-    }
-
-    promise.catch((err) => {
-      assumeType<ApiError>(err);
-      switch(err.type) {
-        case 'INVITE_REQUEST_SENT': {
-          toastNew({langPackKey: 'Chat.SendJoinRequest.Info'});
-          return;
-        }
-      }
-
-      throw err;
+    joinChat({
+      peerId: this.peerId,
+      managers: this.managers,
+      appImManager: this.chat.appImManager
     }).finally(() => {
       if(!middleware()) {
         return;
@@ -1165,7 +1218,7 @@ export default class ChatTopbar {
   };
 
   private onMuteClick = () => {
-    PopupElement.createPopup(PopupMute, this.peerId);
+    showMutePopup(this.peerId);
   };
 
   private onUnmuteClick = () => {
@@ -1173,14 +1226,10 @@ export default class ChatTopbar {
   };
 
   private onResize = () => {
-    this.setUtilsWidth(true);
     this.setFloating();
   };
 
   private onChangeScreen = (from: ScreenSize, to: ScreenSize) => {
-    const isFloating = to === ScreenSize.mobile || PINNED_ALWAYS_FLOATING;
-    // this.chatAudio && this.chatAudio.divAndCaption.container.classList.toggle('is-floating', to === ScreenSize.mobile);
-    this.pinnedMessage && this.pinnedMessage.pinnedMessageContainer.container.classList.toggle('is-floating', isFloating);
     this.onResize();
   };
 
@@ -1192,14 +1241,10 @@ export default class ChatTopbar {
     this.titleMiddlewareHelper?.destroy();
     this.avatarMiddlewareHelper?.destroy();
     this.pinnedMessage?.destroy();
-    this.pinnedContainers?.forEach((pinnedContainer) => pinnedContainer.destroy());
+    this.plates?.destroy();
 
     delete this.pinnedMessage;
-    delete this.chatRequests;
-    delete this.chatActions;
-    delete this.chatLive;
-    delete this.chatTranslation;
-    delete this.chatRemoveFee;
+    delete this.plates;
   }
 
   public cleanup() {
@@ -1208,17 +1253,131 @@ export default class ChatTopbar {
     }
   }
 
-  private appendPinnedMessage(pinnedMessage: ChatPinnedMessage) {
-    const container = pinnedMessage.pinnedMessageContainer.container;
+  private appendPinnedMessage(pinnedMessage: ChatPinnedMessageController) {
+    const container = pinnedMessage.container;
     if(this.pinnedMessage && this.pinnedMessage !== pinnedMessage) {
-      this.pinnedMessage.pinnedMessageContainer.container.replaceWith(container);
+      this.pinnedMessage.container.replaceWith(container);
     } else {
-      if(PINNED_ALWAYS_FLOATING) {
-        this.container.append(container);
-      } else {
-        this.chatUtils.prepend(container);
+      this.floatingPlatesWrapper.prepend(container);
+    }
+  }
+
+  private pinnedMessageSetupForKey: string | undefined;
+  /**
+   * Plate swap deferred from `setupPinnedMessageForPeer` until the
+   * bubbles-mount moment inside `bubbles.setPeer`. `kind='install'`
+   * carries a detached new plate and (optionally) a `prepareInitialPromise`
+   * that resolves once the new plate's content is rendered — awaited in
+   * `finishPeerChange`'s `Promise.all`, so by the time
+   * `revealPreparedPinnedMessage` runs the plate and bubbles paint together. `kind='destroy'` means the new peer has no plate,
+   * but the old one must stay visible until bubbles swap.
+   */
+  private pendingPinnedSetup:
+    | {kind: 'install', newPlate: ChatPinnedMessageController, prepareInitialPromise?: Promise<void>}
+    | {kind: 'destroy'}
+    | null = null;
+
+  /**
+   * Prepare the pinned-message plate for the chat's current peer. Called
+   * from `finishPeerChange` alongside the other plates (after
+   * `onChangePeer` has updated `messagesStorageKey` / `this.type` /
+   * etc), so peer-derived lookups inside `prepareInitial` already point
+   * at the new peer.
+   *
+   * Does NOT touch the DOM — the change is staged into
+   * `pendingPinnedSetup` and applied atomically by
+   * `revealPreparedPinnedMessage` right before bubbles mount, so plate
+   * and bubbles paint in the same frame.
+   *
+   * Idempotent per peer + thread. Returns the `prepareInitial` promise
+   * (if any) so callers can await content readiness in parallel with the
+   * other `finishPeerChange` promises.
+   */
+  public setupPinnedMessageForPeer(): Promise<void> | undefined {
+    const peerId = this.chat.peerId;
+    const threadId = this.chat.threadId;
+    // The pinned list is per-topic in a forum, and on mobile the same chat
+    // instance is reused across peer changes — keying on peerId alone would
+    // keep the previous topic's plate on a topic switch.
+    const setupKey = peerId + (threadId ? '_' + threadId : '');
+    if(this.pinnedMessageSetupForKey === setupKey) {
+      return this.pendingPinnedSetup?.kind === 'install' ?
+        this.pendingPinnedSetup.prepareInitialPromise :
+        undefined;
+    }
+    this.pinnedMessageSetupForKey = setupKey;
+
+    // Drop an orphaned pending plate from an even earlier peer change.
+    if(this.pendingPinnedSetup?.kind === 'install') {
+      this.pendingPinnedSetup.newPlate.destroy();
+    }
+    this.pendingPinnedSetup = null;
+
+    const isPinnedMessagesNeeded = this.chat.isPinnedMessagesNeeded();
+    const wantsPlate = isPinnedMessagesNeeded || this.chat.type === ChatType.Discussion;
+    if(!wantsPlate) {
+      if(this.pinnedMessage) {
+        this.pendingPinnedSetup = {kind: 'destroy'};
+      }
+      return;
+    }
+
+    const newPlate = createChatPinnedMessage(this, this.chat, this.managers);
+    let prepareInitialPromise: Promise<void> | undefined;
+
+    if(this.chat.type === ChatType.Discussion) {
+      newPlate.setStaticMessage(this.chat.threadId);
+    } else {
+      newPlate.setUserHidden(!!this.chat.appState.hiddenPinnedMessages[getPinnedMessagesKey(peerId, threadId)]);
+      const savedPosition = this.chat.appImManager.getChatSavedPosition(this.chat);
+      const cachedFull = untrack(() => this.chat.fullPeer());
+      // Prefer the full saved plate state (mid + index + count) so the
+      // plate restores exactly the view the user left on — including the
+      // pin-list border indicator and counter. Fall back to fullPeer's
+      // `pinned_msg_id`, which is always the newest pin (index 0).
+      // `pinned_msg_id` is peer-scoped. In a forum topic the pinned list is
+      // per-topic (the plate fetches it with `threadId`), so seeding from it
+      // would paint a foreign pin — or any pin at all in a topic that has
+      // none — until the thread-scoped fetch resolves and hides it again.
+      const pinnedMessageId = !threadId && cachedFull && 'pinned_msg_id' in cachedFull ?
+        cachedFull.pinned_msg_id :
+        undefined;
+      const hint = savedPosition?.pinnedMessages ||
+        (pinnedMessageId ? {mid: pinnedMessageId, index: 0, count: 1} : undefined);
+      if(hint) {
+        prepareInitialPromise = newPlate.prepareInitial(hint);
       }
     }
+
+    this.pendingPinnedSetup = {kind: 'install', newPlate, prepareInitialPromise};
+    return prepareInitialPromise;
+  }
+
+  /**
+   * Apply the deferred plate change synchronously. Called from the
+   * `finishPeerChange` sync callback, *after* `Promise.all(promises)`
+   * already awaited `prepareInitialPromise` — so the new plate's content
+   * is in the DOM by now. The install + reveal lands in the same task as
+   * the surrounding bubbles work, painting together.
+   */
+  public revealPreparedPinnedMessage() {
+    const pending = this.pendingPinnedSetup;
+    if(!pending) {
+      this.pinnedMessage?.revealPrepared();
+      return;
+    }
+    this.pendingPinnedSetup = null;
+
+    const old = this.pinnedMessage;
+    if(pending.kind === 'install') {
+      this.appendPinnedMessage(pending.newPlate);
+      this.pinnedMessage = pending.newPlate;
+      pending.newPlate.revealPrepared();
+    } else {
+      this.pinnedMessage = undefined;
+    }
+    old?.destroy();
+    this.setFloating();
   }
 
   public async finishPeerChange(options: Parameters<Chat['finishPeerChange']>[0]) {
@@ -1243,11 +1402,12 @@ export default class ChatTopbar {
         newAvatar = avatarNew({
           middleware: (newAvatarMiddlewareHelper = getMiddleware()).get(),
           isDialog: true,
-          size: 42,
+          size: 40,
           peerId: usePeerId,
           threadId: useThreadId,
-          wrapOptions: {customEmojiSize: makeMediaSize(32, 32)},
+          wrapOptions: {customEmojiSize: makeMediaSize(30, 30)},
           withStories: true,
+          withVideoAvatar: true,
           meAsNotes: isSaved
         });
         newAvatar.node.classList.add('person-avatar');
@@ -1266,10 +1426,11 @@ export default class ChatTopbar {
       newAvatar?.readyThumbPromise,
       this.setTitleManual(),
       status?.prepare(true),
-      modifyAckedPromise(this.chatRequests?.setPeerId(peerId)),
-      modifyAckedPromise(this.chatActions?.setPeerId(peerId)),
-      modifyAckedPromise(this.chatRemoveFee?.setPeerId(peerId)),
-      this.chat.type === ChatType.Chat ? await modifyAckedPromise(this.chat.getAutoDeletePeriod()) : undefined
+      modifyAckedPromise(this.plates.requests.setPeerId(peerId)),
+      modifyAckedPromise(this.plates.actions.setPeerId(peerId)),
+      modifyAckedPromise(this.plates.removeFee.setPeerId(peerId)),
+      this.chat.type === ChatType.Chat ? await modifyAckedPromise(this.chat.getAutoDeletePeriod()) : undefined,
+      this.setupPinnedMessageForPeer()
     ] as const;
 
     const [
@@ -1282,7 +1443,8 @@ export default class ChatTopbar {
       setRequestsCallback,
       setActionsCallback,
       setChatRemoveFeeCallback,
-      autoDeletePeriod
+      autoDeletePeriod,
+      _pinnedReady
     ] = await Promise.all(promises);
 
     if(!middleware() && newAvatarMiddlewareHelper) {
@@ -1290,18 +1452,8 @@ export default class ChatTopbar {
     }
 
     return () => {
-      const canHaveSomeButtons = !(this.chat.type === ChatType.Pinned || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Static || this.chat.type === ChatType.Logs);
+      const canHaveSomeButtons = !(this.chat.type === ChatType.Pinned || this.chat.type === ChatType.Scheduled || this.chat.type === ChatType.Welcome || this.chat.type === ChatType.Static || this.chat.type === ChatType.Logs);
       const canHaveSearch = canHaveSomeButtons || this.chat.type === ChatType.Logs;
-
-      this.btnMute && this.btnMute.classList.toggle('hide', !isBroadcast || !canHaveSomeButtons);
-      if(this.btnJoin) {
-        if(isBroadcast && !this.chat.isRestricted && canHaveSomeButtons) {
-          replaceContent(this.btnJoin, i18n(isBroadcast ? 'Chat.Subscribe' : 'ChannelJoin'));
-          this.btnJoin.classList.toggle('hide', !(chat as MTChat.chat)?.pFlags?.left);
-        } else {
-          this.btnJoin.classList.add('hide');
-        }
-      }
 
       if(this.btnSearch) {
         this.btnSearch.classList.toggle('hide', !canHaveSearch);
@@ -1309,10 +1461,6 @@ export default class ChatTopbar {
 
       if(this.btnLogFilters) {
         this.btnLogFilters.classList.toggle('hide', this.chat.type !== ChatType.Logs);
-      }
-
-      if(this.btnPinned) {
-        this.btnPinned.classList.toggle('hide', !canHaveSomeButtons);
       }
 
       if(this.avatar !== newAvatar) {
@@ -1334,8 +1482,6 @@ export default class ChatTopbar {
         this.avatar?.setAutoDeletePeriod(value);
       });
 
-      this.setUtilsWidth();
-
       this.verifyButtons();
 
       const canHaveMore = canHaveSomeButtons || this.chat.type === ChatType.Logs;
@@ -1344,52 +1490,34 @@ export default class ChatTopbar {
         this.btnMore.classList.toggle('hide', !canHaveMore);
       }
 
-      const isPinnedMessagesNeeded = this.chat.isPinnedMessagesNeeded();
-      if(isPinnedMessagesNeeded || this.chat.type === ChatType.Discussion) {
-        if(this.chat.wasAlreadyUsed || !this.pinnedMessage) { // * change
-          const newPinnedMessage = new ChatPinnedMessage(this, this.chat, this.managers);
-          this.appendPinnedMessage(newPinnedMessage);
-          this.pinnedMessage?.destroy();
-          this.pinnedMessage = newPinnedMessage;
-        }
-
-        if(isPinnedMessagesNeeded) {
-          this.pinnedMessage.hidden = !!this.chat.appState.hiddenPinnedMessages[peerId];
-        } else if(this.chat.type === ChatType.Discussion) {
-          this.pinnedMessage.pinnedMid = this.chat.threadId;
-          this.pinnedMessage.count = 1;
-          this.pinnedMessage.pinnedIndex = 0;
-          this.pinnedMessage._setPinnedMessage();
-        }
-      } else if(this.pinnedMessage) {
-        this.pinnedMessage.destroy();
-        this.pinnedMessage = undefined;
+      if(this.chat.type === ChatType.Welcome) {
+        void this.updateWelcomeMoreButton(true);
       }
 
+      this.revealPreparedPinnedMessage();
       setTitleCallback();
       setStatusCallback?.();
 
       this.subtitle.classList.toggle('hide', !setStatusCallback);
-      this.setMutedState();
 
       this.container.classList.remove('hide');
 
       if(setRequestsCallback.result instanceof Promise) {
-        this.chatRequests.unset(peerId);
+        this.plates.requests.unset(peerId);
       }
 
       if(setActionsCallback.result instanceof Promise) {
-        this.chatActions.unset(peerId);
+        this.plates.actions.unset(peerId);
       }
 
       if(setChatRemoveFeeCallback.result instanceof Promise) {
-        this.chatRemoveFee.hide();
+        this.plates.removeFee.hide();
       }
 
-      this.chatLive?.setPeerId(peerId);
-      this.chatTranslation?.setPeerId(peerId);
-      this.chatRemoveFee?.setPeerId(peerId);
-      this.chatSponsored?.setPeerId(peerId);
+      this.plates.live?.setPeerId(peerId);
+      this.plates.groupCall?.setPeerId(peerId);
+      this.plates.translation.setPeerId(peerId);
+      this.plates.sponsored.setPeerId(peerId);
 
       callbackify(setRequestsCallback.result, (callback) => {
         if(!middleware()) {
@@ -1431,13 +1559,16 @@ export default class ChatTopbar {
       else titleEl = i18n('PinnedMessagesCount', [count]);
 
       if(count === undefined) {
-        this.managers.appMessagesManager.getSearchCounters(
-          peerId,
-          [{_: 'inputMessagesFilterPinned'}],
-          false
-        ).then((result) => {
+        // Not `messages.getSearchCounters`: for some peers the server answers it
+        // with an `inexact` count that undercounts badly — in Saved Messages it
+        // returns 5 while 17 messages are pinned (an exact answer there needs
+        // `saved_peer_id`, which the peer-wide pinned tab has no business
+        // sending). `getPinnedMessage` reads the count off the very
+        // `inputMessagesFilterPinned` search this tab's list is built from, so
+        // the title can't disagree with what's rendered under it — the same
+        // source the official clients use for this counter.
+        this.managers.appMessagesManager.getPinnedMessage(peerId, this.chat.threadId).then(({count}) => {
           if(!middleware()) return;
-          const count = result[0].count;
           this.setTitle(count);
 
           // ! костыль х2, это нужно делать в другом месте
@@ -1447,22 +1578,23 @@ export default class ChatTopbar {
             // ! костыль, это скроет закреплённые сообщения сразу, вместо того, чтобы ждать пока анимация перехода закончится
             const originalChat = this.chat.appImManager.chat;
             if(originalChat.topbar.pinnedMessage) {
-              originalChat.topbar.pinnedMessage.pinnedMessageContainer.toggle(true);
+              originalChat.topbar.pinnedMessage.setHidden(true);
             }
           }
         });
       }
     } else if(this.chat.type === ChatType.Scheduled) {
       titleEl = i18n(peerId === rootScope.myId ? 'Reminders' : 'ScheduledMessages');
+    } else if(this.chat.type === ChatType.Welcome) {
+      titleEl = i18n('WelcomeMessages.Title');
     } else if(this.chat.type === ChatType.Discussion) {
       const el = this.messagesCounter({
         middleware,
         key: 'Chat.Title.Comments',
         minusFirst: this.chat.isForum
       });
-      if(count === undefined) {
+      if(count === undefined && middleware()) {
         const historyStorage = this.chat.getHistoryStorage();
-        if(!middleware()) return;
         el.compareAndUpdate(typeof(historyStorage.count) !== 'number' ?
           {key: 'Loading', args: undefined} :
           {args: [historyStorage.count - (this.chat.isForum ? 1 : 0)]}
@@ -1484,13 +1616,21 @@ export default class ChatTopbar {
         })
         // generateTitleIcons(peerId)
       ]);
+    }
 
+    // Always a callback, never `undefined` — `setPeerCallbacks` and `setTitle`
+    // both call the result unconditionally, so bailing out here used to risk a
+    // 'setTitleCallback is not a function' in the middle of a peer change.
+    return () => {
+      // A newer `setTitleManual` destroyed our helper, so it owns the title now.
+      // Without this the pinned tab could end up stuck on 'Loading': the count
+      // resolves from cache before the caller gets around to invoking this
+      // callback, and the stale 'Loading' element would overwrite the count
+      // that the inner `setTitle(count)` already painted.
       if(!middleware()) {
         return;
       }
-    }
 
-    return () => {
       replaceContent(this.title, titleEl);
       // if(icons) {
       //   this.title.append(...icons);
@@ -1502,72 +1642,44 @@ export default class ChatTopbar {
     this.setTitleManual(count).then((setTitleCallback) => setTitleCallback());
   }
 
-  public async setMutedState() {
-    if(!this.btnMute) return;
-
-    const peerId = this.peerId;
-    const muted = await this.managers.appNotificationsManager.isPeerLocalMuted({peerId, respectType: false, threadId: this.chat.threadId});
-    const isBroadcast = await this.managers.appPeersManager.isBroadcast(peerId);
-    if(isBroadcast) {
-      replaceButtonIcon(this.btnMute, muted ? 'unmute' : 'mute');
-      this.btnMute.dataset.muted = '' + +muted;
-    }
-
-    this.btnMute.style.display = isBroadcast ? '' : 'none';
-  }
-
-  // ! У МЕНЯ ПРОСТО СГОРЕЛО, САФАРИ КОНЧЕННЫЙ БРАУЗЕР - ЕСЛИ НЕ СКРЫВАТЬ БЛОК, ТО ПРИ ПЕРЕВОРОТЕ ЭКРАНА НА АЙФОНЕ БЛОК БУДЕТ НЕПРАВИЛЬНО ШИРИНЫ, ДАЖЕ БЕЗ ЭТОЙ ФУНКЦИИ!
-  public setUtilsWidth = (resize = false) => {
-    // return;
-    if(this.setUtilsRAF) window.cancelAnimationFrame(this.setUtilsRAF);
-
-    if(IS_SAFARI && resize) {
-      this.chatUtils.classList.add('hide');
-    }
-
-    this.setUtilsRAF = window.requestAnimationFrame(() => {
-      if(IS_SAFARI && resize) {
-        this.chatUtils.classList.remove('hide');
-      }
-
-      const width = /* chatUtils.scrollWidth */this.chatUtils.getBoundingClientRect().width;
-      this.chat.log('utils width:', width);
-      this.container.style.setProperty('--utils-width', width + 'px');
-
-      this.setUtilsRAF = 0;
-    });
-  };
-
   public setFloating = () => {
+    // Preview omits `floatingPlatesWrapper` from the live DOM (see `construct`). The plate
+    // controllers still exist for the rest of the code, and a peer with a pinned message
+    // would mark the pinnedMessage plate visible — its hardcoded `height: 48` + TOPBAR_GAP
+    // would leak into `--pinned-floating-height` / `pinnedFloatingHeightPx` and inflate
+    // `bubbles-padding-top` from 56 to 112 above the first message. Bail early.
+    if(this.chat.isPreview) return;
     const containers = [
-      ...(this.pinnedContainers || []),
-      this.pinnedMessage?.pinnedMessageContainer
+      this.pinnedMessage,
+      ...(this.plates?.all || [])
     ].filter(Boolean);
-    let top = 56, floatingHeight = 0;
-    const count = containers.reduce((acc, container) => {
-      const isFloating = container.isFloating();
-      this.container.classList.toggle(`is-pinned-${container.className}-floating`, isFloating);
+    const TOPBAR_GAP = 8;
+    const PLATE_DIVIDER = 1;
 
-      if(!container.isVisible()) {
-        return acc;
-      }
+    const visible = containers.filter((container) => container.isVisible());
+    const count = visible.length;
 
-      if(isFloating) {
-        let height = container.height;
-        if(height === 'auto') {
-          height = container.container.offsetHeight;
-        }
-        floatingHeight += height;
-        container.container.style.top = top + 'px';
-        top += height;
-      } else {
-        container.container.style.top = '';
-      }
+    // Un-hide the wrapper BEFORE measuring any 'auto' plate height below. The
+    // wrapper is `display: none` while no plate is visible (count === 0), and an
+    // ancestor's `display: none` zeroes its descendants' offsetHeight — so the
+    // sponsored plate (the only `height: 'auto'` one), exactly when it is the
+    // plate that flips the count 0 → 1, would otherwise be measured at 0 and
+    // never reserve its padding-top, leaving it overlapping the chat content.
+    this.floatingPlatesWrapper.classList.toggle('hide', count === 0);
 
-      return acc + +isFloating;
-    }, 0);
+    let platesHeight = 0;
+    for(const container of visible) {
+      platesHeight += container.height === 'auto' ? container.container.offsetHeight : container.height;
+    }
+
+    const floatingHeight = count > 0 ? platesHeight + Math.max(0, count - 1) * PLATE_DIVIDER + TOPBAR_GAP : 0;
+    const reservedFloatingHeight = this.chat.container.classList.contains('is-search-active') ? 0 : floatingHeight;
     this.container.dataset.floating = '' + count;
-    this.container.style.setProperty('--pinned-floating-height', `calc(${floatingHeight}px + var(--topbar-floating-call-height) + var(--topbar-floating-audio-height))`);
+    this.chat.container.style.setProperty(
+      '--pinned-floating-height',
+      `calc(${reservedFloatingHeight}px + var(--topbar-floating-call-height) + var(--topbar-floating-audio-height))`
+    );
+    this.chat.updatePinnedFloatingHeight(reservedFloatingHeight);
   };
 
   private messagesCounter({

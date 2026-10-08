@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import setInnerHTML from '@helpers/dom/setInnerHTML';
 import {Middleware} from '@helpers/middleware';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
@@ -12,6 +6,8 @@ import PeerTitle from '@components/peerTitle';
 import Scrollable from '@components/scrollable';
 import AutocompleteHelper from '@components/chat/autocompleteHelper';
 import AutocompleteHelperController from '@components/chat/autocompleteHelperController';
+import Icon from '@components/icon';
+import I18n, {LangPackKey} from '@lib/langPack';
 
 export default class AutocompletePeerHelper extends AutocompleteHelper {
   protected static BASE_CLASS = 'autocomplete-peer-helper';
@@ -22,7 +18,8 @@ export default class AutocompletePeerHelper extends AutocompleteHelper {
     appendTo: HTMLElement,
     controller: AutocompleteHelperController,
     protected className: string,
-    onSelect: (target: Element) => boolean | void
+    onSelect: (target: Element) => boolean | void,
+    ariaLabel: LangPackKey
   ) {
     super({
       appendTo,
@@ -32,10 +29,12 @@ export default class AutocompletePeerHelper extends AutocompleteHelper {
     });
 
     this.container.classList.add(AutocompletePeerHelper.BASE_CLASS, className);
+    this.container.setAttribute('role', 'listbox');
+    this.container.setAttribute('aria-label', I18n.format(ariaLabel, true));
   }
 
   public init() {
-    this.list = document.createElement('div');
+    this.list = this.container.ownerDocument.createElement('div');
     this.list.classList.add(AutocompletePeerHelper.BASE_CLASS + '-list', this.className + '-list');
 
     this.container.append(this.list);
@@ -50,7 +49,7 @@ export default class AutocompletePeerHelper extends AutocompleteHelper {
   }
 
   public render(
-    data: {peerId: PeerId, name?: string, description?: string}[],
+    data: {peerId: PeerId, name?: string, description?: string, ephemeral?: boolean}[],
     middleware: Middleware,
     doNotShow?: boolean
   ) {
@@ -71,7 +70,9 @@ export default class AutocompletePeerHelper extends AutocompleteHelper {
           peerId: d.peerId,
           name: d.name,
           description: d.description,
-          middleware
+          ephemeral: d.ephemeral,
+          middleware,
+          ownerDocument: this.container.ownerDocument
         });
 
         this.list.append(div);
@@ -88,14 +89,22 @@ export default class AutocompletePeerHelper extends AutocompleteHelper {
     peerId: PeerId,
     name?: string,
     description?: string,
-    middleware: Middleware
+    ephemeral?: boolean,
+    middleware: Middleware,
+    ownerDocument?: Document
   }) {
     const BASE = AutocompletePeerHelper.BASE_CLASS_LIST_ELEMENT;
     options.className += '-list-element';
+    const ownerDocument = options.ownerDocument || document;
 
-    const div = document.createElement('div');
+    const div = ownerDocument.createElement('div');
     div.classList.add(BASE, options.className);
     div.dataset.peerId = '' + options.peerId;
+    div.setAttribute('role', 'option');
+    div.setAttribute('aria-selected', 'false');
+    if(options.ephemeral) {
+      div.dataset.ephemeral = '1';
+    }
 
     const {node} = avatarNew({
       middleware: options.middleware,
@@ -105,7 +114,7 @@ export default class AutocompletePeerHelper extends AutocompleteHelper {
     });
     node.classList.add(BASE + '-avatar', options.className + '-avatar');
 
-    const name = document.createElement('div');
+    const name = ownerDocument.createElement('div');
     name.classList.add(BASE + '-name', options.className + '-name');
     if(!options.name) {
       name.append(new PeerTitle({
@@ -120,8 +129,16 @@ export default class AutocompletePeerHelper extends AutocompleteHelper {
 
     div.append(node, name);
 
+    if(options.ephemeral) {
+      const ephemeral = Icon('eyecross', BASE + '-ephemeral', options.className + '-ephemeral');
+      const tooltip = I18n.format('Ephemeral.CommandTooltip', true);
+      ephemeral.title = tooltip;
+      ephemeral.setAttribute('aria-label', tooltip);
+      div.append(ephemeral);
+    }
+
     if(options.description) {
-      const description = document.createElement('div');
+      const description = ownerDocument.createElement('div');
       description.classList.add(BASE + '-description', options.className + '-description');
       setInnerHTML(description, wrapEmojiText(options.description));
       div.append(description);

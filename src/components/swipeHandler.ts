@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 // * zoom part from WebZ
 // * https://github.com/Ajaxy/telegram-tt/blob/069f4f5b2f2c7c22529ccced876842e7f9cb81f4/src/util/captureEvents.ts
 
@@ -50,8 +44,10 @@ function getTouchCenter(a: Touch, b: Touch) {
   };
 }
 
-const attachGlobalListenerTo = document;
-
+// The swipe move/end track on the swiped element's OWN document (`this.element.ownerDocument`) rather
+// than a fixed main-`document` ref: while the client is popped into a Document PiP window the element
+// (stories viewer, media-viewer pan, reorder, …) lives there, so a main-document listener never sees
+// the gesture and the swipe sticks. Equals `document` when not popped out, so behaviour is unchanged.
 let RESET_GLOBAL = false;
 contextMenuController.addEventListener('toggle', (visible) => {
   RESET_GLOBAL = visible;
@@ -110,6 +106,7 @@ export default class SwipeHandler {
 
   private isMouseDown: boolean;
   private tempId: number;
+  private endListener: Listener;
 
   private hadMove: boolean;
   private eventUp: E;
@@ -160,7 +157,8 @@ export default class SwipeHandler {
     if(!IS_TOUCH_SUPPORTED) {
       // @ts-ignore
       this.listenerSetter.add(this.element)('mousedown', this.handleStart, this.listenerOptions);
-      this.listenerSetter.add(attachGlobalListenerTo)('mouseup', this.reset);
+      // The gesture-end listener (`mouseup`/`touchend`) is bound lazily in `handleStart` — see the
+      // note there — not here, so its target document is resolved while the element is live.
 
       if(this.onZoom || this.onDoubleClick) {
         this.listenerSetter.add(this.element)('wheel', this.handleWheel, WHEEL_OPTIONS);
@@ -188,7 +186,7 @@ export default class SwipeHandler {
         });
       }
 
-      this.listenerSetter.add(attachGlobalListenerTo)('touchend', this.reset);
+      // `touchend` is bound lazily in `handleStart` (see the note there), not here.
     }
   }
 
@@ -245,10 +243,15 @@ export default class SwipeHandler {
     } */
 
     if(IS_TOUCH_SUPPORTED) {
-      this.listenerSetter.removeManual(attachGlobalListenerTo, 'touchmove', this.handleMove, TOUCH_MOVE_OPTIONS);
+      this.listenerSetter.removeManual(this.element.ownerDocument, 'touchmove', this.handleMove, TOUCH_MOVE_OPTIONS);
     } else {
-      this.listenerSetter.removeManual(attachGlobalListenerTo, 'mousemove', this.handleMove, MOUSE_MOVE_OPTIONS);
+      this.listenerSetter.removeManual(this.element.ownerDocument, 'mousemove', this.handleMove, MOUSE_MOVE_OPTIONS);
       this.setCursorTo.style.cursor = '';
+    }
+
+    if(this.endListener) {
+      this.listenerSetter.remove(this.endListener);
+      this.endListener = undefined;
     }
 
     if(this.hadMove) {
@@ -305,6 +308,22 @@ export default class SwipeHandler {
 
     const tempId = ++this.tempId;
 
+    // Bind the gesture-end listener to the element's CURRENT document now — while the element is live
+    // in the DOM — rather than at construction. A JSX element cloned from a <template> is initially
+    // owned by the inert template-contents document (about:blank); binding `mouseup`/`touchend` to
+    // that document at construction means the real release event (which fires on the main — or
+    // Document-PiP — document the element actually lives in) is never seen, so the gesture would pause
+    // on press but never resume on release. Resolving `ownerDocument` here keeps PiP support intact.
+    // Done before the (possibly async) verify so a release during verification still cancels cleanly.
+    if(this.endListener) {
+      this.listenerSetter.remove(this.endListener);
+    }
+    // @ts-ignore
+    this.endListener = this.listenerSetter.add(this.element.ownerDocument)(
+      IS_TOUCH_SUPPORTED ? 'touchend' : 'mouseup',
+      this.reset
+    ) as any as Listener;
+
     const verifyResult = this.verifyTouchTarget?.(_e);
     if(verifyResult !== undefined) {
       let result: any;
@@ -330,7 +349,7 @@ export default class SwipeHandler {
       const options = {...MOUSE_MOVE_OPTIONS, once: true};
       const deferred = deferredPromise<void>();
       const cb = () => deferred.resolve();
-      const listener = this.listenerSetter.add(attachGlobalListenerTo)('mousemove', cb, options) as any as Listener;
+      const listener = this.listenerSetter.add(this.element.ownerDocument)('mousemove', cb, options) as any as Listener;
 
       await Promise.race([
         pause(300),
@@ -351,10 +370,10 @@ export default class SwipeHandler {
 
     if(IS_TOUCH_SUPPORTED) {
       // @ts-ignore
-      this.listenerSetter.add(attachGlobalListenerTo)('touchmove', this.handleMove, TOUCH_MOVE_OPTIONS);
+      this.listenerSetter.add(this.element.ownerDocument)('touchmove', this.handleMove, TOUCH_MOVE_OPTIONS);
     } else {
       // @ts-ignore
-      this.listenerSetter.add(attachGlobalListenerTo)('mousemove', this.handleMove, MOUSE_MOVE_OPTIONS);
+      this.listenerSetter.add(this.element.ownerDocument)('mousemove', this.handleMove, MOUSE_MOVE_OPTIONS);
     }
 
     if(this.onStart) {

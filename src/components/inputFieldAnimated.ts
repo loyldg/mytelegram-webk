@@ -1,117 +1,141 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import {USING_BOMS} from '@helpers/dom/richInputHandler';
-import BOM from '@helpers/string/bom';
-import {_i18n} from '@lib/langPack';
 import InputField, {InputFieldOptions} from '@components/inputField';
+import {observeResize} from '@components/resizeObserver';
 import SetTransition from '@components/singleTransition';
 
-const USELESS_REG_EXP = new RegExp(`(<span>${BOM}</span>)|(<br\/?>)`, 'g');
+const TRANSITION_DURATION_FACTOR = 50;
+
+function getBorderBoxBlockSize(entry: ResizeObserverEntry) {
+  const borderBoxSize = entry.borderBoxSize as
+    ResizeObserverEntry['borderBoxSize'] | ResizeObserverSize;
+  const size = Array.isArray(borderBoxSize) ? borderBoxSize[0] : borderBoxSize;
+  return size?.blockSize || (entry.target as HTMLElement).offsetHeight;
+}
+
+export type InputFieldAnimatedOptions = InputFieldOptions;
 
 export default class InputFieldAnimated extends InputField {
-  public inputFake: HTMLElement;
+  public heightWrapper: HTMLDivElement;
   public onChangeHeight: (height: number) => void;
 
-  // public onLengthChange: (length: number, isOverflow: boolean) => void;
-  // protected wasInputFakeClientHeight: number;
-  // protected showScrollDebounced: () => void;
+  private maxHeight: number | undefined;
+  private measuredHeight: number | undefined;
+  private heightMeasurementEnabled = true;
+  private destroyed = false;
+  private unobserveResize: () => void;
 
-  constructor(options?: InputFieldOptions) {
+  constructor(options?: InputFieldAnimatedOptions) {
     super(options);
 
-    this.input.addEventListener('input', () => {
-      this.updateInnerHTML();
-      this.onFakeInput();
-    });
-
-    // if(options.placeholder) {
-    //   _i18n(this.inputFake, options.placeholder, undefined, 'placeholder');
-    // }
-
     this.input.classList.add('scrollable', 'scrollable-y', 'no-scrollbar');
-    // this.wasInputFakeClientHeight = 0;
-    // this.showScrollDebounced = debounce(() => this.input.classList.remove('no-scrollbar'), 150, false, true);
-    this.inputFake = document.createElement('div');
-    // this.inputFake.contentEditable = 'true';
-    this.inputFake.contentEditable = 'true';
-    this.inputFake.tabIndex = -1;
-    this.inputFake.className = this.input.className + ' input-field-input-fake';
+    this.heightWrapper = this.input.ownerDocument.createElement('div');
+    this.heightWrapper.className = 'input-field-height-wrapper';
+    this.heightWrapper.append(this.input);
+
+    this.input.addEventListener('input', this.onInput);
+    this.unobserveResize = observeResize(this.input, this.onResize);
   }
 
-  public onFakeInput(setHeight = true, noAnimation?: boolean) {
-    const {scrollHeight: newHeight/* , clientHeight */} = this.inputFake;
-    /* if(this.wasInputFakeClientHeight && this.wasInputFakeClientHeight !== clientHeight) {
-      this.input.classList.add('no-scrollbar'); // ! в сафари может вообще не появиться скролл после анимации, так как ему нужен полный reflow блока с overflow.
-      this.showScrollDebounced();
-    } */
+  private onInput = () => {
+    this.updateCollapsibleQuotes();
+  };
 
-    noAnimation ??= !this.input.isContentEditable;
+  private onResize = (entry: ResizeObserverEntry) => {
+    if(!this.heightMeasurementEnabled || this.destroyed) return;
 
-    const currentHeight = +this.input.style.height.replace('px', '');
-    if(currentHeight === newHeight) {
-      return;
-    }
+    this.updateCollapsibleQuotes();
+    this.applyHeight(getBorderBoxBlockSize(entry));
+  };
 
-    const TRANSITION_DURATION_FACTOR = 50;
-    const transitionDuration = noAnimation ? 0 : Math.round(
-      TRANSITION_DURATION_FACTOR * Math.log(Math.abs(newHeight - currentHeight))
+  private updateCollapsibleQuotes() {
+    Array.from(this.input.querySelectorAll('.quote-like')).forEach((element) => {
+      if(!element.classList.contains('input-collapsible-quote')) {
+        element.classList.remove('can-send-collapsed');
+        return;
+      }
+      const scrollHeight = element.scrollHeight;
+      const computedStyle = getComputedStyle(element);
+      const lineHeight = parseFloat(computedStyle.lineHeight);
+      const paddingTop = parseFloat(computedStyle.paddingTop);
+      const paddingBottom = parseFloat(computedStyle.paddingBottom);
+      const lines = (scrollHeight - paddingTop - paddingBottom) / lineHeight;
+      element.classList.toggle('can-send-collapsed', lines > 3);
+    });
+  }
+
+  private applyHeight(newHeight: number, setHeight = true, noAnimation?: boolean) {
+    if(!newHeight || !this.input.isConnected) return;
+
+    newHeight = Math.ceil(
+      this.maxHeight === undefined ? newHeight : Math.min(newHeight, this.maxHeight)
     );
+    const currentHeight = this.measuredHeight ?? newHeight;
+    if(currentHeight === newHeight && this.heightWrapper.style.height) return;
 
-    // this.wasInputFakeClientHeight = clientHeight;
-    this.input.style.transitionDuration = `${transitionDuration}ms`;
+    noAnimation ??= !this.input.isContentEditable || this.measuredHeight === undefined;
+    const heightDifference = Math.abs(newHeight - currentHeight);
+    const transitionDuration = noAnimation || heightDifference <= 1 ?
+      0 :
+      Math.round(TRANSITION_DURATION_FACTOR * Math.log(heightDifference));
+
+    this.heightWrapper.style.transitionDuration = `${transitionDuration}ms`;
 
     if(setHeight) {
       this.onChangeHeight?.(newHeight);
-      this.input.style.height = newHeight ? newHeight + 'px' : '';
-      (this.input as any).oldHeight = (this.input as any).newHeight;
+      this.heightWrapper.style.height = `${newHeight}px`;
+      (this.input as any).oldHeight = (this.input as any).newHeight ?? currentHeight;
       (this.input as any).newHeight = newHeight;
-
-      Array.from(this.input.querySelectorAll('.quote-like')).forEach((element) => {
-        const scrollHeight = element.scrollHeight;
-        const computedStyle = getComputedStyle(element);
-        const lineHeight = parseFloat(computedStyle.lineHeight);
-        const paddingTop = parseFloat(computedStyle.paddingTop);
-        const paddingBottom = parseFloat(computedStyle.paddingBottom);
-        const lines = (scrollHeight - paddingTop - paddingBottom) / lineHeight;
-        element.classList.toggle('can-send-collapsed', lines > 3);
-      });
+      this.measuredHeight = newHeight;
     }
 
-    const className = 'is-changing-height';
     SetTransition({
       element: this.input,
-      className,
+      className: 'is-changing-height',
       forwards: true,
       duration: transitionDuration,
       onTransitionEnd: () => {
-        this.input.classList.remove(className);
+        this.input.classList.remove('is-changing-height');
         (this.input as any).oldHeight = (this.input as any).newHeight;
       }
     });
   }
 
-  protected updateInnerHTML(innerHTML = this.input.innerHTML) {
-    innerHTML = innerHTML
-    .replace(/<custom-emoji-renderer-element.+\/custom-emoji-renderer-element>/, '')
-    .replace(/(<custom-emoji-element.+?>).+?\/custom-emoji-element>/g, '$1</custom-emoji-element>');
-
-    if(USING_BOMS) {
-      innerHTML = innerHTML.replace(USELESS_REG_EXP, '');
-    }
-
-    this.inputFake.innerHTML = innerHTML;
+  public setMaxHeight(value: number | undefined) {
+    if(this.maxHeight === value) return;
+    this.maxHeight = value;
+    this.input.style.maxHeight = value !== undefined ? `${value}px` : '';
+    if(this.heightMeasurementEnabled) this.measureHeight();
   }
 
-  public setValueSilently(value: Parameters<InputField['setValueSilently']>[0], fromSet?: boolean) {
-    super.setValueSilently(value, fromSet);
+  public measureHeight(setHeight = true, noAnimation?: boolean) {
+    if(!this.heightMeasurementEnabled || this.destroyed || !this.input.isConnected) return;
 
-    this.updateInnerHTML();
-    if(!fromSet) {
-      this.onFakeInput();
-    }
+    this.updateCollapsibleQuotes();
+    this.applyHeight(this.input.offsetHeight, setHeight, noAnimation);
+  }
+
+  public syncFromInput() {
+    super.syncFromInput();
+    this.measureHeight();
+  }
+
+  public setHeightMeasurementEnabled(enabled: boolean) {
+    if(this.heightMeasurementEnabled === enabled) return;
+    this.heightMeasurementEnabled = enabled;
+    if(enabled) this.measureHeight(true, true);
+  }
+
+  public setValueSilently(
+    value: Parameters<InputField['setValueSilently']>[0],
+    fromSet?: boolean
+  ) {
+    super.setValueSilently(value, fromSet);
+    this.updateCollapsibleQuotes();
+  }
+
+  public destroy() {
+    if(this.destroyed) return;
+    this.destroyed = true;
+    this.input.removeEventListener('input', this.onInput);
+    this.unobserveResize();
   }
 }

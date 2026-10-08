@@ -1,19 +1,50 @@
-import {children, createMemo, JSX, onCleanup, Ref, Show, useContext} from 'solid-js';
+import {
+  children,
+  createRenderEffect,
+  createSignal,
+  JSX,
+  onCleanup,
+  onMount,
+  Ref,
+  Show,
+  splitProps,
+  useContext
+} from 'solid-js';
 import classNames from '@helpers/string/classNames';
 import {IconTsx} from '@components/iconTsx';
 import RippleElement from '@components/rippleElement';
 import createComponentContext, {ComponentContextValue} from '@helpers/solid/createComponentContext';
 import createContextMenu from '@helpers/dom/createContextMenu';
+import {hasMouseMovedSinceDown} from '@helpers/dom/clickEvent';
 import ListenerSetter from '@helpers/listenerSetter';
+import {getRowIconBackgroundImage} from '@helpers/rowIconBackground';
+import {attachHotClassName} from '@helpers/solid/classname';
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import labelControl from '@helpers/dom/labelControl';
+import Modes from '@config/modes';
+import {
+  RADIO_FIELD_RIGHT_CLASS,
+  ROW_CHECKBOX_FIELD_CLASS,
+  ROW_CHECKBOX_FIELD_TOGGLE_CLASS,
+  ROW_RADIO_FIELD_CLASS
+} from '@components/rowFieldClasses';
 
 export type RowMediaSizeType = 'small' | 'medium' | 'big' | 'abitbigger' | 'bigger' | '40';
 
+export const createRowTitle = () => {
+  const title = document.createElement('div');
+  title.classList.add('row-title');
+  title.dir = 'auto';
+  return title;
+};
+
 type Kind = 'title' | 'subtitle' | 'media' | 'midtitle' | 'icon' |
-  'rightContent' | 'checkboxField' | 'checkboxFieldToggle' | 'radioField' |
-  'media';
+  'rightContent' | 'checkboxField' | 'checkboxFieldToggle' | 'radioField' | 'radioFieldRight';
 
 type RowContextValue = ComponentContextValue<Kind> & {
-  noWrap?: boolean
+  noWrap?: boolean,
+  /** A toggle sitting in its own right column instead of riding the title row. See `Row.CheckboxFieldToggle` */
+  toggleAside?: boolean
 };
 
 const {
@@ -21,9 +52,36 @@ const {
   createValue: createRowValue
 } = createComponentContext<RowContextValue, Kind>();
 
+function registerExternalElement(
+  context: RowContextValue,
+  kind: Kind,
+  element: () => HTMLElement,
+  className: () => string
+) {
+  createRenderEffect(() => {
+    const currentElement = element();
+    const classes = className().split(' ').filter(Boolean);
+    if(!currentElement) {
+      return;
+    }
+
+    const addedClasses = classes.filter((className) => !currentElement.classList.contains(className));
+    currentElement.classList.add(...addedClasses);
+    onCleanup(() => currentElement.classList.remove(...addedClasses));
+  });
+
+  return context.register(kind, (
+    <Show keyed when={element()}>{(currentElement) => currentElement}</Show>
+  ));
+}
+
 const Row = (props: {children: JSX.Element} & Partial<{
   ref: Ref<HTMLElement>,
   clickable: boolean | JSX.HTMLAttributes<HTMLElement>['onClick'],
+  role: JSX.HTMLAttributes<HTMLElement>['role'],
+  tabIndex: number,
+  'aria-label': string,
+  'on:keydown': JSX.HTMLAttributes<HTMLElement>['on:keydown'],
   havePadding: boolean,
   noRipple: boolean,
   noWrap: boolean,
@@ -34,22 +92,79 @@ const Row = (props: {children: JSX.Element} & Partial<{
   // buttonRightLangKey: LangPackKey,
   // rightTextContent?: string,
   as: 'a' | 'label' | 'div',
+  'aria-checked': boolean,
+  'aria-disabled': boolean,
   contextMenu: Omit<Parameters<typeof createContextMenu>[0], 'findElement' | 'listenTo' | 'listenerSetter'>,
+  openContextMenuRef: (open?: ReturnType<typeof createContextMenu>['open']) => void,
   // checkboxKeys: [LangPackKey, LangPackKey],
   classList: {[key: string]: boolean},
-  class: string
+  class: string,
+  style: JSX.CSSProperties | string
 }>) => {
   const value: RowContextValue = {
     ...createRowValue(),
     get noWrap() {
       return props.noWrap;
+    },
+    // with a subtitle underneath, a toggle on the title row would hang above the row's own middle,
+    // out of line with the media/icon next to it — give it the right column instead
+    get toggleAside() {
+      return !!(this.store.checkboxFieldToggle && this.store.subtitle && !this.store.rightContent);
     }
   };
 
   const {store} = value;
+  const [hasNestedControl, setHasNestedControl] = createSignal(false);
+  let containerElement: HTMLElement;
 
-  const isCheckbox = () => !!(store.checkboxField || store.checkboxFieldToggle || store.radioField);
+  const isCheckbox = () => !!(
+    store.checkboxField || store.checkboxFieldToggle || store.radioField || store.radioFieldRight
+  );
   const isClickable = () => !!(props.clickable || isCheckbox() || props.contextMenu);
+  const inferredButton = () => isClickable() && !isCheckbox() && !props.as && !hasNestedControl();
+  const role = () => props.role || (inferredButton() ? 'button' : undefined);
+
+  const setupAccessibility = () => {
+    if(!isClickable()) return;
+    let primaryTarget: HTMLElement;
+    const clearPrimaryTarget = () => {
+      if(!primaryTarget) return;
+      primaryTarget.removeEventListener('keydown', buttonKeyDown);
+      primaryTarget.removeAttribute('role');
+      primaryTarget.removeAttribute('tabindex');
+      primaryTarget.removeAttribute('aria-disabled');
+      primaryTarget = undefined;
+    };
+    const update = () => {
+      const title = containerElement.querySelector<HTMLElement>('.row-title');
+      containerElement.querySelectorAll<HTMLElement>('input[type="checkbox"], input[type="radio"]').forEach((control) => labelControl(control, title));
+      const nested = Array.from(containerElement.querySelectorAll<HTMLElement>(
+        'button, a[href], input, select, textarea, [contenteditable="true"], [role="button"], [tabindex]'
+      )).filter((element) => element !== primaryTarget);
+      setHasNestedControl(!!nested.length);
+      // A row with a separate trailing action needs a separate primary target,
+      // rather than an interactive ancestor or a mouse-only title.
+      const needsPrimaryTarget = !props.as && !props.role && !isCheckbox() && nested.length &&
+        title && !nested.some((element) => title.contains(element) || element.matches('input, select, textarea, [contenteditable="true"]'));
+      if(!needsPrimaryTarget || primaryTarget !== title) clearPrimaryTarget();
+      if(needsPrimaryTarget) {
+        primaryTarget = title;
+        primaryTarget.setAttribute('role', 'button');
+        if(Modes.a11y) primaryTarget.tabIndex = props.disabled ? -1 : 0;
+        primaryTarget.setAttribute('aria-disabled', String(!!props.disabled));
+        primaryTarget.addEventListener('keydown', buttonKeyDown);
+      }
+    };
+    createRenderEffect(update);
+    // following the row's controls as they come and go is a subtree observer on every row: without
+    // the a11y layer, where all this sets is ARIA, the marks made on mount have to do
+    const observer = Modes.a11y ? new MutationObserver(update) : undefined;
+    observer?.observe(containerElement, {childList: true, subtree: true});
+    onCleanup(() => {
+      observer?.disconnect();
+      clearPrimaryTarget();
+    });
+  };
   const haveRipple = () => !!(!props.noRipple && isClickable());
   const havePadding = () => !!(
     props.havePadding ||
@@ -58,7 +173,6 @@ const Row = (props: {children: JSX.Element} & Partial<{
     store.radioField ||
     store.media
   );
-
   const resolvedChildren = children(() => (
     <RowContext.Provider value={value}>
       {props.children}
@@ -66,9 +180,11 @@ const Row = (props: {children: JSX.Element} & Partial<{
   ));
 
   let openContextMenu: ReturnType<typeof createContextMenu>['open'];
-  const ref = createMemo(() => {
-    return props.contextMenu ? (container: HTMLElement) => {
-      const listenerSetter = new ListenerSetter();
+  const ref = (container: HTMLElement) => {
+    containerElement = container;
+    const listenerSetter = new ListenerSetter();
+
+    if(props.contextMenu) {
       const {open} = createContextMenu({
         ...props.contextMenu,
         listenTo: container,
@@ -76,21 +192,49 @@ const Row = (props: {children: JSX.Element} & Partial<{
       });
 
       openContextMenu = open;
+      props.openContextMenuRef?.(open);
+    }
 
-      onCleanup(() => {
-        openContextMenu = undefined;
-        listenerSetter.removeAll();
-      });
+    onCleanup(() => {
+      openContextMenu = undefined;
+      props.openContextMenuRef?.();
+      listenerSetter.removeAll();
+    });
 
-      // @ts-ignore
-      props.ref?.(container);
-    } : props.ref as any;
-  });
+    if(typeof(props.ref) === 'function') {
+      props.ref(container);
+    }
+  };
+  // Without the a11y layer only a row its caller made focusable answers to Enter/Space.
+  const onLegacyKeyDown = (event: KeyboardEvent) => {
+    if(event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
 
-  return (
+    event.preventDefault();
+    (event.currentTarget as HTMLElement).click();
+  };
+  const onClick: JSX.EventHandlerUnion<HTMLElement, MouseEvent> = (event) => {
+    if(Modes.a11y && (props.disabled || props['aria-disabled'])) return;
+    const clickable = props.clickable;
+    if(typeof(clickable) === 'function') {
+      if(!hasMouseMovedSinceDown(event)) {
+        clickable(event);
+      }
+      return;
+    }
+
+    openContextMenu?.(event);
+  };
+
+  const element = (
     <RippleElement
-      ref={ref()}
+      ref={ref}
       component={props.as === 'a' ? 'a' : (props.as === 'label' || isCheckbox() ? 'label' : 'div')}
+      role={role()}
+      tabIndex={props.tabIndex ?? (Modes.a11y && role() === 'button' ? props.disabled ? -1 : 0 : undefined)}
+      aria-checked={props['aria-checked']}
+      aria-disabled={props['aria-disabled'] || props.disabled ? true : undefined}
       classList={{
         'row': true,
         'no-subtitle': !store.subtitle,
@@ -100,15 +244,18 @@ const Row = (props: {children: JSX.Element} & Partial<{
         [`row-clickable hover-${props.color ? props.color + '-' : ''}effect`]: isClickable(),
         'is-disabled': props.disabled,
         'is-fake-disabled': props.fakeDisabled,
-        'row-grid': !!store.rightContent,
+        'row-grid': !!store.rightContent || value.toggleAside,
         'with-midtitle': !!store.midtitle,
         ...(props.classList || {}),
         [props.class]: !!props.class
       }}
-      onClick={
-        (typeof(props.clickable) !== 'boolean' && props.clickable) ||
-        (props.contextMenu ? openContextMenu : undefined)
-      }
+      onClick={typeof(props.clickable) === 'function' || props.contextMenu ? onClick : undefined}
+      aria-label={props['aria-label']}
+      style={props.style}
+      onKeyDown={props['on:keydown'] ? undefined : Modes.a11y ?
+        (!isCheckbox() && isClickable() ? buttonKeyDown : undefined) :
+        (props.tabIndex !== undefined && props.clickable ? onLegacyKeyDown : undefined)}
+      on:keydown={props['on:keydown']}
       noRipple={!haveRipple()}
     >
       {resolvedChildren()}
@@ -118,19 +265,30 @@ const Row = (props: {children: JSX.Element} & Partial<{
       {store.icon}
       {store.checkboxField || store.radioField}
       {store.rightContent}
+      <Show when={value.toggleAside}>
+        <div class="row-right">{store.checkboxFieldToggle}</div>
+      </Show>
       {store.media}
     </RippleElement>
   );
+  onMount(setupAccessibility);
+  return element;
 };
 
 Row.RowPart = (props: {
   class: string,
-  part?: JSX.Element
+  part?: JSX.Element,
+  elementRef?: Ref<HTMLDivElement>
 }) => {
   const resolved = children(() => props.part);
   return (
-    <Show when={resolved()}>
+    <Show when={!!props.elementRef || !!resolved()}>
       <div
+        ref={(element) => {
+          if(typeof(props.elementRef) === 'function') {
+            props.elementRef(element);
+          }
+        }}
         class={classNames(
           'row-' + props.class,
           useContext(RowContext).noWrap && 'no-wrap'
@@ -145,21 +303,33 @@ Row.RowPart = (props: {
 
 Row.Row = (props: {
   class: string,
+  rowClass?: string,
   additionalClass?: string,
+  rightAdditionalClass?: string,
   left?: JSX.Element,
   right?: JSX.Element,
-  rightSecondary?: boolean
+  rightSecondary?: boolean,
+  leftRef?: Ref<HTMLDivElement>,
+  rightRef?: Ref<HTMLDivElement>
 }) => {
-  const part = <Row.RowPart class={classNames(props.class, props.additionalClass)} part={props.left} />;
+  const part = (
+    <Row.RowPart
+      elementRef={props.leftRef}
+      class={classNames(props.class, props.additionalClass)}
+      part={props.left}
+    />
+  );
   const resolved = children(() => props.right);
   return (
-    <Show when={resolved()} fallback={part}>
-      <div class={classNames('row-row', `row-${props.class}-row`)}>
+    <Show when={!!props.rightRef || !!resolved()} fallback={part}>
+      <div class={classNames('row-row', `row-${props.class}-row`, props.rowClass)}>
         {part}
         <Row.RowPart
+          elementRef={props.rightRef}
           class={classNames(
             props.class,
             props.additionalClass,
+            props.rightAdditionalClass,
             `row-${props.class}-right${props.rightSecondary ? ` row-${props.class}-right-secondary` : ''}`
           )}
           part={resolved()}
@@ -170,38 +340,65 @@ Row.Row = (props: {
 };
 
 Row.Title = (props: {
-  children: JSX.Element,
+  children?: JSX.Element,
+  rowClass?: string,
   class?: string,
   titleRight?: JSX.Element,
-  titleRightSecondary?: boolean
+  titleRightClass?: string,
+  titleRightSecondary?: boolean,
+  ref?: Ref<HTMLDivElement>,
+  titleRightRef?: (element: HTMLDivElement) => void
 }) => {
   const context = useContext(RowContext);
+  const explicitRight = children(() => props.titleRight);
+  const control = () => context.store.radioFieldRight || (
+    context.toggleAside ? undefined : context.store.checkboxFieldToggle
+  );
+  const right = () => {
+    const explicit = explicitRight();
+    const currentControl = control();
+    return explicit && currentControl ? [explicit, currentControl] : explicit || currentControl;
+  };
+
   return context.register('title', (
     <Row.Row
       class="title"
+      rowClass={props.rowClass}
       additionalClass={props.class}
       left={props.children}
-      right={props.titleRight || context.store.checkboxFieldToggle}
+      right={right()}
+      rightAdditionalClass={classNames(
+        props.titleRightClass,
+        !!(explicitRight() && control()) && 'row-title-right-with-control'
+      )}
       rightSecondary={props.titleRightSecondary}
+      leftRef={props.ref}
+      rightRef={props.titleRightRef}
     />
   ));
 };
 
 Row.Midtitle = (props: {
-  children: JSX.Element
+  children?: JSX.Element,
+  midtitleRight?: JSX.Element,
+  ref?: Ref<HTMLDivElement>
 }) => {
   return useContext(RowContext).register('midtitle', (
     <Row.Row
       class="midtitle"
       left={props.children}
+      right={props.midtitleRight}
+      leftRef={props.ref}
     />
   ));
 };
 
 Row.Subtitle = (props: {
-  children: JSX.Element,
+  children?: JSX.Element,
   class?: string,
-  subtitleRight?: JSX.Element
+  subtitleRight?: JSX.Element,
+  ref?: Ref<HTMLDivElement>,
+  subtitleRightRef?: (element: HTMLDivElement) => void
 }) => {
   return useContext(RowContext).register('subtitle', (
     <Row.Row
@@ -209,59 +406,131 @@ Row.Subtitle = (props: {
       additionalClass={props.class}
       left={props.children}
       right={props.subtitleRight}
+      leftRef={props.ref}
+      rightRef={props.subtitleRightRef}
     />
   ));
 };
 
 Row.Icon = (props: {
   icon: Icon,
-  class?: string
+  class?: string,
+  noBackground?: boolean
 }) => {
   return useContext(RowContext).register('icon', (
-    <IconTsx icon={props.icon} class={classNames('row-icon', props.class)} />
+    <span
+      class={classNames(
+        'row-icon',
+        'row-icon-colored',
+        props.class
+      )}
+      style={!props.noBackground && {
+        'background-image': getRowIconBackgroundImage(props.icon)
+      }}
+    >
+      <IconTsx icon={props.icon} class="row-icon-icon" />
+    </span>
   ));
 };
 
-Row.RightContent = (props: {
-  children: JSX.Element
-}) => {
-  return useContext(RowContext).register('rightContent', (
-    <div class="row-right">{props.children}</div>
+type ExternalRowElementProps = {
+  class?: string,
+  element: HTMLElement
+};
+
+Row.RightContent = (inProps: JSX.HTMLAttributes<HTMLDivElement> | ExternalRowElementProps) => {
+  const context = useContext(RowContext);
+
+  if('element' in inProps) {
+    return registerExternalElement(
+      context,
+      'rightContent',
+      () => inProps.element,
+      () => classNames('row-right', inProps.class)
+    );
+  }
+
+  const [props, restProps] = splitProps(inProps, ['class', 'children']);
+  const resolved = children(() => props.children);
+  // an empty right column still claims its grid track and the gap before it, so when there is
+  // nothing to put there the row is left without one
+  return context.register('rightContent', (
+    <Show when={!!resolved()}>
+      <div class={classNames('row-right', props.class)} {...restProps}>{resolved()}</div>
+    </Show>
   ));
 };
+
+/**
+ * Registers a field AND marks it as the row's own, so `_row.scss` lays out this checkbox and not
+ * whatever else happens to sit inside the row. See `rowFieldClasses`.
+ */
+function registerRowField(kind: Kind, classes: string[], element: JSX.Element) {
+  const context = useContext(RowContext);
+  const resolved = children(() => element);
+  const registeredKind = kind === 'radioField' && resolved.toArray().some((node) => (
+    node instanceof HTMLElement && node.classList.contains(RADIO_FIELD_RIGHT_CLASS)
+  )) ? 'radioFieldRight' : kind;
+
+  createRenderEffect(() => {
+    resolved.toArray().forEach((node) => {
+      node instanceof HTMLElement && attachHotClassName(node, ...classes);
+    });
+  });
+
+  return context.register(registeredKind, resolved());
+}
 
 Row.CheckboxField = (props: {
   children: JSX.Element
 }) => {
-  return useContext(RowContext).register('checkboxField', props.children);
+  return registerRowField('checkboxField', [ROW_CHECKBOX_FIELD_CLASS], props.children);
 };
 
 Row.RadioField = (props: {
   children: JSX.Element
 }) => {
-  return useContext(RowContext).register('radioField', props.children);
+  return registerRowField('radioField', [ROW_RADIO_FIELD_CLASS], props.children);
 };
 
 Row.CheckboxFieldToggle = (props: {
   children: JSX.Element
 }) => {
-  return useContext(RowContext).register('checkboxFieldToggle', props.children);
+  // a toggle is a checkbox too, so the row's checkbox rules go on reaching it
+  return registerRowField(
+    'checkboxFieldToggle',
+    [ROW_CHECKBOX_FIELD_TOGGLE_CLASS],
+    props.children
+  );
 };
 
-Row.Media = (props: {
+type RowMediaProps = JSX.HTMLAttributes<HTMLDivElement> & {
   children?: JSX.Element,
-  size: RowMediaSizeType,
-  ref?: Ref<HTMLDivElement>,
+  size?: RowMediaSizeType,
   class?: string
-}) => {
-  return useContext(RowContext).register('media', (
+};
+
+type ExternalRowMediaProps = ExternalRowElementProps & {
+  size?: RowMediaSizeType
+};
+
+Row.Media = (inProps: RowMediaProps | ExternalRowMediaProps) => {
+  const context = useContext(RowContext);
+  const classes = () => classNames(
+    'row-media',
+    inProps.size && `row-media-${inProps.size}`,
+    inProps.class
+  );
+
+  if('element' in inProps) {
+    return registerExternalElement(context, 'media', () => inProps.element, classes);
+  }
+
+  const [props, restProps] = splitProps(inProps, ['children', 'size', 'class']);
+  return context.register('media', (
     <div
-      class={classNames(
-        'row-media',
-        props.size && `row-media-${props.size}`,
-        props.class
-      )}
-      ref={props.ref}
+      class={classes()}
+      {...restProps}
     >
       {props.children}
     </div>

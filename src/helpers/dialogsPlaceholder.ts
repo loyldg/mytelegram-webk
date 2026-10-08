@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import Scrollable from '@components/scrollable';
 import rootScope from '@lib/rootScope';
 import {animate} from '@helpers/animation';
@@ -225,6 +219,13 @@ export default class DialogsPlaceholder {
   }
 
   private startAnimation() {
+    this.runAnimation();
+    rootScope.addEventListener('theme_changed', this.onThemeChange);
+    mediaSizes.addEventListener('resize', this.onResize);
+  }
+
+  // * redraws without touching the subscriptions, as it runs from inside their dispatch
+  private runAnimation() {
     const {canvas, shimmer} = this;
     const tempId = ++this.tempId;
     const pattern = this.createPattern();
@@ -252,9 +253,6 @@ export default class DialogsPlaceholder {
       // ! tempId can be changed during renderFrame
       return middleware();
     });
-
-    rootScope.addEventListener('theme_changed', this.onThemeChange);
-    mediaSizes.addEventListener('resize', this.onResize);
   }
 
   private stopAnimation() {
@@ -264,8 +262,7 @@ export default class DialogsPlaceholder {
   }
 
   private onThemeChange = () => {
-    this.stopAnimation();
-    this.startAnimation();
+    this.runAnimation();
   };
 
   private onResize = () => {
@@ -276,8 +273,7 @@ export default class DialogsPlaceholder {
       return;
     }
 
-    this.stopAnimation();
-    this.startAnimation();
+    this.runAnimation();
   };
 
   private createPattern() {

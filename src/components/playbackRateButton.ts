@@ -1,17 +1,43 @@
 
 import appMediaPlaybackController from '@components/appMediaPlaybackController';
 import {ButtonMenuSync} from '@components/buttonMenu';
-import {ButtonMenuToggleHandler} from '@components/buttonMenuToggle';
+import ButtonMenuToggle, {ButtonMenuDirection, ButtonMenuToggleHandler} from '@components/buttonMenuToggle';
 import ButtonIcon from '@components/buttonIcon';
 import Icon from '@components/icon';
+import Modes from '@config/modes';
 
 export const PlaybackRateButton = (options: {
   onPlaybackRateMenuToggle?: (open: boolean) => void,
-  direction: string
+  direction: ButtonMenuDirection
 }) => {
   const PLAYBACK_RATES = [0.5, 1, 1.5, 2];
   const PLAYBACK_RATES_ICONS: Icon[] = ['playback_05', 'playback_1x', 'playback_15', 'playback_2x'];
-  const button = ButtonIcon(` btn-menu-toggle`, {noRipple: true});
+  let menuElement: HTMLElement;
+  const updateMenuState = (menu: HTMLElement) => menu.querySelectorAll('.btn-menu-item').forEach((item, index) => {
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(PLAYBACK_RATES[index] === appMediaPlaybackController.playbackRate));
+  });
+  const buttons: Parameters<typeof ButtonMenuSync>[0]['buttons'] = PLAYBACK_RATES.map((rate) => ({
+    regularText: rate + 'x',
+    onClick: () => {appMediaPlaybackController.playbackRate = rate;}
+  }));
+  // without the a11y layer the menu lives inside the button, as it did before the layer
+  const button = !Modes.a11y ? ButtonIcon(` btn-menu-toggle`, {noRipple: true}) : ButtonMenuToggle({
+    noIcon: true,
+    buttonOptions: {noRipple: true, ariaLabel: 'AccDescr.PlaybackSpeed'},
+    direction: options.direction,
+    buttons,
+    onOpenBefore: () => {
+      if(menuElement) updateMenuState(menuElement);
+      options.onPlaybackRateMenuToggle?.(true);
+    },
+    onOpen: (_, menu) => {
+      menuElement = menu;
+      menu.classList.add('playback-rate-menu');
+      updateMenuState(menu);
+    },
+    onClose: () => options.onPlaybackRateMenuToggle?.(false)
+  });
 
   const setIcon = () => {
     const playbackRateButton = button;
@@ -28,17 +54,6 @@ export const PlaybackRateButton = (options: {
   };
 
   const setBtnMenuToggle = () => {
-    const buttons = PLAYBACK_RATES.map((rate, idx) => {
-      const buttonOptions: Parameters<typeof ButtonMenuSync>[0]['buttons'][0] = {
-        // icon: PLAYBACK_RATES_ICONS[idx],
-        regularText: rate + 'x',
-        onClick: () => {
-          appMediaPlaybackController.playbackRate = rate;
-        }
-      };
-
-      return buttonOptions;
-    });
     const btnMenu = ButtonMenuSync({buttons});
     btnMenu.classList.add(options.direction, 'playback-rate-menu');
     ButtonMenuToggleHandler({
@@ -67,6 +82,7 @@ export const PlaybackRateButton = (options: {
     return button.classList.contains('menu-open');
   };
 
-  setBtnMenuToggle();
+  if(Modes.a11y) setIcon();
+  else setBtnMenuToggle();
   return {element: button, setIcon, addRate, isMenuOpen};
 };

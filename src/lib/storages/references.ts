@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {Photo, StoryItem, WallPaper} from '@layer';
 import bytesToHex from '@helpers/bytes/bytesToHex';
 import deepEqual from '@helpers/object/deepEqual';
@@ -14,6 +8,8 @@ import type {MyStickerSetInput} from '@lib/appManagers/utils/stickers/constants'
 export type ReferenceContext =
   ReferenceContext.referenceContextProfilePhoto |
   ReferenceContext.referenceContextMessage |
+  ReferenceContext.referenceContextMessageRich |
+  ReferenceContext.referenceContextMessageRichTranslation |
   ReferenceContext.referenceContextEmojiesSounds |
   ReferenceContext.referenceContextReactions |
   ReferenceContext.referenceContextUserFull |
@@ -45,6 +41,19 @@ export namespace ReferenceContext {
     type: 'message',
     peerId: PeerId,
     messageId: number
+  };
+
+  export type referenceContextMessageRich = {
+    type: 'messageRich',
+    peerId: PeerId,
+    messageId: number
+  };
+
+  export type referenceContextMessageRichTranslation = {
+    type: 'messageRichTranslation',
+    peerId: PeerId,
+    messageId: number,
+    lang: string
   };
 
   export type referenceContextEmojiesSounds = {
@@ -139,7 +148,8 @@ export namespace ReferenceContext {
 
   export type referenceContextSavedMusic = {
     type: 'savedMusic',
-    userId: UserId
+    userId: UserId,
+    docId: DocId
   };
 }
 
@@ -244,6 +254,19 @@ export class ReferencesStorage extends AppManager {
         // });
       }
 
+      case 'messageRich':
+        return this.appMessagesManager.refreshRichMessage(
+          context.peerId,
+          context.messageId
+        );
+
+      case 'messageRichTranslation':
+        return this.appTranslationsManager.refreshRichMessageTranslation(
+          context.peerId,
+          context.messageId,
+          context.lang
+        );
+
       case 'emojiesSounds':
         return this.refreshEmojiesSoundsPromise || this.appStickersManager.getAnimatedEmojiSounds(true).then(() => {
           this.refreshEmojiesSoundsPromise = undefined;
@@ -302,7 +325,9 @@ export class ReferencesStorage extends AppManager {
         });
 
       case 'savedMusic':
-        return this.appProfileManager.getSavedMusic(context.userId, 0, 100);
+        // Ask for the exact document rather than re-reading page 0 — a track that sits deeper in
+        // the playlist would never be covered by the first page.
+        return this.appSavedMusicManager.getSavedMusicByIds(context.userId, [context.docId]);
 
       default: {
         this.log.warn('not implemented context', context);

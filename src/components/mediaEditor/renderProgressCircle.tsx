@@ -1,25 +1,17 @@
-import {StandaloneSignal} from '@components/mediaEditor/types';
+import {Signal} from 'solid-js';
 import {ProgressCircleSVG} from '@components/progressCircleSVG';
+import I18n from '@lib/langPack';
 
-export default function RenderProgressCircle(props: {creationProgress: StandaloneSignal<number>}) {
-  const [progress] = props.creationProgress.signal;
-  // const [progress, setProgress] = createSignal(0); // Progress signal from 0 to 100
-
-  const radius = 52;
-  const strokeWidth = 6;
-  const circumference = 2 * Math.PI * radius;
-
-  const strokeDashoffset = () => circumference - progress() * circumference;
-
-  // createEffect(() => {
-  //   const interval = setInterval(() => {
-  //     setProgress((prev) => (prev < 100 ? prev + Math.floor(Math.random() * 10) : 0));
-  //   }, 120);
-  //   return () => clearInterval(interval);
-  // });
+export default function RenderProgressCircle(props: {creationProgress: Signal<number>}) {
+  const [progress] = props.creationProgress;
 
   return (
     <div
+      role="progressbar"
+      aria-label={I18n.format('Loading', true)}
+      aria-valuenow={Math.round(progress() * 100)}
+      aria-valuemin={0}
+      aria-valuemax={100}
       style={{
         display: 'flex',
         position: 'absolute',

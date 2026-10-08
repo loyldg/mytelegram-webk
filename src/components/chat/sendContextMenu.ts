@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import contextMenuController from '@helpers/contextMenuController';
 import {attachContextMenuListener} from '@helpers/dom/attachContextMenuListener';
 import cancelEvent from '@helpers/dom/cancelEvent';
@@ -12,7 +6,7 @@ import {getMiddleware, Middleware, MiddlewareHelper} from '@helpers/middleware';
 import {Reaction} from '@layer';
 import rootScope from '@lib/rootScope';
 import {ButtonMenuItemOptionsVerifiable, ButtonMenuSync} from '@components/buttonMenu';
-import PopupPremium from '@components/popups/premium';
+import showPremiumPopup from '@components/popups/premium';
 import ChatContextMenu from '@components/chat/contextMenu';
 import {ChatReactionsMenu} from '@components/chat/reactionsMenu';
 
@@ -30,6 +24,7 @@ export default class SendMenu {
     openSide: string,
     onContextElement: HTMLElement,
     onOpen?: () => boolean,
+    onToggle?: (open: boolean) => void,
     canSendWhenOnline?: () => boolean | Promise<boolean>,
     withEffects?: () => boolean,
     effect?: () => DocId,
@@ -64,7 +59,7 @@ export default class SendMenu {
       icon: 'online',
       text: 'Schedule.SendWhenOnline',
       onClick: this.options.onSendWhenOnlineClick,
-      verify: () => this.type === 'schedule' && this.options.canSendWhenOnline?.() && !this.isPaid
+      verify: async() => this.type === 'schedule' && (await this.options.canSendWhenOnline?.()) && !this.isPaid
     }, {
       icon: 'crossround',
       text: 'Effect.Remove',
@@ -121,7 +116,7 @@ export default class SendMenu {
 
               const stickerDocId = (reaction as Reaction.reactionCustomEmoji).document_id;
               if(!rootScope.premium && !reactionsMenu.freeCustomEmoji.has(stickerDocId)) {
-                PopupPremium.show({feature: 'premium_stickers'});
+                showPremiumPopup({feature: 'premium_stickers'});
                 return;
               }
 
@@ -140,7 +135,9 @@ export default class SendMenu {
 
         const reactionsCallbacks = reactionsMenu && ChatContextMenu.appendReactionsMenu({element: element, reactionsMenu, reactionsMenuPosition});
 
+        this.options.onToggle?.(true);
         contextMenuController.openBtnMenu(element, () => {
+          this.options.onToggle?.(false);
           reactionsCallbacks?.onClose();
           middlewareHelper.destroy();
           this.createMenu();

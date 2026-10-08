@@ -1,15 +1,7 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../shared" as *;
 
 .ckin {
   &__player {
-    user-select: none;
-
     &.ckin__fullscreen {
       position: fixed;
       inset: 0;
@@ -43,6 +35,7 @@
   display: flex;
 	align-items: center;
 	justify-content: center;
+  overflow: hidden;
 
   &.show-controls:not(.default-live) .ckin__video {
     cursor: pointer;
@@ -67,10 +60,14 @@
       transform: translate3d(-50%, -50%, 0) scale(1);
       font-size: 4rem;
 
-      @include respond-to(not-handhelds) {
+      // pointer-events:none lets the click fall through to the <video> (which toggles play). Gate on
+      // touch CAPABILITY, not viewport WIDTH: the Document PiP window is a narrow (handheld-width)
+      // viewport but still mouse-driven, so `respond-to(not-handhelds)` left the big button capturing
+      // the click there (with no handler of its own) and swallowing the play toggle.
+      html:not(.is-touch) & {
         pointer-events: none;
       }
-      
+
       @include animation-level(2) {
         transition: opacity var(--layer-transition);
       }
@@ -538,6 +535,7 @@ input[type=range] {
     transition: filter var(--transition-standard-in);
     margin: 8px;
     filter: grayscale(1);
+    line-height: 14px;
 
     &.is-not-buffering {
       filter: none;

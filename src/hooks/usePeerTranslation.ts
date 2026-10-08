@@ -50,7 +50,7 @@ function _usePeerTranslation(peerId: PeerId) {
 
     const _fullPeer = fullPeer();
     if(
-      (!_fullPeer || _fullPeer.pFlags.translations_disabled) ||
+      (!_fullPeer || ('pFlags' in _fullPeer && _fullPeer.pFlags.translations_disabled)) ||
       appSettings.translations.doNotTranslate.includes(peerLanguage())
     ) {
       return false;
@@ -80,5 +80,5 @@ function _usePeerTranslation(peerId: PeerId) {
 }
 
 export default function usePeerTranslation(peerId: PeerId) {
-  return useDynamicCachedValue(() => usePeerTranslation.name + '-' + peerId, () => _usePeerTranslation(peerId))();
+  return useDynamicCachedValue(() => 'usePeerTranslation-' + peerId, () => _usePeerTranslation(peerId))();
 }

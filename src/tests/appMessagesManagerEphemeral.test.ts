@@ -1,0 +1,1576 @@
+import {beforeEach, describe, expect, it, vi} from 'vitest';
+import '@helpers/peerIdPolyfill';
+import {TimeManager} from '@lib/mtproto/timeManager';
+import SlicedArray from '@helpers/slicedArray';
+import {AppMessagesManager, HistoryStorage, MessagesStorage} from '@appManagers/appMessagesManager';
+import {AppMessagesIdsManager} from '@appManagers/appMessagesIdsManager';
+import {EPHEMERAL_MESSAGE_ID_OFFSET} from '@appManagers/constants';
+import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import {BotInfo, Document, EphemeralMessage, InputRichMessage, Message, MessageEntity, ReplyMarkup, RichMessage, Updates} from '@layer';
+
+const CHAT_ID = 777 as ChatId;
+const PEER_ID = CHAT_ID.toPeerId(true);
+const BOT_ID = 100 as UserId;
+const SELF_ID = 999 as UserId;
+const LOCAL_ID_OFFSET = 0x100000000;
+
+function makeHistoryStorage(key: string, count = 0, maxId = 0): HistoryStorage {
+  return {
+    _maxId: maxId,
+    count,
+    history: new SlicedArray(),
+    type: key.includes('replies') ? 'replies' : 'history',
+    key: key as HistoryStorage['key']
+  };
+}
+
+function makeEphemeralMessage(
+  id: number,
+  overrides: Partial<EphemeralMessage> = {}
+): EphemeralMessage {
+  return {
+    _: 'ephemeralMessage',
+    pFlags: {},
+    id,
+    from_id: {_: 'peerUser', user_id: BOT_ID},
+    peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+    receiver_id: SELF_ID,
+    date: Date.now() / 1000 | 0,
+    message: `message ${id}`,
+    ...overrides
+  };
+}
+
+function makeManager() {
+  const manager = new AppMessagesManager();
+  const storage = Object.assign(new Map(), {
+    peerId: PEER_ID,
+    type: 'history',
+    key: `${PEER_ID}_history`
+  }) as MessagesStorage;
+  const baseHistory = makeHistoryStorage(`history_${PEER_ID}`, 12, LOCAL_ID_OFFSET + 500);
+  const threadHistories = new Map<number, HistoryStorage>();
+  const historiesStorage = {[PEER_ID]: baseHistory};
+  const threadsStorage = {[PEER_ID]: {} as Record<number, HistoryStorage>};
+  const dispatchEvent = vi.fn();
+  const invokeApi = vi.fn((_method: string, _params?: any, _options?: any) => Promise.resolve(true));
+  const log = Object.assign(() => {}, {
+    bindPrefix: () => log,
+    error: vi.fn()
+  });
+  let editInputHadTotalEntities: boolean;
+
+  const getPeerId = (peer: any): PeerId => {
+    if(typeof(peer) === 'number') {
+      return peer;
+    }
+
+    if(peer?._ === 'peerUser') {
+      return (+peer.user_id as UserId).toPeerId(false);
+    }
+
+    return (+peer.channel_id as ChatId).toPeerId(true);
+  };
+
+  Object.assign(manager as any, {
+    ephemeralMidsByPeerId: new Map(),
+    anchoredEphemerals: new Map(),
+    ephemeralOrderByPeerId: new Map(),
+    ephemeralOrder: 0,
+    pendingEphemeralMessages: new Map(),
+    pendingEphemeralRetries: new Map(),
+    ephemeralRetryId: 0,
+    ephemeralCallbackTopicHints: new Map(),
+    tempMids: {},
+    historiesStorage,
+    threadsStorage,
+    appPeersManager: {
+      getPeerId,
+      getOutputPeer: (peerId: PeerId) => peerId.isUser() ?
+        {_: 'peerUser', user_id: peerId.toUserId()} :
+        {_: 'peerChannel', channel_id: peerId.toChatId()},
+      getPeerMigratedTo: (): PeerId => undefined,
+      getPeerUsername: () => 'helperbot',
+      getInputPeerById: () => ({
+        _: 'inputPeerChannel',
+        channel_id: CHAT_ID,
+        access_hash: '1'
+      }),
+      isAnyGroup: (peerId: PeerId) => !peerId.isUser(),
+      isChannel: () => true,
+      isForum: () => true,
+      isBotforum: () => false,
+      canManageDirectMessages: () => false
+    },
+    appProfileManager: {
+      getCachedBotCommands: (): any => undefined,
+      getCachedFullChat: (): any => undefined
+    },
+    appUsersManager: {
+      isBot: (userId: UserId) => userId === BOT_ID,
+      getUser: (userId: UserId) => ({
+        _: 'user',
+        pFlags: {bot: userId === BOT_ID},
+        id: userId,
+        access_hash: '1'
+      }),
+      getUserInput: (userId: UserId) => ({
+        _: 'inputUser',
+        user_id: userId,
+        access_hash: '1'
+      })
+    },
+    appDraftsManager: {
+      clearDraft: vi.fn()
+    },
+    apiManager: {
+      getAppConfig: () => Promise.resolve({}),
+      getConfig: () => Promise.resolve({message_length_max: 12}),
+      invokeApi
+    },
+    apiUpdatesManager: {
+      processUpdateMessage: vi.fn()
+    },
+    log,
+    timeManager: new TimeManager(),
+    rootScope: {
+      myId: SELF_ID,
+      dispatchEvent
+    },
+    getHistoryMessagesStorage: () => storage,
+    getHistoryStorage: (_peerId: PeerId, threadId?: number) => {
+      if(!threadId) {
+        return baseHistory;
+      }
+
+      let history = threadHistories.get(threadId);
+      if(!history) {
+        history = makeHistoryStorage(`replies_${PEER_ID}_${threadId}`, 4, threadId);
+        threadHistories.set(threadId, history);
+        threadsStorage[PEER_ID][threadId] = history;
+      }
+
+      return history;
+    },
+    saveMessage: (message: Message.message, {storage}: {storage: MessagesStorage}) => {
+      editInputHadTotalEntities = message.totalEntities !== undefined;
+      message.peerId = PEER_ID;
+      message.fromId = getPeerId(message.from_id);
+      message.mid = message.id;
+      message.storageKey = storage.key;
+      if(message.reply_to?._ === 'messageReplyHeader') {
+        message.reply_to_mid = message.reply_to.reply_to_msg_id;
+      }
+      message.pFlags.unread = true;
+      if(message.entities) {
+        message.totalEntities = message.entities.slice();
+      }
+      storage.set(message.mid, message);
+      return message;
+    },
+    setMessageToStorage: (storage: MessagesStorage, message: Message.message) => {
+      storage.set(message.mid, message);
+    },
+    deleteMessageFromStorage: (storage: MessagesStorage, mid: number) => storage.delete(mid),
+    handleEditedMessage: vi.fn(),
+    handleReleasingMessage: vi.fn(),
+    appMessagesIdsManager: new AppMessagesIdsManager()
+  });
+
+  return {
+    baseHistory,
+    dispatchEvent,
+    getEditInputHadTotalEntities: () => editInputHadTotalEntities,
+    invokeApi,
+    manager: manager as any,
+    storage,
+    threadHistories
+  };
+}
+
+describe('AppMessagesManager ephemeral messages', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps the reserved local id namespace out of server ids', () => {
+    const mid = EPHEMERAL_MESSAGE_ID_OFFSET + 123;
+    expect(new AppMessagesIdsManager().generateMessageId(mid, CHAT_ID)).toBe(mid);
+    expect(getServerMessageId(mid)).toBe(0);
+  });
+
+  it('keeps an isolated history overlay and resolves out-of-order replies', () => {
+    const {
+      baseHistory,
+      dispatchEvent,
+      getEditInputHadTotalEntities,
+      manager,
+      storage
+    } = makeManager();
+    const child = makeEphemeralMessage(2, {
+      reply_to: {
+        _: 'messageReplyHeader',
+        pFlags: {reply_to_ephemeral: true},
+        reply_to_msg_id: 1
+      }
+    });
+
+    manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: child});
+    expect(storage.size).toBe(0);
+
+    const target = makeEphemeralMessage(1, {top_msg_id: 42});
+    manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: target});
+
+    const targetMessage = manager.getEphemeralMessage(PEER_ID, 1);
+    const childMessage = manager.getEphemeralMessage(PEER_ID, 2);
+    expect(storage.size).toBe(2);
+    expect(targetMessage.mid).toBe(EPHEMERAL_MESSAGE_ID_OFFSET + 1);
+    expect(childMessage.mid).toBe(EPHEMERAL_MESSAGE_ID_OFFSET + 2);
+    expect(manager.isEphemeralMessageId(targetMessage.mid)).toBe(true);
+    expect(targetMessage.pFlags.local).toBeUndefined();
+    expect(childMessage.reply_to_mid).toBe(targetMessage.mid);
+    expect((childMessage.reply_to as any).reply_to_top_id).toBe(42);
+    expect(targetMessage.pFlags.unread).toBeUndefined();
+    expect(childMessage.pFlags.unread).toBeUndefined();
+    expect(baseHistory.count).toBe(12);
+    expect(baseHistory._maxId).toBe(LOCAL_ID_OFFSET + 500);
+    expect(baseHistory.history.findSlice(targetMessage.mid)).toBeUndefined();
+
+    expect(manager.getEphemeralHistory({peerId: PEER_ID})).toEqual([
+      childMessage.mid,
+      targetMessage.mid
+    ]);
+    expect(manager.getEphemeralHistory({
+      peerId: PEER_ID,
+      threadId: 42
+    })).toEqual([childMessage.mid, targetMessage.mid]);
+    expect(manager.getEphemeralHistory({
+      peerId: PEER_ID,
+      limit: 1
+    })).toEqual([childMessage.mid]);
+
+    const appendCalls = dispatchEvent.mock.calls.filter(([event]) => event === 'ephemeral_history_append');
+    manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: target});
+    expect(dispatchEvent.mock.calls.filter(([event]) => event === 'ephemeral_history_append')).toHaveLength(appendCalls.length);
+    expect(dispatchEvent.mock.calls.some(([event]) => event === 'history_append')).toBe(false);
+
+    const oldMid = childMessage.mid;
+    const oldDate = childMessage.date;
+    const oldFromId = childMessage.fromId;
+    const oldReplyTo = childMessage.reply_to;
+    const entities: MessageEntity[] = [{
+      _: 'messageEntityBold',
+      offset: 0,
+      length: 6
+    }];
+    manager.onUpdateEditEphemeralMessage({
+      _: 'updateEditEphemeralMessage',
+      message: makeEphemeralMessage(2, {
+        pFlags: {out: true},
+        date: child.date + 100,
+        message: 'edited',
+        entities,
+        top_msg_id: 99
+      })
+    });
+
+    const editedMessage = manager.getEphemeralMessage(PEER_ID, 2);
+    expect(editedMessage.mid).toBe(oldMid);
+    expect(editedMessage.date).toBe(oldDate);
+    expect(editedMessage.fromId).toBe(oldFromId);
+    expect(editedMessage.reply_to).toBe(oldReplyTo);
+    expect(editedMessage.message).toBe('edited');
+    expect(editedMessage.totalEntities).toEqual(entities);
+    expect(getEditInputHadTotalEntities()).toBe(false);
+    expect(dispatchEvent).toHaveBeenCalledWith('ephemeral_history_edit', expect.objectContaining({
+      peerId: PEER_ID,
+      mid: oldMid,
+      message: editedMessage
+    }));
+    expect(dispatchEvent.mock.calls.some(([event]) => event === 'message_edit')).toBe(false);
+
+    manager.onUpdateDeleteEphemeralMessages({
+      _: 'updateDeleteEphemeralMessages',
+      peer: {_: 'peerChannel', channel_id: CHAT_ID},
+      ids: [1, 2]
+    });
+    expect(storage.size).toBe(0);
+    expect(baseHistory.history.findSlice(targetMessage.mid)).toBeUndefined();
+    expect(baseHistory.count).toBe(12);
+    expect(dispatchEvent).toHaveBeenCalledWith('ephemeral_history_delete', {
+      peerId: PEER_ID,
+      msgs: new Set([targetMessage.mid, childMessage.mid])
+    });
+    expect(dispatchEvent.mock.calls.some(([event]) => event === 'history_delete')).toBe(false);
+  });
+
+  it('orders the overlay by date and then by stable arrival order', () => {
+    const {manager} = makeManager();
+    const date = Date.now() / 1000 | 0;
+    manager.insertEphemeralMessage(makeEphemeralMessage(100, {date}));
+    manager.insertEphemeralMessage(makeEphemeralMessage(1, {date: date + 1}));
+    manager.insertEphemeralMessage(makeEphemeralMessage(50, {date}));
+
+    expect(manager.getEphemeralMessage(PEER_ID, 100).ephemeral_order).toBeLessThan(
+      manager.getEphemeralMessage(PEER_ID, 50).ephemeral_order
+    );
+    expect(manager.getEphemeralHistory({peerId: PEER_ID})).toEqual([
+      EPHEMERAL_MESSAGE_ID_OFFSET + 1,
+      EPHEMERAL_MESSAGE_ID_OFFSET + 50,
+      EPHEMERAL_MESSAGE_ID_OFFSET + 100
+    ]);
+  });
+
+  it('gives every unresolved reply its own resolution deadline and preserves pending edits', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-24T00:00:00Z'));
+    const {manager} = makeManager();
+
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(10, {
+        reply_to: {
+          _: 'messageReplyHeader',
+          pFlags: {reply_to_ephemeral: true},
+          reply_to_msg_id: 100
+        }
+      })
+    });
+    vi.advanceTimersByTime(1900);
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(20, {
+        reply_to: {
+          _: 'messageReplyHeader',
+          pFlags: {reply_to_ephemeral: true},
+          reply_to_msg_id: 200
+        }
+      })
+    });
+
+    vi.advanceTimersByTime(100);
+    expect(manager.getEphemeralMessage(PEER_ID, 10)).toBeTruthy();
+    expect(manager.getEphemeralMessage(PEER_ID, 10).reply_to).toBeUndefined();
+    expect(manager.getEphemeralMessage(PEER_ID, 20)).toBeUndefined();
+    vi.advanceTimersByTime(1900);
+    expect(manager.getEphemeralMessage(PEER_ID, 20)).toBeTruthy();
+    expect(manager.getEphemeralMessage(PEER_ID, 20).reply_to).toBeUndefined();
+
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(30, {
+        reply_to: {
+          _: 'messageReplyHeader',
+          pFlags: {reply_to_ephemeral: true},
+          reply_to_msg_id: 300
+        }
+      })
+    });
+    manager.onUpdateEditEphemeralMessage({
+      _: 'updateEditEphemeralMessage',
+      message: makeEphemeralMessage(30, {
+        message: 'edited while pending',
+        reply_to: {
+          _: 'messageReplyHeader',
+          pFlags: {reply_to_ephemeral: true},
+          reply_to_msg_id: 300
+        }
+      })
+    });
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(300)
+    });
+
+    const edited = manager.getEphemeralMessage(PEER_ID, 30);
+    const target = manager.getEphemeralMessage(PEER_ID, 300);
+    expect(edited.message).toBe('edited while pending');
+    expect(edited.reply_to_mid).toBe(target.mid);
+    expect((edited.reply_to as any).pFlags.reply_to_ephemeral).toBe(true);
+  });
+
+  it('sends oversized commands in one private request and drops unsafe replies', async() => {
+    const {manager, storage} = makeManager();
+    const botInfo: BotInfo.botInfo = {
+      _: 'botInfo',
+      pFlags: {},
+      user_id: BOT_ID,
+      commands: [{
+        _: 'botCommand',
+        pFlags: {ephemeral: true},
+        command: 'secret',
+        description: 'Secret'
+      }]
+    };
+    manager.appProfileManager.getCachedFullChat = () => ({bot_info: [botInfo]});
+    const sendEphemeralMessage = vi.fn(() => Promise.resolve());
+    manager.sendEphemeralMessage = sendEphemeralMessage;
+    manager.generateOutgoingMessage = vi.fn(() => {
+      throw new Error('public send path reached');
+    });
+
+    await manager.sendText({
+      peerId: PEER_ID,
+      text: '/secret a long private payload'
+    });
+    expect(sendEphemeralMessage).toHaveBeenCalledTimes(1);
+    expect(sendEphemeralMessage).toHaveBeenCalledWith(expect.objectContaining({
+      receiverId: BOT_ID,
+      message: '/secret a long private payload'
+    }));
+
+    sendEphemeralMessage.mockClear();
+    await manager.sendText({
+      peerId: PEER_ID,
+      text: '/secret x',
+      webPage: {_: 'webPage', url: 'x'} as any,
+      webPageOptions: {largeMedia: true}
+    });
+    expect(sendEphemeralMessage).toHaveBeenCalledWith(expect.objectContaining({
+      media: {
+        _: 'inputMediaWebPage',
+        url: 'x',
+        pFlags: expect.objectContaining({force_large_media: true})
+      }
+    }));
+    // a preview the user moved above the text stays above it (layer 229 `invert_media`)
+    expect(sendEphemeralMessage).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({invert_media: true})
+    );
+
+    sendEphemeralMessage.mockClear();
+    await manager.sendText({
+      peerId: PEER_ID,
+      text: '/secret x',
+      webPage: {_: 'webPage', url: 'x'} as any,
+      webPageOptions: {},
+      invertMedia: true
+    });
+    expect(sendEphemeralMessage).toHaveBeenCalledWith(expect.objectContaining({
+      invert_media: true
+    }));
+
+    manager.appProfileManager.getCachedFullChat = (): any => undefined;
+    manager.appProfileManager.getCachedBotCommands = () => ({[BOT_ID]: botInfo.commands});
+    sendEphemeralMessage.mockClear();
+    await manager.sendText({
+      peerId: PEER_ID,
+      text: '/secret from cached commands'
+    });
+    expect(sendEphemeralMessage).toHaveBeenCalled();
+
+    sendEphemeralMessage.mockClear();
+    await manager.sendText({
+      peerId: PEER_ID,
+      replyToMsgId: EPHEMERAL_MESSAGE_ID_OFFSET + 999,
+      threadId: 42,
+      text: '/secret stale topic reply'
+    });
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+
+    sendEphemeralMessage.mockClear();
+    await manager.sendText({
+      peerId: PEER_ID,
+      text: '/secret scheduled',
+      scheduleDate: 123
+    });
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+
+    await expect(manager.sendText({
+      peerId: PEER_ID,
+      text: '/secret inline result',
+      forceOrdinary: true
+    })).rejects.toThrow('public send path reached');
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+
+    const outgoing: Message.message = {
+      _: 'message',
+      pFlags: {out: true, ephemeral: true},
+      id: LOCAL_ID_OFFSET + 1.0001,
+      mid: LOCAL_ID_OFFSET + 1.0001,
+      peerId: PEER_ID,
+      fromId: SELF_ID.toPeerId(false),
+      from_id: {_: 'peerUser', user_id: SELF_ID},
+      peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+      date: Date.now() / 1000 | 0,
+      message: 'outgoing',
+      ephemeral_id: 50,
+      ephemeral_receiver_id: BOT_ID
+    };
+    storage.set(outgoing.mid, outgoing);
+    await manager.sendText({
+      peerId: PEER_ID,
+      replyToMsgId: outgoing.mid,
+      text: 'must not leak'
+    });
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for ambiguous ephemeral commands', async() => {
+    const {dispatchEvent, manager} = makeManager();
+    const commands: BotInfo.botInfo['commands'] = [{
+      _: 'botCommand',
+      pFlags: {ephemeral: true},
+      command: 'secret',
+      description: 'Secret'
+    }];
+    manager.appProfileManager.getCachedFullChat = () => ({
+      bot_info: [{
+        _: 'botInfo',
+        pFlags: {},
+        user_id: BOT_ID,
+        commands
+      }, {
+        _: 'botInfo',
+        pFlags: {},
+        user_id: 101 as UserId,
+        commands
+      }]
+    });
+    manager.generateOutgoingMessage = vi.fn(() => {
+      throw new Error('ordinary send path reached');
+    });
+    const sendEphemeralMessage = vi.fn(() => Promise.resolve());
+    manager.sendEphemeralMessage = sendEphemeralMessage;
+
+    await expect(manager.sendText({
+      peerId: PEER_ID,
+      text: '/secret must stay private'
+    })).resolves.toBeUndefined();
+    expect(manager.generateOutgoingMessage).not.toHaveBeenCalled();
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledWith('ephemeral_send_blocked', {
+      peerId: PEER_ID,
+      reason: 'ambiguous'
+    });
+  });
+
+  it('fails closed for stale command caches and private replies when the bot user is missing', async() => {
+    const {dispatchEvent, manager} = makeManager();
+    const commands: BotInfo.botInfo['commands'] = [{
+      _: 'botCommand',
+      pFlags: {ephemeral: true},
+      command: 'secret',
+      description: 'Secret'
+    }];
+    manager.appProfileManager.getCachedBotCommands = () => ({[BOT_ID]: commands});
+    manager.appUsersManager.getUser = (): undefined => undefined;
+    manager.generateOutgoingMessage = vi.fn(() => {
+      throw new Error('ordinary send path reached');
+    });
+    const sendEphemeralMessage = vi.fn(() => Promise.resolve());
+    manager.sendEphemeralMessage = sendEphemeralMessage;
+
+    await expect(manager.sendText({
+      peerId: PEER_ID,
+      text: '/secret stale cache'
+    })).resolves.toBeUndefined();
+    expect(manager.generateOutgoingMessage).not.toHaveBeenCalled();
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledWith('ephemeral_send_blocked', {
+      peerId: PEER_ID,
+      reason: 'unavailable'
+    });
+
+    dispatchEvent.mockClear();
+    manager.insertEphemeralMessage(makeEphemeralMessage(55));
+    await expect(manager.sendText({
+      peerId: PEER_ID,
+      replyToMsgId: EPHEMERAL_MESSAGE_ID_OFFSET + 55,
+      text: 'must stay private'
+    })).resolves.toBeUndefined();
+    expect(manager.generateOutgoingMessage).not.toHaveBeenCalled();
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledWith('ephemeral_send_blocked', {
+      peerId: PEER_ID,
+      reason: 'unavailable'
+    });
+  });
+
+  it('retries a failed ephemeral send with the same random id', async() => {
+    const {dispatchEvent, manager} = makeManager();
+    const error = {type: 'TIMEOUT'} as ApiError;
+    const updates: Updates.updates = {_: 'updates', updates: [], users: [], chats: [], date: 0, seq: 0};
+    const invokeApi = vi.fn()
+      .mockRejectedValueOnce(error)
+      .mockResolvedValueOnce(updates);
+    manager.apiManager.invokeApi = invokeApi;
+
+    await expect(manager.sendEphemeralMessage({
+      peerId: PEER_ID,
+      receiverId: BOT_ID,
+      randomId: '123',
+      message: 'private'
+    })).rejects.toEqual(error);
+
+    const errorEvent = dispatchEvent.mock.calls.find(([event]) => event === 'ephemeral_send_error');
+    expect(errorEvent).toBeTruthy();
+    await manager.retryEphemeralMessage(errorEvent[1].retryId);
+
+    expect(invokeApi).toHaveBeenCalledTimes(2);
+    expect(invokeApi).toHaveBeenNthCalledWith(1, 'ephemeral.sendMessage', expect.objectContaining({
+      random_id: '123'
+    }));
+    expect(invokeApi).toHaveBeenNthCalledWith(2, 'ephemeral.sendMessage', expect.objectContaining({
+      random_id: '123'
+    }));
+    expect(manager.apiUpdatesManager.processUpdateMessage).toHaveBeenCalledWith(updates);
+    expect(manager.pendingEphemeralRetries.size).toBe(0);
+  });
+
+  it('restarts a file upload that failed before the ephemeral API call', async() => {
+    const {dispatchEvent, manager} = makeManager();
+    const options = {
+      peerId: PEER_ID,
+      ephemeral: true,
+      ephemeralReceiverId: BOT_ID,
+      file: new Blob(['retry'])
+    };
+    const sendFile = vi.fn(() => Promise.resolve({}));
+    manager.sendFile = sendFile;
+
+    manager.registerEphemeralRetry(PEER_ID, {
+      type: 'file',
+      options
+    });
+    const errorEvent = dispatchEvent.mock.calls.find(([event]) => event === 'ephemeral_send_error');
+    await manager.retryEphemeralMessage(errorEvent[1].retryId);
+
+    expect(sendFile).toHaveBeenCalledWith(options);
+    expect(manager.pendingEphemeralRetries.size).toBe(0);
+  });
+
+  it('does not duplicate retry actions when a restarted file upload fails again', async() => {
+    const {dispatchEvent, manager} = makeManager();
+    const error = {type: 'TIMEOUT'} as ApiError;
+    const options = {
+      peerId: PEER_ID,
+      ephemeral: true,
+      ephemeralReceiverId: BOT_ID,
+      file: new Blob(['retry'])
+    };
+    manager.sendFile = vi.fn((retryOptions: typeof options) => {
+      manager.registerEphemeralRetry(PEER_ID, {
+        type: 'file',
+        options: retryOptions
+      });
+      return Promise.reject(error);
+    });
+
+    manager.registerEphemeralRetry(PEER_ID, {
+      type: 'file',
+      options
+    });
+    const errorEvents = () => dispatchEvent.mock.calls.filter(([event]) => event === 'ephemeral_send_error');
+    const retryId = errorEvents()[0][1].retryId;
+
+    await expect(manager.retryEphemeralMessage(retryId)).rejects.toEqual(error);
+
+    expect(manager.pendingEphemeralRetries.size).toBe(1);
+    expect(errorEvents()).toHaveLength(2);
+  });
+
+  it('preserves explicit ephemeral intent when a shortcut replaces the command text', async() => {
+    const {manager} = makeManager();
+    const sendEphemeralMessage = vi.fn(() => Promise.resolve());
+    manager.sendEphemeralMessage = sendEphemeralMessage;
+    manager.generateOutgoingMessage = vi.fn(() => {
+      throw new Error('public send path reached');
+    });
+
+    await manager.sendOther({
+      peerId: PEER_ID,
+      ephemeral: true,
+      ephemeralReceiverId: BOT_ID,
+      inputMedia: {
+        _: 'inputMediaGeoPoint',
+        geo_point: {_: 'inputGeoPoint', lat: 1, long: 2}
+      }
+    });
+
+    expect(sendEphemeralMessage).toHaveBeenCalledWith(expect.objectContaining({
+      peerId: PEER_ID,
+      receiverId: BOT_ID,
+      message: '',
+      media: expect.objectContaining({_: 'inputMediaGeoPoint'})
+    }));
+    expect(manager.generateOutgoingMessage).not.toHaveBeenCalled();
+
+    sendEphemeralMessage.mockClear();
+    manager.appUsersManager.getUser = (): undefined => undefined;
+    await manager.sendOther({
+      peerId: PEER_ID,
+      ephemeral: true,
+      ephemeralReceiverId: BOT_ID,
+      inputMedia: {
+        _: 'inputMediaGeoPoint',
+        geo_point: {_: 'inputGeoPoint', lat: 1, long: 2}
+      }
+    });
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+    expect(manager.generateOutgoingMessage).not.toHaveBeenCalled();
+  });
+
+  it('strips unsupported and stale ephemeral replies before ordinary sends', () => {
+    const {manager} = makeManager();
+    manager.insertEphemeralMessage(makeEphemeralMessage(60));
+    const message = manager.getEphemeralMessage(PEER_ID, 60);
+    const options = {
+      peerId: PEER_ID,
+      replyToMsgId: message.mid,
+      replyTo: manager.getInputReplyTo({
+        peerId: PEER_ID,
+        replyToMsgId: message.mid
+      }),
+      replyToQuote: {text: 'quote'},
+      replyToPollOption: new Uint8Array([1]),
+      replyToPeerId: BOT_ID.toPeerId(false),
+      threadId: 42
+    };
+
+    expect(options.replyTo._).toBe('inputReplyToEphemeralMessage');
+    expect(manager.stripEphemeralReply(options)).toBe(true);
+    expect(options).toEqual(expect.objectContaining({
+      peerId: PEER_ID,
+      replyToMsgId: undefined,
+      replyTo: undefined,
+      replyToQuote: undefined,
+      replyToPollOption: undefined,
+      replyToPeerId: undefined,
+      threadId: 42
+    }));
+    expect(manager.getInputReplyTo({
+      peerId: PEER_ID,
+      replyToMsgId: EPHEMERAL_MESSAGE_ID_OFFSET + 999
+    })).toBeUndefined();
+  });
+
+  it('rebuilds a stale ephemeral reply as a topic-root reply before sending', async() => {
+    const {manager} = makeManager();
+    const options = {
+      peerId: PEER_ID,
+      replyToMsgId: EPHEMERAL_MESSAGE_ID_OFFSET + 999,
+      replyToQuote: {text: 'stale'},
+      threadId: 42
+    };
+
+    await manager.checkSendOptions(options);
+
+    expect(options).toEqual(expect.objectContaining({
+      replyToMsgId: 42,
+      replyToQuote: undefined,
+      threadId: 42,
+      replyTo: expect.objectContaining({
+        _: 'inputReplyToMessage',
+        reply_to_msg_id: 42,
+        top_msg_id: 42
+      })
+    }));
+  });
+
+  it('keeps only the first attachment from an ephemeral media batch', async() => {
+    const {invokeApi, manager} = makeManager();
+    manager.insertEphemeralMessage(makeEphemeralMessage(70));
+    manager.checkSendOptions = async(options: any) => {
+      options.replyTo ??= manager.getInputReplyTo(options);
+      return {config: {}, appConfig: {}};
+    };
+    let randomId = 0;
+    manager.sendFile = vi.fn(async(options: any) => {
+      const id = '' + ++randomId;
+      return {
+        message: {id: +id, random_id: id},
+        send: async() => ({
+          _: 'inputMediaGeoPoint',
+          geo_point: {_: 'inputGeoPoint', lat: +id, long: +id}
+        }),
+        uploadingFileName: `file-${id}`
+      };
+    });
+    manager.setTyping = vi.fn();
+    manager.sendSmthLazyLoadQueue = {
+      push: ({load}: {load: () => Promise<unknown>}): void => {
+        void load();
+      }
+    };
+    const sendEphemeralMessage = vi.fn(() => Promise.resolve());
+    manager.sendEphemeralMessage = sendEphemeralMessage;
+
+    await manager.sendGrouped({
+      peerId: PEER_ID,
+      caption: 'private album',
+      replyTo: {
+        _: 'inputReplyToEphemeralMessage',
+        id: 70
+      },
+      sendFileDetails: [
+        {file: new Blob(['one'])},
+        {file: new Blob(['two'])}
+      ]
+    });
+
+    expect(manager.sendFile).toHaveBeenCalledTimes(1);
+    expect(manager.sendFile).toHaveBeenCalledWith(expect.objectContaining({
+      file: expect.any(Blob),
+      replyTo: {
+        _: 'inputReplyToEphemeralMessage',
+        id: 70
+      }
+    }));
+    expect(sendEphemeralMessage).not.toHaveBeenCalled();
+    expect(invokeApi.mock.calls.filter(([method]) => method === 'messages.sendMultiMedia')).toHaveLength(0);
+  });
+
+  it('drops albums initiated by an ephemeral command', async() => {
+    const {invokeApi, manager} = makeManager();
+    const commands: BotInfo.botInfo['commands'] = [{
+      _: 'botCommand',
+      pFlags: {ephemeral: true},
+      command: 'secret',
+      description: 'Secret'
+    }];
+    manager.appProfileManager.getCachedBotCommands = () => ({[BOT_ID]: commands});
+    manager.sendFile = vi.fn();
+
+    await manager.sendGrouped({
+      peerId: PEER_ID,
+      caption: '/secret album',
+      sendFileDetails: [
+        {file: new Blob(['one'])},
+        {file: new Blob(['two'])}
+      ]
+    });
+
+    expect(manager.sendFile).not.toHaveBeenCalled();
+    expect(invokeApi).not.toHaveBeenCalled();
+  });
+
+  it('shows an ephemeral media send as a placeholder, and a failure takes it away quietly', async() => {
+    const {dispatchEvent, manager, storage} = makeManager();
+    manager.insertEphemeralMessage(makeEphemeralMessage(80));
+    const storageSize = storage.size;
+    const error = {type: 'MESSAGE_ID_INVALID'} as ApiError;
+    const messagePromise = {
+      reject: vi.fn(),
+      resolve: vi.fn()
+    };
+    const outgoingMessage: Message.message = {
+      _: 'message',
+      pFlags: {out: true},
+      id: LOCAL_ID_OFFSET + 1.5,
+      from_id: {_: 'peerUser', user_id: SELF_ID},
+      peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+      date: Date.now() / 1000 | 0,
+      message: '',
+      random_id: '123',
+      promise: messagePromise as any
+    };
+    const document: Document.document = {
+      _: 'document',
+      pFlags: {},
+      id: '10',
+      access_hash: '20',
+      file_reference: new Uint8Array(),
+      date: 0,
+      mime_type: 'application/octet-stream',
+      size: 1,
+      dc_id: 1,
+      attributes: []
+    };
+    const onMessagesSendError = vi.fn();
+
+    manager.checkSendOptions = async(options: any) => {
+      options.replyTo ??= manager.getInputReplyTo(options);
+      return {config: {}, appConfig: {}};
+    };
+    manager.generateOutgoingMessage = () => outgoingMessage;
+    manager.appDocsManager = {
+      getDoc: () => document
+    };
+    manager.makeDocumentAndMetaForSendingFile = (): any => ({
+      document,
+      apiFileName: '',
+      actionName: undefined,
+      photo: undefined,
+      fileType: document.mime_type,
+      mediaUnread: false,
+      attributes: [],
+      attachType: 'document'
+    });
+    manager.apiFileManager = {
+      invokeApiWithReference: ({callback}: {callback: () => Promise<unknown>}) => callback()
+    };
+    manager.setTyping = vi.fn();
+    let placeholder: Message.message;
+    manager.beforeMessageSending = (message: Message.message, options: {
+      noOutgoingMessage?: boolean,
+      keepOutOfDialog?: boolean
+    }) => {
+      // a placeholder while it uploads, as desktop's local sending item — never the chat's last
+      expect(options.noOutgoingMessage).toBe(false);
+      expect(options.keepOutOfDialog).toBe(true);
+      placeholder = message;
+      message.send();
+    };
+    manager.onMessagesSendError = onMessagesSendError;
+    const cancelPendingMessage = vi.fn();
+    manager.cancelPendingMessage = cancelPendingMessage;
+    manager.pendingByRandomId = {'123': {}};
+    manager.sendEphemeralMessage = vi.fn(() => Promise.reject(error));
+
+    await manager.sendFile({
+      peerId: PEER_ID,
+      file: document,
+      replyTo: {
+        _: 'inputReplyToEphemeralMessage',
+        id: 80
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // it reads as what it becomes: an ephemeral message only visible to its bot
+    expect(placeholder.pFlags.ephemeral).toBe(true);
+    expect((placeholder as any).ephemeral_receiver_id).toBe(BOT_ID);
+    expect(cancelPendingMessage).toHaveBeenCalledWith('123');
+    expect(onMessagesSendError).not.toHaveBeenCalled();
+    expect(storage.size).toBe(storageSize);
+    expect((storage as Map<unknown, unknown>).has(undefined)).toBe(false);
+    expect(dispatchEvent.mock.calls.some(([event]) => (
+      event === 'message_error' ||
+      event === 'messages_pending' ||
+      event === 'history_append'
+    ))).toBe(false);
+  });
+
+  it('uses the ephemeral edit event namespace for indirect message mutations', () => {
+    const {dispatchEvent, manager} = makeManager();
+    manager.insertEphemeralMessage(makeEphemeralMessage(90));
+    const message = manager.getEphemeralMessage(PEER_ID, 90);
+    dispatchEvent.mockClear();
+
+    manager.dispatchMessageEditEvent(message);
+
+    expect(dispatchEvent).toHaveBeenCalledWith('ephemeral_history_edit', {
+      storageKey: message.storageKey,
+      peerId: PEER_ID,
+      mid: message.mid,
+      message
+    });
+    expect(dispatchEvent.mock.calls.some(([event]) => event === 'message_edit')).toBe(false);
+  });
+
+  it('uses raw ephemeral ids and the stored receiver for callback, report and delete', async() => {
+    const {invokeApi, manager} = makeManager();
+    manager.insertEphemeralMessage(makeEphemeralMessage(7, {top_msg_id: 42}));
+    const message = manager.getEphemeralMessage(PEER_ID, 7);
+
+    await manager.getEphemeralCallbackAnswer(PEER_ID, message.mid, new Uint8Array([1]));
+    await manager.reportEphemeralMessage(PEER_ID, message.mid, new Uint8Array([2]), 'reason');
+    await manager.deleteEphemeralMessage(PEER_ID, message.mid);
+
+    expect(invokeApi).toHaveBeenNthCalledWith(1, 'ephemeral.getCallbackAnswer', expect.objectContaining({
+      id: 7
+    }), expect.anything());
+    expect(invokeApi).toHaveBeenNthCalledWith(2, 'ephemeral.reportMessage', expect.objectContaining({
+      id: 7
+    }));
+    expect(invokeApi).toHaveBeenNthCalledWith(3, 'ephemeral.deleteMessage', expect.objectContaining({
+      id: 7,
+      receiver_id: expect.objectContaining({user_id: SELF_ID})
+    }));
+    expect(invokeApi.mock.calls.some(([method]) => method.startsWith('messages.'))).toBe(false);
+
+    manager.insertEphemeralMessage(makeEphemeralMessage(8, {
+      pFlags: {out: true},
+      from_id: {_: 'peerUser', user_id: SELF_ID},
+      receiver_id: BOT_ID
+    }));
+    manager.appUsersManager.getUser = (): undefined => undefined;
+    await manager.deleteEphemeralMessage(PEER_ID, EPHEMERAL_MESSAGE_ID_OFFSET + 8);
+    expect(manager.getEphemeralMessage(PEER_ID, 8)).toBeUndefined();
+    expect(invokeApi).toHaveBeenCalledTimes(3);
+  });
+  it('anchors an ephemeral message onto a regular one and gives the original back', () => {
+    const {dispatchEvent, manager, storage} = makeManager();
+    const anchorServerId = 30;
+    const anchorMid = new AppMessagesIdsManager().generateMessageId(anchorServerId, CHAT_ID);
+    const original: Message.message = {
+      _: 'message',
+      pFlags: {},
+      id: anchorMid,
+      mid: anchorMid,
+      peerId: PEER_ID,
+      fromId: BOT_ID.toPeerId(false),
+      peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+      from_id: {_: 'peerUser', user_id: BOT_ID},
+      date: Date.now() / 1000 | 0,
+      message: 'original text',
+      storageKey: storage.key
+    };
+    storage.set(anchorMid, original);
+
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(11, {
+        anchor_msg_id: anchorServerId,
+        message: 'bot stand-in'
+      })
+    });
+
+    // no bubble of its own: the storage still holds exactly the anchor message
+    expect(storage.size).toBe(1);
+    const anchored = storage.get(anchorMid) as Message.message;
+    expect(anchored.message).toBe('bot stand-in');
+    expect(anchored.pFlags.ephemeral_anchored).toBe(true);
+    expect(anchored.pFlags.ephemeral).toBeUndefined();
+    expect(anchored.ephemeral_id).toBe(11);
+    expect(anchored.ephemeral_receiver_id).toBe(SELF_ID);
+    // it stays out of the ephemeral overlay — it already sits in the real history
+    expect(manager.getEphemeralHistory({peerId: PEER_ID})).toEqual([]);
+    expect(dispatchEvent.mock.calls.some(([event]) => event === 'ephemeral_history_append')).toBe(false);
+
+    manager.onUpdateEditEphemeralMessage({
+      _: 'updateEditEphemeralMessage',
+      message: makeEphemeralMessage(11, {
+        anchor_msg_id: anchorServerId,
+        message: 'bot stand-in, revised'
+      })
+    });
+    expect((storage.get(anchorMid) as Message.message).message).toBe('bot stand-in, revised');
+    expect(storage.size).toBe(1);
+
+    // the server sends the anchor over again (a history reload): the stand-in stays on top, and
+    // the fresh copy is what Revert will bring back
+    const refetched: Message.message = {...original, pFlags: {}, message: 'original text, refetched'};
+    manager.keepAnchoredEphemeralOverRefetch(PEER_ID, refetched);
+    expect(refetched.message).toBe('bot stand-in, revised');
+    expect(refetched.pFlags.ephemeral_anchored).toBe(true);
+    storage.set(anchorMid, refetched);
+
+    manager.onUpdateDeleteEphemeralMessages({
+      _: 'updateDeleteEphemeralMessages',
+      peer: {_: 'peerChannel', channel_id: CHAT_ID},
+      ids: [11]
+    });
+
+    const restored = storage.get(anchorMid) as Message.message;
+    expect(restored.message).toBe('original text, refetched');
+    expect(restored.pFlags.ephemeral_anchored).toBeUndefined();
+    expect(restored.ephemeral_id).toBeUndefined();
+    expect(storage.size).toBe(1);
+  });
+
+  it('drops anchored stand-ins without reviving them when the chat is flushed', () => {
+    const {dispatchEvent, manager, storage} = makeManager();
+    const anchorServerId = 60;
+    const anchorMid = new AppMessagesIdsManager().generateMessageId(anchorServerId, CHAT_ID);
+    storage.set(anchorMid, {
+      _: 'message',
+      pFlags: {},
+      id: anchorMid,
+      mid: anchorMid,
+      peerId: PEER_ID,
+      fromId: BOT_ID.toPeerId(false),
+      peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+      from_id: {_: 'peerUser', user_id: BOT_ID},
+      date: Date.now() / 1000 | 0,
+      message: 'original',
+      storageKey: storage.key
+    } as Message.message);
+
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(18, {anchor_msg_id: anchorServerId, message: 'stand-in'})
+    });
+    expect((storage.get(anchorMid) as Message.message).pFlags.ephemeral_anchored).toBe(true);
+
+    dispatchEvent.mockClear();
+    manager.forgetAnchoredEphemeralsForPeer(PEER_ID);
+
+    // the whole history is going away, so nothing is written back over the message
+    expect((storage.get(anchorMid) as Message.message).message).toBe('stand-in');
+    expect(dispatchEvent.mock.calls.some(([event]) => event === 'message_edit')).toBe(false);
+    // and the registration is gone, so a later delete cannot resurrect the backup either
+    manager.onUpdateDeleteEphemeralMessages({
+      _: 'updateDeleteEphemeralMessages',
+      peer: {_: 'peerChannel', channel_id: CHAT_ID},
+      ids: [18]
+    });
+    expect((storage.get(anchorMid) as Message.message).message).toBe('stand-in');
+  });
+
+  it('lets only one ephemeral message stand in for a given message', () => {
+    const {manager, storage} = makeManager();
+    const anchorServerId = 70;
+    const anchorMid = new AppMessagesIdsManager().generateMessageId(anchorServerId, CHAT_ID);
+    storage.set(anchorMid, {
+      _: 'message',
+      pFlags: {},
+      id: anchorMid,
+      mid: anchorMid,
+      peerId: PEER_ID,
+      fromId: BOT_ID.toPeerId(false),
+      peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+      from_id: {_: 'peerUser', user_id: BOT_ID},
+      date: Date.now() / 1000 | 0,
+      message: 'original',
+      storageKey: storage.key
+    } as Message.message);
+
+    const anchored = (id: number, text: string) => manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(id, {anchor_msg_id: anchorServerId, message: text})
+    });
+
+    anchored(20, 'first stand-in');
+    // a second one must not take the anchor: its backup would be the FIRST stand-in, and
+    // reverting would hand the reader the bot's text as if it were the original
+    anchored(21, 'second stand-in');
+
+    expect((storage.get(anchorMid) as Message.message).message).toBe('first stand-in');
+    expect(manager.getEphemeralMessage(PEER_ID, 21).mid).toBe(EPHEMERAL_MESSAGE_ID_OFFSET + 21);
+
+    manager.onUpdateDeleteEphemeralMessages({
+      _: 'updateDeleteEphemeralMessages',
+      peer: {_: 'peerChannel', channel_id: CHAT_ID},
+      ids: [20]
+    });
+    expect((storage.get(anchorMid) as Message.message).message).toBe('original');
+  });
+
+  it('refuses to stand in for a message that is still being sent', () => {
+    const {manager, storage} = makeManager();
+    const anchorServerId = 40;
+    const anchorMid = new AppMessagesIdsManager().generateMessageId(anchorServerId, CHAT_ID);
+    // the anchor resolves to this mid, but what sits there has not reached the server yet
+    const pending = {
+      _: 'message',
+      pFlags: {is_outgoing: true},
+      id: anchorMid,
+      mid: anchorMid,
+      peerId: PEER_ID,
+      peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+      from_id: {_: 'peerUser', user_id: BOT_ID},
+      date: Date.now() / 1000 | 0,
+      message: 'still sending',
+      storageKey: storage.key
+    } as Message.message;
+    storage.set(anchorMid, pending);
+
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(16, {anchor_msg_id: anchorServerId, message: 'stand-in'})
+    });
+
+    expect(pending.message).toBe('still sending');
+    expect(pending.pFlags.ephemeral_anchored).toBeUndefined();
+    // it became an ordinary ephemeral message of its own instead
+    expect(manager.getEphemeralMessage(PEER_ID, 16).mid).toBe(EPHEMERAL_MESSAGE_ID_OFFSET + 16);
+  });
+
+  it('answers a callback on an anchored message by its ephemeral id', async() => {
+    const {invokeApi, manager, storage} = makeManager();
+    const anchorServerId = 50;
+    const anchorMid = new AppMessagesIdsManager().generateMessageId(anchorServerId, CHAT_ID);
+    storage.set(anchorMid, {
+      _: 'message',
+      pFlags: {},
+      id: anchorMid,
+      mid: anchorMid,
+      peerId: PEER_ID,
+      fromId: BOT_ID.toPeerId(false),
+      peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+      from_id: {_: 'peerUser', user_id: BOT_ID},
+      date: Date.now() / 1000 | 0,
+      message: 'original',
+      storageKey: storage.key
+    } as Message.message);
+
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(17, {anchor_msg_id: anchorServerId, message: 'stand-in'})
+    });
+
+    // the anchor keeps its real mid, but the keyboard it shows belongs to the bot
+    await manager.getEphemeralCallbackAnswer(PEER_ID, anchorMid, new Uint8Array([3]));
+    expect(invokeApi).toHaveBeenCalledWith('ephemeral.getCallbackAnswer', expect.objectContaining({
+      id: 17
+    }), expect.anything());
+    expect(invokeApi.mock.calls.some(([method]) => method === 'messages.getBotCallbackAnswer')).toBe(false);
+  });
+
+  it('falls back to an ordinary ephemeral message when the anchor cannot take it', () => {
+    const {manager, storage} = makeManager();
+
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(12, {anchor_msg_id: 404, message: 'no anchor here'})
+    });
+
+    const message = manager.getEphemeralMessage(PEER_ID, 12);
+    expect(message.mid).toBe(EPHEMERAL_MESSAGE_ID_OFFSET + 12);
+    expect(message.pFlags.ephemeral).toBe(true);
+    expect(message.pFlags.ephemeral_anchored).toBeUndefined();
+    expect(storage.size).toBe(1);
+    expect(manager.getEphemeralHistory({peerId: PEER_ID})).toEqual([message.mid]);
+  });
+
+  it('carries the fields layer 229 added to an ephemeral message', () => {
+    const {manager} = makeManager();
+    const richMessage = {_: 'richMessage', pFlags: {}, blocks: [], photos: [], documents: []} as any;
+
+    manager.onUpdateNewEphemeralMessage({
+      _: 'updateNewEphemeralMessage',
+      message: makeEphemeralMessage(30, {
+        pFlags: {invert_media: true, noforwards: true},
+        rich_message: richMessage
+      })
+    });
+
+    const message = manager.getEphemeralMessage(PEER_ID, 30);
+    expect(message.pFlags.invert_media).toBe(true);
+    expect(message.pFlags.noforwards).toBe(true);
+    expect(message.rich_message).toBe(richMessage);
+
+    // an edit has to be able to take them back off again
+    manager.onUpdateEditEphemeralMessage({
+      _: 'updateEditEphemeralMessage',
+      message: makeEphemeralMessage(30, {message: 'plain now'})
+    });
+
+    const edited = manager.getEphemeralMessage(PEER_ID, 30);
+    expect(edited.message).toBe('plain now');
+    expect(edited.pFlags.invert_media).toBeUndefined();
+    expect(edited.rich_message).toBeUndefined();
+  });
+
+  it('resolves the chat of an ephemeral message that carries no peer_id', () => {
+    const {manager} = makeManager();
+
+    expect(manager.getEphemeralPeerId(makeEphemeralMessage(13, {
+      peer_id: undefined
+    }))).toBe(BOT_ID.toPeerId(false));
+
+    expect(manager.getEphemeralPeerId(makeEphemeralMessage(14, {
+      peer_id: undefined,
+      pFlags: {out: true},
+      from_id: {_: 'peerUser', user_id: SELF_ID},
+      receiver_id: BOT_ID
+    }))).toBe(BOT_ID.toPeerId(false));
+
+    // a real chat peer still wins over the bot/receiver fallback
+    expect(manager.getEphemeralPeerId(makeEphemeralMessage(15))).toBe(PEER_ID);
+  });
+
+  it('answers a bot privately in its own chat', async() => {
+    const {invokeApi, manager} = makeManager();
+    const botPeerId = BOT_ID.toPeerId(false);
+    manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: makeEphemeralMessage(50, {
+      peer_id: {_: 'peerUser', user_id: SELF_ID}
+    })});
+    const target = manager.getEphemeralMessage(botPeerId, 50) as Message.message;
+    expect(target).toBeDefined();
+
+    await manager.sendText({peerId: botPeerId, text: 'the answer', replyToMsgId: target.mid, ephemeral: true});
+    expect(invokeApi).toHaveBeenCalledWith('ephemeral.sendMessage', expect.objectContaining({
+      message: 'the answer',
+      receiver_id: expect.objectContaining({user_id: BOT_ID}),
+      reply_to: {_: 'inputReplyToEphemeralMessage', id: 50}
+    }));
+  });
+
+  it('puts an ephemeral message from a bot chat into that chat, whatever peer_id says', () => {
+    const {manager} = makeManager();
+    // in a private chat with a bot the server names the reader in peer_id
+    const incoming = makeEphemeralMessage(16, {peer_id: {_: 'peerUser', user_id: SELF_ID}});
+    const botPeerId = manager.getEphemeralPeerId(incoming);
+    expect(botPeerId).toBe(BOT_ID.toPeerId(false));
+
+    const local = manager.makeLocalEphemeralMessage(incoming, botPeerId, 1);
+    expect(local.peer_id).toEqual({_: 'peerUser', user_id: BOT_ID});
+  });
+
+  it('lets a keyboard an ephemeral message brings become the chat keyboard, until it goes', () => {
+    const {baseHistory, dispatchEvent, manager} = makeManager();
+    const now = Date.now() / 1000 | 0;
+    // our own ephemeral command comes back first: its random mid must not count as the last
+    // outgoing message, or a single-use keyboard answering it would start out hidden
+    manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: makeEphemeralMessage(39, {
+      pFlags: {out: true},
+      from_id: {_: 'peerUser', user_id: SELF_ID},
+      receiver_id: BOT_ID,
+      date: now,
+      message: '/keyboard'
+    })});
+    expect(baseHistory.maxOutId).toBeUndefined();
+    manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: makeEphemeralMessage(40, {
+      date: now,
+      reply_markup: {_: 'replyKeyboardMarkup', pFlags: {single_use: true}, rows: []}
+    })});
+    const stored = manager.getEphemeralMessage(PEER_ID, 40) as Message.message;
+
+    expect(baseHistory.replyMarkup?.mid).toBe(stored.mid);
+    expect((baseHistory.replyMarkup as ReplyMarkup.replyKeyboardMarkup)?.pFlags.hidden).toBeUndefined();
+    expect(dispatchEvent).toHaveBeenCalledWith('history_reply_markup', {peerId: PEER_ID});
+
+    // ephemeral mids sit above every history mid: an older history keyboard must not take over,
+    // a newer one must, whatever the mids say
+    const regular = (mid: number, date: number) => ({
+      _: 'message',
+      pFlags: {},
+      mid,
+      id: mid,
+      peerId: PEER_ID,
+      peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+      from_id: {_: 'peerUser', user_id: BOT_ID},
+      date,
+      message: '',
+      reply_markup: {_: 'replyKeyboardMarkup', pFlags: {}, rows: []}
+    }) as any as Message.message;
+    expect(manager.mergeReplyKeyboard(baseHistory, regular(600, now - 60))).toBe(false);
+    expect(baseHistory.replyMarkup?.mid).toBe(stored.mid);
+
+    manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: makeEphemeralMessage(41, {
+      date: now + 1,
+      reply_markup: {_: 'replyKeyboardMarkup', pFlags: {}, rows: []}
+    })});
+    const second = manager.getEphemeralMessage(PEER_ID, 41) as Message.message;
+    expect(baseHistory.replyMarkup?.mid).toBe(second.mid);
+
+    manager.onUpdateDeleteEphemeralMessages({
+      _: 'updateDeleteEphemeralMessages',
+      peer: {_: 'peerChannel', channel_id: CHAT_ID},
+      ids: [41]
+    });
+    expect(baseHistory.replyMarkup).toBeUndefined();
+
+    expect(manager.mergeReplyKeyboard(baseHistory, regular(601, now + 60))).toBe(true);
+    expect(baseHistory.replyMarkup?.mid).toBe(601);
+  });
+
+  it('spends a force-reply by the answer to it, in a way the tab mirror sees', () => {
+    const {baseHistory, manager} = makeManager();
+    const now = Date.now() / 1000 | 0;
+    const make = (mid: number, date: number, extra: Partial<Message.message>) => ({
+      _: 'message',
+      pFlags: {},
+      mid,
+      id: mid,
+      peerId: PEER_ID,
+      peer_id: {_: 'peerChannel', channel_id: CHAT_ID},
+      from_id: {_: 'peerUser', user_id: BOT_ID},
+      date,
+      message: '',
+      ...extra
+    }) as any as Message.message;
+
+    manager.mergeReplyKeyboard(baseHistory, make(700, now, {
+      reply_markup: {_: 'replyKeyboardForceReply', pFlags: {}}
+    }));
+    const asked = baseHistory.replyMarkup;
+    expect(asked?.mid).toBe(700);
+
+    // an unrelated message of ours leaves a (non-single-use) force-reply standing
+    expect(manager.mergeReplyKeyboard(baseHistory, make(701, now + 1, {pFlags: {out: true}, message: 'hi'}))).toBe(false);
+
+    expect(manager.mergeReplyKeyboard(baseHistory, make(702, now + 2, {
+      pFlags: {out: true},
+      message: 'the answer',
+      reply_to_mid: 700
+    }))).toBe(true);
+    // replaced, not mutated: only top-level writes reach the mirror
+    expect(baseHistory.replyMarkup).not.toBe(asked);
+    expect((baseHistory.replyMarkup as ReplyMarkup.replyKeyboardForceReply).pFlags.hidden).toBe(true);
+  });
+
+  describe('welcome messages (layer 229)', () => {
+    function makeWelcomeManager() {
+      const harness = makeManager();
+      const {manager} = harness;
+      manager.welcomeMessagesStorage = {};
+      manager.welcomeMessagesHashes = new Map();
+      // the real mid scheme: a template's id becomes a channel mid, and back
+      manager.saveMessage = (message: Message.message, {storage}: {storage: MessagesStorage}) => {
+        message.peerId = PEER_ID;
+        message.mid = manager.appMessagesIdsManager.generateMessageId(message.id, CHAT_ID);
+        message.storageKey = storage.key;
+        storage.set(message.mid, message);
+        return message;
+      };
+      return harness;
+    }
+
+    const template = (id: number, overrides: Partial<EphemeralMessage> = {}) => makeEphemeralMessage(id, {
+      pFlags: {out: true, welcome_template: true},
+      from_id: {_: 'peerUser', user_id: SELF_ID},
+      receiver_id: 0,
+      ...overrides
+    });
+
+    it('keeps templates apart from the chat and follows every update to them', () => {
+      const {dispatchEvent, manager, storage} = makeWelcomeManager();
+
+      manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: template(3)});
+      const welcome = manager.getWelcomeMessagesStorage(PEER_ID) as MessagesStorage;
+      expect(welcome.key).toBe(`${PEER_ID}_welcome`);
+      expect(welcome.size).toBe(1);
+      expect(storage.size).toBe(0);
+      expect(manager.getEphemeralMessage(PEER_ID, 3)).toBeUndefined();
+      const [stored] = [...welcome.values()] as Message.message[];
+      expect(stored.pFlags.welcome_template).toBe(true);
+      expect(getServerMessageId(stored.mid)).toBe(3);
+      expect(dispatchEvent).toHaveBeenCalledWith('welcome_message_new', stored);
+
+      manager.onUpdateEditEphemeralMessage({_: 'updateEditEphemeralMessage', message: template(3, {message: 'hello'})});
+      expect((welcome.get(stored.mid) as Message.message).message).toBe('hello');
+      expect(dispatchEvent).toHaveBeenCalledWith('message_edit', expect.objectContaining({
+        storageKey: `${PEER_ID}_welcome`
+      }));
+
+      manager.onUpdateDeleteEphemeralMessages({
+        _: 'updateDeleteEphemeralMessages',
+        peer: {_: 'peerChannel', channel_id: CHAT_ID},
+        ids: [3]
+      });
+      expect(welcome.size).toBe(0);
+      expect(dispatchEvent).toHaveBeenCalledWith('welcome_messages_delete', {peerId: PEER_ID, mids: [stored.mid]});
+    });
+
+    it('sends a template to nobody yet, and edits and deletes it by its own id', async() => {
+      const {invokeApi, manager} = makeWelcomeManager();
+
+      // a reply the composer still holds (a bot's force-reply, say) must not ride along
+      await manager.sendText({
+        peerId: PEER_ID,
+        text: 'Welcome aboard',
+        ephemeral: true,
+        welcome: true,
+        replyTo: {_: 'inputReplyToMessage', reply_to_msg_id: 5}
+      });
+      expect(invokeApi).toHaveBeenCalledWith('ephemeral.sendMessage', expect.objectContaining({
+        welcome: true,
+        message: 'Welcome aboard',
+        receiver_id: {_: 'inputUserEmpty'}
+      }));
+      expect(invokeApi.mock.calls.find(([method]) => method === 'ephemeral.sendMessage')[1].reply_to).toBeUndefined();
+
+      manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: template(9)});
+      const [message] = [...manager.getWelcomeMessagesStorage(PEER_ID).values()] as Message.message[];
+      invokeApi.mockClear();
+
+      await manager.editMessage(message, 'Hi there');
+      expect(invokeApi).toHaveBeenCalledWith('ephemeral.editMessage', expect.objectContaining({
+        welcome: true,
+        id: 9,
+        message: 'Hi there',
+        receiver_id: {_: 'inputUserEmpty'}
+      }));
+
+      // saving it unchanged is no failure: nothing may reject into the composer
+      invokeApi.mockImplementationOnce(() => Promise.reject({type: 'MESSAGE_NOT_MODIFIED'}));
+      await expect(manager.editMessage(message, 'Hi there')).resolves.toBeUndefined();
+
+      await manager.deleteWelcomeMessages(PEER_ID, [message.mid]);
+      expect(invokeApi).toHaveBeenCalledWith('ephemeral.deleteWelcomeMessage', expect.objectContaining({id: 9}));
+      expect(manager.getWelcomeMessagesCount(PEER_ID)).toBe(0);
+    });
+
+    it('calls off a template still uploading when all of them are deleted', async() => {
+      const {invokeApi, manager} = makeWelcomeManager();
+      manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: template(9)});
+      const storage = manager.getWelcomeMessagesStorage(PEER_ID) as MessagesStorage;
+      const tempMid = 0.5;
+      storage.set(tempMid, {
+        _: 'message',
+        pFlags: {is_outgoing: true, welcome_template: true},
+        mid: tempMid,
+        peerId: PEER_ID,
+        random_id: '42'
+      } as any as Message.message);
+      manager.tempFinalizeCallbacks = {};
+      manager.pendingByRandomId = {'42': {peerId: PEER_ID, tempId: tempMid, storage}};
+
+      await manager.deleteAllWelcomeMessages(PEER_ID);
+      expect(invokeApi).toHaveBeenCalledWith('ephemeral.deleteAllWelcomeMessages', expect.anything());
+      // its send is off, so no echo brings it back after the server has cleared the rest
+      expect(manager.pendingByRandomId['42']).toBeUndefined();
+      expect(manager.getWelcomeMessagesCount(PEER_ID)).toBe(0);
+    });
+
+    it('offers to edit a rich template, unless only part of it came', async() => {
+      const {manager} = makeWelcomeManager();
+      manager.canManageWelcomeMessages = () => true;
+      const richMessage = (part?: true): RichMessage => ({_: 'richMessage', pFlags: {part}, blocks: [], photos: [], documents: []});
+      manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: template(5, {message: 'Hi'})});
+      manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: template(6, {
+        message: '',
+        rich_message: richMessage()
+      })});
+      manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: template(7, {
+        message: '',
+        rich_message: richMessage(true)
+      })});
+      const [plain, rich, partial] = [...manager.getWelcomeMessagesStorage(PEER_ID).values()] as Message.message[];
+
+      expect(await manager.canEditMessage(plain)).toBe(true);
+      expect(await manager.canEditMessage(rich)).toBe(true);
+      expect(await manager.canEditMessage(partial)).toBe(false);
+      expect(manager.canDeleteMessage(partial)).toBe(true);
+    });
+
+    it('sends and edits a rich template as a rich message', async() => {
+      const {invokeApi, manager} = makeWelcomeManager();
+      manager.apiManager.getAppConfig = () => Promise.resolve({rich_message_posting: 'enabled'});
+      const input = {
+        _: 'inputRichMessage',
+        pFlags: {},
+        blocks: [{_: 'pageBlockParagraph', text: {_: 'textPlain', text: 'Welcome aboard'}}]
+      } as InputRichMessage.inputRichMessage;
+      const richMessage = {input, output: {_: 'richMessage', pFlags: {}, blocks: input.blocks, photos: [], documents: []}} as any;
+
+      await manager.sendText({peerId: PEER_ID, text: 'Welcome aboard', ephemeral: true, welcome: true, richMessage});
+      const sent = invokeApi.mock.calls.find(([method]) => method === 'ephemeral.sendMessage')[1];
+      expect(sent).toMatchObject({welcome: true, message: '', rich_message: input});
+      expect(sent.entities).toBeUndefined();
+      expect(sent.media).toBeUndefined();
+
+      manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: template(9)});
+      const [message] = [...manager.getWelcomeMessagesStorage(PEER_ID).values()] as Message.message[];
+      invokeApi.mockClear();
+
+      await manager.editMessage(message, 'Welcome aboard', {richMessage});
+      const edited = invokeApi.mock.calls.find(([method]) => method === 'ephemeral.editMessage')[1];
+      expect(edited).toMatchObject({welcome: true, id: 9, rich_message: input});
+      expect(edited.message).toBeUndefined();
+      expect(edited.entities).toBeUndefined();
+    });
+
+    it('shows every template as sent by the chat itself, even one a bot admin wrote', () => {
+      const {manager} = makeWelcomeManager();
+      manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: template(7, {
+        pFlags: {welcome_template: true},
+        from_id: {_: 'peerUser', user_id: BOT_ID},
+        peer_id: {_: 'peerChannel', channel_id: CHAT_ID}
+      })});
+      const [stored] = [...manager.getWelcomeMessagesStorage(PEER_ID).values()] as Message.message[];
+
+      expect(stored.from_id).toEqual({_: 'peerChannel', channel_id: CHAT_ID});
+    });
+
+    it('lists the templates, dropping those another admin deleted meanwhile', async() => {
+      const {manager} = makeWelcomeManager();
+      manager.onUpdateNewEphemeralMessage({_: 'updateNewEphemeralMessage', message: template(1)});
+      manager.apiManager.invokeApiSingleProcess = ({processResult}: {processResult: (result: any) => any}) => {
+        return Promise.resolve(processResult({
+          _: 'ephemeral.welcomeMessages',
+          hash: 5,
+          messages: [template(2, {date: 20}), template(4, {date: 10})]
+        }));
+      };
+
+      const mids = await manager.getWelcomeMessages(PEER_ID);
+      expect(mids.map(getServerMessageId)).toEqual([4, 2]);
+      expect(manager.welcomeMessagesHashes.get(PEER_ID)).toBe(5);
+    });
+  });
+});

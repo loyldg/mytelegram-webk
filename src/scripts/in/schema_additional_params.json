@@ -411,6 +411,26 @@
         "type": "MessagesStorageKey"
       },
       {
+        "name": "ephemeral_id",
+        "type": "number"
+      },
+      {
+        "name": "ephemeral_receiver_id",
+        "type": "UserId"
+      },
+      {
+        "name": "ephemeral",
+        "type": "true"
+      },
+      {
+        "name": "ephemeral_anchored",
+        "type": "true"
+      },
+      {
+        "name": "welcome_template",
+        "type": "true"
+      },
+      {
         "name": "repayRequest",
         "type": "{id: number, messageCount: number}"
       }
@@ -833,6 +853,31 @@
         "type": "true"
       },
       {
+        "name": "used",
+        "type": "true"
+      },
+      {
+        "name": "fromId",
+        "type": "PeerId"
+      }
+    ]
+  },
+  {
+    "predicate": "replyInlineMarkup",
+    "params": [
+      {
+        "name": "hidden",
+        "type": "true"
+      },
+      {
+        "name": "used",
+        "type": "true"
+      },
+      {
+        "name": "mid",
+        "type": "number"
+      },
+      {
         "name": "fromId",
         "type": "PeerId"
       }
@@ -862,6 +907,10 @@
       {
         "name": "chosenIndexes",
         "type": "number[]"
+      },
+      {
+        "name": "correctIndexes",
+        "type": "number[]"
       }
     ]
   },
@@ -870,7 +919,7 @@
     "params": [
       {
         "name": "action",
-        "type": "MessageAction.messageActionPhoneCall"
+        "type": "MessageAction.messageActionPhoneCall | MessageAction.messageActionConferenceCall"
       }
     ],
     "type": "MessageMedia"
@@ -1088,7 +1137,7 @@
     "params": [
       {
         "name": "type",
-        "type": "'document' | 'photo' | 'telegram_channel' | 'telegram_megagroup' | 'telegram_bot' | 'telegram_botapp' | 'telegram_user' | 'telegram_chatlist' | 'telegram_story' | 'telegram_channel_boost' | 'telegram_giftcode' | 'telegram_chat' | 'telegram_videochat' | 'telegram_voicechat' | 'telegram_livestream' | 'telegram_nft' | 'telegram_collection' | 'telegram_story_album' | 'telegram_megagroup_request' | 'telegram_stickerset'"
+          "type": "'document' | 'photo' | 'telegram_channel' | 'telegram_megagroup' | 'telegram_bot' | 'telegram_botapp' | 'telegram_user' | 'telegram_chatlist' | 'telegram_story' | 'telegram_channel_boost' | 'telegram_giftcode' | 'telegram_chat' | 'telegram_videochat' | 'telegram_voicechat' | 'telegram_livestream' | 'telegram_nft' | 'telegram_collection' | 'telegram_story_album' | 'telegram_megagroup_request' | 'telegram_stickerset' | 'telegram_call' | 'telegram_aicomposetone'"
       },
       {
         "name": "entities",
@@ -1274,6 +1323,24 @@
       {
         "name": "name",
         "type": "string"
+      }
+    ],
+    "type": "MessageEntity"
+  },
+  {
+    "predicate": "messageEntityRichButton",
+    "params": [
+      {
+        "name": "offset",
+        "type": "number"
+      },
+      {
+        "name": "length",
+        "type": "number"
+      },
+      {
+        "name": "button",
+        "type": "RichText.textButton"
       }
     ],
     "type": "MessageEntity"

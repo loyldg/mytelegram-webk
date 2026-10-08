@@ -14,7 +14,7 @@ export default function onQuoteClick(
   const isTruncated = quoteDiv.classList.contains('is-truncated');
   const isExpanded = quoteDiv.classList.contains('is-expanded');
   const isGood = isTruncated || isExpanded;
-  if(isGood && window.getSelection().isCollapsed) {
+  if(isGood && quoteDiv.ownerDocument.defaultView.getSelection().isCollapsed) {
     cancelEvent(e);
 
     if(createScrollSaver) {
@@ -49,6 +49,7 @@ export default function onQuoteClick(
 
     quoteDiv.classList.toggle('is-expanded');
     quoteDiv.classList.toggle('is-truncated', isExpanded);
+    quoteDiv.querySelector(':scope > .quote-like-collapse')?.setAttribute('aria-expanded', '' + !isExpanded);
     return true;
   }
 

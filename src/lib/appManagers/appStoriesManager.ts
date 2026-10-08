@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import forEachReverse from '@helpers/array/forEachReverse';
 import indexOfAndSplice from '@helpers/array/indexOfAndSplice';
 import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
@@ -16,7 +10,11 @@ import deepEqual from '@helpers/object/deepEqual';
 import safeReplaceObject from '@helpers/object/safeReplaceObject';
 import pause from '@helpers/schedulers/pause';
 import tsNow from '@helpers/tsNow';
-import {Reaction, ReportReason, StoriesAllStories, StoriesStories, StoryItem, Update, PeerStories, User, Chat, StoryView, MediaArea, StoryAlbum, StoriesStealthMode} from '@layer';
+import {Reaction, ReportReason, StoriesAllStories, StoriesStories, StoryItem, Update, PeerStories, User, Chat, StoryView, MediaArea, StoryAlbum, StoriesStealthMode, InputPrivacyRule} from '@layer';
+import getPrivacyRulesDetails from '@appManagers/utils/privacy/getPrivacyRulesDetails';
+import getStoryPrivacyType from '@appManagers/utils/stories/privacyType';
+import {StorySettings, StorySettingsSaveResult} from '@appManagers/utils/stories/storySettings';
+import createSerializedQueue, {SerializedQueue} from '@helpers/createSerializedQueue';
 import {SERVICE_PEER_ID, TEST_NO_STORIES} from '@appManagers/constants';
 import {ReferenceContext} from '@lib/storages/references';
 import {AppManager} from '@appManagers/manager';
@@ -65,6 +63,7 @@ const TEST_READ = false;
 const TEST_EXPIRING = 0;
 
 export default class AppStoriesManager extends AppManager {
+  private settingsSaveQueue: SerializedQueue;
   private cache: {[userId: UserId]: StoriesPeerCache};
   private lists: {[type in StoriesListType]: PeerId[]};
   private changelogPeerId: PeerId;
@@ -85,7 +84,9 @@ export default class AppStoriesManager extends AppManager {
 
       updateReadStories: this.onUpdateReadStories,
 
-      updateStoriesStealthMode: this.onUpdateStoriesStealthMode
+      updateStoriesStealthMode: this.onUpdateStoriesStealthMode,
+
+      updateNewStoryReaction: this.onUpdateNewStoryReaction
     });
 
     this.rootScope.addEventListener('app_config', this.setChangelogPeerIdFromAppConfig);
@@ -259,6 +260,25 @@ export default class AppStoriesManager extends AppManager {
     this.rootScope.dispatchEvent('stories_position', {peerId: cache.peerId, position});
   }
 
+  /**
+   * A snapshot of where every known peer sits in the lists.
+   *
+   * `stories_position` is only broadcast when a position CHANGES, so a tab that attached to an
+   * already-running shared worker — a reload, a second tab — never hears about the positions
+   * computed before it, and would sort its list by the fallback instead. This is how it catches up.
+   */
+  public getListPositions() {
+    const positions: {[peerId: PeerId]: StoriesListPosition} = {};
+    for(const peerId in this.cache) {
+      const position = this.cache[peerId].position;
+      if(position) {
+        positions[peerId as any as PeerId] = position;
+      }
+    }
+
+    return positions;
+  }
+
   public getPeerStoriesCache(peerId: PeerId, create = true): StoriesPeerCache {
     return this.cache[peerId] ??= create ? {
       peerId,
@@ -388,7 +408,13 @@ export default class AppStoriesManager extends AppManager {
         storyId: storyItem.id
       };
 
-      this.appMessagesManager.saveMessageMedia(storyItem, mediaContext);
+      this.appMessagesManager.saveMessageMedia(storyItem, 'media', mediaContext);
+      // the track the story was posted with — saved like any other document so the viewer can put
+      // it in the profile playlist or forward it, file_reference refreshes included
+      if(storyItem.music) {
+        storyItem.music = this.appDocsManager.saveDoc(storyItem.music, mediaContext);
+      }
+
       const mediaAreas = storyItem.media_areas;
       mediaAreas?.forEach((mediaArea) => {
         (mediaArea as MediaArea.mediaAreaChannelPost).msg_id =
@@ -714,6 +740,106 @@ export default class AppStoriesManager extends AppManager {
     });
 
     return promise;
+  }
+
+  public async getStorySettings(peerId: PeerId, id: number): Promise<StorySettings> {
+    this.assertStorySettingsRights(peerId, id);
+    const personal = peerId.isUser();
+    const [result, closeFriends, hideFrom] = await Promise.all([
+      this.apiManager.invokeApiSingle('stories.getStoriesByID', {
+        peer: this.appPeersManager.getInputPeerById(peerId),
+        id: [id]
+      }),
+      personal ? this.appUsersManager.getCloseFriends() : [],
+      personal ? this.appUsersManager.getStoryBlockedPeerIds() : []
+    ]);
+    const items = this.saveStoriesStories(result, this.getPeerStoriesCache(peerId), undefined, true);
+    const story = items.find((story) => story.id === id);
+    if(!story || (personal && !story.privacy)) throw new Error('STORY_ID_INVALID');
+    this.assertStorySettingsRights(peerId, id);
+    const privacyType = personal ? getStoryPrivacyType(story) || 'selected' : 'public';
+    const {allowPeers, disallowPeers} = getPrivacyRulesDetails(personal ? story.privacy : []);
+    const toPeerIds = (peers: typeof allowPeers) => peers.users.map((id) => id.toPeerId())
+    .concat(peers.chats.map((id) => id.toPeerId(true)));
+    const excluded = toPeerIds(disallowPeers);
+    return {
+      ...(!personal ? {peerType: this.appChatsManager.isMegagroup(peerId.toChatId()) ? 'group' as const : 'channel' as const} : {}),
+      privacyType,
+      everyoneExcept: privacyType === 'public' ? excluded : [],
+      contactsExcept: privacyType === 'contacts' ? excluded : [],
+      selectedContacts: toPeerIds(allowPeers),
+      closeFriends,
+      hideFrom,
+      allowScreenshots: !story.pFlags.noforwards,
+      keepOnPage: !!story.pFlags.pinned
+    };
+  }
+
+  public canEditStorySettings(peerId: PeerId, id: number) {
+    if(peerId.isUser()) return peerId === this.appPeersManager.peerId;
+    return this.appChatsManager.getChat(peerId.toChatId())?._ === 'channel' && this.hasRights(peerId, id, 'pin');
+  }
+
+  private assertStorySettingsRights(peerId: PeerId, id: number) {
+    if(!this.canEditStorySettings(peerId, id)) throw new Error('STORY_EDIT_FORBIDDEN');
+  }
+
+  public saveStorySettings(peerId: PeerId, id: number, settings: StorySettings, previous: StorySettings) {
+    // Account lists are shared by all stories and tabs. Serialize their read/modify/write cycle.
+    return (this.settingsSaveQueue ??= createSerializedQueue()).enqueue(() => this.saveStorySettingsInternal(peerId, id, settings, previous));
+  }
+
+  private async saveStorySettingsInternal(peerId: PeerId, id: number, settings: StorySettings, previous: StorySettings): Promise<StorySettingsSaveResult> {
+    this.assertStorySettingsRights(peerId, id);
+    if(!peerId.isUser()) {
+      if(settings.keepOnPage !== previous.keepOnPage) {
+        await this.togglePinned(peerId, id, settings.keepOnPage);
+      }
+      return {saved: true, applied: {keepOnPage: settings.keepOnPage}};
+    }
+    const privacyList = (value: StorySettings) => value.privacyType === 'public' ? value.everyoneExcept :
+      value.privacyType === 'contacts' ? value.contactsExcept : value.privacyType === 'selected' ? value.selectedContacts : [];
+    const privacyChanged = settings.privacyType !== previous.privacyType ||
+      !deepEqual([...privacyList(settings)].sort(), [...privacyList(previous)].sort());
+    const rules: InputPrivacyRule[] = [];
+    const list = privacyList(settings);
+    const users = list.filter((peerId) => peerId.isUser()).map((peerId) => this.appUsersManager.getUserInput(peerId.toUserId()));
+    const chats = list.filter((peerId) => peerId.isAnyChat()).map((peerId) => peerId.toChatId());
+    // Exceptions must precede the catch-all audience rule.
+    if(users.length || settings.privacyType === 'selected') rules.push({_: settings.privacyType === 'selected' ? 'inputPrivacyValueAllowUsers' : 'inputPrivacyValueDisallowUsers', users});
+    if(chats.length) rules.push({_: settings.privacyType === 'selected' ? 'inputPrivacyValueAllowChatParticipants' : 'inputPrivacyValueDisallowChatParticipants', chats});
+    switch(settings.privacyType) {
+      case 'public': rules.push({_: 'inputPrivacyValueAllowAll'}); break;
+      case 'contacts': rules.push({_: 'inputPrivacyValueAllowContacts'}); break;
+      case 'close': rules.push({_: 'inputPrivacyValueAllowCloseFriends'}); break;
+      case 'selected': break;
+      default: throw new Error('PRIVACY_VALUE_INVALID');
+    }
+
+    const added = (key: 'closeFriends' | 'hideFrom') => settings[key].filter((peerId) => !previous[key].includes(peerId));
+    const removed = (key: 'closeFriends' | 'hideFrom') => previous[key].filter((peerId) => !settings[key].includes(peerId));
+    const applied: Partial<StorySettings> = {};
+    try {
+      await this.appUsersManager.updateCloseFriends(added('closeFriends'), removed('closeFriends'));
+      applied.closeFriends = [...settings.closeFriends];
+      await this.appUsersManager.updateStoryBlockedPeers(added('hideFrom'), removed('hideFrom'));
+      applied.hideFrom = [...settings.hideFrom];
+      if(privacyChanged) {
+        try {
+          const updates = await this.apiManager.invokeApi('stories.editStory', {
+            peer: this.appPeersManager.getInputPeerById(peerId),
+            id,
+            privacy_rules: rules
+          });
+          this.apiUpdatesManager.processUpdateMessage(updates);
+        } catch(error) {
+          if((error as ApiError).type !== 'STORY_NOT_MODIFIED') throw error;
+        }
+      }
+      return {saved: true, applied: {...settings}};
+    } catch{
+      return {saved: false, applied};
+    }
   }
 
   public togglePinned(peerId: PeerId, storyId: StoryItem['id'] | StoryItem['id'][], pinned: boolean) {
@@ -1479,7 +1605,7 @@ export default class AppStoriesManager extends AppManager {
 
     const chatId = peerId.toChatId();
     const story = this.getStoryByIdCached(peerId, storyId) as StoryItem.storyItem;
-    const isMyStory = !!story.pFlags.out;
+    const isMyStory = !!story?.pFlags.out;
 
     const canEdit = this.appChatsManager.hasRights(chatId, 'edit_stories');
     const canPost = this.appChatsManager.hasRights(chatId, 'post_stories');
@@ -1550,9 +1676,38 @@ export default class AppStoriesManager extends AppManager {
         };
         if(peerId.isUser()) this.appUsersManager.saveApiUsers([newPeer as User.user]);
         else this.appChatsManager.saveApiChats([newPeer as Chat.channel]);
-        this.appNotificationsManager.toggleStoriesMute(peerId, hidden, true);
+        this.appNotificationsManager.toggleStoriesMute(peerId, hidden || undefined, true);
       }
     });
+  }
+
+  /**
+   * A user who is not a contact is in the feed only as a top correspondent: the server will not hide
+   * their stories to the archive, dropping the rating takes them out instead (as Android does)
+   */
+  public removeTopPeerFromStories(peerId: PeerId) {
+    return this.appUsersManager.resetTopPeerRating(peerId).then(() => {
+      const cache = this.getPeerStoriesCache(peerId, false);
+      if(cache?.position) {
+        indexOfAndSplice(this.lists[cache.position.type], peerId);
+        cache.position = undefined;
+      }
+
+      this.rootScope.dispatchEvent('stories_position', {peerId, position: undefined});
+    });
+  }
+
+  /**
+   * How a peer's stories leave the feed: a top correspondent who is not a contact is removed from it
+   * (Android shows it only then), everyone else is hidden to the archive
+   */
+  public async getPeerStoriesRemoval(peerId: PeerId): Promise<'hide' | 'remove'> {
+    if(!peerId.isUser() || peerId === this.changelogPeerId || this.appUsersManager.isContact(peerId.toUserId())) {
+      return 'hide';
+    }
+
+    const topPeers = await this.appUsersManager.getTopPeers('correspondents');
+    return topPeers.some((topPeer) => topPeer.id === peerId) ? 'remove' : 'hide';
   }
 
   public activateStealthMode() {
@@ -1585,6 +1740,9 @@ export default class AppStoriesManager extends AppManager {
     const peerId = this.appPeersManager.getPeerId(update.peer);
     const cache = this.getPeerStoriesCache(peerId);
     let {story} = update;
+    // * capture it here: the notification can be routed after an await, by which time the
+    // * first difference is already over
+    const isInitialSync = this.apiUpdatesManager.isInitialSync();
 
     if(story._ === 'storyItemDeleted') {
       this.handleDeletedStory(cache, story.id);
@@ -1594,6 +1752,16 @@ export default class AppStoriesManager extends AppManager {
     if(cache.maxReadId === undefined) {
       Promise.resolve(this.getPeerStories(peerId)).then((userStories) => {
         this.rootScope.dispatchEvent('stories_stories', userStories);
+        // * the peer's stories weren't cached yet (e.g. their very first story), so the
+        // * normal path below was skipped — notify now that maxReadId is known. The guard
+        // * inside notifyAboutStory drops it if it turns out to be already read.
+        if(
+          story._ === 'storyItem' &&
+          !this.isStoryExpired(story) &&
+          this.getCacheTypeForPeerId(peerId)
+        ) {
+          this.notifyAboutStory(peerId, story, cache.maxReadId, isInitialSync);
+        }
       });
       return;
     }
@@ -1603,8 +1771,70 @@ export default class AppStoriesManager extends AppManager {
     story = this.saveStoryItems([update.story], cache, cacheType, true)[0];
     if(!hadStoryBefore && cacheType) {
       this.rootScope.dispatchEvent('story_new', {peerId, story, cacheType, maxReadId: cache.maxReadId});
+      this.notifyAboutStory(peerId, story as StoryItem.storyItem, cache.maxReadId, isInitialSync);
     }
   };
+
+  private async notifyAboutStory(peerId: PeerId, story: StoryItem.storyItem, maxReadId: number, isInitialSync?: boolean) {
+    // * don't notify about our own stories
+    if(peerId === this.appPeersManager.peerId || story.pFlags?.out) {
+      return;
+    }
+
+    // * a story at or below maxReadId is already seen (e.g. replayed on reconnect)
+    if(maxReadId && story.id <= maxReadId) {
+      return;
+    }
+
+    // * hold it back while a difference is being applied: the updateReadStories that makes this
+    // * story already-seen (opened on another device) can still be in it
+    await this.apiUpdatesManager.waitForSync(peerId);
+
+    // * ...so re-read the mark, it may have moved while we were waiting
+    const maxReadIdNow = this.getPeerStoriesCache(peerId, false)?.maxReadId;
+    if(maxReadIdNow && story.id <= maxReadIdNow) {
+      return;
+    }
+
+    if(await this.appNotificationsManager.isPeerStoriesMuted(peerId)) {
+      return;
+    }
+
+    return this.appNotificationsManager.routeNotification(peerId, {
+      story: {peerId, storyId: story.id}
+    }, isInitialSync);
+  }
+
+  protected onUpdateNewStoryReaction = (update: Update.updateNewStoryReaction) => {
+    this.notifyAboutStoryReaction(update, this.apiUpdatesManager.isInitialSync());
+  };
+
+  // * someone reacted to one of our own stories — unlike a new story, this is gated by the
+  // * global reactions settings (account.getReactionsNotifySettings), not by the peer's mute
+  private async notifyAboutStoryReaction(update: Update.updateNewStoryReaction, isInitialSync?: boolean) {
+    const {reaction, story_id: storyId} = update;
+    if(reaction._ === 'reactionEmpty') { // * the reaction was removed
+      return;
+    }
+
+    const peerId = this.appPeersManager.getPeerId(update.peer);
+    if(peerId === this.appPeersManager.peerId) {
+      return;
+    }
+
+    // * let a running difference finish first, so the settings below are read after whatever
+    // * it carries (a mute, a settings change) has been applied
+    await this.apiUpdatesManager.waitForSync(peerId);
+
+    const notifySettings = await this.appNotificationsManager.getStoryReactionNotifySettings(peerId);
+    if(!notifySettings) {
+      return;
+    }
+
+    return this.appNotificationsManager.routeNotification(peerId, {
+      storyReaction: {peerId, storyId, reaction, showPreview: notifySettings.showPreview}
+    }, isInitialSync);
+  }
 
   protected onUpdateReadStories = (update: Update.updateReadStories) => {
     const peerId = this.appPeersManager.getPeerId(update.peer);

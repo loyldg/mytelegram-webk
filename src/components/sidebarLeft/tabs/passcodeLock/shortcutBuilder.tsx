@@ -22,7 +22,7 @@ const ShortcutBuilder: Component<{
 
   const getKeyContent = (key: ShortcutKey): JSX.Element => {
     if(key === 'Meta') {
-      return <IconTsx icon={IS_APPLE ? 'mac_command_key' : 'win_key'} />;
+      return <IconTsx icon={IS_APPLE ? 'mac_command_key' : 'win_key_filled'} />;
     }
     return <span>{key}</span>;
   };
@@ -54,6 +54,7 @@ const ShortcutBuilder: Component<{
               [styles.KeyButtonFirst]: idx === 0,
               [styles.KeyButtonLast]: idx === array.length - 1
             }}
+            aria-pressed={isSelected(key)}
             onClick={[onKeyClick, key]}
           >
             {getKeyContent(key)}

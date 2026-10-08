@@ -97,7 +97,7 @@ export type MediaEditorState = {
 export enum SetVideoTimeFlags {
   Redraw = 0b001,
   UpdateCursor = 0b010,
-  UpdateVideo = 0b100,
+  UpdateVideo = 0b100
 };
 
 export type EditorOverridableGlobalActions = {
@@ -175,13 +175,17 @@ export type MediaEditorContextValue = {
   canImageResultInGIF: boolean;
   isEditingForAvatar: boolean;
   isEditingForumAvatar: boolean;
+  isVideoAvatarMode: boolean;
   dontCreatePreview: boolean;
+  imageType?: 'image/jpeg' | 'image/png';
+  imageQuality?: number;
 
   mediaState: Store<EditingMediaState>;
   editorState: Store<MediaEditorState>;
   actions: EditorOverridableGlobalActions;
 
   canFinish: Accessor<boolean>;
+  hasModifications: Accessor<boolean>;
 
   resizableLayersSeed: number;
 };
@@ -196,6 +200,11 @@ export function createContextValue(props: MediaEditorProps): MediaEditorContextV
 
   const mediaStateInitClone = structuredClone(mediaStateInit);
 
+
+  // Video-avatar mode forces audio off, since profile videos have no sound.
+  if(props.isVideoAvatarMode) {
+    mediaStateInit.videoMuted = true;
+  }
 
   const mediaState = createMutable(mediaStateInit);
   const editorState = createMutable(getDefaultMediaEditorState());
@@ -252,13 +261,17 @@ export function createContextValue(props: MediaEditorProps): MediaEditorContextV
     canImageResultInGIF: props.canImageResultInGIF || false,
     isEditingForAvatar: props.isEditingForAvatar || false,
     isEditingForumAvatar: props.isEditingForumAvatar || false,
+    isVideoAvatarMode: props.isVideoAvatarMode || false,
     dontCreatePreview: props.dontCreatePreview || false,
+    imageType: props.imageType,
+    imageQuality: props.imageQuality,
 
     mediaState,
     editorState,
     actions,
 
-    canFinish: createMemo(() => props.isEditingForAvatar || hasModifications()),
+    canFinish: createMemo(() => props.canFinishWithoutChanges || hasModifications()),
+    hasModifications,
 
     // [0-1] make sure it's different even after reopening the editor, note that there might be some items in history!
     resizableLayersSeed: Math.random()

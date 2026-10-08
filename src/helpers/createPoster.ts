@@ -1,16 +1,16 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import pause from '@helpers/schedulers/pause';
 import {makeMediaSize} from '@helpers/mediaSize';
 import scaleMediaElement from '@helpers/canvas/scaleMediaElement';
-import preloadVideo from '@helpers/preloadVideo';
 import setCurrentTime from '@helpers/dom/setCurrentTime';
 
-export function createPosterFromMedia(media: HTMLVideoElement | HTMLImageElement) {
+// iOS fits the uploaded video thumb into a square box (320), Android keeps the
+// frame size as-is; 720 matches the media editor's thumbnail cap and stays
+// sharp on retina bubbles (the old 320x240 box crippled portrait videos)
+const POSTER_MAX_SIZE = 720;
+
+export function createPosterFromMedia(
+  media: HTMLVideoElement | HTMLImageElement,
+  mimeType?: 'image/jpeg' | 'image/png'
+) {
   let width: number, height: number;
   if(media instanceof HTMLVideoElement) {
     width = media.videoWidth;
@@ -23,7 +23,9 @@ export function createPosterFromMedia(media: HTMLVideoElement | HTMLImageElement
   return scaleMediaElement({
     media,
     mediaSize: makeMediaSize(width, height),
-    boxSize: makeMediaSize(320, 240),
+    // clamp the box to the source so a smaller video is never upscaled
+    boxSize: makeMediaSize(Math.min(width, POSTER_MAX_SIZE), Math.min(height, POSTER_MAX_SIZE)),
+    mimeType,
     quality: .9
   });
 }
@@ -44,14 +46,3 @@ export function createPosterFromVideo(video: HTMLVideoElement): ReturnType<typeo
     setCurrentTime(video, Math.min(video.duration, 1));
   });
 }
-
-export async function createPosterForVideo(url: string) {
-  const video = await preloadVideo(url);
-
-  return Promise.race([
-    pause(2000) as Promise<undefined>,
-    createPosterFromVideo(video)
-  ]);
-}
-
-

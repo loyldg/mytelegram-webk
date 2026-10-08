@@ -1,23 +1,14 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import customProperties from '@helpers/dom/customProperties';
 import {Middleware} from '@helpers/middleware';
 import noop from '@helpers/noop';
 import pause from '@helpers/schedulers/pause';
 import {MyDocument} from '@appManagers/appDocsManager';
-import {applyColorOnContext} from '@lib/rlottie/rlottiePlayer';
+import {applyColorOnContext} from '@lib/lottie/lottiePlayer';
 import rootScope from '@lib/rootScope';
 import wrapSticker from '@components/wrappers/sticker';
 
 export default async function wrapEmojiPattern({
   docId,
   middleware,
-  useHighlightingColor,
-  colorAsOut,
   container,
   color,
   positions,
@@ -28,9 +19,8 @@ export default async function wrapEmojiPattern({
 }: {
   docId: DocId | MyDocument,
   middleware: Middleware,
-  useHighlightingColor?: boolean,
-  colorAsOut?: boolean,
   container?: HTMLElement,
+  // * left out to keep the emoji's own colours, e.g. when the pattern is used as a mask
   color?: string,
   positions: [x: number, y: number, size: number, alpha: number][],
   canvasWidth: number,
@@ -84,13 +74,7 @@ export default async function wrapEmojiPattern({
     });
     ctx.globalAlpha = 1;
 
-    if(useHighlightingColor) {
-      color = '#ffffff';
-    } else if(colorAsOut) {
-      color = customProperties.getProperty('message-out-primary-color');
-    }
-
-    applyColorOnContext(ctx, color, 0, 0, canvas.width, canvas.height);
+    if(color) applyColorOnContext(ctx, color, 0, 0, canvas.width, canvas.height);
     if(container) container.prepend(canvas);
     return canvas;
   }).catch(noop) as Promise<HTMLCanvasElement>;

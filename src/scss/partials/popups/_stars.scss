@@ -1,31 +1,22 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../../shared" as *;
 
- .popup-stars {
+.popup-stars {
   --popup-min-width: 26.25rem;
   --popup-max-width: 26.25rem;
   $parent: ".popup";
 
   #{$parent} {
     &-header {
-      height: 3.5rem;
-      padding-inline: .5rem;
-
       .stars-balance {
+        // the balance sits at the far end of the header, whether or not there is a title next to it
+        margin-inline-start: auto;
         margin-top: .25rem;
         margin-inline-end: .75rem;
       }
     }
 
     &-container {
-      max-height: calc(100vh - 5rem);
-      padding: 0;
-      border-radius: 1rem;
+      max-height: calc(var(--100vh) - 5rem);
     }
 
     &-body {
@@ -43,45 +34,26 @@
 
   &-image {
     width: 194px;
-    margin: 1.125rem auto .3125rem;
+    margin: 1.125rem auto 0;
     display: block;
     transform: translateX(-3px); // * fix image alignment
   }
 
-  &-title,
-  &-subtitle {
-    @include text-overflow(false);
-    @include text-center();
+  &-intro {
+    margin-bottom: 1.5rem;
   }
 
-  &-title {
-    font-size: 1.5rem;
-    font-weight: var(--font-weight-bold);
-    line-height: 2rem;
+  &-empty {
+    margin-block: .375rem 1.5rem;
   }
 
-  &-subtitle {
-    line-height: 1.375rem;
-    margin-top: .375rem;
-
-    &.mt {
-      margin-top: .5rem;
-    }
+  &-history-title {
+    padding-top: 3.5rem;
   }
 
   &-options {
-    // display: grid;
-    // grid-template-columns: repeat(2, 1fr);
-    // gap: .5rem;
-    margin-top: 1.5rem;
-    margin: 1.5rem .5rem .5rem;
     overflow: hidden;
     position: relative;
-
-    @include respond-to(handhelds) {
-      margin-left: 0;
-      margin-right: 0;
-    }
 
     @include animation-level(2) {
       transition: height var(--transition-standard-in);
@@ -141,21 +113,8 @@
     font-weight: var(--font-weight-bold);
     justify-content: center;
     align-items: unset;
-    height: 0rem;
     line-height: 3rem;
-
-    &.is-visible {
-      height: 3rem;
-    }
-
-    @include animation-level(2) {
-      transition: height var(--transition-standard-in) !important;
-    }
-
-    @include respond-to(not-handhelds) {
-      margin: 0 .5rem !important;
-      width: calc(100% - 1rem) !important;
-    }
+    margin-top: .5rem !important;
 
     .button-icon {
       margin-inline: .25rem 0;
@@ -175,10 +134,6 @@
       }
     }
 
-    &-tab {
-      border-radius: 0 !important;
-    }
-
     &-content {
       padding: .5rem;
 
@@ -192,6 +147,20 @@
   }
 
   &-transaction {
+    &-row {
+      .row-midtitle,
+      .row-subtitle {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      @include respond-to(handhelds) {
+        grid-template-columns: 3.5rem minmax(0, 1fr) !important;
+        grid-template-areas: "left title" "left midtitle" "left subtitle" "right right" !important;
+      }
+    }
+
     &-media {
       position: absolute;
       inset: 0;
@@ -248,13 +217,9 @@
   $parent: ".popup";
 
   #{$parent} {
-    &-header {
-      margin-bottom: 0;
-    }
-
     &-body {
       background-color: var(--surface-color);
-      margin: -3.5rem 0 1rem;
+      margin: -3.5rem 0 0;
 
       &.is-receipt {
         margin-bottom: 0;
@@ -283,7 +248,6 @@
 
     &-footer {
       .button-icon {
-        font-size: 18.5px;
         vertical-align: bottom;
         line-height: inherit;
         margin-inline-start: .25rem;
@@ -345,7 +309,10 @@
     }
 
     &-status {
-      background-color: rgba(var(--green-color-rgb), .1);
+      // the chip takes the amount's own colour, the way tdesktop paints it (the amount's pen at
+      // 15% alpha for the pill, full strength for the label) — a refund on a negative amount used
+      // to end up as red text inside a green pill
+      background-color: color-mix(in srgb, currentColor 10%, transparent);
       border-radius: $border-radius;
       padding: 0 .375rem;
     }
@@ -399,21 +366,11 @@
 
   #{$parent} {
     &-header {
-      margin-bottom: -.25rem;
       z-index: 2;
     }
 
     &-body {
       background-color: var(--surface-color);
-    }
-
-    &-footer {
-      .button-icon {
-        font-size: 18.5px;
-        vertical-align: bottom;
-        line-height: inherit;
-        margin-inline-start: .25rem;
-      }
     }
   }
 
@@ -455,7 +412,7 @@
       pointer-events: none;
 
       &.is-visible {
-        &:not(.backwards) {
+        &.forwards {
           transform: scale(1);
           opacity: 1;
         }
@@ -502,19 +459,11 @@
   }
 
   &-senders {
+    // Layout only — the line/text framing is `.delimiter-with-text`.
     &-delimiter {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: .625rem;
       padding: 0 1rem;
       margin-top: 1.625rem;
-    }
-
-    &-line {
-      height: .5px;
-      background-color: var(--border-color);
-      flex: 1 1 auto;
+      width: 100%;
     }
 
     &-text {
@@ -610,11 +559,6 @@
     display: flex;
     justify-content: center;
     margin-top: 1rem;
-
-    &-row {
-      padding-inline-start: 3.5rem;
-      border-radius: $border-radius-medium;
-    }
   }
 
   .popup-stars-slider {
@@ -655,9 +599,5 @@
         overflow: visible;
       }
     }
-  }
-
-  .stars-balance {
-    margin-left: auto;
   }
 }

@@ -4,7 +4,7 @@ import {ResizableLayerProps, TextLayerInfo, TextRenderingInfoLine} from '@compon
 import {fontInfoMap, getContrastColor} from '@components/mediaEditor/utils';
 import createElementFromMarkup from '@helpers/createElementFromMarkup';
 import track from '@helpers/solid/track';
-import {i18n} from '@lib/langPack';
+import I18n, {i18n} from '@lib/langPack';
 import {batch, createEffect, createMemo, on, onCleanup, onMount} from 'solid-js';
 import {modifyMutable, reconcile} from 'solid-js/store';
 
@@ -58,8 +58,8 @@ export default function TextLayerContent(props: ResizableLayerProps) {
 
       // Firefox cursor reset
       const child = contentEditable.children[0];
-      const range = document.createRange();
-      const sel = window.getSelection();
+      const range = contentEditable.ownerDocument.createRange();
+      const sel = contentEditable.ownerDocument.defaultView.getSelection();
 
       range.setStart(child, 0);
       range.collapse(true);
@@ -69,12 +69,12 @@ export default function TextLayerContent(props: ResizableLayerProps) {
     }
 
     // Firefox puts the cursor outside the inner divs and messes up everything
-    const selection = window.getSelection();
+    const selection = contentEditable.ownerDocument.defaultView.getSelection();
     if(selection.rangeCount > 0) {
       const range = selection.getRangeAt(0);
       if(range.startContainer === contentEditable && range.startOffset === 0) {
         const innerDiv = contentEditable.children[0];
-        const innerDivRange = document.createRange();
+        const innerDivRange = contentEditable.ownerDocument.createRange();
         innerDivRange.selectNodeContents(innerDiv);
         innerDivRange.collapse(false); // Collapse to the end of the inner div
 
@@ -99,9 +99,9 @@ export default function TextLayerContent(props: ResizableLayerProps) {
   }
 
   function selectAll() {
-    const range = document.createRange();
+    const range = contentEditable.ownerDocument.createRange();
     range.selectNodeContents(contentEditable.children[0]);
-    const selection = window.getSelection();
+    const selection = contentEditable.ownerDocument.defaultView.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
   }
@@ -151,7 +151,7 @@ export default function TextLayerContent(props: ResizableLayerProps) {
 
   const intialContent = (() => {
     const layerInfo = props.layer.textRenderingInfo;
-    if(!layerInfo) return <div>{i18n('MediaEditor.TypeSomething')}</div>;
+    if(!layerInfo) return <div>{/* {i18n('MediaEditor.TypeSomething')} */}</div>;
     return layerInfo.lines.map((line) => <div>{line.content}</div>);
   })();
 
@@ -170,10 +170,15 @@ export default function TextLayerContent(props: ResizableLayerProps) {
         '--align-items': flexAlignMap[props.layer.textInfo.alignment]
       }}
     >
+      {/* * translate="no": the typed text is read back out of this element and baked into the image */}
       <div
         ref={contentEditable}
         class="media-editor__text-layer-layout"
         contenteditable
+        role="textbox"
+        aria-multiline={true}
+        aria-label={I18n.format('MediaEditor.TypeSomething', true)}
+        translate="no"
         onInput={() => updateBackground()}
         onFocus={onFocus}
       >

@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -20,7 +16,6 @@ import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import App from '@config/app';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import {IDB} from '@lib/files/idb';
-import CryptoWorker from '@lib/crypto/cryptoMessagePort';
 import ctx from '@environment/ctx';
 import noop from '@helpers/noop';
 import Modes from '@config/modes';
@@ -41,9 +36,10 @@ import {ActiveAccountNumber} from '@lib/accounts/types';
 import makeError from '@helpers/makeError';
 import EncryptedStorageLayer from '@lib/encryptedStorageLayer';
 import {getCommonDatabaseState} from '@config/databases/state';
-import EncryptionKeyStore from '@lib/passcode/keyStore';
+import {saveEncryptionKeyForHandoff} from '@lib/passcode/keyHandoff';
 import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
 import {MTAuthKey} from '@lib/mtproto/authKey';
+import TempAuthKeys from '@lib/mtproto/tempAuthKeys';
 /**
  * To not be used in an ApiManager instance as there is no account number attached to it
  */
@@ -67,6 +63,8 @@ export class ApiManager extends ApiManagerMethods {
 
   private cachedExportPromise: {[x: number]: Promise<unknown>};
   private gettingNetworkers: {[dcIdAndType: string]: Promise<MTPNetworker>};
+  // * Perfect Forward Secrecy: temporary keys per DC, and per its media cluster
+  private tempAuthKeys: {[dcIdAndCluster: string]: TempAuthKeys};
   private baseDcId: DcId;
 
   private afterMessageTempIds: {
@@ -87,6 +85,7 @@ export class ApiManager extends ApiManagerMethods {
     this.cachedNetworkers = {} as any;
     this.cachedExportPromise = {};
     this.gettingNetworkers = {};
+    this.tempAuthKeys = {};
     this.baseDcId = 0;
     this.afterMessageTempIds = {};
 
@@ -156,6 +155,29 @@ export class ApiManager extends ApiManagerMethods {
     return transportType;
   }
 
+  // * Sums every live networker of this account; the file DCs are where the big bodies sit.
+  public getMemoryStats() {
+    const total = {
+      networkers: 0,
+      sentMessages: 0,
+      sentMessageBodyBytes: 0,
+      pendingMessages: 0,
+      pendingAcks: 0,
+      sentResendReq: 0,
+      lastServerMessages: 0
+    };
+
+    this.iterateNetworkers(({networker}) => {
+      ++total.networkers;
+      const stats = networker.getMemoryStats();
+      for(const key in stats) {
+        total[key as keyof typeof stats] += stats[key as keyof typeof stats];
+      }
+    });
+
+    return total;
+  }
+
   private iterateNetworkers(callback: (o: {networker: MTPNetworker, dcId: DcId, connectionType: ConnectionType, transportType: TransportType, index: number, array: MTPNetworker[]}) => void) {
     for(const transportType in this.cachedNetworkers) {
       const connections = this.cachedNetworkers[transportType as TransportType];
@@ -178,8 +200,8 @@ export class ApiManager extends ApiManagerMethods {
     }
   }
 
-  private chooseServer(dcId: DcId, connectionType: ConnectionType, transportType: TransportType) {
-    return this.dcConfigurator.chooseServer(dcId, connectionType, transportType, connectionType === 'client', this.rootScope.premium);
+  private chooseServer(dcId: DcId, connectionType: ConnectionType, transportType: TransportType, reuse = connectionType === 'client') {
+    return this.dcConfigurator.chooseServer(dcId, connectionType, transportType, reuse, this.rootScope.premium);
   }
 
   public changeTransportType(transportType: TransportType) {
@@ -329,10 +351,8 @@ export class ApiManager extends ApiManagerMethods {
         await AppStoragesManager.shiftStorages(accountNumber);
 
         if(await DeferredIsUsingPasscode.isUsingPasscode()) {
-          // Keep the screen unlocked even if the user logs out
-          await sessionStorage.set({
-            encryption_key: await EncryptionKeyStore.getAsBase64()
-          });
+          // Keep the screen unlocked even if the user logs out — tab-scoped, never on disk
+          await saveEncryptionKeyForHandoff();
         }
       }
       IDB.closeDatabases();
@@ -370,9 +390,8 @@ export class ApiManager extends ApiManagerMethods {
     return [dcId, transportType, connectionType].join('-');
   }
 
-  public async getAuthKeyFromHex(authKeyHex: string) {
-    const authKey = bytesFromHex(authKeyHex);
-    return new MTAuthKey(authKey, (await CryptoWorker.invokeCrypto('sha1', authKey)).slice(-8));
+  public getAuthKeyFromHex(authKeyHex: string) {
+    return MTAuthKey.fromKey(bytesFromHex(authKeyHex));
   }
 
   public getNetworker(dcId: DcId, options: InvokeApiOptions = {}): Promise<MTPNetworker> {
@@ -458,8 +477,8 @@ export class ApiManager extends ApiManagerMethods {
     .then(async([authKeyHex, serverSaltHex]) => {
       await ApiManager.fillTimeManagerOffsetPromise;
 
-      let networker: MTPNetworker, error: any, onTransport: () => Promise<any>;
-      let permanent: {authKey?: MTAuthKey, serverSalt?: Uint8Array}, temporary: typeof permanent;
+      let networker: MTPNetworker, error: any;
+      let permanent: {authKey?: MTAuthKey, serverSalt?: Uint8Array};
       if(authKeyHex?.length === 512) {
         if(serverSaltHex?.length !== 16) {
           serverSaltHex = 'AAAAAAAAAAAAAAAA';
@@ -469,11 +488,9 @@ export class ApiManager extends ApiManagerMethods {
           authKey: await this.getAuthKeyFromHex(authKeyHex),
           serverSalt: bytesFromHex(serverSaltHex)
         };
-
-        temporary = await this.authorizer.auth(dcId, true);
       } else {
         try { // if no saved state
-          [permanent, temporary] = await Promise.all([this.authorizer.auth(dcId, false), this.authorizer.auth(dcId, true)]);
+          permanent = await this.authorizer.auth(dcId);
 
           authKeyHex = bytesToHex(permanent.authKey.key);
           serverSaltHex = bytesToHex(permanent.serverSalt);
@@ -488,21 +505,17 @@ export class ApiManager extends ApiManagerMethods {
       }
 
       if(!error) {
-        const auth = temporary ?? permanent;
+        // * with PFS the stored key only binds temporary ones, which do all the talking
+        const tempAuthKeys = Modes.pfs ? this.getTempAuthKeys(dcId, connectionType !== 'client', permanent.authKey) : undefined;
         networker = this.networkerFactory.getNetworker({
           dcId,
           permAuthKey: permanent.authKey,
-          authKey: auth.authKey,
-          serverSalt: auth.serverSalt,
+          authKey: tempAuthKeys ? undefined : permanent.authKey,
+          serverSalt: tempAuthKeys ? undefined : permanent.serverSalt,
+          tempAuthKeys,
           isFileDownload: connectionType === 'download',
           isFileUpload: connectionType === 'upload'
         });
-
-        if(temporary) onTransport = async() => {
-          await networker.wrapBindAuthKeyCall(temporary.authKey.expiresAt);
-          // await networker.wrapApiCall('help.getConfig', {});
-          // await pause(1000000);
-        };
       }
 
       // ! cannot get it before this promise because simultaneous changeTransport will change nothing
@@ -531,7 +544,6 @@ export class ApiManager extends ApiManagerMethods {
       }
 
       this.changeNetworkerTransport(networker, transport);
-      // onTransport && await onTransport?.();
       networkers.unshift(networker);
       this.setOnDrainIfNeeded(networker);
       return networker;
@@ -540,6 +552,27 @@ export class ApiManager extends ApiManagerMethods {
 
   public getNetworkerVoid(dcId: DcId) {
     return this.getNetworker(dcId).then(noop, noop);
+  }
+
+  /**
+   * @param media the file connections go to the media cluster of the DC,
+   * which knows nothing of the temporary keys of the main one (-404)
+   */
+  private getTempAuthKeys(dcId: DcId, media: boolean, permAuthKey: MTAuthKey) {
+    const connectionType: ConnectionType = media ? 'download' : 'client';
+    const key = `${dcId}${media ? '-media' : ''}`;
+    return this.tempAuthKeys[key] ??= new TempAuthKeys({
+      permAuthKey,
+      timeManager: this.timeManager,
+      log: this.createLogger(`PFS-${key}`),
+      createTransport: () => this.chooseServer(dcId, connectionType, this.getTransportType(connectionType), false),
+      authTemp: (transport, expiresIn) => this.authorizer.authTemp(dcId, media, transport, expiresIn),
+      createNetworker: (options) => this.networkerFactory.getHelperNetworker({
+        ...options,
+        dcId,
+        serverSalt: options.authKey.serverSalt
+      })
+    });
   }
 
   private changeNetworkerTransport(networker: MTPNetworker, transport?: MTTransport) {

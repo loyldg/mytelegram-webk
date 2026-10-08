@@ -1,16 +1,11 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
-import {children, createContext, createEffect, createMemo, createSignal, JSX, on, onCleanup, Ref} from 'solid-js';
+import {children, createContext, createEffect, createMemo, createSignal, JSX, on, onCleanup, Ref, untrack} from 'solid-js';
 import {IS_OVERLAY_SCROLL_SUPPORTED} from '@environment/overlayScrollSupport';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import {IS_MOBILE_SAFARI, IS_SAFARI} from '@environment/userAgent';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import classNames from '@helpers/string/classNames';
 import useHeavyAnimationCheck from '@hooks/useHeavyAnimationCheck';
+import Modes from '@config/modes';
 
 const SCROLL_THROTTLE = /* IS_ANDROID ? 200 :  */24;
 
@@ -37,7 +32,10 @@ export type ScrollableContextValue = {
   getDistanceToEnd: () => number,
   container: HTMLDivElement,
   onSizeChange: () => void,
-  setScrollPositionSilently: (value: number) => void
+  setScrollPositionSilently: (value: number) => void,
+  checkForTriggers: () => void,
+  isScrolledToStart: boolean,
+  isScrolledToEnd: boolean
 };
 
 export const ScrollableContext = createContext<ScrollableContextValue>();
@@ -46,15 +44,25 @@ export default function Scrollable(props: {
   children: JSX.Element,
   ref?: Ref<HTMLDivElement>,
   thumbRef?: (el: HTMLDivElement) => void,
+  contextRef?: (ctx: ScrollableContextValue) => void,
   class?: string,
+  tabIndex?: number,
   classList?: JSX.HTMLAttributes<HTMLDivElement>['classList'],
+  style?: JSX.CSSProperties,
   axis?: 'x' | 'y',
   withBorders?: 'both' | 'top' | 'bottom' | 'manual',
+  /**
+   * Keep `isScrolledToStart` / `isScrolledToEnd` up to date without drawing the borders.
+   * `withBorders` implies it; this is for a consumer that only reads the state off the context
+   * (a floating popup header, say) and doesn't want a border on the scrollable itself.
+   */
+  trackEnds?: boolean,
   onScrolledTop?: () => void,
   onScrolledBottom?: () => void,
   onScroll?: () => void,
   onScrollOffset?: number,
-  relative?: boolean
+  relative?: boolean,
+  hideThumb?: boolean,
 }) {
   const axis = props.axis ?? 'y';
   const scrollPositionProperty: 'scrollTop' | 'scrollLeft' = axis === 'x' ? 'scrollLeft' : 'scrollTop';
@@ -218,7 +226,10 @@ export default function Scrollable(props: {
     }, {capture: true, passive: false, once: true});
   };
 
-  const onScrollCallbacks = createMemo(() => [props.onScroll, props.withBorders && checkEnds].filter(Boolean));
+  const onScrollCallbacks = createMemo(() => [
+    props.onScroll,
+    (props.withBorders || props.trackEnds) && checkEnds
+  ].filter(Boolean));
 
   const onThumbMouseMove = (e: MouseEvent) => {
     cancelEvent(e);
@@ -242,29 +253,50 @@ export default function Scrollable(props: {
     startScrollPosition = scrollPosition();
     (e.target as HTMLElement).classList.add('is-focused');
 
-    window.addEventListener('mousemove', onThumbMouseMove);
-    window.addEventListener('mouseup', onThumbMouseUp, {once: true});
+    // Track the drag on the thumb's own window (the Document PiP window while popped out), not main.
+    const w = thumbRef.ownerDocument.defaultView || window;
+    w.addEventListener('mousemove', onThumbMouseMove);
+    w.addEventListener('mouseup', onThumbMouseUp, {once: true});
   };
 
   const onThumbMouseUp = (e: MouseEvent) => {
-    window.removeEventListener('mousemove', onThumbMouseMove);
+    (thumbRef.ownerDocument.defaultView || window).removeEventListener('mousemove', onThumbMouseMove);
     thumbRef.classList.remove('is-focused');
   };
 
   const onWheel = (e: WheelEvent) => {
     e.stopPropagation();
-    const target = e.target as HTMLElement;
-    if(!e.deltaX && target.scrollWidth > target.clientWidth) {
-      target.scrollLeft += e.deltaY / 4;
+    const container = ref;
+    if(!e.deltaX && container.scrollWidth > container.clientWidth) {
+      container.scrollLeft += e.deltaY / 4;
       cancelEvent(e);
     }
   };
 
+  const tracksEnds = () => !!(props.withBorders || props.trackEnds);
+
+  // which end the content sits at costs a layout read, so it is kept only where it is drawn
+  const checkEndsIfTracked = () => {
+    if(tracksEnds()) {
+      checkEnds();
+    }
+  };
+
   const onSizeChange = () => {
+    checkEndsIfTracked();
+
     if(!IS_OVERLAY_SCROLL_SUPPORTED() && thumbRef) {
       onScroll();
     }
   };
+
+  /**
+   * Which end the content sits at cannot be known before it is laid out — and whether it
+   * matters at all can turn true after mount, since a footer registers itself with the popup
+   * only once the whole body has rendered. Content that grows later says so through
+   * `onSizeChange`.
+   */
+  createEffect(checkEndsIfTracked);
 
   const value: ScrollableContextValue = {
     get scrollPosition() {
@@ -284,8 +316,19 @@ export default function Scrollable(props: {
       return ref;
     },
     onSizeChange,
-    setScrollPositionSilently
+    setScrollPositionSilently,
+    checkForTriggers,
+    get isScrolledToStart() {
+      return isScrolledToStart();
+    },
+    get isScrolledToEnd() {
+      return isScrolledToEnd();
+    }
   };
+
+  if(props.contextRef) {
+    untrack(() => props.contextRef)(value);
+  }
 
   const resolvedChildren = children(() => {
     return (
@@ -300,6 +343,7 @@ export default function Scrollable(props: {
   let ref: HTMLDivElement, thumbRef: HTMLDivElement;
   return (
     <div
+      tabIndex={Modes.a11y ? props.tabIndex : undefined}
       ref={(_ref) => {
         ref = _ref;
         (props.ref as any)?.(_ref);
@@ -310,7 +354,13 @@ export default function Scrollable(props: {
         props.class,
         props.relative && 'relative',
         IS_SAFARI && !IS_MOBILE_SAFARI && 'no-scrollbar',
-        ...(props.withBorders ? [
+        ...(props.withBorders === 'manual' ? [
+          isScrolledToStart() && 'scrolled-start-manual',
+          isScrolledToEnd() && 'scrolled-end-manual',
+          isScrolledToStart() && !isScrolledToEnd() && 'scrolled-only-start-manual',
+          isScrolledToEnd() && !isScrolledToStart() && 'scrolled-only-end-manual',
+          !isScrolledToStart() && !isScrolledToEnd() && 'scrolled-none-manual'
+        ] : props.withBorders ? [
           isScrolledToStart() && 'scrolled-start',
           isScrolledToEnd() && 'scrolled-end',
           axis === 'y' && 'scrollable-y-bordered',
@@ -319,12 +369,17 @@ export default function Scrollable(props: {
         ] : [])
       )}
       onScroll={!ignoreScrollEvent() && onScroll}
+      classList={props.classList}
+      style={props.style}
       onWheel={(axis === 'x' && !IS_TOUCH_SUPPORTED && onWheel) || undefined}
     >
       {!IS_OVERLAY_SCROLL_SUPPORTED() && axis === 'y' && (
         <div class="scrollable-thumb-container">
           <div
             class="scrollable-thumb"
+            classList={{
+              'scrollable-thumb--hidden': props.hideThumb
+            }}
             ref={(el) => {
               thumbRef = el;
               props.thumbRef?.(el);

@@ -1,7 +1,10 @@
-import {batch, createComputed, Show} from 'solid-js';
+import {batch, createComputed, createEffect, on, onCleanup, Show} from 'solid-js';
 import {Transition} from 'solid-transition-group';
 import {IS_MOBILE} from '@environment/userAgent';
+import Modes from '@config/modes';
+import createFocusTrap from '@helpers/dom/focusTrap';
 import track from '@helpers/solid/track';
+import I18n from '@lib/langPack';
 import {FlagFilters} from '@components/sidebarRight/tabs/adminRecentActions/filters/flagFilters';
 import styles from '@components/sidebarRight/tabs/adminRecentActions/filters/styles.module.scss';
 import {CommittedFilters} from '@components/sidebarRight/tabs/adminRecentActions/filters/types';
@@ -40,9 +43,28 @@ export const Filters = (props: FiltersProps) => {
     props.onClose?.();
   });
 
+  let inputEl: HTMLInputElement;
   const onInputRef = (el: HTMLInputElement) => {
+    inputEl = el;
     if(IS_MOBILE) return;
     setTimeout(() => el.focus(), focusDelay)
+  };
+
+  let cardEl: HTMLDivElement;
+  createEffect(on(() => props.open, (open) => {
+    if(!open || !cardEl) return;
+
+    const focusTrap = createFocusTrap(cardEl);
+    focusTrap.activate(undefined, inputEl);
+    onCleanup(() => focusTrap.deactivate());
+  }));
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if(Modes.a11y && e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      props.onClose?.();
+    }
   };
 
 
@@ -62,11 +84,18 @@ export const Filters = (props: FiltersProps) => {
       >
         <Show when={props.open}>
           <div class={styles.Container}>
-            <div class={styles.ContainerBackdrop}>
+            <div>
               <div class={styles.ContainerBackdropFill} />
               <div class={styles.ContainerBackdropExtension} />
             </div>
-            <div class={styles.Card}>
+            <div
+              ref={cardEl}
+              class={styles.Card}
+              role='dialog'
+              aria-modal='true'
+              aria-label={I18n.format('AdminRecentActionsFilters.ByType', true)}
+              onKeyDown={onKeyDown}
+            >
               <FlagFilters
                 filtersControls={filtersControls}
                 inputRef={onInputRef}

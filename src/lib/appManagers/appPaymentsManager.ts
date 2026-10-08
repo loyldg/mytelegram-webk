@@ -1,25 +1,23 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {
   HelpPremiumPromo,
   InputInvoice,
   InputPaymentCredentials,
+  InputPeer,
   InputStorePaymentPurpose,
   PaymentRequestedInfo,
   PaymentsPaymentForm,
   PaymentsPaymentResult,
   PaymentsStarsStatus,
   StarsAmount,
-  StarsTransactionPeer,
   Update
 } from '@layer';
 import {AppManager} from '@appManagers/manager';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import isEphemeralMessageId from '@appManagers/utils/messageId/isEphemeralMessageId';
 import formatStarsAmount from '@appManagers/utils/payments/formatStarsAmount';
+import {getStarsTransactionMessagePeerId} from '@appManagers/utils/payments/starsTransaction';
+import forEachReverse from '@helpers/array/forEachReverse';
+import makeError from '@helpers/makeError';
 
 export default class AppPaymentsManager extends AppManager {
   private premiumPromo: MaybePromise<HelpPremiumPromo>;
@@ -45,6 +43,10 @@ export default class AppPaymentsManager extends AppManager {
   }
 
   public getInputInvoiceByPeerId(peerId: PeerId, mid: number): InputInvoice.inputInvoiceMessage {
+    if(isEphemeralMessageId(mid)) {
+      throw makeError('MESSAGE_ID_INVALID');
+    }
+
     return {
       _: 'inputInvoiceMessage',
       peer: this.appPeersManager.getInputPeerById(peerId),
@@ -67,6 +69,10 @@ export default class AppPaymentsManager extends AppManager {
   }
 
   public getPaymentReceipt(peerId: PeerId, mid: number) {
+    if(isEphemeralMessageId(mid)) {
+      return Promise.reject(makeError('MESSAGE_ID_INVALID'));
+    }
+
     return this.apiManager.invokeApi('payments.getPaymentReceipt', {
       peer: this.appPeersManager.getInputPeerById(peerId),
       msg_id: getServerMessageId(mid)
@@ -170,6 +176,10 @@ export default class AppPaymentsManager extends AppManager {
   }
 
   public getGiveawayInfo(peerId: PeerId, mid: number) {
+    if(isEphemeralMessageId(mid)) {
+      return Promise.reject(makeError('MESSAGE_ID_INVALID'));
+    }
+
     return this.apiManager.invokeApiSingleProcess({
       method: 'payments.getGiveawayInfo',
       params: {
@@ -197,31 +207,68 @@ export default class AppPaymentsManager extends AppManager {
     return this.apiManager.invokeApi('payments.getStarsTopupOptions');
   }
 
-  private saveStarsStatus = (starsStatus: PaymentsStarsStatus) => {
+  private saveStarsStatus = (starsStatus: PaymentsStarsStatus, ownerPeerId = this.rootScope.myId) => {
     this.appPeersManager.saveApiPeers(starsStatus);
 
     starsStatus.history?.forEach((transaction) => {
-      const transactionPeer = transaction.peer as StarsTransactionPeer.starsTransactionPeer;
-      const peerId = transactionPeer && this.appPeersManager.getPeerId(transactionPeer.peer);
-      if(transaction.msg_id) {
+      const transactionPeerId = transaction.peer._ === 'starsTransactionPeer' ?
+        this.appPeersManager.getPeerId(transaction.peer.peer) : undefined;
+      const peerId = getStarsTransactionMessagePeerId(transaction, ownerPeerId, this.rootScope.myId);
+      if(transaction.msg_id && peerId) {
         transaction.msg_id = this.appMessagesIdsManager.generateMessageId(
           transaction.msg_id,
           this.appPeersManager.isChannel(peerId) ? peerId.toChatId() : undefined
         );
       }
 
+      if(transaction.giveaway_post_id && transactionPeerId) {
+        transaction.giveaway_post_id = this.appMessagesIdsManager.generateMessageId(
+          transaction.giveaway_post_id,
+          this.appPeersManager.isChannel(transactionPeerId) ? transactionPeerId.toChatId() : undefined
+        );
+      }
+
+      if(transaction.stargift) {
+        const gift = this.appGiftsManager.wrapGift(transaction.stargift);
+        if(transaction.stargift._ === 'starGift') transaction.stargift.sticker = gift.sticker;
+      }
+
       if(transaction.extended_media) {
-        transaction.extended_media.forEach((messageMedia) => {
+        forEachReverse(transaction.extended_media, (messageMedia, idx, media) => {
+          const m = {media: messageMedia};
           this.appMessagesManager.saveMessageMedia(
-            {media: messageMedia},
+            m,
+            'media',
             {type: 'starsTransaction', peerId, mid: transaction.msg_id}
           );
+
+          if(m.media) {
+            media[idx] = m.media;
+          } else {
+            media.splice(idx, 1);
+          }
         });
       }
     });
 
     return starsStatus;
   };
+
+  /**
+   * The stars ledger is always read as its owner, and our own `User` is not in the cache until
+   * the server has sent it — on a cold session it is not there at all. Name ourselves with
+   * `inputPeerSelf`, which needs no `access_hash`, instead of going through the user cache
+   * (tdesktop does the same: `_peer->isSelf() ? MTP_inputPeerSelf() : _peer->input()`).
+   */
+  private getStarsOwnerInputPeer(peerId?: PeerId): InputPeer {
+    // * resolved in the body, not as a parameter default - the bundler has been caught binding
+    // * a default to an unrelated symbol (see scripts/check-bundle-mangling.mjs)
+    if(peerId === undefined || peerId === this.rootScope.myId) {
+      return {_: 'inputPeerSelf'};
+    }
+
+    return this.appPeersManager.getInputPeerById(peerId);
+  }
 
   public getCachedStarsStatus() {
     if(this.starsStatus instanceof Promise) return;
@@ -236,7 +283,7 @@ export default class AppPaymentsManager extends AppManager {
     return this.starsStatus ??= this.apiManager.invokeApiSingleProcess({
       method: 'payments.getStarsStatus',
       params: {
-        peer: this.appPeersManager.getInputPeerById(this.rootScope.myId)
+        peer: this.getStarsOwnerInputPeer()
       },
       processResult: (starsStatus) => {
         return this.starsStatus = this.saveStarsStatus(starsStatus);
@@ -252,7 +299,7 @@ export default class AppPaymentsManager extends AppManager {
     return this.starsStatusTon ??= this.apiManager.invokeApiSingleProcess({
       method: 'payments.getStarsStatus',
       params: {
-        peer: this.appPeersManager.getInputPeerById(this.rootScope.myId),
+        peer: this.getStarsOwnerInputPeer(),
         ton: true
       },
       processResult: (starsStatus) => {
@@ -261,18 +308,29 @@ export default class AppPaymentsManager extends AppManager {
     });
   }
 
-  public getStarsTransactions(offset: string = '', inbound?: boolean, ton?: boolean) {
+  public getPeerStarsStatus(peerId: PeerId, ton?: boolean) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.getStarsStatus',
+      params: {
+        peer: this.getStarsOwnerInputPeer(peerId),
+        ton
+      },
+      processResult: (starsStatus) => this.saveStarsStatus(starsStatus, peerId)
+    });
+  }
+
+  public getStarsTransactions(offset: string = '', inbound?: boolean, ton?: boolean, peerId = this.rootScope.myId) {
     return this.apiManager.invokeApiSingleProcess({
       method: 'payments.getStarsTransactions',
       params: {
-        peer: this.appPeersManager.getInputPeerById(this.rootScope.myId),
+        peer: this.getStarsOwnerInputPeer(peerId),
         offset,
         inbound,
         outbound: inbound === false,
         limit: 30,
         ton
       },
-      processResult: this.saveStarsStatus
+      processResult: (starsStatus) => this.saveStarsStatus(starsStatus, peerId)
     });
   }
 
@@ -280,8 +338,7 @@ export default class AppPaymentsManager extends AppManager {
     return this.apiManager.invokeApiSingleProcess({
       method: 'payments.getStarsSubscriptions',
       params: {
-        // peer: this.appPeersManager.getInputPeerById(peerId),
-        peer: this.appPeersManager.getInputPeerById(this.rootScope.myId),
+        peer: this.getStarsOwnerInputPeer(),
         offset,
         missing_balance: missingBalance
       },
@@ -294,7 +351,7 @@ export default class AppPaymentsManager extends AppManager {
       method: 'payments.changeStarsSubscription',
       params: {
         subscription_id: subscriptionId,
-        peer: this.appPeersManager.getInputPeerById(this.rootScope.myId),
+        peer: this.getStarsOwnerInputPeer(),
         canceled
       }
     });
@@ -305,7 +362,7 @@ export default class AppPaymentsManager extends AppManager {
       method: 'payments.fulfillStarsSubscription',
       params: {
         subscription_id: subscriptionId,
-        peer: this.appPeersManager.getInputPeerById(this.rootScope.myId)
+        peer: this.getStarsOwnerInputPeer()
       }
     });
   }
@@ -320,13 +377,16 @@ export default class AppPaymentsManager extends AppManager {
     }).then(this.processPaymentResult);
   }
 
-  public getStarsTransactionsByID(transactionId: string) {
+  public getStarsTransactionsByID(transactionId: string, ton?: boolean, refund?: boolean, peerId = this.rootScope.myId) {
     if(!transactionId) return;
-    return this.apiManager.invokeApi('payments.getStarsTransactionsByID', {
-      peer: this.appPeersManager.getInputPeerById(this.rootScope.myId),
-      id: [{_: 'inputStarsTransaction', pFlags: {}, id: transactionId}]
-    }).then((starsStatus) => {
-      return starsStatus.history?.[0];
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'payments.getStarsTransactionsByID',
+      params: {
+        peer: this.getStarsOwnerInputPeer(peerId),
+        ton,
+        id: [{_: 'inputStarsTransaction', pFlags: {refund: refund || undefined}, id: transactionId}]
+      },
+      processResult: (starsStatus) => this.saveStarsStatus(starsStatus, peerId).history?.[0]
     });
   }
 

@@ -1,0 +1,102 @@
+@use "../../../../scss/variables" as *;
+@use "../../../../scss/mixins" as *;
+
+.popupBody {
+  padding: 0 1rem;
+}
+
+.header {
+  padding-block: 2.5rem 1rem;
+}
+
+.emoji {
+  --size: 4rem;
+  width: var(--size);
+  height: var(--size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--size);
+  position: relative;
+}
+
+.emojiButton {
+  background-color: var(--surface-color);
+  border-radius: 50%;
+}
+
+.description {
+  // a deliberately narrow column; the subtitle's own inline padding sits inside the cap
+  max-width: calc(180px + 2rem);
+  margin-inline: auto;
+}
+
+.comparison {
+  background-color: var(--surface-color);
+  border-radius: 24px;
+  overflow: hidden;
+
+  &Header {
+    background-color: var(--surface-color);
+
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    height: 3rem;
+    padding: 0 1rem;
+
+    font-weight: var(--font-weight-bold);
+  }
+
+  &Divider {
+    background-color: var(--surface-color);
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+
+    :global(.night) & {
+      border-color: rgba(255, 255, 255, 0.1);
+    }
+  }
+
+  &Content {
+    max-height: 200px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    padding: 0 1rem 1rem;
+
+    &SkeletonWrapper {
+      padding: 0 1rem 1rem;
+    }
+
+    &Skeleton {
+      height: 5rem;
+      border-radius: 12px;
+    }
+  }
+}
+
+.anotherExampleButton {
+  position: relative;
+  overflow: hidden;
+  padding: 0.125rem 0.25rem;
+  color: var(--primary-color);
+
+  cursor: pointer;
+  border-radius: 0.5rem;
+
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-grow: 0;
+
+  @include hover-global(blue, background-color, true);
+  --ripple-color: hsla(from var(--primary-color) h s l / 0.1);
+}
+
+.note {
+  padding: 0 4rem;
+  margin: 0 auto;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--secondary-text-color);
+}

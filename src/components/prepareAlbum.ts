@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Layouter, RectPart} from '@components/groupedLayout';
 
 export default function prepareAlbum(options: {
@@ -16,7 +10,13 @@ export default function prepareAlbum(options: {
   forMedia?: true,
   noGroupedItem?: boolean
 }) {
-  const layouter = new Layouter(options.items, options.maxWidth, options.minWidth, options.spacing, options.maxHeight);
+  const layouter = new Layouter(
+    options.items,
+    options.maxWidth,
+    options.minWidth,
+    options.spacing,
+    options.maxHeight
+  );
   const layout = layouter.layout();
 
   const widthItem = layout.find((item) => item.sides & RectPart.Right);

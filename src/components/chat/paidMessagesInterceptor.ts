@@ -8,8 +8,7 @@ import noop from '@helpers/noop';
 
 import confirmationPopup from '@components/confirmationPopup';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
-import PopupStars from '@components/popups/stars';
-import PopupElement from '@components/popups';
+import showStarsPopup from '@components/popups/stars';
 
 import showUndoablePaidTooltip, {paidMessagesLangKeys} from '@components/chat/undoablePaidTooltip';
 import createPendingUndoableMessage from '@components/chat/pendingUndoableMessage';
@@ -49,8 +48,6 @@ export const PAYMENT_REJECTED = Symbol('Payment rejected');
 export default class PaidMessagesInterceptor {
   private pendingUndoableMessage = createPendingUndoableMessage();
 
-  private static rawStars = useStars();
-
   /**
    * Mininum required params to make the message(s) undoable
    *
@@ -65,6 +62,7 @@ export default class PaidMessagesInterceptor {
   //   messageCount: 3
   // };
 
+  public static PaymentRejectedSymbol: typeof PAYMENT_REJECTED = PAYMENT_REJECTED;
 
   constructor(private chat: Chat, private managers: AppManagers) {}
 
@@ -72,8 +70,11 @@ export default class PaidMessagesInterceptor {
     this.pendingUndoableMessage.dispose();
   }
 
+  // Read on use, never in a static initializer: that would fetch the balance while the module
+  // evaluates — whenever the bundler's chunking happens to load it, possibly before
+  // `rootScope.managers` exists.
   private static get starsBalance() {
-    return +this.rawStars();
+    return +useStars()();
   }
 
   /**
@@ -90,7 +91,7 @@ export default class PaidMessagesInterceptor {
     if(PaidMessagesInterceptor.starsBalance < totalStarsAmount)
     {
       this.pendingUndoableMessage.abort();
-      PopupElement.createPopup(PopupStars);
+      showStarsPopup({spendPurposePeerId: peerId});
       return PAYMENT_REJECTED;
     }
 
@@ -141,7 +142,7 @@ export default class PaidMessagesInterceptor {
 
     if(PaidMessagesInterceptor.starsBalance < totalStarsAmount)
     {
-      PopupElement.createPopup(PopupStars);
+      showStarsPopup({spendPurposePeerId: peerId});
       return PAYMENT_REJECTED;
     }
 

@@ -1,6 +1,6 @@
 import {Show} from 'solid-js';
 import {i18n} from '@lib/langPack';
-import lottieLoader from '@lib/rlottie/lottieLoader';
+import lottieLoader from '@lib/lottie/lottieLoader';
 import defineSolidElement, {PassedProps} from '@lib/solidjs/defineSolidElement';
 import LottieAnimation from '@components/lottieAnimation';
 import ripple from '@components/ripple';
@@ -29,7 +29,7 @@ const EmptySearchPlaceholder = defineSolidElement({
           name="UtyanSearch"
         />
 
-        <div class={styles.NoResults}>
+        <div class={styles.NoResults} role="status">
           <div class={styles.NoResultsTitle}>{i18n('NoResultsTitle')}</div>
           <div class={styles.NoResultsSubtitle}>{i18n('NoResultsSubtitle')}</div>
         </div>

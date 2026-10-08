@@ -1,15 +1,17 @@
-import {batch, createEffect, createSignal, on, onCleanup, onMount} from 'solid-js';
-import {modifyMutable, produce} from 'solid-js/store';
+import {ButtonIconTsx} from '@components/buttonIconTsx';
+import {animateToNewRotationOrRatio} from '@components/mediaEditor/canvas/animateToNewRotationOrRatio';
+import getConvenientPositioning from '@components/mediaEditor/canvas/getConvenientPositioning';
+import {useMediaEditorContext} from '@components/mediaEditor/context';
+import {NumberPair} from '@components/mediaEditor/types';
+import SwipeHandler from '@components/swipeHandler';
 import {animateValue} from '@helpers/animateValue';
 import {lerp} from '@helpers/lerp';
 import clamp from '@helpers/number/clamp';
-import {ButtonIconTsx} from '@components/buttonIconTsx';
-import SwipeHandler from '@components/swipeHandler';
-import {useMediaEditorContext} from '@components/mediaEditor/context';
-import {NumberPair} from '@components/mediaEditor/types';
-import {withCurrentOwner} from '@components/mediaEditor/utils';
-import {animateToNewRotationOrRatio} from '@components/mediaEditor/canvas/animateToNewRotationOrRatio';
-import getConvenientPositioning from '@components/mediaEditor/canvas/getConvenientPositioning';
+import {withCurrentOwner} from '@helpers/solid/withCurrentOwner';
+import I18n from '@lib/langPack';
+import Modes from '@config/modes';
+import {batch, createEffect, createSignal, on, onCleanup, onMount, Show} from 'solid-js';
+import {modifyMutable, produce} from 'solid-js/store';
 
 
 const DEGREE_DIST_PX = 42;
@@ -187,9 +189,11 @@ export default function RotationWheel() {
     }));
   });
 
+  let cancelResetAnimation: () => void;
   function resetWheelWithAnimation() {
+    cancelResetAnimation?.();
     prevRotation = 0;
-    animateValue([moved(), movedDiff()], [0, 0], 200, (values) => {
+    cancelResetAnimation = animateValue([moved(), movedDiff()], [0, 0], 200, (values) => {
       batch(() => {
         setMoved(values[0]);
         setMovedDiff(values[1]);
@@ -199,6 +203,7 @@ export default function RotationWheel() {
 
   actions.resetRotationWheel = () => resetWheelWithAnimation();
   onCleanup(() => {
+    cancelResetAnimation?.();
     actions.resetRotationWheel = () => {}
   });
 
@@ -240,10 +245,25 @@ export default function RotationWheel() {
     .replace(/\.0$/, '')
     .replace(/^-0$/, '0');
 
+  const setFineRotation = (degrees: number) => {
+    cancelResetAnimation?.();
+    initialScale = mediaState.scale;
+    batch(() => {
+      setMoved(-degrees / DEGREE_STEP * DEGREE_DIST_PX);
+      setMovedDiff(0);
+      onSwipe();
+    });
+  };
+
   return (
     <div class="media-editor__rotation-wheel" style={{display: isCropping() ? undefined : 'none'}}>
-      <ButtonIconTsx onClick={withCurrentOwner(rotateLeft)} class="media-editor__rotation-wheel-button" icon="rotate" />
-      <div class="media-editor__rotation-wheel-swiper-wrapper">
+      <ButtonIconTsx
+        onClick={withCurrentOwner(rotateLeft)}
+        class="media-editor__rotation-wheel-button"
+        icon="rotate"
+        aria-label={I18n.format('MediaEditor.RotateLeft', true)}
+      />
+      <div class="media-editor__rotation-wheel-swiper-wrapper" aria-hidden={true}>
         <div
           ref={swiperEl}
           style={{['--moved']: moved() + movedDiff() + 'px'}}
@@ -263,11 +283,30 @@ export default function RotationWheel() {
           </div>
         </div>
       </div>
-      <div class="media-editor__rotation-wheel-value">
+      <div class="media-editor__rotation-wheel-value" aria-hidden={true}>
         <div class="media-editor__rotation-wheel-value-number">{value()}</div>
       </div>
+      <Show when={Modes.a11y}>
+        <input
+          type="range"
+          class="media-editor__rotation-wheel-input"
+          min={-TOTAL_DEGREES_SIDE}
+          max={TOTAL_DEGREES_SIDE}
+          step={1}
+          disabled={editorState.isMoving}
+          value={Number(value())}
+          aria-label={I18n.format('MediaEditor.FineRotation', true)}
+          aria-valuetext={`${value()}°`}
+          onInput={(event) => setFineRotation(event.currentTarget.valueAsNumber)}
+        />
+      </Show>
       <ArrowUp />
-      <ButtonIconTsx onClick={flipImage} class="media-editor__rotation-wheel-button" icon="flip_image_horizontal" />
+      <ButtonIconTsx
+        onClick={flipImage}
+        class="media-editor__rotation-wheel-button"
+        icon="flip_image_horizontal"
+        aria-label={I18n.format('MediaEditor.FlipHorizontal', true)}
+      />
     </div>
   );
 }
@@ -276,6 +315,7 @@ function ArrowUp() {
   return (
     <svg
       class="media-editor__rotation-wheel-arrow"
+      aria-hidden={true}
       width="6"
       height="4"
       viewBox="0 0 6 4"

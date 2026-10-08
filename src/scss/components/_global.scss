@@ -37,6 +37,11 @@ button {
   font-size: inherit;
 }
 
+input:focus,
+button:focus {
+  outline: none;
+}
+
 img, 
 video {
   -webkit-user-drag: none;
@@ -98,11 +103,6 @@ Utility Classes
   overflow: hidden;
 }
 
-// No Text Select
-.no-select/* , .no-select * */ {
-  user-select: none;
-}
-
 .no-transition {
   &,
   &:before,
@@ -149,6 +149,11 @@ Utility Classes
 
 .text-bold {
   font-weight: var(--font-weight-bold) !important;
+}
+
+.text-italic {
+  font-family: var(--font-serif);
+  font-style: italic;
 }
 
 .text-normal {

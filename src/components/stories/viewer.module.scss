@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../../scss/mixins" as *;
 @use "../../scss/variables" as *;
 
@@ -22,6 +16,12 @@ $color-inactive: rgba(255, 255, 255, .5);
   align-items: center;
   justify-content: center;
   visibility: visible;
+
+  // the dialog itself takes the initial focus (a landing spot, not a tab stop) — a ring around the
+  // whole screen would say nothing; `:root` outranks the global `:root :focus-visible`
+  :root:global(:where(.a11y)) &:focus-visible {
+    outline: none;
+  }
 
   &.isInvisible {
     visibility: hidden;
@@ -82,8 +82,7 @@ $color-inactive: rgba(255, 255, 255, .5);
     }
 
     :global(.stories-input) {
-      --chat-input-padding: .5rem;
-      --chat-input-background-color: #212121;
+      --chat-input-background: #212121;
       --chat-input-focus-offset: 0px;
       --backdrop-filter: unset;
     }
@@ -189,6 +188,10 @@ $color-inactive: rgba(255, 255, 255, .5);
       &.small :global(.stories-input) {
         opacity: 0;
         pointer-events: none;
+
+        :global(:where(.a11y)) & {
+          visibility: hidden;
+        }
       }
     }
 
@@ -201,6 +204,15 @@ $color-inactive: rgba(255, 255, 255, .5);
 
     &Container.small &ContentMediaContainer {
       opacity: .5;
+    }
+
+    // Media areas sit outside `hideOnSmall` so that holding to pause leaves them on the story —
+    // but a story shrunk down to a neighbour's preview still drops them with the rest of it.
+    // `!important` because the caption's scroll dims them from an inline style — and for the same
+    // reason this must NOT get an opacity transition, or that scroll-tracking dimming would lag.
+    &Container.small &MediaAreas {
+      opacity: 0 !important;
+      pointer-events: none;
     }
 
     &Container.small &Info {
@@ -555,6 +567,18 @@ $color-inactive: rgba(255, 255, 255, .5);
         padding-top: 214px;
       }
 
+      // the music pill is pinned under the caption: end the scroller above it (so no line ever
+      // runs behind the pill) and take the same 2rem off the top, keeping the strip of caption
+      // on show exactly the size it is without a track
+      &.hasMusic {
+        bottom: 2rem;
+        padding-top: 232px;
+      }
+
+      &.hasReply.hasMusic {
+        padding-top: 182px;
+      }
+
       &Text {
         width: 100%;
         height: 100%;
@@ -583,6 +607,13 @@ $color-inactive: rgba(255, 255, 255, .5);
       border-radius: 6px;
       z-index: 1;
       pointer-events: all;
+
+      // the weather pill takes its width from the temperature it renders, so it can be wider than
+      // the area the sender drew — let it out, and drop the rounding it sets for itself
+      &Weather {
+        overflow: visible;
+        border-radius: 0;
+      }
 
       &Reaction {
         display: flex;
@@ -681,7 +712,7 @@ $color-inactive: rgba(255, 255, 255, .5);
       left: 50%;
       transform: translateX(-50%);
       background-color: rgba(0, 0, 0, .5) !important;
-      backdrop-filter: blur(25px);
+      backdrop-filter: var(--blur-off, blur(25px));
       opacity: 1 !important;
       visibility: visible !important;
       // max-width: 355px;
@@ -711,23 +742,11 @@ $color-inactive: rgba(255, 255, 255, .5);
       }
     }
 
+    // the small variant is the shared story pill — see storyPill.module.scss
     &Repost {
       margin-bottom: .25rem;
       width: fit-content;
       max-width: 100%;
-
-      &Small {
-        height: 1.5rem;
-        line-height: 1.5rem;
-        border-radius: 1rem;
-        padding: 0 .5rem;
-        background-color: rgba(0, 0, 0, .2);
-        font-size: var(--font-size-14);
-        font-weight: var(--font-weight-bold);
-        cursor: pointer;
-
-        @include text-overflow(true);
-      }
     }
 
     :global {
@@ -740,16 +759,15 @@ $color-inactive: rgba(255, 255, 255, .5);
 
   :global {
     .stories-input {
-      --chat-input-size: 3rem;
-      --chat-input-padding: 0rem;
+      --chat-input-height: 3rem;
       --chat-input-border-radius: #{$border-radius-medium};
       --chat-input-focus-offset: 135px;
       --chat-input-max-width: calc(var(--stories-width) + var(--chat-input-focus-offset));
       --secondary-text-color: #707579;
       --primary-text-color: #fff;
       --focus-translateX: 0px;
-      --chat-input-background-color: rgba(0, 0, 0, .5);
-      --backdrop-filter: blur(25px);
+      --chat-input-background: rgba(0, 0, 0, .5);
+      --backdrop-filter: var(--blur-off, blur(25px));
       position: absolute;
       bottom: 0;
       width: var(--stories-width);
@@ -797,7 +815,7 @@ $color-inactive: rgba(255, 255, 255, .5);
 
       &.is-private {
         .btn-reaction {
-          --add-translateX: calc(var(--chat-input-size) + #{$btn-send-margin});
+          --add-translateX: calc(var(--chat-input-height) + #{$btn-send-margin});
         }
 
         &:not(.is-focused) .btn-send-container {
@@ -820,7 +838,7 @@ $color-inactive: rgba(255, 255, 255, .5);
       .rows-wrapper {
         width: var(--stories-width);
         // max-width: calc(var(--chat-input-max-width) - var(--chat-input-size) - #{$btn-send-margin});
-        max-width: calc(var(--chat-input-max-width) - (var(--chat-input-size) + #{$btn-send-margin} + var(--chat-input-padding)));
+        max-width: calc(var(--chat-input-max-width) - (var(--chat-input-height) + #{$btn-send-margin} + var(--chat-input-padding)));
 
         @include animation-level-global(2) {
           transition: width var(--transition-standard-out) !important;
@@ -840,7 +858,7 @@ $color-inactive: rgba(255, 255, 255, .5);
         --add-translateX: 0px;
         position: absolute;
         transform: translateX(calc(var(--focus-translateX) + var(--add-translateX)));
-        inset-inline-end: calc(var(--chat-input-size) + var(--chat-input-padding) + #{$btn-send-margin});
+        inset-inline-end: calc(var(--chat-input-height) + var(--chat-input-padding) + #{$btn-send-margin});
 
         @include animation-level-global(2) {
           transition: .2s color, transform var(--transition-standard-out), opacity var(--transition-standard-out), visibility var(--transition-standard-out-time);
@@ -876,12 +894,12 @@ $color-inactive: rgba(255, 255, 255, .5);
       .btn-reaction {
         --color: var(--secondary-text-color);
         color: var(--color);
-        background-color: var(--chat-input-background-color) !important;
+        background: var(--chat-input-background) !important;
 
         @include hover-global() {
           --color: var(--primary-text-color);
           color: var(--color) !important;
-          background-color: var(--chat-input-background-color) !important;
+          background: var(--chat-input-background) !important;
         }
       }
 
@@ -893,7 +911,7 @@ $color-inactive: rgba(255, 255, 255, .5);
         }
 
         @include animation-level-global(2) {
-          transition: .2s color, .2s background-color;
+          transition: .2s color, .2s background;
 
           .btn-send-icon-forward {
             transition: .2s color;
@@ -919,7 +937,7 @@ $color-inactive: rgba(255, 255, 255, .5);
       .bubble-tail,
       .chat-input-secondary-button,
       .emoji-dropdown {
-        background-color: var(--chat-input-background-color) !important;
+        background-color: var(--chat-input-background) !important;
         backdrop-filter: var(--backdrop-filter);
       }
 
@@ -941,7 +959,7 @@ $color-inactive: rgba(255, 255, 255, .5);
 
       .record-ripple {
         background: rgba(0, 0, 0, .25);
-        backdrop-filter: blur(5px);
+        backdrop-filter: var(--blur-off, blur(5px));
         opacity: 1;
       }
     }
@@ -949,7 +967,7 @@ $color-inactive: rgba(255, 255, 255, .5);
     .emoji-dropdown {
       --translateX: 0px;
       left: auto;
-      bottom: calc(var(--chat-input-size) + .5rem);
+      bottom: calc(var(--chat-input-height) + .5rem);
       border-radius: var(--chat-input-border-radius);
       transform: translateX(var(--translateX)) scale(0);
 
@@ -965,7 +983,7 @@ $color-inactive: rgba(255, 255, 255, .5);
     }
 
     .autocomplete-helper {
-      background-color: var(--chat-input-background-color) !important;
+      background-color: var(--chat-input-background) !important;
       backdrop-filter: var(--backdrop-filter);
     }
 
@@ -1012,4 +1030,12 @@ $color-inactive: rgba(255, 255, 255, .5);
   //   align-items: center;
   //   // justify-content: center;
   // }
+}
+:global(:where(.a11y)) {
+  .ViewerStoryHeaderLeft,
+  .ViewerStoryFooterLeft,
+  .ViewerStoryFooterReaction {
+    color: inherit;
+    text-align: inherit;
+  }
 }

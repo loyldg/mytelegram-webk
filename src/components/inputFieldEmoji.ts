@@ -1,67 +1,49 @@
-import {attachClickEvent} from '@helpers/dom/clickEvent';
-import cloneDOMRect from '@helpers/dom/cloneDOMRect';
 import getRichValueWithCaret from '@helpers/dom/getRichValueWithCaret';
 import deepEqual from '@helpers/object/deepEqual';
-import {MessageEntity, TextWithEntities} from '@layer';
-import getEmojiEntityFromEmoji from '@lib/richTextProcessor/getEmojiEntityFromEmoji';
-import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
-import wrapRichText from '@lib/richTextProcessor/wrapRichText';
-import rootScope from '@lib/rootScope';
-import ButtonIcon from '@components/buttonIcon';
-import {EmoticonsDropdown} from '@components/emoticonsDropdown';
-import EmojiTab from '@components/emoticonsDropdown/tabs/emoji';
-import InputField, {InputFieldOptions, insertRichTextAsHTML} from '@components/inputField';
-
+import {TextWithEntities} from '@layer';
+import InputField, {InputFieldOptions} from '@components/inputField';
+import attachPlainMessageEditor from '@components/chat/inputEditor/plainField';
+import type {ChatInputEditor} from '@components/chat/inputEditor/types';
+import createEmojiDropdownButton from '@components/emojiDropdownButton';
+import classNames from '@helpers/string/classNames';
 import styles from '@components/inputFieldEmoji.module.scss';
+import cloneDOMRect from '@helpers/dom/cloneDOMRect';
+import {getAppWindow, getOverlayRoot} from '@helpers/appWindow';
 
-const createEmojiDropdownButton = ({
-  inputField,
-  onEmoticonsDropdown
-}: {
-  inputField: InputFieldEmoji,
-  onEmoticonsDropdown: (emoticonsDropdown: EmoticonsDropdown) => void
-}) => {
-  const button = ButtonIcon('smile ' + styles.EmojiButton);
-  if(inputField.options.withLinebreaks) {
-    button.classList.add(styles.multiline);
-  }
+export class InputFieldEmoji extends InputField {
+  private richOriginalValue: TextWithEntities;
+  private dispose: () => void;
+  private editor: ChatInputEditor;
 
-  let emoticonsDropdown: EmoticonsDropdown;
+  constructor(options?: InputFieldOptions) {
+    super({
+      canWrapCustomEmojis: true,
+      ...options
+    })
 
-  attachClickEvent(button, async() => {
-    if(emoticonsDropdown) return;
+    // Every field of this class sends text plus entities, so it gets the
+    // composer's engine: the clipboard, undo and custom emoji then behave as in
+    // the chat input, and a one-line field gets the one-line schema.
+    this.editor = attachPlainMessageEditor(this.input);
 
-    const emojiTab = new EmojiTab({
-      managers: rootScope.managers,
-      additionalStickerViewerClass: styles.StickerViewer,
-      noPacks: !rootScope.premium,
-      noSearchGroups: !rootScope.premium,
-      onClick: async(emoji) => {
-        const entity: MessageEntity = emoji.docId ? {
-          _: 'messageEntityCustomEmoji',
-          document_id: emoji.docId,
-          length: emoji.emoji.length,
-          offset: 0
-        } : getEmojiEntityFromEmoji(emoji.emoji);
-
-        insertRichTextAsHTML(inputField.input, emoji.emoji, entity ? [entity] : undefined);
-      }
-    });
-
-    emoticonsDropdown = new EmoticonsDropdown({
-      tabsToRender: [emojiTab],
-      customParentElement: document.body,
+    const {button, dispose} = createEmojiDropdownButton({
+      inputField: this,
+      class: classNames(
+        styles.EmojiButton,
+        this.options.withLinebreaks && styles.multiline
+      ),
+      customParentElement: getOverlayRoot,
       getOpenPosition: () => {
-        if(inputField.options.withLinebreaks) {
-          const rect = inputField.input.getBoundingClientRect()
+        if(this.options.withLinebreaks) {
+          const rect = this.input.getBoundingClientRect();
           const cloned = cloneDOMRect(rect);
-          cloned.top += rect.height
-          if(cloned.top + 420 > window.innerHeight) {
-            cloned.top = rect.top - 428
+          cloned.top += rect.height;
+          if(cloned.top + 420 > getAppWindow().innerHeight) {
+            cloned.top = rect.top - 428;
           }
 
-          cloned.left += rect.width / 2
-          return cloned
+          cloned.left += rect.width / 2;
+          return cloned;
         }
 
         const rect = button.getBoundingClientRect();
@@ -71,47 +53,13 @@ const createEmojiDropdownButton = ({
         return cloned;
       }
     });
-
-    emoticonsDropdown.getElement()?.classList.add(styles.EmoticonsDropdown);
-
-    const textColor = 'primary-text-color';
-
-    emoticonsDropdown.setTextColor(textColor);
-
-    emoticonsDropdown.addEventListener('closed', () => {
-      emoticonsDropdown.hideAndDestroy();
-      emoticonsDropdown = undefined;
-    });
-
-    emoticonsDropdown.onButtonClick();
-
-    onEmoticonsDropdown(emoticonsDropdown);
-  });
-
-  return {button};
-};
-
-export class InputFieldEmoji extends InputField {
-  private emoticonsDropdown: EmoticonsDropdown;
-  private richOriginalValue: TextWithEntities;
-
-  constructor(options?: InputFieldOptions) {
-    super({
-      canWrapCustomEmojis: true,
-      ...options
-    })
-
-    const {button} = createEmojiDropdownButton({
-      inputField: this,
-      onEmoticonsDropdown: (emoticonsDropdown) => {
-        this.emoticonsDropdown = emoticonsDropdown;
-      }
-    });
+    this.dispose = dispose;
     this.input.after(button);
   }
 
   public cleanup() {
-    this.emoticonsDropdown?.hideAndDestroy();
+    this.editor.destroy();
+    this.dispose();
   }
 
   get richValue(): TextWithEntities {
@@ -119,12 +67,12 @@ export class InputFieldEmoji extends InputField {
     return {_: 'textWithEntities', text: value, entities};
   }
   set richValue(value: TextWithEntities) {
-    this.value = wrapEmojiText(value.text, false, value.entities);
+    this.value = value;
   }
 
   public setRichOriginalValue(value: TextWithEntities) {
     this.richOriginalValue = value;
-    this.value = wrapEmojiText(value.text, true, value.entities);
+    this.value = value;
   }
 
   isChanged() {

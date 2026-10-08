@@ -2,32 +2,19 @@ import {MessageEntity} from '@layer';
 
 
 export default function trimRichText(text: string, entities: MessageEntity[]) {
+  const originalText = text;
   entities = structuredClone(entities);
-  let prevLength = text.length;
+  const left = originalText.match(/^\s*/)[0].length;
+  text = originalText.slice(left).replace(/\s*$/, '');
+  const right = left + text.length;
 
-  // trim left
-  text = text.replace(/^\s*/, '');
-  let diff = prevLength - text.length;
-
-  if(diff) {
-    entities.forEach((entity) => {
-      entity.offset = Math.max(0, entity.offset - diff);
-    });
-  }
-
-  prevLength = text.length;
-
-  // trim right
-  text = text.replace(/\s*$/, '');
-  diff = prevLength - text.length;
-
-  if(diff) {
-    entities.forEach((entity) => {
-      if((entity.offset + entity.length) > text.length) {
-        entity.length = text.length - entity.offset;
-      }
-    });
-  }
+  entities = entities.filter((entity) => {
+    const start = Math.max(left, entity.offset);
+    const end = Math.min(right, entity.offset + entity.length);
+    entity.offset = start - left;
+    entity.length = end - start;
+    return entity.length > 0;
+  });
 
   return {text, entities};
 }

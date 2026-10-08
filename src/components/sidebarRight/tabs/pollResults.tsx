@@ -1,13 +1,6 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {render} from 'solid-js/web';
 import {SliderSuperTab} from '@components/slider';
 import appSidebarRight from '..';
-import {roundPercents} from '@components/poll';
 import appDialogsManager from '@lib/appDialogsManager';
 import {i18n} from '@lib/langPack';
 import setInnerHTML from '@helpers/dom/setInnerHTML';
@@ -19,6 +12,8 @@ import wrapTextWithEntities from '@lib/richTextProcessor/wrapTextWithEntities';
 import {Show, untrack} from 'solid-js';
 import {createLoadableList, MoreButton} from '@components/sidebarRight/tabs/statistics';
 import {formatFullSentTimeRaw} from '@helpers/date';
+import {getRoundedPercentsFromResults} from '@components/chat/bubbleParts/pollMessageContent/roundPercents';
+
 
 export default class AppPollResultsTab extends SliderSuperTab {
   private dispose: VoidFunction;
@@ -35,13 +30,12 @@ export default class AppPollResultsTab extends SliderSuperTab {
       <div class="sidebar-header__rows">
         {this.title}
         <div class="sidebar-header__subtitle">
-          {i18n('Chat.Poll.TotalVotes1', [poll.results.total_voters])}
+          {i18n('Chat.Poll.MembersVoted', [poll.results.total_voters])}
         </div>
       </div>
     ) as HTMLElement);
 
-    const percents = poll.results.results.map((v) => v.voters / poll.results.total_voters * 100);
-    roundPercents(percents);
+    const percents = getRoundedPercentsFromResults(poll.results);
 
     const getSections = () => poll.results.results.map((result, idx) => {
       if(!result.voters) {
@@ -56,7 +50,7 @@ export default class AppPollResultsTab extends SliderSuperTab {
       setInnerHTML(answerTitle, answerTextWrapped);
       answerTitle.append(' — ', Math.round(percents[idx]) + '%');
 
-      const answerPercents = i18n('Chat.Poll.TotalVotes1', [result.voters]);
+      const answerPercents = i18n('Chat.Poll.MembersVoted', [result.voters]);
 
       // Humans
       const list = appDialogsManager.createChatList();
@@ -74,6 +68,8 @@ export default class AppPollResultsTab extends SliderSuperTab {
 
       let offset: string, limit = 4;
       const load = async() => {
+        if(answer._ !== 'pollAnswer') return;
+
         const votesList = await this.managers.appPollsManager.getVotes(
           message,
           answer.option,

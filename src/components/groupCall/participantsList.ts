@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import replaceContent from '@helpers/dom/replaceContent';
 import {fastRaf} from '@helpers/schedulers';
@@ -31,6 +25,9 @@ export default class GroupCallParticipantsList extends SortedList<SortedParticip
   protected rippleEnabled = true;
   protected autonomous = true;
   protected createChatListOptions: Parameters<AppDialogsManager['createChatList']>[0] = {/* new: true,  */dialogSize: 72};
+  private liveElements = new Set<SortedParticipant>();
+  private destroyed = false;
+  private generation = 0;
 
   constructor(private instance: GroupCallInstance) {
     super({
@@ -40,11 +37,24 @@ export default class GroupCallParticipantsList extends SortedList<SortedParticip
         this.onElementDestroy(element);
       },
       onUpdate: async(element) => {
-        const participant = await this.instance.getParticipantByPeerId(element.id);
-        const state = getGroupCallParticipantMutedState(participant);
+        const generation = this.generation;
+        try {
+          const participant = await this.instance.getParticipantByPeerId(element.id);
+          if(this.destroyed || this.generation !== generation || this.get(element.id) !== element) return;
 
-        element.mutedIcon.setState(state);
-        element.status.setState(state, participant);
+          const state = getGroupCallParticipantMutedState(participant);
+          // On the e2e chain but absent from the SFU roster: has the call key,
+          // isn't connected to the media. See conferenceMembership.ts.
+          const withAccess = this.instance.isMemberWithAccess(element.id);
+
+          element.dom.listEl.classList.toggle('is-with-access', withAccess);
+          element.mutedIcon.setState(state);
+          element.status.setState(state, participant, withAccess);
+        } catch(err) {
+          if(!this.destroyed && this.generation === generation && this.get(element.id) === element) {
+            console.error('group call participant row update failed', err);
+          }
+        }
       },
       onSort: (element, idx) => {
         positionElementByIndex(element.dom.listEl, this.list, idx);
@@ -83,6 +93,7 @@ export default class GroupCallParticipantsList extends SortedList<SortedParticip
         }); */
 
         (base as SortedParticipant).dom = dom;
+        this.liveElements.add(base as SortedParticipant);
 
         return base as SortedParticipant;
       },
@@ -93,13 +104,19 @@ export default class GroupCallParticipantsList extends SortedList<SortedParticip
   }
 
   public destroy() {
+    if(this.destroyed) return;
+    this.destroyed = true;
+    ++this.generation;
+    const elements = Array.from(this.liveElements);
     super.clear();
-    this.elements.forEach((element) => {
+    elements.forEach((element) => {
+      element.dom.listEl.remove();
       this.onElementDestroy(element);
     });
   }
 
   protected onElementDestroy(element: SortedParticipant) {
+    if(!this.liveElements.delete(element)) return;
     element.mutedIcon.destroy();
     element.middlewareHelper.destroy();
   }

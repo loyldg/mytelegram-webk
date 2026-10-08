@@ -1,10 +1,5 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {attachClickEvent} from '@helpers/dom/clickEvent';
+import {getAppWindow} from '@helpers/appWindow';
 import findUpAsChild from '@helpers/dom/findUpAsChild';
 import EventListenerBase from '@helpers/eventListenerBase';
 import ListenerSetter from '@helpers/listenerSetter';
@@ -14,6 +9,9 @@ import appNavigationController, {NavigationItem} from '@components/appNavigation
 import findUpClassName from '@helpers/dom/findUpClassName';
 import rootScope from '@lib/rootScope';
 import liteMode from '@helpers/liteMode';
+import {getFocusableElements} from '@helpers/dom/focusTrap';
+import ensureButtonSemantics from '@helpers/dom/ensureButtonSemantics';
+import Modes from '@config/modes';
 
 const KEEP_OPEN = false;
 const TOGGLE_TIMEOUT = 200;
@@ -36,8 +34,10 @@ export default class DropdownHover extends EventListenerBase<{
   protected ignoreButtons: Set<HTMLElement>;
   protected navigationItem: NavigationItem;
   protected ignoreOutClickClassName: string;
+  protected suppressOutClick: boolean;
   protected timeouts: {[type in DropdownHoverTimeoutType]?: number};
   protected detachClickEvent: () => void;
+  private keyboardTrigger: HTMLElement;
 
   constructor(options: {
     element: DropdownHover['element'],
@@ -57,16 +57,29 @@ export default class DropdownHover extends EventListenerBase<{
     listenerSetter: ListenerSetter
   ) {
     let firstTime = true;
-    if(IS_TOUCH_SUPPORTED) {
-      attachClickEvent(button, () => {
+    ensureButtonSemantics(button);
+    const popupRole = this.element.getAttribute('role') || 'dialog';
+    this.element.setAttribute('role', popupRole);
+    const label = button.getAttribute('aria-label') || button.textContent.trim();
+    if(label && !this.element.hasAttribute('aria-label')) this.element.setAttribute('aria-label', label);
+    button.setAttribute('aria-haspopup', popupRole);
+    button.setAttribute('aria-expanded', 'false');
+    listenerSetter.add(this)('open', () => button.setAttribute('aria-expanded', 'true'));
+    listenerSetter.add(this)('close', () => button.setAttribute('aria-expanded', 'false'));
+    attachClickEvent(button, (event) => {
+      this.keyboardTrigger = Modes.a11y && event.type === 'click' && event.detail === 0 ? button : undefined;
+      if(IS_TOUCH_SUPPORTED) {
         if(firstTime) {
           firstTime = false;
           this.toggle(true);
         } else {
           this.toggle();
         }
-      }, {listenerSetter});
-    } else {
+      } else {
+        this.onButtonClick(button, event);
+      }
+    }, {listenerSetter});
+    if(!IS_TOUCH_SUPPORTED) {
       listenerSetter.add(button)('mouseover', (e) => {
         if(firstTime) {
           listenerSetter.add(button)('mouseout', (e) => {
@@ -80,8 +93,6 @@ export default class DropdownHover extends EventListenerBase<{
           this.toggle(true);
         }, TOGGLE_TIMEOUT);
       });
-
-      attachClickEvent(button, this.onButtonClick.bind(this, button), {listenerSetter});
     }
   }
 
@@ -92,7 +103,21 @@ export default class DropdownHover extends EventListenerBase<{
     if(ignore && !this.ignoreMouseOut.size) {
       button && this.ignoreButtons.add(button);
       setTimeout(() => {
-        this.detachClickEvent = attachClickEvent(window, this.onClickOut, {capture: true});
+        // Click-outside-to-close on the active window — the dropdown opens in whichever window the app
+        // is in (the tab, or the Document PiP window), so a main-`window` listener never sees the
+        // outside click there and the panel won't dismiss. Same `w` for add + detach so they match.
+        const w = getAppWindow();
+        if(this.suppressOutClick) {
+          const options: AddEventListenerOptions = {capture: true};
+          w.addEventListener('mousedown', this.onMouseDownOut, options);
+          w.addEventListener('click', this.onClickOut, options);
+          this.detachClickEvent = () => {
+            w.removeEventListener('mousedown', this.onMouseDownOut, options);
+            w.removeEventListener('click', this.onClickOut, options);
+          };
+        } else {
+          this.detachClickEvent = attachClickEvent(w, this.onClickOut, {capture: true});
+        }
       }, 0);
     }
 
@@ -100,16 +125,32 @@ export default class DropdownHover extends EventListenerBase<{
     this.toggle(ignore);
   };
 
-  protected onClickOut = (e: MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if(
-      e.isTrusted &&
-      !findUpAsChild(target, this.element) &&
+  protected isOutClickTarget(target: HTMLElement) {
+    return !findUpAsChild(target, this.element) &&
       !Array.from(this.ignoreButtons).some((button) => findUpAsChild(target, button) || target === button) &&
       this.ignoreMouseOut.size <= 1 &&
-      (!this.ignoreOutClickClassName || !findUpClassName(target, this.ignoreOutClickClassName))
-    ) {
+      (!this.ignoreOutClickClassName || !findUpClassName(target, this.ignoreOutClickClassName));
+  }
+
+  protected onClickOut = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if(e.isTrusted && this.isOutClickTarget(target)) {
+      if(this.suppressOutClick) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+
       this.toggle(false);
+    }
+  };
+
+  // swallow the mousedown that precedes the out-click, otherwise handlers that
+  // act on mousedown (e.g. the chat list opening a peer) fire before we close
+  protected onMouseDownOut = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if(e.isTrusted && this.isOutClickTarget(target)) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
     }
   };
 
@@ -184,11 +225,17 @@ export default class DropdownHover extends EventListenerBase<{
       this.element.style.display = '';
       void this.element.offsetLeft; // reflow
       this.element.classList.add('active');
+      if(this.keyboardTrigger) {
+        this.element.ownerDocument.defaultView.requestAnimationFrame(() => {
+          if(this.isActive()) getFocusableElements(this.element)[0]?.focus();
+        });
+      }
 
       this.dispatchEvent('openAfterLayout');
 
       appNavigationController.pushItem(this.navigationItem = {
         type: 'dropdown',
+        noBlurOnPop: Modes.a11y,
         onPop: () => {
           this.toggle(false);
         }
@@ -216,6 +263,8 @@ export default class DropdownHover extends EventListenerBase<{
       this.ignoreButtons.clear();
 
       this.element.classList.remove('active');
+      if(this.keyboardTrigger?.isConnected) this.keyboardTrigger.focus();
+      this.keyboardTrigger = undefined;
 
       appNavigationController.removeItem(this.navigationItem);
       this.detachClickEvent?.();
@@ -246,6 +295,14 @@ export default class DropdownHover extends EventListenerBase<{
 
   public isActive() {
     return this.element.classList.contains('active');
+  }
+
+  /**
+   * The `active` class comes off when the closing animation starts, but the panel stays on
+   * screen until it ends — anything that must not be seen happening has to wait for `closed`.
+   */
+  public isDisplayed() {
+    return this.element.style.display !== 'none';
   }
 
   public setIgnoreMouseOut(type: IgnoreMouseOutType, ignore: boolean) {

@@ -1,11 +1,5 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {JSX, createSignal, For, createEffect, Accessor, onMount, createMemo, splitProps, on, Show, onCleanup} from 'solid-js';
-import {ScrollableX} from '@components/scrollable';
+import Scrollable from '@components/scrollable2';
 import {createStoriesViewer} from '@components/stories/viewer';
 import styles from '@components/stories/list.module.scss';
 import mediaSizes from '@helpers/mediaSizes';
@@ -19,9 +13,10 @@ import findUpClassName from '@helpers/dom/findUpClassName';
 import {StoriesProvider, useStories} from '@components/stories/store';
 import appImManager from '@lib/appImManager';
 import appSidebarLeft from '@components/sidebarLeft';
-import AppMyStoriesTab from '@components/sidebarLeft/tabs/myStories';
+import {AppMyStoriesTab} from '@components/solidJsTabs/tabs';
 import {toastNew} from '@components/toast';
 import wrapPeerTitle from '@components/wrappers/peerTitle';
+import removeStoriesFromRecent from '@components/stories/removeFromRecent';
 import {ChatType} from '@components/chat/chatType';
 import {subscribeOn} from '@helpers/solid/subscribeOn';
 import {useCollapsable} from '@hooks/useCollapsable';
@@ -29,37 +24,10 @@ import createMiddleware from '@helpers/solid/createMiddleware';
 import ListenerSetter from '@helpers/listenerSetter';
 import {PeerTitleTsx} from '@components/peerTitleTsx';
 import showStoriesStealthModePopup from '@components/popups/storiesStealthMode';
-
+import buttonKeyDown from '@helpers/solid/buttonKeyDown';
+import Modes from '@config/modes';
 
 const TEST_COUNT = 0;
-
-export const ScrollableXTsx = (props: {
-  children: JSX.Element,
-  onAdditionalScroll?: () => void
-} & JSX.HTMLAttributes<HTMLDivElement>) => {
-  const [, rest] = splitProps(props, ['onAdditionalScroll']);
-  let container: HTMLDivElement;
-  const ret = (
-    <div ref={container} {...rest}>
-      {props.children}
-    </div>
-  );
-
-  const scrollable = new ScrollableX(undefined, undefined, undefined, undefined, container);
-
-  if(props.onAdditionalScroll) {
-    scrollable.setListeners();
-    scrollable.onAdditionalScroll = props.onAdditionalScroll;
-  }
-
-  onCleanup(() => {
-    scrollable.destroy();
-  });
-
-  return ret;
-};
-
-
 const ITEM_MARGIN = 0;
 const ITEM_WIDTH = 74 + ITEM_MARGIN * 2;
 const ITEM_AVATAR_SIZE = 54;
@@ -73,7 +41,8 @@ function _StoriesList(props: {
   listenWheelOn: HTMLElement,
   archive?: boolean,
   offsetX?: number,
-  resizeCallback?: (callback: () => void) => void
+  resizeCallback?: (callback: () => void) => void,
+  onExpand?: () => void
 }) {
   type PeerStories = typeof stories['peers'][0];
   const [stories, actions] = useStories();
@@ -106,7 +75,10 @@ function _StoriesList(props: {
   const items = new WeakMap<PeerStories, HTMLDivElement>();
   const itemsTarget = new WeakMap<HTMLDivElement, PeerStories>();
 
-  const onContainerClick = (e: MouseEvent) => unfold(e);
+  const onContainerClick = (e: MouseEvent) => {
+    unfold(e);
+    props.onExpand?.();
+  };
 
   createEffect(() => {
     const peer = viewerPeer();
@@ -217,6 +189,15 @@ function _StoriesList(props: {
 
     const isMyStory = peer.peerId === rootScope.myId;
 
+    const [ariaLabel, setAriaLabel] = createSignal(I18n.format('OpenStory', true));
+    if(isMyStory) {
+      setAriaLabel(`${I18n.format('OpenStory', true)}, ${I18n.format('MyStory', true)}`);
+    } else {
+      wrapPeerTitle({peerId: peer.peerId, onlyFirstName: true}).then((el) => {
+        setAriaLabel(`${I18n.format('OpenStory', true)}, ${el.textContent}`);
+      });
+    }
+
     const ret = (
       <div
         ref={(el) => (items.set(peer, el), itemsTarget.set(el, peer))}
@@ -228,6 +209,10 @@ function _StoriesList(props: {
             return movement && !movement.isOut && !movement.isLastIn;
           })()
         }}
+        role="button"
+        tabindex={Modes.a11y ? 0 : undefined}
+        aria-label={ariaLabel()}
+        onKeyDown={buttonKeyDown}
         onClick={onClick}
         style={{
           ...calculateMovement()?.cssProperties,
@@ -340,13 +325,18 @@ function _StoriesList(props: {
     disableHoverWhenFolded: true
   });
 
+  // * declared before `r`: creating it maps `peers()` through `Item` right away, so a list
+  // * that already has its peers (a provider constructed with them) would read this memo
+  // * before initialization
+  const shouldStoriesSegmentsBeFolded = createMemo(() => progress() !== STATE_UNFOLDED);
+
   const r = (
     <div
       ref={container}
       class={styles.ListContainer}
       style={calculateMovement()}
     >
-      <ScrollableXTsx>
+      <Scrollable axis="x">
         <div
           class={styles.List}
           classList={{
@@ -355,7 +345,7 @@ function _StoriesList(props: {
         >
           <For each={peers()}>{Item}</For>
         </div>
-      </ScrollableXTsx>
+      </Scrollable>
     </div>
   );
 
@@ -378,22 +368,20 @@ function _StoriesList(props: {
       });
     };
 
-    let peer: PeerStories, isSelf: boolean;
+    let peer: PeerStories, isSelf: boolean, removal: 'hide' | 'remove';
     createContextMenu({
       buttons: [{
         icon: 'stories',
         text: 'SavedStories',
         onClick: () => {
-          appSidebarLeft.createTab(AppMyStoriesTab).open();
+          appSidebarLeft.createTab(AppMyStoriesTab).open(AppMyStoriesTab.getInitArgs());
         },
         verify: () => isSelf
       }, {
         icon: 'archive',
         text: 'ArchivedStories',
         onClick: () => {
-          const tab = appSidebarLeft.createTab(AppMyStoriesTab);
-          tab.isArchive = true;
-          tab.open();
+          appSidebarLeft.createTab(AppMyStoriesTab).open({...AppMyStoriesTab.getInitArgs(), isArchive: true});
         },
         verify: () => isSelf
       }, {
@@ -429,7 +417,7 @@ function _StoriesList(props: {
         verify: () => !isSelf && rootScope.managers.appNotificationsManager.isPeerStoriesMuted(peer.peerId),
         multiline: true
       }, {
-        icon: 'eyecross_outline',
+        icon: 'eyecross',
         text: 'Stories.StealthMode.View',
         onClick: () => {
           const {peerId} = peer;
@@ -448,7 +436,12 @@ function _StoriesList(props: {
         icon: 'archive',
         text: 'ArchivePeerStories',
         onClick: () => toggleHidden(true),
-        verify: () => !isSelf && !props.archive
+        verify: () => !isSelf && !props.archive && removal === 'hide'
+      }, {
+        icon: 'delete',
+        text: 'StoriesRemoveFromRecent',
+        onClick: () => removeStoriesFromRecent(peer.peerId),
+        verify: () => !isSelf && !props.archive && removal === 'remove'
       }, {
         icon: 'unarchive',
         text: 'UnarchiveStories',
@@ -460,17 +453,16 @@ function _StoriesList(props: {
       findElement: (e) => {
         return !folded() && findUpClassName(e.target, styles.ListItem);
       },
-      onOpen: (e, target) => {
+      onOpen: async(e, target) => {
         peer = itemsTarget.get(target as HTMLDivElement);
         isSelf = peer.peerId === rootScope.myId;
+        removal = await rootScope.managers.appStoriesManager.getPeerStoriesRemoval(peer.peerId);
       },
       onClose: () => {
         peer = undefined;
       }
     });
   });
-
-  const shouldStoriesSegmentsBeFolded = createMemo(() => progress() !== STATE_UNFOLDED);
 
   return (
     <>

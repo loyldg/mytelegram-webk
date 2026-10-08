@@ -6,8 +6,9 @@ import RangeInput from '@components/mediaEditor/rangeInput';
 import StepInput, {StepInputStep} from '@components/mediaEditor/stepInput';
 import useIsMobile from '@components/mediaEditor/useIsMobile';
 import {availableQualityHeights, checkIfHasAnimatedStickers, snapToAvailableQuality} from '@components/mediaEditor/utils';
-import {HeightTransition} from '@components/sidebarRight/tabs/adminRecentActions/heightTransition';
 import Space from '@components/space';
+import {getOverlayRoot} from '@helpers/appWindow';
+import {HeightTransition} from '@helpers/solid/heightTransition';
 import {i18n} from '@lib/langPack';
 import {createEffect, createMemo, createSignal, on, onCleanup, Show} from 'solid-js';
 
@@ -15,7 +16,7 @@ import {createEffect, createMemo, createSignal, on, onCleanup, Show} from 'solid
 const ADJUST_TIMEOUT = 800;
 
 export default function AdjustmentsTab() {
-  const {editorState, mediaState, actions, mediaType, canImageResultInGIF} = useMediaEditorContext();
+  const {editorState, mediaState, actions, mediaType, canImageResultInGIF, isVideoAvatarMode} = useMediaEditorContext();
 
   const isMobile = useIsMobile();
   const cropOffset = useCropOffset();
@@ -58,7 +59,9 @@ export default function AdjustmentsTab() {
     return false;
   });
 
-  const canShowQualityInput = createMemo(() => willResultInVideo() && steps().length > 1);
+  // Profile video avatars are encoded at a fixed quality (800px / 30fps /
+  // 1.5Mbps), so the Quality picker would be a no-op — hide it there.
+  const canShowQualityInput = createMemo(() => !isVideoAvatarMode && willResultInVideo() && steps().length > 1);
 
   return (
     <>
@@ -69,6 +72,8 @@ export default function AdjustmentsTab() {
           <div>
             <StepInput
               label={i18n('Quality')}
+              ariaLabel="Quality"
+              ariaValueText={(value) => value + 'p'}
               steps={steps()}
               value={Math.min(maxVideoQuality(), mediaState.videoQuality)}
               onChange={(value) => void(mediaState.videoQuality = value)}
@@ -108,12 +113,13 @@ export default function AdjustmentsTab() {
                   value={value()}
                   onChange={() => {}}
                   label={item.label()}
+                  ariaLabel={item.labelKey}
                   min={item.to100 ? 0 : -50}
                   max={item.to100 ? 100 : 50}
                 />
               </div>
             ) as HTMLDivElement;
-            document.body.append(div);
+            getOverlayRoot().append(div);
 
             onCleanup(() => {
               setTimeout(() => {
@@ -144,6 +150,7 @@ export default function AdjustmentsTab() {
                 removeIsAdjusting();
               }}
               label={item.label()}
+              ariaLabel={item.labelKey}
               onChangeFinish={(prevValue, currentValue) => {
                 setShowGhost(false);
                 editorState.isAdjusting = false;

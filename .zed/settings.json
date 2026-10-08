@@ -13,5 +13,24 @@
     {
       "code_action": "source.fixAll.eslint"
     }
+  ],
+  "file_scan_exclusions": [
+    "**/node_modules",
+    "**/dist",
+    "public",
+    "snapshot-server/snapshots",
+    "src/scripts/in/schema.json",
+    "src/scripts/out/schema.json",
+    "src/lib/mtproto/schema.ts",
+    // Default values:
+    "**/.svn",
+    "**/.hg",
+    "**/.jj",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings",
+    "**/.git",
   ]
 }

@@ -1,4 +1,4 @@
-import {AuthSentCode} from '@layer';
+import {AccountSentEmailCode, AuthSentCode} from '@layer';
 import type {ApiError} from '@appManagers/apiManager';
 import {ActiveAccountNumber} from '@lib/sessionStorage';
 
@@ -27,9 +27,7 @@ export type InvokeApiOptions = Partial<{
   timeout: number,
   waitTime: number,
   stopTime: number,
-  rawError: any,
-  noInitConnection: boolean,
-  msg_id: MTLong
+  rawError: any
 }>;
 
 export type WorkerTaskTemplate = {
@@ -120,8 +118,12 @@ type PartialByKeys<T, K extends keyof T = never> =
   Omit<T, K> &
   Partial<Pick<T, K>>;
 
+  type FilterBooleanKeys<T> = {
+    [K in keyof T]: T[K] extends boolean ? K : never
+  }[keyof T];
 
-export type AuthState = AuthState.signIn | AuthState.signQr | AuthState.authCode | AuthState.password | AuthState.signUp | AuthState.signedIn | AuthState.signImport;
+
+export type AuthState = AuthState.signIn | AuthState.signQr | AuthState.authCode | AuthState.emailSetup | AuthState.emailSetupCode | AuthState.password | AuthState.signUp | AuthState.signedIn | AuthState.signImport;
 export namespace AuthState {
   export type signIn = {
     _: 'authStateSignIn'
@@ -134,6 +136,21 @@ export namespace AuthState {
   export type authCode = {
     _: 'authStateAuthCode',
     sentCode: AuthSentCode.authSentCode
+  };
+
+  /** `auth.sentCodeTypeSetUpEmailRequired` — a login email has to be added before signing in. */
+  export type emailSetup = {
+    _: 'authStateEmailSetup',
+    phone_number: string,
+    phone_code_hash: string
+  };
+
+  /** The code `account.sendVerifyEmailCode` mailed to the address entered in `emailSetup`. */
+  export type emailSetupCode = {
+    _: 'authStateEmailSetupCode',
+    phone_number: string,
+    phone_code_hash: string,
+    sentCode: AccountSentEmailCode.accountSentEmailCode
   };
 
   export type password = {
@@ -347,6 +364,7 @@ export type TelegramWebViewEventMap = {
   }
   web_app_share_to_story: unknown,
   web_app_send_prepared_message: {id: string},
+  web_app_request_chat: {req_id: string},
   web_app_request_fullscreen: void,
   web_app_exit_fullscreen: void,
   web_app_verify_age: {
@@ -491,11 +509,16 @@ export type TelegramWebViewSendEventMap = {
     bottom: number,
   },
   prepared_message_failed: {error: string},
+  requested_chat_sent: {req_id: string},
+  requested_chat_failed: {req_id: string, error?: string},
   gyroscope_failed: {error: string},
   device_orientation_failed: {error: string},
   accelerometer_failed: {error: string},
   prepared_message_sent: void
 };
+
+export type LocalTextWithEntities = Pick<TextWithEntities, 'text' | 'entities'>;
+export type LocalTextWithOptionalEntities = Pick<TextWithEntities, 'text'> & Partial<Pick<TextWithEntities, 'entities'>>;
 
 // export type TelegramWebViewSendSerializedEvent<T extends keyof TelegramWebViewSendEventMap> = {
 //   eventType: T,

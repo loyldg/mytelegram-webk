@@ -28,7 +28,7 @@ import {useParticipantClickHandler} from '@components/sidebarRight/tabs/adminRec
 keepMe(ripple);
 
 
-const fetchLimit = 30; // we don't care if it doesn't fill the viewport, it will refetch immediately anyway
+const fetchLimit = 30; // we don't care if it doesn't fill the viewport, it will fetch more immediately anyway if needed
 const fetchThrottleTimeout = 200;
 const maxBatchSize = 20;
 const itemSizeEstimate = 70;
@@ -42,7 +42,7 @@ const thumbUpdateDebounceTimeout = 100;
 const testEmpty = 0;
 
 const AdminRecentActionsTab = () => {
-  const {rootScope, PeerTitleTsx, apiManagerProxy, appImManager, ChatType} = useHotReloadGuard();
+  const {rootScope, PeerTitleTsx, apiManagerProxy, appImManager, ChatType, I18n} = useHotReloadGuard();
   const [tab] = useSuperTab<typeof AppAdminRecentActionsTab>();
 
   const isForum = apiManagerProxy.isForum(tab.payload.channelId.toPeerId(true));
@@ -172,10 +172,10 @@ const AdminRecentActionsTab = () => {
         </Transition>
         <Transition name='fade' mode='outin'>
           <Show when={logs().length || committedFilters()}>
-            <ButtonIconTsx icon='filter' onClick={() => setIsFiltersOpen(!isFiltersOpen())} />
+            <ButtonIconTsx icon='filter' aria-label={I18n.format('AdminRecentActionsFilters.ByType', true)} onClick={() => setIsFiltersOpen(!isFiltersOpen())} />
           </Show>
         </Transition>
-        <ButtonIconTsx icon='message' onClick={onChatView} />
+        <ButtonIconTsx icon='message' aria-label={I18n.format('SavedViewAsMessages', true)} onClick={onChatView} />
       </div>
     </Portal>
     <Portal mount={tab.content}>
@@ -207,7 +207,7 @@ const AdminRecentActionsTab = () => {
       <Show keyed when={logs().length ? initialLogs() : false}>
         <DynamicVirtualList
           list={logs()}
-          measureElementHeight={(el: HTMLDivElement) => el.offsetHeight}
+          measureElementHeight={(el) => el.offsetHeight}
           estimateItemHeight={() => cachedAreAllExpanded() ? itemSizeEstimateExpanded : itemSizeEstimate}
           maxBatchSize={maxBatchSize}
           scrollable={tab.scrollable.container}

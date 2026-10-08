@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -10,19 +6,22 @@
  */
 
 import {MessageEntity} from '@layer';
-import matchUrlProtocol from '@lib/richTextProcessor/matchUrlProtocol';
+import {normalizeUrlProtocol} from '@lib/richTextProcessor/matchUrlProtocol';
 import {BOM_REG_EXP} from '@helpers/string/bom';
 import {ENTITY_ELEMENT_MAP} from '@lib/richTextProcessor/wrapRichText';
 
 export type MarkdownType = 'bold' | 'italic' | 'underline' | 'strikethrough' |
-  'monospace' | 'link' | 'mentionName' | 'spoiler' | 'quote' | 'date'/*  | 'customEmoji' */;
+  'monospace' | 'link' | 'mentionName' | 'spoiler' | 'quote' | 'date' |
+  'highlight' | 'subscript' | 'superscript'/*  | 'customEmoji' */;
 export type MarkdownTag = {
   match: string,
   entityName: Extract<
     MessageEntity['_'], 'messageEntityBold' | 'messageEntityUnderline' |
     'messageEntityItalic' | 'messageEntityCode' | 'messageEntityStrike' |
     'messageEntityTextUrl' | 'messageEntityMentionName' | 'messageEntitySpoiler' |
-    'messageEntityBlockquote' | 'messageEntityFormattedDate'/*  | 'messageEntityCustomEmoji' */
+    'messageEntityBlockquote' | 'messageEntityFormattedDate' |
+    'messageEntityHighlight' | 'messageEntitySubscript' |
+    'messageEntitySuperscript'/*  | 'messageEntityCustomEmoji' */
   >;
 };
 
@@ -91,6 +90,18 @@ export const markdownTags: {[type in MarkdownType]: MarkdownTag} = {
   date: {
     match: join('[style*="date"]', '.formatted-date'),
     entityName: 'messageEntityFormattedDate'
+  },
+  highlight: {
+    match: join('[style*="highlight"]', '[data-highlight]', 'mark'),
+    entityName: 'messageEntityHighlight'
+  },
+  subscript: {
+    match: join('[style*="subscript"]', 'sub'),
+    entityName: 'messageEntitySubscript'
+  },
+  superscript: {
+    match: join('[style*="superscript"]', 'sup'),
+    entityName: 'messageEntitySuperscript'
   }
   // customEmoji: {
   //   match: '.custom-emoji',
@@ -132,12 +143,42 @@ const BLOCK_TAGS = new Set([
   'BLOCKQUOTE'
 ]);
 
+function getListItemPrefix(element: HTMLElement) {
+  if(element.tagName !== 'LI') return '';
+  const list = element.parentElement;
+  if(list?.tagName !== 'UL' && list?.tagName !== 'OL') return '';
+
+  let depth = 0;
+  for(let parent = list.parentElement; parent; parent = parent.parentElement) {
+    if(parent.tagName === 'LI') ++depth;
+  }
+
+  if(list.tagName === 'UL') return `${'  '.repeat(depth)}- `;
+
+  const startAttribute = Number(list.getAttribute('start'));
+  const start = list.hasAttribute('start') && Number.isFinite(startAttribute) ? startAttribute : 1;
+  const items = Array.from(list.children).filter((child) => child.tagName === 'LI');
+  const index = items.indexOf(element);
+  const valueAttribute = Number(element.getAttribute('value'));
+  const value = element.hasAttribute('value') && Number.isFinite(valueAttribute) ? valueAttribute : start + index;
+  return `${'  '.repeat(depth)}${value}. `;
+}
+
 // const INSERT_NEW_LINE_TAGS = new Set([
 //   'OL',
 //   'UL'
 // ]);
 
 export const SELECTION_SEPARATOR = '\x01';
+
+const FORMATTED_DATE_FLAGS = [
+  'relative',
+  'short_time',
+  'long_time',
+  'short_date',
+  'long_date',
+  'day_of_week'
+] as const;
 
 export function getFormattedDateEntityByElement(
   element: HTMLElement,
@@ -146,9 +187,13 @@ export function getFormattedDateEntityByElement(
 ): MessageEntity.messageEntityFormattedDate {
   const dateStr = element.dataset.date;
   const date = dateStr ? +dateStr : undefined;
+  const dateFlags = new Set((element.dataset.dateFlags || '').split(','));
+  const pFlags = Object.fromEntries(
+    FORMATTED_DATE_FLAGS.filter((flag) => dateFlags.has(flag)).map((flag) => [flag, true])
+  ) as MessageEntity.messageEntityFormattedDate['pFlags'];
   return {
     _: 'messageEntityFormattedDate',
-    pFlags: {},
+    pFlags,
     date: 0,
     ...((ENTITY_ELEMENT_MAP.get(element) as MessageEntity.messageEntityFormattedDate) || {}),
     ...(date ? {date} : {}),
@@ -208,10 +253,7 @@ function checkElementForEntity(
             throw 1;
           }
 
-          let url2Before = value;
-          if(!matchUrlProtocol(url2Before)) {
-            url2Before = 'https://' + url2Before;
-          }
+          const url2Before = normalizeUrlProtocol(value);
 
           let url2: URL;
           let url2String: string;
@@ -236,11 +278,19 @@ function checkElementForEntity(
         entity.length += value.length;
       }
     } else if(tag.entityName === 'messageEntityMentionName') {
+      // `data-follow` also arrives with pasted HTML, so it is untrusted: only a
+      // numeric user id becomes an entity — a missing one used to throw here and
+      // any other value reached `getUserInput` as NaN, i.e. as `inputUserSelf`.
+      const follow = (closest as HTMLElement).dataset.follow;
+      if(!/^\d+$/.test(follow) || !+follow) {
+        continue;
+      }
+
       (currentEntities[tag.entityName] ||= pushEntity(entities, {
         _: tag.entityName,
         offset: offset.offset,
         length: 0,
-        user_id: (closest as HTMLElement).dataset.follow.toUserId()
+        user_id: follow.toUserId()
       })).length += value.length;
     } else if(tag.entityName === 'messageEntityBlockquote') {
       (currentEntities[tag.entityName] ||= pushEntity(entities, {
@@ -308,7 +358,7 @@ export default function getRichElementValue(
   selNode?: Node,
   selOffset?: number,
   entities?: MessageEntity[],
-  offset: {offset: number} = {offset: 0},
+  offset: {offset: number, contentEnd?: number} = {offset: 0},
   currentEntities: {[_ in MessageEntity['_']]?: MessageEntity} = {}
 ) {
   if(node.nodeType === node.TEXT_NODE) { // TEXT
@@ -339,6 +389,9 @@ export default function getRichElementValue(
     }
 
     offset.offset += nodeValue.length;
+    if(nodeValue.length) { // * track the last real-content offset (excludes trailing block line breaks)
+      offset.contentEnd = offset.offset;
+    }
     return;
   }
 
@@ -377,7 +430,16 @@ export default function getRichElementValue(
     if(alt) {
       line.push(alt);
       offset.offset += alt.length;
+      offset.contentEnd = offset.offset;
     }
+  }
+
+  const listItemPrefix = getListItemPrefix(node);
+  if(listItemPrefix) {
+    if(entities) checkElementForEntity(node, listItemPrefix, entities, offset, line, currentEntities);
+    line.push(listItemPrefix);
+    offset.offset += listItemPrefix.length;
+    offset.contentEnd = offset.offset;
   }
 
   if(isSelected && !selOffset) {
@@ -390,7 +452,7 @@ export default function getRichElementValue(
   let wasNodeEmpty = true;
 
   // * prefill currentEntities for current element
-  if(node.getAttribute('contenteditable') === null) {
+  if(node.getAttribute('contenteditable') === null && entities) {
     checkElementForEntity(node, '', entities, offset, line, currentEntities);
   }
 
@@ -419,6 +481,16 @@ export default function getRichElementValue(
       line[line.length - 1] = lastValue.slice(0, -1);
       offset.offset -= 1;
     }
+
+    // * inner line breaks of a quote can come from block children (<br>/<div>): their \n lands in the
+    // * value but never in the blockquote length (only text nodes feed checkElementForEntity), so the
+    // * last character would spill outside the quote. Re-span the entity up to the last content offset
+    // * (trailing block line breaks excluded).
+    const quoteEntity = currentEntities.messageEntityBlockquote;
+    if(quoteEntity) {
+      const contentEnd = Math.min(offset.contentEnd ?? offset.offset, offset.offset);
+      quoteEntity.length = Math.max(0, contentEnd - quoteEntity.offset);
+    }
   }
 
   // can test on text with list (https://www.who.int/initiatives/sports-and-health)
@@ -442,7 +514,13 @@ export default function getRichElementValue(
     }
   }
 
-  if(isBlock && !wasNodeEmpty) {
+  const lastChild = node.lastChild as HTMLElement;
+  const childClosedLine = lastChild?.nodeType === node.ELEMENT_NODE &&
+    lastChild.tagName !== 'BR' && (BLOCK_TAGS.has(lastChild.tagName) || lastChild.matches('.quote'));
+  const isFinishedBlockContainer = isLineEmpty(line) && (
+    node.tagName === 'UL' || node.tagName === 'OL' || node.tagName === 'LI' || childClosedLine
+  );
+  if(isBlock && !wasNodeEmpty && !isFinishedBlockContainer) {
     pushLine();
   }
 

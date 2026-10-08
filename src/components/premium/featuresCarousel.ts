@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {PremiumPromoFeature} from '@components/premium/featuresConfig';
 import {i18n} from '@lib/langPack';
 import {HelpPremiumPromo} from '@layer';
@@ -19,6 +13,9 @@ import {Middleware} from '@helpers/middleware';
 import {PopupPremiumProps} from '@components/popups/premium';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
+import Button from '@components/button';
+import attachTabList from '@helpers/dom/tabList';
+import Modes from '@config/modes';
 
 export default class FeaturesCarousel {
   private features: PremiumPromoFeature[];
@@ -94,6 +91,7 @@ export default class FeaturesCarousel {
         let frame = slideTopSectionContainer.querySelector<HTMLElement>('.device-frame');
         if(!frame) {
           const img = document.createElement('img');
+          img.alt = '';
           img.classList.add('device-frame-image');
           frame = document.createElement('div');
           frame.classList.add('device-frame');
@@ -132,6 +130,7 @@ export default class FeaturesCarousel {
       await this.appendVideo(featureIndex, this.carouselItems[featureIndex].querySelector('.device-frame'));
     } else {
       if(feature.type !== 'premium-stickers') {
+        if(Modes.a11y) slideTopSectionContainer.tabIndex = 0;
         slideTopSectionContainer.addEventListener('scroll', this.scrollListener);
       }
 
@@ -268,6 +267,7 @@ export default class FeaturesCarousel {
     this.dotsContainer.classList.add('popup-premium-controls-dots');
     this.controlsContainer.append(this.dotsContainer);
     this.features.forEach((f, i) => this.dotsContainer.append(this.createFeatureDot(options, f.feature, i)));
+    options.listenerSetter.addCleanup(attachTabList(this.dotsContainer, this.carouselItemsContainer));
     attachClickEvent(this.dotsContainer, (e) => {
       e.stopPropagation();
     }, {listenerSetter: options.listenerSetter});
@@ -281,8 +281,9 @@ export default class FeaturesCarousel {
   }
 
   private createFeatureDot(options: PopupPremiumProps, feature: PremiumPromoFeatureType, index: number) {
-    const dot = document.createElement('div');
-    dot.classList.add('popup-premium-controls-dot');
+    const dot = Button('popup-premium-controls-dot', {noRipple: true, asDiv: !Modes.a11y});
+    dot.setAttribute('role', 'tab');
+    dot.setAttribute('aria-label', i18n(this.features[index].titleLangKey, this.features[index].titleLangArgs).textContent);
     if(feature === this.selectedFeature) {
       dot.classList.add('active');
     }

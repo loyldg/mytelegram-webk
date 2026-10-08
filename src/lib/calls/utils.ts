@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/evgeny-nadymov/telegram-react
  * Copyright (C) 2018 Evgeny Nadymov
@@ -20,6 +16,12 @@ export function toTelegramSource(source: number) {
 export function fromTelegramSource(source: number) {
   return source >>> 0;
 }
+
+// Same bit-op, named for the other intent: canonicalizing an already-unsigned
+// (or unknown-provenance) SSRC into the unsigned form every SSRC map is keyed
+// by. Use `fromTelegramSource` when the value is known to come from a Telegram
+// row, `normalizeSsrc` when keying/looking up a map.
+export const normalizeSsrc = fromTelegramSource;
 
 export function getAmplitude(array: Uint8Array, scale = 3) {
   if(!array) return 0;

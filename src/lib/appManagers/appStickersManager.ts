@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import type {MyDocument} from '@appManagers/appDocsManager';
 import type {DownloadOptions} from '@appManagers/apiFileManager';
 import {Document, InputFileLocation, InputStickerSet, MessageEntity, MessagesAllStickers, MessagesFavedStickers, MessagesFeaturedStickers, MessagesFoundStickerSets, MessagesRecentStickers, MessagesStickers, MessagesStickerSet, PhotoSize, StickerPack, StickerSet, StickerSetCovered, Update, VideoSize} from '@layer';
@@ -29,6 +23,7 @@ import StickerType from '@config/stickerType';
 import {ReferenceContext} from '@lib/storages/references';
 import {STICKERS_LOCAL_IDS, STICKERS_LOCAL_IDS_SET, STICKER_LOCAL_SET_ID, MyMessagesStickerSet, MyStickerSetInput} from '@lib/appManagers/utils/stickers/constants';
 import {getStickerSetInputByDice, getStickerSetInputById, getStickerSetInputByLocalId, getStickerSetInputByShortName, getStickerSetInputByStickerSet} from '@lib/appManagers/utils/stickers/getStickerSetInput';
+import isStickerSetAdded from '@lib/appManagers/utils/stickers/isStickerSetAdded';
 
 const CACHE_TIME = 3600e3;
 
@@ -64,7 +59,7 @@ export class AppStickersManager extends AppManager {
         this.getAnimatedEmojiStickerSet();
 
         Promise.resolve(this.getLocalStickerSet(STICKERS_LOCAL_IDS.GENERIC_ANIMATIONS)).then(async(messagesStickerSet) => {
-          for(const doc of messagesStickerSet.documents) {
+          for(const doc of messagesStickerSet?.documents || []) {
             await this.apiFileManager.downloadMedia({media: doc as Document.document});
           }
         });
@@ -455,7 +450,7 @@ export class AppStickersManager extends AppManager {
       });
     });
 
-    const shouldRemove = !stickerSet.set.installed_date;
+    const shouldRemove = !isStickerSetAdded(stickerSet.set);
     map.forEach((keywords, docId) => {
       index.indexObjectArray(docId as DocId, shouldRemove ? [] : keywords);
     });
@@ -497,7 +492,7 @@ export class AppStickersManager extends AppManager {
     this.saveStickerSetLocal(newSet);
 
     // console.log('stickers wrote', this.stickerSets);
-    const needSave = stickerSet.set.installed_date || STICKERS_LOCAL_IDS_SET.has(newSet.set.id as any);
+    const needSave = isStickerSetAdded(stickerSet.set) || STICKERS_LOCAL_IDS_SET.has(newSet.set.id as any);
     stickerSet.refreshTime = Date.now();
     this.storage.set({[cacheKey]: stickerSet}, !needSave);
   }
@@ -617,12 +612,14 @@ export class AppStickersManager extends AppManager {
     const doc = this.appDocsManager.getDoc(docId);
     findAndSplice(this.favedStickers, (_doc) => _doc.id === doc.id);
 
+    let limitReached = false;
     if(!unfave) {
       this.favedStickers.unshift(doc);
       const spliced = this.favedStickers.splice(limit, this.favedStickers.length - limit);
+      limitReached = spliced.length > 0;
     }
 
-    this.rootScope.dispatchEvent('sticker_updated', {type: 'faved', faved: !unfave, document: doc});
+    this.rootScope.dispatchEvent('sticker_updated', {type: 'faved', faved: !unfave, document: doc, limitReached});
 
     return this.apiManager.invokeApi('messages.faveSticker', {
       id: getDocumentInput(doc),
@@ -634,39 +631,99 @@ export class AppStickersManager extends AppManager {
     });
   }
 
-  public async toggleStickerSet(set: StickerSet.stickerSet) {
-    const input = getStickerSetInputByStickerSet(set);
-    const cacheKey = this.getCacheKey(input);
-    const stickerSet = this.storage.getFromCache(cacheKey);
-    set = stickerSet.set;
+  /**
+   * A set is cached under its id and, once opened by its link (`t.me/addstickers/...`), under its short name
+   * as well — two separate copies, both of which have to follow the set's state.
+   */
+  private getCachedStickerSets(set: StickerSet.stickerSet) {
+    const inputs: MyStickerSetInput[] = [getStickerSetInputByStickerSet(set)];
+    if(set.short_name) {
+      inputs.push(getStickerSetInputByShortName(set.short_name));
+    }
 
-    if(set.installed_date) {
-      const res = await this.apiManager.invokeApi('messages.uninstallStickerSet', {
-        stickerset: input
-      });
+    return inputs.map((input) => {
+      const cacheKey = this.getCacheKey(input);
+      return {stickerSet: this.storage.getFromCache(cacheKey), cacheKey};
+    }).filter(({stickerSet}) => stickerSet);
+  }
 
-      if(res) {
-        delete set.installed_date;
-        this.saveStickerSetLocal(stickerSet);
-        this.rootScope.dispatchEvent('stickers_deleted', set);
+  /**
+   * Applies a local state change to every cached copy of the set and returns the copy to dispatch.
+   * `forget` keeps a set that is no longer among the user's own in memory only.
+   */
+  private updateStickerSet(set: StickerSet.stickerSet, update: (set: StickerSet.stickerSet) => void, forget?: boolean) {
+    const cached = this.getCachedStickerSets(set);
+    if(!cached.length) {
+      update(set);
+      return set;
+    }
+
+    cached.forEach(({stickerSet, cacheKey}) => {
+      update(stickerSet.set);
+      this.saveStickerSetLocal(stickerSet);
+      if(forget) {
         this.storage.delete(cacheKey, true);
-        return true;
       }
-    } else {
-      const res = await this.apiManager.invokeApi('messages.installStickerSet', {
-        stickerset: input,
-        archived: false
-      });
+    });
 
-      if(res) {
-        set.installed_date = tsNow(true);
-        this.saveStickerSetLocal(stickerSet);
-        this.rootScope.dispatchEvent('stickers_installed', set);
-        return true;
-      }
+    return cached[0].stickerSet.set;
+  }
+
+  public async toggleStickerSet(set: StickerSet.stickerSet) {
+    set = this.getCachedStickerSets(set)[0]?.stickerSet.set ?? set;
+    if(!isStickerSetAdded(set)) {
+      return this.installStickerSet(set, false);
+    }
+
+    const res = await this.apiManager.invokeApi('messages.uninstallStickerSet', {
+      stickerset: getStickerSetInputByStickerSet(set)
+    });
+
+    if(res) {
+      set = this.updateStickerSet(set, (set) => {
+        delete set.installed_date;
+      }, true);
+      this.rootScope.dispatchEvent('stickers_deleted', set);
+      return true;
     }
 
     return false;
+  }
+
+  public archiveStickerSet(set: StickerSet.stickerSet) {
+    return this.installStickerSet(set, true);
+  }
+
+  private async installStickerSet(set: StickerSet.stickerSet, archived: boolean) {
+    const result = await this.apiManager.invokeApi('messages.installStickerSet', {
+      stickerset: getStickerSetInputByStickerSet(set),
+      archived
+    });
+
+    if(archived) {
+      this.onStickerSetArchived(set);
+    } else {
+      set = this.updateStickerSet(set, (set) => {
+        delete set.pFlags.archived;
+        set.installed_date = tsNow(true);
+      });
+      this.rootScope.dispatchEvent('stickers_installed', set);
+    }
+
+    // the server made room for this set by archiving the least used ones
+    if(result._ === 'messages.stickerSetInstallResultArchive') {
+      result.sets.forEach((covered) => this.onStickerSetArchived(covered.set));
+    }
+
+    return true;
+  }
+
+  private onStickerSetArchived(set: StickerSet.stickerSet) {
+    set = this.updateStickerSet(set, (set) => {
+      set.pFlags.archived = true;
+      set.installed_date ||= tsNow(true);
+    }, true);
+    this.rootScope.dispatchEvent('stickers_deleted', set);
   }
 
   public toggleStickerSets(sets: StickerSet.stickerSet[]) {

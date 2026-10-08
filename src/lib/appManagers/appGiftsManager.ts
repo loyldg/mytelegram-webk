@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import bigInt from 'big-integer';
 import {InputSavedStarGift, Message, MessageAction, PremiumGiftCodeOption, SavedStarGift, StarGift, StarGiftAttribute, StarGiftAttributeId, StarGiftCollection, StarGiftUpgradePrice, StarsAmount, WebPageAttribute} from '@layer';
 import {STARS_CURRENCY} from '@appManagers/constants';
@@ -241,12 +235,17 @@ export default class AppGiftsManager extends AppManager {
       pFlags: {
         unsaved: action.pFlags.saved ? undefined : true,
         can_upgrade: action._ === 'messageActionStarGift' ? action.pFlags.can_upgrade : undefined,
-        refunded: action.pFlags.refunded
+        refunded: action.pFlags.refunded,
+        // layer 229: the buyer of a resold gift chose not to show their name
+        name_hidden: action._ === 'messageActionStarGiftUnique' && action.pFlags.name_hidden ? true : undefined
       },
       from_id: isIncomingGift ? message.peer_id : {_: 'peerUser', user_id: this.rootScope.myId},
       date: message.date,
       gift,
-      message: action._ === 'messageActionStarGift' ? action.message : baseWrap.collectibleAttributes.original?.message,
+      // layer 229 lets a resale carry its own message; otherwise the gift's original one stands
+      message: action._ === 'messageActionStarGift' ?
+        action.message :
+        (action.message || baseWrap.collectibleAttributes.original?.message),
       msg_id: action._ === 'messageActionStarGift' && action.pFlags.prepaid_upgrade ? action.gift_msg_id : message.id,
       convert_stars: gift._ === 'starGift' ? gift.convert_stars : undefined,
       upgrade_stars: gift._ === 'starGift' ? gift.upgrade_stars : undefined,
@@ -480,7 +479,8 @@ export default class AppGiftsManager extends AppManager {
       }).catch((): null => null)
     ]);
 
-    this.appUsersManager.saveApiUsers(result.users);
+    // * the owner (or host) can be a channel, so the chats matter as much as the users
+    this.appPeersManager.saveApiPeers(result);
 
     const ret = this.wrapGift(result.gift);
     if(savedResult) {

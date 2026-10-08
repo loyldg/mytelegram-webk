@@ -1,15 +1,12 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
+import {getAppWindow} from '@helpers/appWindow';
 
 export default function cancelSelection() {
-  if(window.getSelection) {
-    if(window.getSelection().empty) {  // Chrome
-      window.getSelection().empty();
-    } else if(window.getSelection().removeAllRanges) {  // Firefox
-      window.getSelection().removeAllRanges();
+  const win = getAppWindow();
+  if(win.getSelection) {
+    if(win.getSelection().empty) {  // Chrome
+      win.getSelection().empty();
+    } else if(win.getSelection().removeAllRanges) {  // Firefox
+      win.getSelection().removeAllRanges();
     }
     // @ts-ignore
   } else if(document.selection) {  // IE?

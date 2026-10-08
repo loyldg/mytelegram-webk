@@ -4,7 +4,6 @@
   display: flex;
   flex-direction: column;
   min-width: 200px;
-  user-select: none;
 }
 
 .title {
@@ -95,6 +94,17 @@
       opacity: 1;
       transform: translateX(14px) scale(1);
     }
+  }
+}
+
+.checkboxChecked {
+  :global(.checkbox-box-background) {
+    transform: scale(1);
+  }
+
+  :global(.checkbox-box-check use) {
+    stroke-dasharray: 24.19, 24.19;
+    visibility: visible;
   }
 }
 

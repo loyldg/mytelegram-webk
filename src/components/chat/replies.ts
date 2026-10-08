@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import {Message} from '@layer';
 import rootScope from '@lib/rootScope';
 import ripple from '@components/ripple';
@@ -17,6 +11,7 @@ import type LazyLoadQueue from '@components/lazyLoadQueue';
 import {MiddlewareHelper} from '@helpers/middleware';
 import {_tgico} from '@helpers/tgico';
 import Icon from '@components/icon';
+import ensureButtonSemantics from '@helpers/dom/ensureButtonSemantics';
 
 const TAG_NAME = 'replies-element';
 
@@ -45,6 +40,7 @@ export default class RepliesElement extends HTMLElement {
   }
 
   public init() {
+    ensureButtonSemantics(this);
     this.render();
     this.dataset.postKey = this.message.peerId + '_' + this.message.mid;
     this.classList.add('replies', 'replies-' + this.type);
@@ -52,6 +48,9 @@ export default class RepliesElement extends HTMLElement {
 
   public render() {
     const replies = this.message.replies;
+    this.setAttribute('aria-label', replies ?
+      I18n.format(replies.replies ? 'Comments' : 'LeaveAComment', true, [replies.replies]) :
+      I18n.format('ViewInChat', true));
 
     if(this.type === 'footer') {
       let leftPart: HTMLElement;
@@ -138,7 +137,7 @@ export default class RepliesElement extends HTMLElement {
     } else {
       this.classList.add('bubble-beside-button');
       this.innerHTML = `<span class="replies-beside-text">${replies?.replies ? formatNumber(replies.replies, 0) : ''}</span>`;
-      this.prepend(Icon('commentssticker'));
+      this.prepend(Icon('commentssticker_filled'));
     }
 
     if(replies && !this.updated && !this.message.pFlags.is_outgoing) {

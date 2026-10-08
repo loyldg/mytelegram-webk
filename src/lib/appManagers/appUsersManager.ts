@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -24,6 +20,8 @@ import SearchIndex from '@lib/searchIndex';
 import {AppManager} from '@appManagers/manager';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import canSendToUser from '@appManagers/utils/users/canSendToUser';
+import getUserStatusForSort from '@appManagers/utils/users/getUserStatusForSort';
+import {getUserSortName} from '@appManagers/utils/users/sortContacts';
 import {AppStoragesManager} from '@appManagers/appStoragesManager';
 import deepEqual from '@helpers/object/deepEqual';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
@@ -33,8 +31,19 @@ import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
 import pause from '@helpers/schedulers/pause';
 
 export type User = MTUser.user;
-export type TopPeerType = 'correspondents' | 'bots_inline' | 'bots_app';
+export type TopPeerType = 'correspondents' | 'bots_inline' | 'bots_app' | 'bots_guestchat';
 export type MyTopPeer = {id: PeerId, rating: number};
+
+// The recent-peer lists kept in state: the state key holding the list, and the peers-storage key
+// its entries are held under. They are restored, pushed to and pruned the same way.
+const RECENT_SEARCH_LIST = {stateKey: 'recentSearch', storageKey: 'recentSearch'} as const;
+const RECENTLY_CLOSED_LIST = {stateKey: 'recentlyClosedChats', storageKey: 'recentlyClosed'} as const;
+const RECENT_PEER_LISTS = [RECENT_SEARCH_LIST, RECENTLY_CLOSED_LIST];
+
+type RecentPeerList = typeof RECENT_PEER_LISTS[number];
+
+/** How many peers each of those lists keeps — their surfaces only show the first handful. */
+const RECENT_PEERS_LIMIT = 20;
 
 const SEARCH_OPTIONS: ProcessSearchTextOptions = {
   clearBadChars: true,
@@ -74,16 +83,7 @@ export class AppUsersManager extends AppManager {
     this.rootScope.addEventListener('state_synchronized', this.updateUsersStatuses);
 
     this.rootScope.addEventListener('peer_deleted', (peerId) => {
-      this.appStateManager.getState().then((state) => {
-        const recentSearch = state.recentSearch;
-        if(!recentSearch) return;
-        const idx = recentSearch.indexOf(peerId);
-        if(idx !== -1) {
-          recentSearch.splice(idx, 1);
-          this.peersStorage.releasePeer(peerId, 'recentSearch');
-          this.appStateManager.pushToState('recentSearch', recentSearch);
-        }
-      });
+      RECENT_PEER_LISTS.forEach((list) => this.removeRecentPeer(peerId, list));
     });
 
     this.apiUpdatesManager.addMultipleEventsListeners({
@@ -201,10 +201,12 @@ export class AppUsersManager extends AppManager {
       //   }
       // }
 
-      const recentSearch = state.recentSearch || [];
-      for(let i = 0, length = recentSearch.length; i < length; ++i) {
-        this.peersStorage.requestPeer(recentSearch[i], 'recentSearch');
-      }
+      RECENT_PEER_LISTS.forEach(({stateKey, storageKey}) => {
+        const list = state[stateKey] || [];
+        for(let i = 0, length = list.length; i < length; ++i) {
+          this.peersStorage.requestPeer(list[i], storageKey);
+        }
+      });
 
       this.peersStorage.addEventListener('peerNeeded', (peerId) => {
         if(!this.appPeersManager.isUser(peerId)) {
@@ -278,22 +280,52 @@ export class AppUsersManager extends AppManager {
     }
   }
 
-  public pushRecentSearch(peerId: PeerId) {
+  /** Moves a peer to the front of one of the recent lists, trimming (and releasing) the overflow. */
+  private pushRecentPeer(peerId: PeerId, {stateKey, storageKey}: RecentPeerList) {
     return this.appStateManager.getState().then((state) => {
-      const recentSearch = state.recentSearch || [];
-      if(recentSearch[0] !== peerId) {
-        indexOfAndSplice(recentSearch, peerId);
-        recentSearch.unshift(peerId);
-        if(recentSearch.length > 20) {
-          recentSearch.length = 20;
-        }
+      const list = state[stateKey] || [];
+      if(list[0] === peerId) {
+        return;
+      }
 
-        this.appStateManager.pushToState('recentSearch', recentSearch);
-        for(const peerId of recentSearch) {
-          this.peersStorage.requestPeer(peerId, 'recentSearch');
-        }
+      indexOfAndSplice(list, peerId);
+      list.unshift(peerId);
+      list.splice(RECENT_PEERS_LIMIT).forEach((dropped) => {
+        this.peersStorage.releasePeer(dropped, storageKey);
+      });
+
+      this.appStateManager.pushToState(stateKey, list);
+      for(const kept of list) {
+        this.peersStorage.requestPeer(kept, storageKey);
       }
     });
+  }
+
+  /** Drops a peer from one of the recent lists. */
+  private removeRecentPeer(peerId: PeerId, {stateKey, storageKey}: RecentPeerList) {
+    return this.appStateManager.getState().then((state) => {
+      const list = state[stateKey];
+      if(!list || indexOfAndSplice(list, peerId) === undefined) return;
+
+      this.peersStorage.releasePeer(peerId, storageKey);
+      this.appStateManager.pushToState(stateKey, list);
+    });
+  }
+
+  public pushRecentSearch(peerId: PeerId) {
+    return this.pushRecentPeer(peerId, RECENT_SEARCH_LIST);
+  }
+
+  public removeRecentSearch(peerId: PeerId) {
+    return this.removeRecentPeer(peerId, RECENT_SEARCH_LIST);
+  }
+
+  /**
+   * Remembers a chat the user left behind — closed outright, or switched away from. Feeds the
+   * "Recently closed" chip of the tip cards shown while no chat is open.
+   */
+  public pushRecentlyClosedChat(peerId: PeerId) {
+    return this.pushRecentPeer(peerId, RECENTLY_CLOSED_LIST);
   }
 
   public clearRecentSearch() {
@@ -352,8 +384,9 @@ export class AppUsersManager extends AppManager {
 
     username = username.toLowerCase();
     const peerId = this.usernames[username];
-    if(peerId) {
-      return this.appPeersManager.getPeer(peerId);
+    const peer = peerId && this.appPeersManager.getPeer(peerId);
+    if(peer && !(peer as User | Chat.channel).pFlags.min) {
+      return peer;
     }
 
     return this.apiManager.invokeApiSingleProcess({
@@ -380,6 +413,12 @@ export class AppUsersManager extends AppManager {
     return this.apiManager.invokeApi('contacts.resolvePhone', {phone}).then((resolvedPeer) => {
       return this.processResolvedPeer(resolvedPeer) as User;
     });
+  }
+
+  // One-time `t.me/contact/<token>` link to add the current user as a contact —
+  // used by the My QR popup when you have no username (mirrors iOS).
+  public exportContactToken() {
+    return this.apiManager.invokeApiSingle('contacts.exportContactToken', {});
   }
 
   private pushContact(id: UserId) {
@@ -496,6 +535,64 @@ export class AppUsersManager extends AppManager {
     });
   }
 
+  public async getCloseFriends() {
+    const contacts = await this.getContacts();
+    return contacts.filter((id) => this.getUser(id)?.pFlags.close_friend).map((id) => id.toPeerId());
+  }
+
+  public async updateCloseFriends(added: PeerId[], removed: PeerId[]) {
+    if(!added.length && !removed.length) return;
+    const current = await this.getCloseFriends();
+    const next = new Set(current.filter((peerId) => !removed.includes(peerId)));
+    added.forEach((peerId) => next.add(peerId));
+    const result = await this.apiManager.invokeApi('contacts.editCloseFriends', {
+      id: [...next].map((peerId) => peerId.toUserId())
+    });
+    if(!result) throw new Error('CLOSE_FRIENDS_NOT_UPDATED');
+
+    for(const peerId of new Set([...current, ...next])) {
+      const user = this.getUser(peerId.toUserId());
+      if(!user || !!user.pFlags.close_friend === next.has(peerId)) continue;
+      this.saveApiUser({...user, pFlags: {...user.pFlags, close_friend: next.has(peerId) || undefined}});
+    }
+  }
+
+  public async getStoryBlockedPeerIds() {
+    const peerIds: PeerId[] = [];
+    let count = Infinity;
+    while(peerIds.length < count) {
+      const page = await this.getBlocked(peerIds.length, 100, true);
+      if(!page.peerIds.length) {
+        if(peerIds.length < page.count) throw new Error('STORY_BLOCKLIST_INCOMPLETE');
+        break;
+      }
+      peerIds.push(...page.peerIds);
+      count = page.count;
+    }
+    return peerIds;
+  }
+
+  public async updateStoryBlockedPeers(added: PeerId[], removed: PeerId[]) {
+    if(!added.length && !removed.length) return;
+    const current = await this.getStoryBlockedPeerIds();
+    const next = new Set(current.filter((peerId) => !removed.includes(peerId)));
+    added.forEach((peerId) => next.add(peerId));
+    const result = await this.apiManager.invokeApi('contacts.setBlocked', {
+      my_stories_from: true,
+      id: [...next].map((peerId) => this.appPeersManager.getInputPeerById(peerId)),
+      limit: Math.max(current.length, next.size)
+    });
+    if(!result) throw new Error('STORY_BLOCKLIST_NOT_UPDATED');
+
+    for(const peerId of new Set([...added, ...removed])) {
+      if(!peerId.isUser()) continue;
+      this.appProfileManager.modifyCachedFullUser(peerId.toUserId(), (userFull) => {
+        // Story blocking is independent of blocking messages from this peer.
+        userFull.pFlags.blocked_my_stories_from = next.has(peerId) || undefined;
+      });
+    }
+  }
+
   public testSelfSearch(query: string) {
     const user = this.getSelf();
     const index = this.createSearchIndex();
@@ -568,6 +665,7 @@ export class AppUsersManager extends AppManager {
 
     const userId = user.id;
     const oldUser = this.users[userId];
+    const previousCommunityId = oldUser?.linked_community_id?.toChatId();
 
     // ! commented block can affect performance !
     // if(oldUser && !override) {
@@ -581,6 +679,10 @@ export class AppUsersManager extends AppManager {
       return;
     }
 
+    if(user.linked_community_id) {
+      user.linked_community_id = user.linked_community_id.toChatId();
+    }
+
     // * exclude from state
     // defineNotNumerableProperties(user, ['initials', 'num', 'rFirstName', 'rFullName', 'rPhone', 'sortName', 'sortStatus']);
 
@@ -590,9 +692,7 @@ export class AppUsersManager extends AppManager {
       oldUser.sortName === undefined ||
       oldUser.first_name !== user.first_name ||
       oldUser.last_name !== user.last_name) {
-      const fullName = user.first_name + (user.last_name ? ' ' + user.last_name : '');
-
-      user.sortName = user.pFlags.deleted ? '' : cleanSearchText(fullName, false);
+      user.sortName = user.pFlags.deleted ? '' : cleanSearchText(getUserSortName(user), false);
     } else {
       user.sortName = oldUser.sortName;
     }
@@ -670,6 +770,15 @@ export class AppUsersManager extends AppManager {
 
     this.checkPremium(user, oldUser);
     this.setUserToStateIfNeeded(user);
+
+    const communityId = user.linked_community_id?.toChatId();
+    if(String(previousCommunityId || '') !== String(communityId || '')) {
+      this.appCommunitiesManager.handlePeerLinkedCommunityUpdate({
+        peerId,
+        previousCommunityId,
+        communityId
+      });
+    }
   }
 
   private mirrorUser(user: User) {
@@ -708,32 +817,7 @@ export class AppUsersManager extends AppManager {
       status = user?.status;
     }
 
-    if(status) {
-      const expires = status._ === 'userStatusOnline' ? status.expires : (status._ === 'userStatusOffline' ? status.was_online : 0);
-      if(expires) {
-        return expires;
-      }
-
-      /* const timeNow = tsNow(true);
-      switch(status._) {
-        case 'userStatusRecently':
-          return timeNow - 86400 * 3;
-        case 'userStatusLastWeek':
-          return timeNow - 86400 * 7;
-        case 'userStatusLastMonth':
-          return timeNow - 86400 * 30;
-      } */
-      switch(status._) {
-        case 'userStatusRecently':
-          return 3;
-        case 'userStatusLastWeek':
-          return 2;
-        case 'userStatusLastMonth':
-          return 1;
-      }
-    }
-
-    return 0;
+    return getUserStatusForSort(status);
   }
 
   public getUser(id: User | UserId) {
@@ -746,6 +830,35 @@ export class AppUsersManager extends AppManager {
 
   public getUsers() {
     return this.users;
+  }
+
+  public setLinkedCommunityId(userId: UserId, communityId?: ChatId) {
+    const user = this.users[userId];
+    communityId = communityId?.toChatId();
+    if(!user || String(user.linked_community_id || '') === String(communityId || '')) {
+      return false;
+    }
+
+    const previousCommunityId = user.linked_community_id?.toChatId();
+    if(communityId) {
+      user.linked_community_id = communityId;
+    } else {
+      delete user.linked_community_id;
+    }
+
+    this.mirrorUser(user);
+    this.rootScope.dispatchEvent('user_update', userId);
+    this.appCommunitiesManager.handlePeerLinkedCommunityUpdate({
+      peerId: userId.toPeerId(false),
+      previousCommunityId,
+      communityId
+    });
+    if(this.peersStorage.isPeerNeeded(userId.toPeerId(false))) {
+      this.storage.set({
+        [userId]: user
+      });
+    }
+    return true;
   }
 
   public getUserStatus(id: UserId) {
@@ -829,8 +942,15 @@ export class AppUsersManager extends AppManager {
 
   public getUserInput(id: UserId): InputUser {
     const user = this.getUser(id);
-    if(!id || (user.pFlags && user.pFlags.self)) {
+    // * our own User is not in the cache until the server has sent it, so go by the id too
+    if(!id || user?.pFlags?.self || (!user && id === this.userId)) {
       return {_: 'inputUserSelf'};
+    }
+
+    // * a `min` user's access_hash is not accepted by most methods — name them through a message
+    const fromMessage = user?.pFlags?.min && this.appPeersManager.getMessageWithPeer(id.toPeerId(false));
+    if(fromMessage) {
+      return {_: 'inputUserFromMessage', ...fromMessage, user_id: id};
     }
 
     return {
@@ -840,12 +960,23 @@ export class AppUsersManager extends AppManager {
     };
   }
 
-  public getUserInputPeer(id: UserId): InputPeer.inputPeerSelf | InputPeer.inputPeerUser {
+  public getUserInputPeer(id: UserId): InputPeer.inputPeerSelf | InputPeer.inputPeerUser | InputPeer.inputPeerUserFromMessage {
     const user = this.getUser(id);
     // ! do not use it, there are places that don't support it. need explicit peer id
     // if(user.pFlags?.self) {
     //   return {_: 'inputPeerSelf'};
     // }
+
+    // * ...our own User, however, is not in the cache until the server has sent it, and naming
+    // * ourselves beats an inputPeerUser with an undefined access_hash
+    if(!user && id === this.userId) {
+      return {_: 'inputPeerSelf'};
+    }
+
+    const fromMessage = user?.pFlags?.min && this.appPeersManager.getMessageWithPeer(id.toPeerId(false));
+    if(fromMessage) {
+      return {_: 'inputPeerUserFromMessage', ...fromMessage, user_id: id};
+    }
 
     return {
       _: 'inputPeerUser',
@@ -1002,16 +1133,39 @@ export class AppUsersManager extends AppManager {
 
         return topPeers;
       });
+    }).catch((err) => {
+      // * don't keep a failure for the whole session, the next caller asks again
+      delete this.getTopPeersPromises[type];
+      throw err;
     });
   }
 
-  public getBlocked(offset = 0, limit = 0) {
-    return this.apiManager.invokeApiSingle('contacts.getBlocked', {offset, limit}).then((contactsBlocked) => {
+  /**
+   * Takes a peer out of the top correspondents, on the server and in the cached list
+   */
+  public resetTopPeerRating(peerId: PeerId) {
+    const type: TopPeerType = 'correspondents';
+    return this.apiManager.invokeApi('contacts.resetTopPeerRating', {
+      category: {_: 'topPeerCategoryCorrespondents'},
+      peer: this.appPeersManager.getInputPeerById(peerId)
+    }).then(() => {
+      delete this.getTopPeersPromises[type];
+      return this.appStateManager.getState().then((state) => {
+        const cached = state.topPeersCache[type];
+        if(!cached?.peers) return;
+        cached.peers = cached.peers.filter((topPeer) => topPeer.id !== peerId);
+        this.appStateManager.pushToState('topPeersCache', state.topPeersCache);
+      });
+    });
+  }
+
+  public getBlocked(offset = 0, limit = 0, myStoriesFrom?: boolean) {
+    return this.apiManager.invokeApiSingle('contacts.getBlocked', {offset, limit, my_stories_from: myStoriesFrom}).then((contactsBlocked) => {
       this.saveApiUsers(contactsBlocked.users);
       this.appChatsManager.saveApiChats(contactsBlocked.chats);
-      const count = contactsBlocked._ === 'contacts.blocked' ? contactsBlocked.users.length + contactsBlocked.chats.length : contactsBlocked.count;
+      const count = contactsBlocked._ === 'contacts.blocked' ? contactsBlocked.blocked.length : contactsBlocked.count;
 
-      const peerIds: PeerId[] = contactsBlocked.users.map((u) => u.id.toPeerId()).concat(contactsBlocked.chats.map((c) => c.id.toPeerId(true)));
+      const peerIds = contactsBlocked.blocked.map((blocked) => this.appPeersManager.getPeerId(blocked.peer_id));
 
       return {count, peerIds};
     });
@@ -1064,7 +1218,8 @@ export class AppUsersManager extends AppManager {
       return out;
     });
   } */
-  public searchContacts(query: string, limit = 20) {
+  // * `filter` asks the server for channels or bots only (both at once are not supported)
+  public searchContacts(query: string, limit = 20, filter?: 'broadcasts' | 'bots') {
     // handle 't.me/username' as 'username'
     const entities = parseEntities(query);
     if(entities.length && entities[0].length === query.trim().length && entities[0]._ === 'messageEntityUrl') {
@@ -1079,7 +1234,8 @@ export class AppUsersManager extends AppManager {
 
     return this.apiManager.invokeApiCacheable('contacts.search', {
       q: query,
-      limit
+      limit,
+      ...(filter && {[filter]: true})
     }, {cacheSeconds: 60}).then((peers) => {
       this.saveApiUsers(peers.users);
       this.appChatsManager.saveApiChats(peers.chats);
@@ -1170,6 +1326,20 @@ export class AppUsersManager extends AppManager {
       this.appProfileManager.refreshPeerSettingsIfNeeded(userId.toPeerId(false));
 
       this.onContactUpdated(userId, true);
+    });
+  }
+
+  /**
+   * Share our phone number with a user who already has us in their contacts — the
+   * `share_contact` peer setting. Mirrors tdesktop's `ContactStatus::setupShareHandler`.
+   */
+  public acceptContact(userId: UserId) {
+    return this.apiManager.invokeApi('contacts.acceptContact', {
+      id: this.getUserInput(userId)
+    }).then((updates) => {
+      this.apiUpdatesManager.processUpdateMessage(updates, {override: true});
+
+      this.appProfileManager.refreshPeerSettingsIfNeeded(userId.toPeerId(false));
     });
   }
 

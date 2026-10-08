@@ -1,36 +1,82 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 @use "../shared" as *;
 
-.checkbox-field {
-  --size: 1.25rem;
-  --offset-left: 0px;
-  margin: 1.5rem 1.1875rem;
-  display: block;
-  text-align: start;
-  position: relative;
-  cursor: pointer;
-  min-width: var(--size);
-  min-height: var(--size);
+.checkbox {
+  &-field {
+    --size: 1.25rem;
+    --offset-left: 0px;
+    margin: 1.5rem 1.1875rem;
+    display: block;
+    text-align: start;
+    position: relative;
+    cursor: pointer;
+    min-width: var(--size);
+    min-height: var(--size);
 
-  @include animation-level(2) {
-    transition: .2s opacity;
+    @include animation-level(2) {
+      transition: .2s opacity;
+    }
+
+    &.checkbox-disabled {
+      pointer-events: none !important;
+      opacity: var(--disabled-opacity);
+    }
+
+    @include respond-to(handhelds) {
+      margin-bottom: 27px;
+    }
+
+    &-round {
+      --size: 1.5rem;
+
+      .checkbox-box {
+        border-radius: 50%;
+        overflow: auto;
+
+        &-background {
+          top: 0;
+          right: 0;
+          bottom: 0;
+          left: 0;
+        }
+
+        &-border {
+          border: 2px solid var(--secondary-color);
+          z-index: 1;
+        }
+
+        &-check {
+          --offset: calc(var(--size) - (var(--size) / 2 + .125rem));
+        }
+
+        html.is-safari & {
+          -webkit-mask-image: none;
+        }
+      }
+
+      &.checkbox-color-white {
+        background: #fff;
+        border-radius: 50%;
+
+        &::before {
+          --inner-size: .125rem;
+          content: " ";
+          position: absolute;
+          width: calc(var(--size) - (var(--inner-size) * 2));
+          height: calc(var(--size) - (var(--inner-size) * 2));
+          left: var(--inner-size);
+          top: var(--inner-size);
+          border: 2px solid var(--secondary-color);
+          border-radius: inherit;
+        }
+
+        .checkbox-box-border {
+          border-color: #fff;
+        }
+      }
+    }
   }
 
-  &.checkbox-disabled {
-    pointer-events: none !important;
-    opacity: var(--disabled-opacity);
-  }
-
-  @include respond-to(handhelds) {
-    margin-bottom: 27px;
-  }
-
-  .checkbox-box {
+  &-box {
     position: absolute;
     inset-inline-start: var(--offset-left);
     top: 50%;
@@ -98,77 +144,6 @@
       }
     }
   }
-
-  .checkbox-caption {
-    position: relative;
-    padding-inline-start: 3.375rem;
-    transition: .2s opacity;
-    color: inherit;
-    pointer-events: none;
-    line-height: var(--line-height);
-
-    @include text-overflow(false);
-
-    @include animation-level(0) {
-      transition: none;
-    }
-  }
-
-  &.hover-effect {
-    display: flex;
-    align-items: center;
-    height: 3.5rem;
-    padding: 0 1.1875rem;
-    margin-left: 0;
-    margin-right: 0;
-
-    .checkbox-box {
-      inset-inline-start: auto;
-    }
-  }
-
-  .anchor-url {
-    pointer-events: all;
-  }
-}
-
-.checkbox-ripple {
-  overflow: hidden;
-  border-radius: $border-radius-medium;
-
-  .checkbox-box,
-  .checkbox-caption {
-    pointer-events: none;
-  }
-}
-
-.checkbox-field-round {
-  --size: 1.5rem;
-
-  .checkbox-box {
-    border-radius: 50%;
-    overflow: auto;
-
-    &-background {
-      top: 0;
-      right: 0;
-      bottom: 0;
-      left: 0;
-    }
-
-    &-border {
-      border: 2px solid var(--secondary-color);
-      z-index: 1;
-    }
-
-    &-check {
-      --offset: calc(var(--size) - (var(--size) / 2 + .125rem));
-    }
-
-    html.is-safari & {
-      -webkit-mask-image: none;
-    }
-  }
 }
 
 .radio-field {
@@ -201,6 +176,14 @@
         &::after {
           transform: translateY(-50%) scale(1);
         }
+      }
+    }
+
+    &:focus-visible ~ .radio-field-main {
+      &::before,
+      .radio-field-lock {
+        outline: 2px solid var(--primary-color);
+        outline-offset: 3px;
       }
     }
   }
@@ -273,12 +256,16 @@
   &.radio-field-right {
     .radio-field-main {
       &:before {
-        inset-inline: auto 0;
+        inset-inline: auto var(--offset-left);
       }
 
       &:after {
-        inset-inline: auto .3125rem;
+        inset-inline: auto calc(var(--offset-left) + .3125rem);
       }
+    }
+
+    .radio-field-lock {
+      inset-inline: auto var(--offset-left);
     }
   }
 
@@ -303,6 +290,13 @@
 }
 
 .checkbox-field .checkbox-field-input {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  z-index: 1;
+  cursor: inherit;
+
   &:checked:not(.is-fake-disabled) + .checkbox-box {
     .checkbox-box-check {
       use {
@@ -322,11 +316,33 @@
     
   } */
 
-  &:disabled + .checkbox-box,
-  &:disabled ~ .checkbox-caption {
+  &:disabled + .checkbox-box {
     cursor: default;
     opacity: var(--disabled-opacity);
   }
+}
+
+// The native input lies at opacity: 0 on top of the control that is actually
+// drawn, so the global focus ring is painted on something invisible. Move it
+// onto the visible part — the same thing .radio-field-main does above.
+:where(.a11y) .checkbox-field-input:focus-visible ~ .checkbox-box,
+:where(.a11y) .checkbox-field-input:focus-visible ~ .checkbox-toggle {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: 3px;
+}
+
+// Inside a row the target is the row, not the control: a clickable row focuses
+// its own container and is ringed as a whole, and a row carrying a toggle has
+// to look the same. The input is a descendant, so the ring is projected up onto
+// the row and taken back off the control.
+:where(.a11y) .row:has(.checkbox-field-input:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+:where(.a11y) .row .checkbox-field-input:focus-visible ~ .checkbox-box,
+:where(.a11y) .row .checkbox-field-input:focus-visible ~ .checkbox-toggle {
+  outline: none;
 }
 
 .checkbox-field-restriction {
@@ -369,42 +385,42 @@
 }
 
 .checkbox-field-toggle {
-  --size: 20px;
-  margin: 0 .3125rem;
-  padding: 0 .25rem; // horizontal because of the bounce
+  --transition: .1s var(--transition-standard-easing);
+  --size: 1.5rem;
+  margin: 0 !important;
+  padding: 0 !important;
   display: flex;
   align-items: center;
   pointer-events: none;
 
   .checkbox-toggle {
-    --offset: 3px;
-    --toggle-width: 1.9375rem;
+    --offset: -2px;
+    --toggle-width: 2.625rem;
     width: var(--toggle-width);
-    height: .875rem;
-    background-color: var(--secondary-color);
+    height: var(--size);
+    background-color: transparent;
+    border: 2px solid var(--secondary-color);
     border-radius: $border-radius-big;
     position: relative;
     display: flex;
     align-items: center;
-    margin: 0 var(--offset);
 
     @include animation-level(2) {
-      transition: background-color .1s;
+      transition: border-color var(--transition), background-color var(--transition);
     }
 
     &-circle {
-      width: 1.25rem;
-      height: 1.25rem;
-      border: 2px solid var(--secondary-color);
-      background-color: var(--surface-color);
+      width: 1rem;
+      height: 1rem;
+      background-color: var(--secondary-color);
       content: " ";
-      transform: translateX(calc(var(--offset) * var(--reflect) * -1));
+      transform: translateX(calc(var(--offset) * var(--reflect) * -1)) scale(.75);
       border-radius: 50%;
       position: absolute;
       inset-inline-start: 0;
 
       @include animation-level(2) {
-        transition: border-color .1s, transform .1s cubic-bezier(.22, .75, .7, 1.3);
+        transition: background-color var(--transition), transform var(--transition);
       }
 
       &.with-lock {
@@ -419,21 +435,22 @@
   &-restriction {
     .checkbox-toggle {
       background-color: var(--danger-color);
+      border-color: transparent;
 
       &-circle {
-        border-color: var(--danger-color);
-        color: var(--danger-color);
+        background-color: var(--surface-color);
       }
     }
   }
 
   [type="checkbox"]:checked:not(.is-fake-disabled) + .checkbox-toggle {
     background-color: var(--primary-color);
+    border-color: var(--primary-color);
 
     .checkbox-toggle-circle {
-      border-color: var(--primary-color);
       color: var(--primary-color);
-      transform: translateX(calc((var(--toggle-width) - 1.25rem + var(--offset)) * var(--reflect)));
+      background-color: var(--surface-color);
+      transform: translateX(calc((var(--toggle-width) - 1.25rem + var(--offset)) * var(--reflect))) scale(1);
     }
   }
 }

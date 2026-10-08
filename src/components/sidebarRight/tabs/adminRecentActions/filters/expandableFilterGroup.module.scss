@@ -11,7 +11,11 @@
   &Checkbox {
     margin: 0;
     display: inline-flex;
-    pointer-events: none;
+
+    // Without the keyboard layer the row takes the click and the checkbox only shows the state.
+    &Passive {
+      pointer-events: none;
+    }
 
     &Wrapper {
       position: relative;
@@ -19,7 +23,7 @@
       padding: var(--padding);
     }
 
-    &CickArea {
+    &ClickArea {
       position: absolute;
       inset: 0;
     }
@@ -33,6 +37,9 @@
   }
 
   &Label {
+    color: inherit;
+    text-align: inherit;
+    cursor: pointer;
     padding: var(--padding);
     padding-left: 0;
     flex: 1;

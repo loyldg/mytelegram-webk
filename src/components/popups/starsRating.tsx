@@ -5,7 +5,8 @@ import {i18n} from '@lib/langPack';
 import bigInt from 'big-integer';
 import {LimitLineTsx} from '@components/limitLineTsx';
 import {I18nTsx} from '@helpers/solid/i18n';
-import Row from '@components/rowTsx';
+import FeatureRows from '@components/featureRows';
+import MediaHeader from '@components/mediaHeader';
 import classNames from '@helpers/string/classNames';
 import styles from '@components/popups/starsRating.module.scss';
 import {createMemo, createSignal, Show, Switch} from 'solid-js';
@@ -16,6 +17,7 @@ import {wrapFormattedDuration} from '@components/wrappers/wrapDuration';
 import {Transition} from 'solid-transition-group';
 import {IconTsx} from '@components/iconTsx';
 import formatNumber from '@helpers/number/formatNumber';
+import A11yButton from '@components/a11yButton';
 
 function Badge(props: {
   active: boolean
@@ -61,9 +63,9 @@ export default function showStarsRatingPopup(props: {
     });
 
     return (
-      <PopupElement class={styles.popup} containerClass={styles.popupContainer}>
-        <PopupElement.Header class={styles.popupHeader}>
-          <PopupElement.CloseButton class={styles.popupCloseButton} />
+      <PopupElement class={styles.popup} containerClass={styles.popupContainer} old>
+        <PopupElement.Header floating>
+          <PopupElement.CloseButton />
         </PopupElement.Header>
         <PopupElement.Body>
           <LimitLineTsx
@@ -83,26 +85,27 @@ export default function showStarsRatingPopup(props: {
                 )}
               </div>
             )}
-            hintIcon={isNegativeLevel() ? 'warning' : 'crownalt'}
+            hintIcon={isNegativeLevel() ? 'warning_filled' : 'crownalt_filled'}
             hintJustIcon={true}
           />
 
           <Show when={isNegativeLevel() && !futureRating}>
-            <I18nTsx
-              key={isPersonal ? 'StarsRating.NegativeDescriptionMy' : 'StarsRating.NegativeDescription'}
-              class={classNames(styles.description, styles.negativeDescription)}
-              args={isPersonal ?
-                [Math.abs(Number(rating().stars)).toString()] :
-                [wrapEmojiText(props.user.first_name)]
-              }
-            />
+            <MediaHeader.Subtitle color="danger" class={styles.description}>
+              <I18nTsx
+                key={isPersonal ? 'StarsRating.NegativeDescriptionMy' : 'StarsRating.NegativeDescription'}
+                args={isPersonal ?
+                  [Math.abs(Number(rating().stars)).toString()] :
+                  [wrapEmojiText(props.user.first_name)]
+                }
+              />
+            </MediaHeader.Subtitle>
           </Show>
 
           <Show when={futureRating}>
-            <div class={styles.description}>
+            <MediaHeader.Subtitle color="secondary" class={styles.description}>
               <Transition mode="outin">
                 <Show when={!isFuture()}>
-                  <div class={styles.descriptionInner}>
+                  <div>
                     <I18nTsx
                       key="StarsRating.PendingDescription"
                       args={[
@@ -110,14 +113,14 @@ export default function showStarsRatingPopup(props: {
                         pendingStars.toString()
                       ]}
                     />
-                    <a class={styles.previewButton} onClick={() => setIsFuture(true)}>
+                    <A11yButton as="a" class={styles.previewButton} onClick={() => setIsFuture(true)}>
                       <I18nTsx key="StarsRating.Preview" />
                       <IconTsx icon="next" />
-                    </a>
+                    </A11yButton>
                   </div>
                 </Show>
                 <Show when={isFuture()}>
-                  <div class={styles.descriptionInner}>
+                  <div>
                     <I18nTsx
                       key="StarsRating.FutureDescription"
                       args={[
@@ -125,61 +128,53 @@ export default function showStarsRatingPopup(props: {
                         pendingStars.toString()
                       ]}
                     />
-                    <a class={styles.previewButton} onClick={() => setIsFuture(false)}>
+                    <A11yButton as="a" class={styles.previewButton} onClick={() => setIsFuture(false)}>
                       <I18nTsx key="StarsRating.Back" />
                       <IconTsx icon="next" />
-                    </a>
+                    </A11yButton>
                   </div>
                 </Show>
               </Transition>
-            </div>
+            </MediaHeader.Subtitle>
           </Show>
 
-          <I18nTsx key="StarsRating.Title" class={styles.title} />
-          <I18nTsx
-            key={isPersonal ? 'StarsRating.SubtitleMy' : 'StarsRating.Subtitle'}
-            class={styles.subtitle}
-            args={[wrapEmojiText(props.user.first_name)]}
-          />
+          <MediaHeader>
+            <MediaHeader.Title>
+              <I18nTsx key="StarsRating.Title" />
+            </MediaHeader.Title>
+            <MediaHeader.Subtitle>
+              <I18nTsx
+                key={isPersonal ? 'StarsRating.SubtitleMy' : 'StarsRating.Subtitle'}
+                args={[wrapEmojiText(props.user.first_name)]}
+              />
+            </MediaHeader.Subtitle>
+          </MediaHeader>
 
-          <div class={styles.list}>
-            <Row class={styles.row}>
-              <Row.Icon class={styles.rowIcon} icon="gift" />
-              <Row.Title class="text-bold">
-                <I18nTsx key="StarsRating.Row1Title" />
-              </Row.Title>
-              <Row.Subtitle class={styles.rowSubtitle}>
-                <Badge active={true} />
-                <I18nTsx key="StarsRating.Row1Subtitle" />
-              </Row.Subtitle>
-            </Row>
-
-            <Row class={styles.row}>
-              <Row.Icon class={styles.rowIcon} icon="group_star" />
-              <Row.Title class="text-bold">
-                <I18nTsx key="StarsRating.Row2Title" />
-              </Row.Title>
-              <Row.Subtitle class={styles.rowSubtitle}>
-                <Badge active={true} />
-                <I18nTsx key="StarsRating.Row2Subtitle" />
-              </Row.Subtitle>
-            </Row>
-
-            <Row class={styles.row}>
-              <Row.Icon class={styles.rowIcon} icon="reload_star" />
-              <Row.Title class="text-bold">
-                <I18nTsx key="StarsRating.Row3Title" />
-              </Row.Title>
-              <Row.Subtitle class={styles.rowSubtitle}>
-                <Badge active={false} />
-                <I18nTsx key="StarsRating.Row3Subtitle" />
-              </Row.Subtitle>
-            </Row>
+          <div>
+            <FeatureRows
+              rows={/* @once */ [
+                {
+                  icon: 'gift_filled',
+                  title: <I18nTsx key="StarsRating.Row1Title" />,
+                  subtitle: <><Badge active={true} /><I18nTsx key="StarsRating.Row1Subtitle" /></>
+                },
+                {
+                  icon: 'group_star',
+                  title: <I18nTsx key="StarsRating.Row2Title" />,
+                  subtitle: <><Badge active={true} /><I18nTsx key="StarsRating.Row2Subtitle" /></>
+                },
+                {
+                  icon: 'reload_star',
+                  title: <I18nTsx key="StarsRating.Row3Title" />,
+                  subtitle: <><Badge active={false} /><I18nTsx key="StarsRating.Row3Subtitle" /></>
+                }
+              ]}
+            />
           </div>
         </PopupElement.Body>
         <PopupElement.FooterButton
           class={styles.popupButton}
-          iconLeft="okay"
+          iconLeft="okay_filled"
           langKey="StarsRating.Understood"
         />
       </PopupElement>

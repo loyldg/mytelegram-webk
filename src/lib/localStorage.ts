@@ -1,8 +1,4 @@
 /*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- *
  * Originally from:
  * https://github.com/zhukov/webogram
  * Copyright (C) 2014 Igor Zhukov <igor.beatle@gmail.com>
@@ -214,7 +210,7 @@ export default class LocalStorageController<Storage extends Record<string, any>>
     ...args: Parameters<EncryptedStorageLayer<any>[T]>
   ): Promise<Awaited<ReturnType<EncryptedStorageLayer<any>[T]>>> {
     if(!IS_WORKER) {
-      const port = MTProtoMessagePort.getInstance<true>();
+      const port = MTProtoMessagePort.getMasterInstance();
       return port.invoke('localStorageEncryptedProxy', {type, args});
     }
 
@@ -306,6 +302,16 @@ export default class LocalStorageController<Storage extends Record<string, any>>
 
     this.encryptionDeferred?.resolve();
     this.encryptionDeferred = undefined;
+  }
+
+  /**
+   * Reads the encrypted store into memory with the current key, to be awaited before that key is replaced
+   */
+  public async loadEncryptable() {
+    if(this.warnAboutEncrypting('loadEncryptable')) return;
+
+    const encryptedStorage = await this.getEncryptedStorage();
+    await encryptedStorage.ensureLoaded();
   }
 
   public async reEncryptEncryptable() {

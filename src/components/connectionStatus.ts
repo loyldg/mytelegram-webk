@@ -1,9 +1,3 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import App from '@config/app';
 import DEBUG from '@config/debug';
 import {LangPackKey, i18n} from '@lib/langPack';
@@ -25,9 +19,6 @@ export default class ConnectionStatusComponent {
   public static INITIAL_DELAY = 2000;
   public static ANIMATION_DURATION = 250;
 
-  // private statusContainer: HTMLElement;
-  // private statusEl: HTMLElement;
-
   private hadConnect = false;
   private retryAt: number;
   private connecting = false;
@@ -41,6 +32,8 @@ export default class ConnectionStatusComponent {
 
   private managers: AppManagers;
   private inputSearch: InputSearch;
+  private announcement: HTMLElement;
+  private announcedKey: LangPackKey;
   private rAF: number;
 
   public construct(
@@ -50,15 +43,12 @@ export default class ConnectionStatusComponent {
   ) {
     this.managers = managers;
     this.inputSearch = inputSearch;
+    this.announcement = document.createElement('span');
+    this.announcement.className = 'sr-only';
+    this.announcement.setAttribute('role', 'status');
+    chatsContainer.append(this.announcement);
     this.log = logger('CS', undefined, undefined);
-    // this.statusContainer = document.createElement('div');
-    // this.statusContainer.classList.add('connection-status'/* , 'hide' */);
-
-    // this.statusEl = Button('btn-primary bg-warning connection-status-button', {noRipple: true});
-    // this.statusContainer.append(this.statusEl);
     this.inputSearch.setPlaceholder('Search');
-
-    // chatsContainer.prepend(this.statusContainer);
 
     rootScope.addEventListener('connection_status_change', (status) => {
       // console.log(status);
@@ -135,6 +125,13 @@ export default class ConnectionStatusComponent {
 
   private wrapSetStatusText = (...args: Parameters<InputSearch['setPlaceholder']>) => {
     return () => {
+      const key = args[0] === 'Search' ? undefined :
+        args[0] === 'ConnectionStatus.ReconnectIn' || args[0] === 'ConnectionStatus.ReconnectInPlain' ?
+          'ConnectionStatus.Reconnecting' : args[0];
+      if(key !== this.announcedKey) {
+        this.announcedKey = key;
+        this.announcement.replaceChildren(...(key ? [i18n(key)] : []));
+      }
       return this.inputSearch.setPlaceholder(...args);
     };
   };

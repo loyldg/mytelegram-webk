@@ -1,14 +1,11 @@
-/*
- * https://github.com/morethanwords/tweb
- * Copyright (C) 2019-2021 Eduard Kuzmenko
- * https://github.com/morethanwords/tweb/blob/master/LICENSE
- */
-
 import tsNow from '@helpers/tsNow';
 import {LangPackKey} from '@lib/langPack';
 import {MUTE_UNTIL} from '@appManagers/constants';
-import {RadioFormFromValues} from '@components/row';
-import PopupPeer from '@components/popups/peer';
+import RadioFormTsx from '@components/radioFormTsx';
+import showPeerPopup from '@components/popups/peer';
+import createCommunityAvatarElement from '@components/communities/communityAvatarElement';
+import {createComponent} from 'solid-js';
+import rootScope from '@lib/rootScope';
 
 const ONE_HOUR = 3600;
 const times: {value: number | string, langPackKey: LangPackKey, checked?: boolean}[] = [{
@@ -32,27 +29,49 @@ const times: {value: number | string, langPackKey: LangPackKey, checked?: boolea
   checked: true
 }];
 
-export default class PopupMute extends PopupPeer {
-  constructor(peerId: PeerId, threadId?: number) {
-    super('popup-mute', {
-      peerId,
-      titleLangKey: 'Notifications',
-      buttons: [{
-        langKey: 'ChatList.Context.Mute',
-        callback: () => {
-          this.managers.appMessagesManager.mutePeer({peerId, muteUntil: time === -1 ? MUTE_UNTIL : tsNow(true) + time, threadId});
+export default function showMutePopup(
+  peerId?: PeerId,
+  threadId?: number,
+  communityId?: ChatId
+) {
+  // a Community can't go through `peerId`: its avatar is the decorated one, built here
+  // so the popup looks like every other mute popup instead of a bare title
+  const communityAvatar = communityId ?
+    createCommunityAvatarElement(communityId, 32) :
+    undefined;
+
+  let time = +times.find((option) => option.checked).value;
+
+  showPeerPopup('popup-mute', {
+    peerId: communityId ? undefined : peerId,
+    avatar: communityAvatar?.element,
+    titleLangKey: 'Notifications',
+    buttons: [{
+      langKey: 'ChatList.Context.Mute',
+      callback: () => {
+        const muteUntil = time === -1 ?
+          MUTE_UNTIL :
+          tsNow(true) + time;
+        if(communityId) {
+          rootScope.managers.appCommunitiesManager.muteCommunity(
+            communityId,
+            muteUntil
+          );
+        } else {
+          rootScope.managers.appMessagesManager.mutePeer({
+            peerId,
+            muteUntil,
+            threadId
+          });
         }
-      }],
-      body: true
-    });
-
-    let time: number;
-    const radioForm = RadioFormFromValues(times, (value) => {
-      time = +value;
-    }, true);
-
-    this.body.append(radioForm);
-
-    this.show();
-  }
+      }
+    }],
+    content: createComponent(RadioFormTsx<number | string>, {
+      values: times,
+      onChange: (value) => {
+        time = +value;
+      }
+    }),
+    onCloseAfterTimeout: communityAvatar?.dispose
+  });
 }
