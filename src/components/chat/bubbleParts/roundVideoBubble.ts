@@ -9,10 +9,12 @@ import {i18n} from '@lib/langPack';
 import rootScope from '@lib/rootScope';
 import appMediaPlaybackController, {MediaSearchContext} from '@components/appMediaPlaybackController';
 import Icon from '@components/icon';
-import showPremiumPopup from '@components/popups/premium';
 import {hideToast, toastNew} from '@components/toast';
 import wrapDocument from '@components/wrappers/document';
 import {SpinnerElement} from '@components/spinner';
+import {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import {getBubbleBackground} from '@components/chat/bubbleShape';
+import {onMediaSpoilerClick} from '@components/wrappers/mediaSpoiler';
 
 
 type WrapRoundVideoBubbleOptions = {
@@ -96,6 +98,8 @@ export function wrapRoundVideoBubble({
     const initialThumbSize = initialThumbBcr.width;
 
     const contentStyle = window.getComputedStyle(content);
+    // * what is seen: a bubble of a gradient paints no colour of its own, and its piece goes with `.just-media` below
+    const background = getBubbleBackground(content, contentStyle, content.getBoundingClientRect()).color;
 
     const initialRadiuses = [
       contentStyle.borderStartStartRadius,
@@ -121,7 +125,7 @@ export function wrapRoundVideoBubble({
     content.style.height = initialHeight + 'px';
     content.style.width = initialWidth + 'px';
     content.style.overflow = 'hidden';
-    content.style.setProperty('background', contentStyle.background, 'important');
+    content.style.setProperty('background', background, 'important');
 
     audioMessageContainer.style.width = audioMessageContainer.clientWidth + 'px';
     audioMessageContainer.style.height = audioMessageContainer.clientHeight + 'px';
@@ -206,7 +210,7 @@ export function wrapRoundVideoBubble({
         langPackKey: 'AudioAndVideoTranscription.PremiumAlert',
         langPackArguments: [anchorCallback(() => {
           hideToast();
-          showPremiumPopup({feature: 'voice_to_text'});
+          hotReloadGuard.showPremiumPopup({feature: 'voice_to_text'});
         })]
       });
       return;
@@ -321,7 +325,15 @@ export function wrapRoundVideoBubble({
 
     const bubbleStyle = window.getComputedStyle(bubbleTail);
     const initialTailTransform = bubbleStyle.transform;
-    bubbleTail.style.transform = `${initialTailTransform !== 'none' ? initialTailTransform : ''} translateX(calc(100% * var(--reflect)))`;
+    if(initialTailTransform !== 'none') {
+      // * the computed transform already holds the tail's mirroring (`scaleX`), so the shift is along the
+      // * tail's own axis: into the bubble on either side, in either direction
+      bubbleTail.style.transform = `${initialTailTransform} translateX(100%)`;
+    } else {
+      // * an outgoing tail is mirrored by its shape, and a transform would take its piece of the gradient in: into
+      // * the bubble by its margin instead
+      bubbleTail.style.marginInlineEnd = bubbleStyle.width;
+    }
     bubbleTail.style.transition = '.2s';
 
     if(true)
@@ -362,6 +374,7 @@ export function wrapRoundVideoBubble({
 
             content.style.removeProperty('overflow');
             bubbleTail?.style.removeProperty('transform');
+            bubbleTail?.style.removeProperty('margin-inline-end');
 
             await doubleRaf();
             animatedCanvas.style.opacity = '0';
@@ -382,7 +395,14 @@ export function wrapRoundVideoBubble({
       );
   }
 
-  transcribe.addEventListener('click', () => {
+  transcribe.addEventListener('click', (event) => {
+    // * the text shows the video's frames: one still under its spoiler is revealed first
+    const mediaSpoiler = mediaContainer.querySelector<HTMLElement>('.media-spoiler-container');
+    if(mediaSpoiler) {
+      onMediaSpoilerClick({mediaSpoiler, event});
+      return;
+    }
+
     showAudio();
   });
 

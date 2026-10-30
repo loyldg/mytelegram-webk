@@ -1,5 +1,5 @@
 import {Message, RichMessage} from '@layer';
-import {getSolidMessageBodyStructure} from '@components/chat/bubbleParts/solidMessageShell';
+import {getSolidMessageBodyStructure, hasMessageTextSpoilers} from '@components/chat/bubbleParts/solidMessageShell';
 
 const peerId = 10 as PeerId;
 
@@ -53,6 +53,26 @@ describe('Solid message legacy-shell compatibility', () => {
     expect(getSolidMessageBodyStructure(final)).toEqual(getSolidMessageBodyStructure(draft));
   });
 
+  test('ignores what comes in by its own way: reactions, views, shares, comments, a pin', () => {
+    const before = message({
+      views: 10,
+      replies: {_: 'messageReplies', pFlags: {comments: true}, replies: 1, replies_pts: 5, channel_id: 2}
+    });
+    const after = message({
+      pFlags: {pinned: true},
+      views: 11,
+      forwards: 3,
+      reactions: {_: 'messageReactions', pFlags: {}, results: [{_: 'reactionCount', reaction: {_: 'reactionEmoji', emoticon: '👍'}, count: 1}]},
+      replies: {_: 'messageReplies', pFlags: {comments: true}, replies: 2, replies_pts: 6, channel_id: 2, max_id: 9}
+    });
+
+    expect(getSolidMessageBodyStructure(after)).toEqual(getSolidMessageBodyStructure(before));
+    // * but whether it has them at all: a post with views, a message that opens a thread, is made otherwise
+    expect(getSolidMessageBodyStructure(message({replies: {_: 'messageReplies', pFlags: {}, replies: 0, replies_pts: 0}})))
+    .not.toEqual(getSolidMessageBodyStructure(message()));
+    expect(getSolidMessageBodyStructure(message({views: 1}))).not.toEqual(getSolidMessageBodyStructure(message({views: 0})));
+  });
+
   test('keeps shell-affecting media and reply markup structural', () => {
     const source = message();
     const withMedia = message({media: {_: 'messageMediaEmpty'}});
@@ -99,5 +119,18 @@ describe('Solid message legacy-shell compatibility', () => {
     });
 
     expect(getSolidMessageBodyStructure(withSpoiler)).toEqual(getSolidMessageBodyStructure(source));
+  });
+
+  test('finds a spoiler inside a rich message, which carries no entities of its own', () => {
+    const withSpoiler: RichMessage = {
+      ...rich(''),
+      blocks: [{_: 'pageBlockParagraph', text: {_: 'textConcat', texts: [
+        {_: 'textPlain', text: 'shown '},
+        {_: 'textSpoiler', text: {_: 'textPlain', text: 'hidden'}}
+      ]}}]
+    };
+
+    expect(hasMessageTextSpoilers(message({message: '', rich_message: withSpoiler}))).toBe(true);
+    expect(hasMessageTextSpoilers(message({message: '', rich_message: rich('shown')}))).toBe(false);
   });
 });

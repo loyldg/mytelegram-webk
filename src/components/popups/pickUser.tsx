@@ -1,4 +1,3 @@
-import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import AppSelectPeers, {SelectSearchPeerType} from '@components/appSelectPeers';
 import PopupElement, {createPopup, PopupContext, PopupContextValue} from '@components/popups/indexTsx';
 import I18n, {LangPackKey, i18n} from '@lib/langPack';
@@ -285,6 +284,7 @@ export default function showPickUserPopup(options: PopupPickUserOptions) {
       },
       renderResultsFunc: async(threadIds, append) => {
         const middleware = fs.middlewareHelperLoader.get();
+        const rowsMiddleware = fs.getRowsMiddleware();
         if(firstRender) {
           firstRender = false;
 
@@ -294,7 +294,7 @@ export default function showPickUserPopup(options: PopupPickUserOptions) {
         }
 
         const promises = threadIds.map((threadId) => {
-          return wrapTopicRow({peerId, threadId, middleware});
+          return wrapTopicRow({peerId, threadId, middleware: rowsMiddleware});
         });
         const elements = await Promise.all(promises);
         if(!middleware()) {
@@ -497,10 +497,6 @@ export default function showPickUserPopup(options: PopupPickUserOptions) {
       onFirstRender: () => {
         setShow(true);
         selector.checkForTriggers();
-
-        if(!IS_TOUCH_SUPPORTED && selector.inputSearch) {
-          selector.inputSearch.input.focus();
-        }
       },
       noPlaceholder: true,
       rippleEnabled: false,
@@ -617,6 +613,7 @@ export default function showPickUserPopup(options: PopupPickUserOptions) {
           options.onCloseAfterTimeout?.();
         }}
         btnConfirmOnEnter={options.btnConfirmOnEnter}
+        initialFocus={() => selector?.inputSearch?.input}
       >
         <PopupElement.Header>
           <PopupElement.CloseButton
@@ -670,7 +667,8 @@ export async function showPickUser2Popup<T extends boolean = false>({
   limitCallback,
   titleLangKey,
   placeholder,
-  exceptSelf
+  exceptSelf,
+  excludePeerIds
 }: {
   peerType?: SelectSearchPeerType[],
   filterPeerTypeBy: AppSelectPeers['filterPeerTypeBy'],
@@ -680,7 +678,8 @@ export async function showPickUser2Popup<T extends boolean = false>({
   limit?: number,
   limitCallback?: () => void,
   titleLangKey?: LangPackKey,
-  exceptSelf?: boolean
+  exceptSelf?: boolean,
+  excludePeerIds?: PopupPickUserOptions['excludePeerIds']
 }) {
   return new Promise<T extends false ? PeerId : PeerId[]>((resolve, reject) => {
     let resolved = false;
@@ -705,6 +704,7 @@ export async function showPickUser2Popup<T extends boolean = false>({
       chatRightsActions,
       titleLangKey,
       exceptSelf,
+      excludePeerIds,
       onClose: () => {
         if(!resolved) {
           reject();

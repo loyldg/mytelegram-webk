@@ -6,7 +6,6 @@
  */
 
 import type {TrueDcId} from '@types';
-import langPackLocalVersion from '@/langPackLocalVersion';
 
 export const MAIN_DOMAINS = ['web.telegram.org', 'webk.telegram.org'];
 export const DEFAULT_BACKGROUND_SLUG = 'pattern';
@@ -21,7 +20,6 @@ const App = {
   versionFull: import.meta.env.VITE_VERSION_FULL,
   build: +import.meta.env.VITE_BUILD,
   langPackVersion: +import.meta.env.VITE_LANG_PACK_VERSION,
-  langPackLocalVersion: langPackLocalVersion,
   langPack: 'webk',
   langPackCode: 'en',
   domains: MAIN_DOMAINS,
@@ -33,6 +31,11 @@ const App = {
   cryptoWorkers: threads,
   interclientBroadcastChannel: 'tgweb'
 };
+
+// * "Telegram WebK 2.2 (681)" - how the app names itself, in the main menu and under Settings
+export function getAppVersionText() {
+  return `Telegram Web${App.suffix} ${App.version} (${App.build})`;
+}
 
 if(App.isMainDomain) { // use Webogram credentials then
   App.id = 2496;

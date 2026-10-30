@@ -40,26 +40,19 @@ export function makeTime(date: Date, includeDate?: boolean) {
   return includeDate ? formatFullSentTimeRaw(date.getTime() / 1000 | 0, {combined: true}).dateEl : formatTime(date);
 };
 
-export function generateTail(asSpan?: boolean) {
-  if(asSpan) {
-    const span = document.createElement('span');
-    span.classList.add('bubble-tail');
-    return span;
-  }
+// * a plain element, so that it takes the bubble's background, the gradient of an outgoing one included; its shape is a
+// * clip of it (`.bubble-tail`)
+export function generateTail() {
+  const span = document.createElement('span');
+  span.classList.add('bubble-tail');
+  return span;
+}
 
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttributeNS(null, 'viewBox', '0 0 11 20');
-  svg.setAttributeNS(null, 'width', '11');
-  svg.setAttributeNS(null, 'height', '20');
-  svg.classList.add('bubble-tail');
-
-  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-  use.setAttributeNS(null, 'href', '#message-tail-filled');
-  // use.classList.add('bubble-tail-use');
-
-  svg.append(use);
-
-  return svg;
+// * what clips the outgoing bubbles' gradient to the bubble (`message-out-gradient`)
+export function generateGradient() {
+  const div = document.createElement('div');
+  div.classList.add('bubble-gradient');
+  return div;
 }
 
 export function linkColor(el: string | Node) {

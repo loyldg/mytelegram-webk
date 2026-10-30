@@ -67,6 +67,8 @@ export default class ServiceMessagePort<Master extends boolean = false> extends 
   shownNotification: (payload: string) => void,
   leaveRtmpCall: (payload: [Long, boolean]) => void,
   toggleStreamInUse: (payload: {url: string, inUse: boolean, accountNumber: ActiveAccountNumber}) => void,
+  // * the account the tab shows - on every hello, and whenever it switches in place
+  tabAccount: (payload: ActiveAccountNumber, source: MessageEventSource) => void,
   toggleCacheStorage: (value: boolean) => void,
   resetEncryptableCacheStorages: () => void,
   toggleUsingPasscode: (payload: SWToggleUsingPasscodePayload, source: MessageEventSource) => void,
@@ -79,7 +81,8 @@ export default class ServiceMessagePort<Master extends boolean = false> extends 
   // SW's ring buffer on export and propagates the enabled flag (the SW's
   // location.search has no ?debug=1).
   getLogs: (payload: void) => LogEntry[],
-  setLogBufferEnabled: (enabled: boolean) => void
+  setLogBufferEnabled: (enabled: boolean) => void,
+  clearLogs: (payload: void) => void
 
   // from mtproto worker
   download: (payload: ServiceDownloadTaskPayload) => void,

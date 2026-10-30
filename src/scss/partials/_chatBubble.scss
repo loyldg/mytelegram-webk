@@ -17,6 +17,92 @@
   }
 }
 
+// * the gradient of the outgoing bubbles (`--message-out-gradient-image-<phase>`, `none` when the theme gives them one colour)
+// * over a part of one that clips it: a piece of it fixed to the chat's frame (`.bubbles`, whose transform makes it the
+// * box what is fixed in it is laid out in), the vertical one stretched across that from its column a pixel wide, the
+// * freeform one (`--message-out-gradient-freeform: 1`) as wide as the frame. The compositor keeps it in place as the
+// * chat scrolls and draws it from its picture, so a scroll restyles and repaints nothing more. A transform on the
+// * bubble or its wrapper takes the piece in, and it is placed there where the frame is (below)
+@mixin message-out-gradient-piece {
+  content: "";
+  position: fixed;
+  // * where the frame is, against what took the piece in (below)
+  inset: var(--message-out-gradient-top, 0) auto auto var(--message-out-gradient-left, 0);
+  width: calc(1px + (var(--message-out-gradient-width, 100%) - 1px) * var(--message-out-gradient-freeform, 0));
+  height: var(--message-out-gradient-height, 100%);
+  border-radius: 0;
+  background-size: 100% 100%;
+  // * the column across both ways: what took it in may start inside the bubble's tail
+  transform: scaleX(calc(20000 - 19999 * var(--message-out-gradient-freeform, 0)));
+  transform-origin: 50% 0;
+  pointer-events: none;
+}
+
+@mixin message-out-gradient {
+  @supports (clip-path: border-box) {
+    &::before {
+      @include message-out-gradient-piece;
+      // * longhands: a shorthand of a `var()` next to one is serialized empty, and the Picture-in-Picture window gets
+      // * the app's styles as text (`mirrorDocumentStyles`)
+      background-image: var(--message-out-gradient-phase-image, var(--message-out-gradient-image-0));
+    }
+
+    // * the freeform gradient's next phase, which comes up over this one as a message is sent and then takes its place
+    // * (`advanceOutgoingMessageGradient`): there from the start, as an opacity changed with the display set is not
+    // * animated
+    &::after {
+      @include message-out-gradient-piece;
+      display: var(--message-out-gradient-next-display, none);
+      background-image: var(--message-out-gradient-next-image, var(--message-out-gradient-image-7));
+      opacity: var(--message-out-gradient-next-opacity, 0);
+      // * the wallpaper's easing (`ChatBackgroundGradientRenderer`, easeOutQuad)
+      transition: opacity var(--message-out-gradient-next-duration, 0ms) cubic-bezier(.25, .46, .45, .94);
+    }
+  }
+}
+
+// * the freeform gradient's phase and its move to the next one, classes of the chat's frame
+// * (`advanceOutgoingMessageGradient`), set on its pieces, not there: a property changed there restyles every message.
+// * The pictures are the nearest theme's, the same one at every phase but the freeform gradient's
+@each $phase in 0, 1, 2, 3, 4, 5, 6, 7 {
+  .message-out-gradient-phase-#{$phase} {
+    .bubble-gradient,
+    .bubble-gradient ~ .bubble-tail {
+      --message-out-gradient-phase-image: var(--message-out-gradient-image-#{$phase});
+      --message-out-gradient-next-image: var(--message-out-gradient-image-#{($phase + 7) % 8});
+    }
+  }
+}
+
+.is-message-out-gradient-advancing {
+  .bubble-gradient,
+  .bubble-gradient ~ .bubble-tail {
+    --message-out-gradient-next-opacity: 1;
+  }
+}
+
+// * as long as the scroll the wallpaper moves with, in steps of 50ms
+@for $step from 5 through 12 {
+  .message-out-gradient-advance-#{$step * 50} {
+    .bubble-gradient,
+    .bubble-gradient ~ .bubble-tail {
+      --message-out-gradient-next-duration: #{$step * 50}ms;
+    }
+  }
+}
+
+// * the flash a bubble gets when a jump lands on it: the highlight colour comes up and fades away,
+// * over an overlay that is painted with that colour and is taken away afterwards, by the timeout in
+// * `highlightBubble` (BUBBLE_HIGHLIGHT_DURATION, the same 2s). `forwards` is what holds the faded-out
+// * end until it is: the timeout runs in a task, so it is late by a frame at best and by however long
+// * the main thread is busy at worst — and with no fill mode the overlay snaps back to the full colour
+// * it is painted with, blinking once before it goes.
+@mixin bubble-highlight-flash {
+  body:not(.animation-level-0) & {
+    animation: bubbleSelected 2s linear forwards;
+  }
+}
+
 .bubbles-date-group {
   position: relative;
 
@@ -48,11 +134,14 @@
   &-avatar {
     position: sticky !important;
     top: 0;
-    bottom: calc(var(--chat-padding-bottom) + #{$bubble-overflow-big} + .25rem);
+    bottom: calc(var(--chat-padding-bottom) + var(--chat-input-height-surplus, 0px) + #{$bubble-overflow-big} + .25rem);
     cursor: pointer;
     pointer-events: all;
     overflow: hidden;
-    transition: bottom var(--transition-standard-out);
+
+    @include animation-level(2) {
+      transition: bottom var(--transition-standard-out);
+    }
 
     .bubbles.is-selecting & {
       transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
@@ -100,6 +189,8 @@
   --line-height: var(--messages-line-height);
   --primary-color: var(--message-primary-color);
   --primary-color-rgb: var(--message-primary-color-rgb);
+  // links are in the accent colour: an outgoing message's own one
+  --link-color: var(--primary-color);
   --secondary-text-color: var(--message-status-color);
   --peer-color-rgb: var(--message-primary-color-rgb);
   --peer-border-background: rgb(var(--peer-color-rgb));
@@ -218,7 +309,7 @@
       height: var(--message-beside-button-size);
       position: absolute;
       top: 50%;
-      right: var(--message-beside-button-margin);
+      inset-inline-end: var(--message-beside-button-margin);
       transform: translateY(-50%);
       color: #fff;
       border-radius: 50%;
@@ -246,7 +337,7 @@
       &.is-hiding {
         opacity: 0 !important;
 
-        @include animation-level(2) {
+        @include animation-level(1) {
           transition: opacity var(--transition-standard-out);
         }
       }
@@ -293,9 +384,7 @@
     //background-color: rgba(0, 132, 255, .3);
     background-color: var(--message-highlighting-color);
 
-    body:not(.animation-level-0) & {
-      animation: bubbleSelected 2s linear;
-    }
+    @include bubble-highlight-flash;
   }
 
   &.is-first-unread {
@@ -376,6 +465,9 @@
     inset-inline-start: 0;
     display: flex;
     margin: 0;
+    // the bubble under it is the click target; the checkbox only shows what the selection holds.
+    // A touch device toggles on the press, and a tap's click on the box would tick it back
+    pointer-events: none;
 
     .checkbox-box-border {
       border-color: var(--message-checkbox-border-color);
@@ -419,6 +511,12 @@
     img,
     video,
     a {
+      pointer-events: none;
+    }
+
+    // * with the a11y layer an album item's spoiler is a button of its own, which would reveal the
+    // * media instead of letting the click select the item - the item's checkbox lies over it too
+    .media-spoiler-container {
       pointer-events: none;
     }
   }
@@ -500,8 +598,11 @@
     justify-content: center;
     box-shadow: var(--menu-box-shadow);
 
-    @include animation-level(2) {
-      transition: opacity var(--btn-corner-transition), transform var(--btn-corner-transition);
+    @include animation-level-transition(opacity var(--btn-corner-transition), transform var(--btn-corner-transition));
+
+    // reduced: it fades where it stands, in and out
+    @include animation-level-below(2) {
+      transform: none;
     }
 
     &.is-visible {
@@ -627,6 +728,10 @@
 
     html.no-touch &.with-hover {
       opacity: 0;
+    }
+
+    html.no-touch body.animation-level-1 & {
+      transition: opacity .2s ease-in-out;
     }
 
     html.no-touch body.animation-level-2 & {
@@ -844,8 +949,8 @@
 
     .message {
       position: relative !important;
-      margin-left: auto;
-      right: 0 !important;
+      margin-inline-start: auto;
+      inset-inline-end: 0 !important;
     }
   }
 
@@ -854,6 +959,40 @@
       position: absolute;
       border-radius: 0;
       z-index: 1;
+
+      // * a sensitive one stands blurred under its warning until it is revealed
+      &.is-sensitive-sticker {
+        > img,
+        > canvas,
+        > video,
+        > svg {
+          @include animation-level(1) {
+            transition: filter var(--transition-standard-out);
+          }
+        }
+      }
+
+      &.is-blurred {
+        > img,
+        > canvas,
+        > video,
+        > svg {
+          filter: blur(1.25rem);
+        }
+      }
+
+      // * a premium one's art faces the middle of the chat (reflect-x-at-*), its warning reads as it is
+      &.reflect-x-at-start .sensitive-content-warning {
+        transform: translate(-50%, -50%) scaleX(-1);
+
+        .is-rtl & {
+          transform: translate(-50%, -50%);
+        }
+      }
+
+      .is-rtl &.reflect-x-at-end .sensitive-content-warning {
+        transform: translate(-50%, -50%) scaleX(-1);
+      }
     }
   }
 
@@ -870,6 +1009,12 @@
     .media-video {
       border-radius: 50% !important;
       pointer-events: none;
+    }
+
+    // * a sensitive one is covered as round as it is
+    .media-spoiler-container {
+      border-radius: 50%;
+      overflow: hidden;
     }
   }
 
@@ -929,6 +1074,10 @@
       position: relative;
       margin: 0 auto;
       z-index: 1;
+      // * a picture fitted into the box stays inside the box's frame (the border of a photo or a
+      // * video): cut off by it, the bubble showed less than the media viewer and the peek open from
+      // * and close back into
+      max-height: 100%;
     }
 
     &-fitted {
@@ -1001,9 +1150,22 @@
 
     .bubble-select-checkbox {
       bottom: auto !important;
-      left: auto;
-      right: .5rem;
+      inset-inline: auto .5rem;
       top: .5rem;
+    }
+
+    // * the item a jump lands on: the flash a bubble gets, over the photo of this one item — and
+    // * over its spoiler cover, which takes the same level earlier in the tree
+    &.is-highlighted:after {
+      content: " ";
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      border-radius: inherit;
+      background-color: var(--message-highlighting-color);
+      pointer-events: none;
+
+      @include bubble-highlight-flash;
     }
 
     // * the selection drives its state with SetTransition (`forwards` while in, `animating` +
@@ -1039,13 +1201,6 @@
           border-radius: 0;
         }
       }
-    }
-  }
-
-  .anchor-url:not(.reply-markup-button):not(.rich-button-link),
-  .mention {
-    @include hover() {
-      text-decoration: underline !important;
     }
   }
 
@@ -1128,6 +1283,7 @@
     .floating-part {
       --primary-color: #fff;
       --primary-color-rgb: 255, 255, 255;
+      --link-plate-color: #{$link-plate-service-color};
       --ripple-color: rgba(var(--primary-color-rgb), .1);
       // padding: .375rem .5rem;
       border-radius: .25rem;
@@ -1300,7 +1456,7 @@
     .time {
       position: absolute;
       bottom: 4px;
-      right: 8px;
+      inset-inline-end: 8px;
     }
   }
 
@@ -1313,7 +1469,7 @@
     &.is-empty {
       .reply {
         margin-top: 0 !important;
-        margin-right: 2.5rem !important;
+        margin-inline-end: 2.5rem !important;
         background-color: transparent;
 
         &-content {
@@ -1327,40 +1483,8 @@
     }
   }
 
-  &.contact-message,
   &.call-message {
     --min-content-width: 200px;
-  }
-
-  &.contact-message {
-    .contact {
-      display: flex;
-      padding: 2px 0;
-      cursor: pointer;
-      user-select: none;
-
-      &-avatar {
-        color: #fff;
-      }
-
-      &-details {
-        padding-left: 12px;
-        margin-top: 8px;
-        display: flex;
-        flex-direction: column;
-      }
-
-      &-name {
-        font-size: 1rem;
-        font-weight: var(--font-weight-bold);
-      }
-
-      &-number {
-        font-size: 14px;
-        line-height: 1.4;
-        color: var(--message-status-color);
-      }
-    }
   }
 
   &.document-message {
@@ -1416,7 +1540,7 @@
       display: flex;
       align-items: center;
       margin-top: .0625rem;
-      margin-left: -.1875rem;
+      margin-inline-start: -.1875rem;
       line-height: var(--messages-secondary-line-height);
     }
 
@@ -1519,13 +1643,8 @@
       &.is-highlighted {
         .document-selection {
           background-color: var(--message-highlighting-color);
-        }
 
-        body:not(.animation-level-0) & {
-          .document-selection/* ,
-          .document-wrapper:before */ {
-            animation: bubbleSelected 2s linear;
-          }
+          @include bubble-highlight-flash;
         }
       }
 
@@ -1623,7 +1742,8 @@
     }
 
     .reactions-block {
-      margin: -1rem 0.5rem 0.375rem 0.25rem;
+      margin-block: -1rem 0.375rem;
+      margin-inline: 0.25rem 0.5rem;
     }
   }
 
@@ -1635,18 +1755,10 @@
     // }
   }
 
-  &.poll-message,
-  &.contact-message {
-    .time {
-      position: absolute;
-      right: 0;
-      bottom: 0;
-    }
-  }
-
   &.poll-message {
     .time {
-      right: 8px;
+      position: absolute;
+      inset-inline-end: 8px;
       bottom: 5px;
     }
   }
@@ -1728,8 +1840,9 @@
     direction: ltr; // * rtl fix
     float: right;   // * rtl fix
 
+    // * the line's end, which is the left in RTL (`float: inline-end` is not on our targets)
     .is-rtl & {
-      float: inline-end;
+      float: left;
       direction: inherit;
     }
 
@@ -1798,9 +1911,14 @@
     }
 
     &-post-author {
+      // * the time runs the way the UI does (see `direction` above), so its end is a physical side
       &-comma {
-        float: inline-end;
+        float: right;
         direction: ltr;
+
+        .is-rtl & {
+          float: left;
+        }
       }
     }
 
@@ -1827,11 +1945,11 @@
       max-width: inherit;
       position: absolute;
       bottom: .1875rem;
-      right: .1875rem;
+      inset-inline-end: .1875rem;
       z-index: 2;
       opacity: 1;
 
-      @include animation-level(2) {
+      @include animation-level(1) {
         transition: opacity var(--transition-standard-in);
       }
 
@@ -1890,7 +2008,7 @@
     --height: calc(var(--messages-time-text-size) + .375rem);
     position: absolute;
     top: 3px;
-    left: 3px;
+    inset-inline-start: 3px;
     border-radius: var(--height);
     background-color: var(--message-time-background);
     padding: 0px 6px;
@@ -1904,14 +2022,15 @@
     line-height: 1;
     opacity: 1;
 
-    @include animation-level(2) {
+    @include animation-level(1) {
       transition: opacity var(--transition-standard-in);
     }
 
     &-icon {
       // * same as .iconVolume
       order: 1;
-      padding: 0 1px 0 3px;
+      padding-block: 0;
+      padding-inline: 3px 1px;
       font-size: calc(var(--messages-time-text-size) + 8px);
       color: #fff;
     }
@@ -1923,8 +2042,7 @@
     }
 
     &.other-side {
-      left: auto;
-      right: 3px;
+      inset-inline: auto 3px;
     }
   }
 
@@ -1973,6 +2091,12 @@
     text-decoration: underline;
   }
 
+  // in a dark theme an outgoing message's links are as white as its text: every kind of them is told
+  // apart by its underline, as iOS does it
+  .night &.is-out .message a:not(.peer-title):not(.rich-button-link) {
+    text-decoration: underline;
+  }
+
   .video-play {
     background-color: var(--message-time-background);
     color: #fff;
@@ -1997,13 +2121,24 @@
     font-size: var(--messages-secondary-text-size);
     line-height: calc(var(--messages-secondary-text-size) + .25rem);
     max-width: 100%;
-    overflow: hidden;
+    // cut off for the ellipsis, but not the ripple of a held name, whose plate reaches past its text
+    // (helpers/dom/linkPress.ts); `clip` makes no formatting context of its own, `flow-root` does
+    display: flow-root;
+    overflow: clip;
+    overflow-clip-margin: $link-plate-bleed;
     text-overflow: ellipsis;
     user-select: none;
 
     .badge-fake {
       display: inline-block;
       vertical-align: text-bottom;
+    }
+
+    // a name with icons is a flex row: it hugs them as a plain name hugs its text, so that what is
+    // pressed (the ripple of helpers/dom/linkPress.ts) and clicked is the name, not the whole line
+    > .peer-title.with-icons,
+    .name-first-line > .peer-title.with-icons {
+      width: fit-content;
     }
   }
 
@@ -2027,6 +2162,23 @@
     // align-items: center;
     max-width: inherit;
     overflow: inherit;
+    // the margin `.name` clips with (it is not inherited by itself)
+    overflow-clip-margin: inherit;
+
+    // * a name beside a tag gives way to it (desktop): one line, cut with an ellipsis, while the tag
+    // * stays whole. Clipped as `.name` is, so that a held name's plate still shows past its text
+    > .bubble-name-first {
+      flex: 0 1 auto;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: clip;
+      overflow-clip-margin: $link-plate-bleed;
+      text-overflow: ellipsis;
+    }
+
+    > .bubble-name-rank {
+      flex-shrink: 0;
+    }
 
     &-topic {
       > .bubble-name-rank,
@@ -2038,13 +2190,25 @@
 
   &-name {
     &-first {
-      margin-right: auto;
+      margin-inline-end: auto;
     }
 
     &-rank {
       color: var(--message-time-color);
       order: 999;
       @include text-overflow();
+
+      // * a member tag is the box of a pill, which the pointer and a press light up (desktop's
+      // * ripple): in the middle of the name line, a little shorter than it, the gap after the name
+      // * outside it. A plain tag's box is a pill's too and ends where the line does - the name
+      // * line clips anything past it - so its text stands where a pill's does
+      &.is-member-tag {
+        cursor: pointer;
+        align-self: center;
+        line-height: 1rem;
+        padding-inline: .375rem;
+        margin-inline-start: .25rem;
+      }
     }
 
     &-boosts {
@@ -2112,7 +2276,9 @@
         height: 20px;
         z-index: -2;
         display: block;
-        fill: var(--message-background-color);
+        background-color: var(--message-background-color);
+        // * the tail's shape (11×20), cut out of an element so that it can take the gradient of the outgoing bubbles
+        clip-path: path("M3 19h6V2c-.193 2.84-.876 5.767-2.05 8.782-.904 2.325-2.446 4.485-4.625 6.48A1 1 0 0 0 3 19z");
         transform: translateY(1px) scaleX(var(--reflect));
       }
     }
@@ -2161,7 +2327,7 @@
       max-height: 52px;
       bottom: 47px; // * forward button + 9px margin
       border-radius: 2rem;
-      right: -44px; // * because not 38px, as forward button
+      inset-inline-end: -44px; // * because not 38px, as forward button
       padding: .375rem 0 .5rem;
 
       &-text {
@@ -2186,7 +2352,12 @@
         background-color: var(--light-primary-color);
 
         & ~ .bubble-tail {
-          fill: var(--light-filled-message-primary-color);
+          background-color: var(--light-filled-message-primary-color);
+
+          &::before,
+          &::after {
+            content: none;
+          }
         }
 
         // .tgico-next {
@@ -2245,7 +2416,7 @@
     }
 
     &.is-in .bubble-content-wrapper {
-      margin-left: 0;
+      margin-inline-start: 0;
     }
   }
 
@@ -2260,6 +2431,12 @@
         .stacked-avatars {
           --border-color: var(--background-color);
         }
+      }
+
+      // * of the bubble's colour where the accent it stands on is white (an outgoing one of a theme's colours at night),
+      // * as a tag's is
+      &.is-chosen.forwards {
+        --counter-color: var(--message-icon-text-color);
       }
     }
 
@@ -2299,7 +2476,7 @@
 
   .name-with-reply {
     .name {
-      display: block;
+      display: flow-root;
       padding: 0 !important;
       margin: 0;
 
@@ -2370,6 +2547,12 @@
         &-3 {
           animation-name: audio-dots-3;
         }
+
+        // * with no animations they stand, all three shown
+        @include animation-level-below(1) {
+          animation: none;
+          opacity: 1;
+        }
       }
     }
   }
@@ -2427,6 +2610,61 @@
     &-text {
       margin-top: .75rem;
     }
+  }
+
+  // * the plate of a message this client cannot show, drawn as Android draws it (`UnsupportedBlockDrawable`): on the
+  // * wallpaper in the service lines' colours, in a bubble with no background of its own (`.just-media`)
+  &-unsupported {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    width: 25rem;
+    max-width: 100%;
+    padding: .4375rem .6875rem .4375rem .375rem;
+    border-radius: 1.125rem;
+    background-color: var(--message-highlighting-color);
+    color: #fff;
+    user-select: none;
+
+    &-icon {
+      flex: 0 0 auto;
+      width: 3rem;
+      height: 3rem;
+
+      &-bubble {
+        fill: rgba(0, 0, 0, .11);
+      }
+
+      &-plane {
+        fill: currentColor;
+      }
+    }
+
+    &-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: .125rem;
+    }
+
+    &-title {
+      @include text-overflow();
+      font-size: var(--font-size-14);
+      line-height: var(--line-height-14);
+      font-weight: var(--font-weight-bold);
+    }
+
+    &-subtitle {
+      font-size: var(--font-size-13);
+      line-height: var(--line-height-13);
+      opacity: .7;
+    }
+  }
+
+  // * its width gives way to a column narrower than it, with an avatars' margin beside it too, as text would wrap
+  &.is-unsupported .bubble-content-wrapper {
+    min-width: 0;
   }
 
   // Generic "media + caption + button" service bubble (e.g. suggested profile
@@ -2632,7 +2870,8 @@
     }
   }
 
-  &:has(.reaction.is-paid.effect-active) {
+  // * its paid reaction's effect playing (reactions.ts)
+  &.has-paid-effect {
     z-index: 3;
   }
 
@@ -2684,6 +2923,11 @@
   color: var(--primary-text-color);
   display: block;
 
+  // * a shared contact is pressed, not read: never selected, as before it became a preview
+  &.is-contact {
+    user-select: none;
+  }
+
   & + .time {
     display: block;
     float: unset;
@@ -2719,8 +2963,18 @@
         &-resizer {
           width: 3rem;
           height: 3rem;
-          float: inline-end;
+          // * at the end of the line the text runs on (a `dir="auto"` message may run either way);
+          // * `float: inline-end` is not on every target, so a side first, and the UI's end in RTL
+          float: right;
           margin-inline-start: .625rem;
+
+          @supports (float: inline-end) {
+            float: inline-end;
+          }
+
+          .is-rtl & {
+            float: left;
+          }
         }
 
         // sticker-set / custom-emoji preview grid: box is sized inline (boxSize px),
@@ -2734,6 +2988,15 @@
           width: auto;
           height: auto;
         }
+      }
+    }
+
+    // * too small for the words: the eye alone
+    .sensitive-content-warning {
+      padding: .375rem;
+
+      .i18n {
+        display: none;
       }
     }
   }
@@ -2819,7 +3082,8 @@
   &-name {
     display: block;
 
-    .anchor-url {
+    // a site's name is no underlined link, until the mouse is over it (helpers/dom/linkPress.ts)
+    .anchor-url:not(.is-link-hovered) {
       text-decoration: none !important;
     }
 
@@ -2884,7 +3148,7 @@
 
     &-icon {
       position: absolute;
-      right: -.125rem;
+      inset-inline-end: -.125rem;
       top: .125rem;
       display: block;
     }
@@ -2901,18 +3165,97 @@
       @include text-overflow(false);
     }
 
+    // * The button reaches from the box's border line to its edge, past the content's padding, so a
+    // * press and its ripple take the whole width; the separator keeps to the text's width, as
+    // * tdesktop draws it (history_view_web_page.cpp, `inner.width()`). It is drawn inside the
+    // * padding, since the button's `overflow: hidden` would clip a border-box line
     &.is-button {
       margin-bottom: #{-$webpage-padding-vertical};
+      margin-inline: #{-$webpage-padding};
+      border-top: 0;
       line-height: $height;
       font-size: var(--messages-text-size);
       text-align: center;
       font-weight: var(--font-weight-bold);
       height: #{$height + $margin + $border};
-      padding: #{math.div($margin, 2)} .5rem 0;
+      padding: #{math.div($margin, 2) + $border} #{$webpage-padding + .5rem} 0;
       pointer-events: none;
-      width: 100%;
+      // * below a square thumbnail floating beside short text: a box that clips its overflow would
+      // * otherwise narrow itself to sit next to the float
+      clear: both;
+      @include text-overflow(true);
+
+      &:before {
+        content: "";
+        position: absolute;
+        top: 0;
+        inset-inline: $webpage-padding;
+        height: $border;
+        background-color: rgba(var(--primary-color-rgb, 0, 0, 0), .2);
+      }
+
+      // * where it stood before the button reached past the padding and lost its border
+      #{$parent}-footer-icon {
+        top: #{.125rem + $border};
+        inset-inline-end: #{$webpage-padding - .125rem};
+      }
+    }
+
+    // * The same button, split into buttons of their own (a shared contact's MESSAGE | ADD): each
+    // * takes the caption's padding, so the press and its ripple reach the line above. Columns of
+    // * `1fr` are as wide as the widest button, and make the box wide enough for all of them
+    &.is-split {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+      padding: #{$border} 0 0;
+    }
+
+    &-button {
+      padding: #{math.div($margin, 2)} .5rem 0;
+      pointer-events: auto;
+      cursor: pointer;
+      // * above the box's own ripple, which would take the press otherwise
+      position: relative;
+      z-index: 1;
+      // * a <button> with the a11y layer
+      border: 0;
+      background: none;
+      color: inherit;
+      font: inherit;
       @include text-overflow(true);
     }
+  }
+
+  // * a round picture at the start, with the name and text beside it (a shared contact)
+  // * the picture keeps to the top, as tdesktop draws it, however many lines the text runs to
+  &-with-thumb {
+    display: flex;
+    align-items: flex-start;
+    gap: .625rem;
+    padding: .125rem 0;
+
+    &-texts {
+      flex: 1 1 auto;
+      min-width: 0;
+
+      #{$parent}-name,
+      #{$parent}-text {
+        @include text-overflow(true);
+      }
+
+      // * a line each (a contact's phones, emails, organization), every one cut short on its own
+      #{$parent}-text {
+        white-space: pre;
+      }
+    }
+  }
+
+  // * the picture is part of the box's own control: a photo avatar would take the press for the
+  // * peer it shows, and open the chat where the box opens the vCard
+  &-thumb {
+    flex: 0 0 auto;
+    pointer-events: none;
   }
 }
 
@@ -3088,7 +3431,7 @@
     &-timer {
       position: absolute;
       top: 50%;
-      right: .1875rem;
+      inset-inline-end: .1875rem;
       transform: translateY(-50%);
       width: 1.875rem;
       height: 1.875rem;
@@ -3121,7 +3464,7 @@
 
     &.is-live {
       position: relative;
-      padding-right: 3rem;
+      padding-inline-end: 3rem;
     }
   }
 }
@@ -3238,6 +3581,7 @@
 
 .bubble.service, .bubble.has-fake-service {
   .service-msg {
+    --link-plate-color: #{$link-plate-service-color};
     color: #fff;
     //background-color: rgba(0, 0, 0, .24);
     background-color: var(--message-highlighting-color);
@@ -3295,7 +3639,7 @@
 }
 
 .message-action-icon {
-  margin-right: 0.25rem;
+  margin-inline-end: 0.25rem;
   margin-bottom: 2.5px;
   vertical-align: bottom;
   display: inline-block;
@@ -3384,10 +3728,10 @@
 
   &.just-media {
     .floating-part {
-      left: calc(100% + 10px);
+      inset-inline-start: calc(100% + 10px);
 
       @include respond-to(handhelds) {
-        left: calc(100% + 1px);
+        inset-inline-start: calc(100% + 1px);
       }
     }
   }
@@ -3405,7 +3749,6 @@
   }
 
   .audio-subtitle,
-  .contact-number,
   .audio-time {
     color: var(--secondary-text-color) !important;
   }
@@ -3430,14 +3773,12 @@
   --light-filled-message-background-color: var(--light-filled-message-out-background-color);
   --dark-message-background-color: var(--dark-message-out-background-color);
   --message-icon-text-color: var(--message-out-icon-text-color);
-  --link-color: var(--message-out-link-color);
   --message-primary-color: var(--message-out-primary-color);
   --message-primary-color-rgb: var(--message-out-primary-color-rgb);
   --light-filled-message-primary-color: var(--light-filled-message-out-primary-color);
   --selection-background-color: var(--message-out-selection-background-color);
   --message-time-color: var(--message-out-time-color);
   --message-status-color: var(--message-out-status-color);
-  --link-color: var(--message-primary-color);
   --peer-color-rgb: var(--message-primary-color-rgb);
   --peer-border-background: var(--message-out-peer-border-background);
   --message-reaction-tag-dot-color: var(--message-out-reaction-tag-dot-color);
@@ -3447,7 +3788,7 @@
   --border-end-start-radius: #{$bubble-border-radius-big};
 
   .bubble-content {
-    margin-left: auto;
+    margin-inline-start: auto;
 
     &,
     .poll-footer-button {
@@ -3468,6 +3809,76 @@
     }
   }
 
+  // * over what the bubble lays under its content (a background of its own, a document's selection), under the content
+  .bubble-gradient {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    clip-path: border-box;
+    pointer-events: none;
+  }
+
+  &:not(.just-media) .bubble-gradient {
+    @include message-out-gradient;
+  }
+
+  // * with a gradient the bubble's colour is painted under its piece, in the piece's clip, and not by the bubble
+  // * (`--message-out-gradient-content-background`): the compositor may cut the piece a pixel short of the bubble's edge
+  @supports (clip-path: border-box) {
+    &:not(.just-media) {
+      // * one the chat rendered with its piece (`has-gradient`): elsewhere a bubble is drawn without one (a message
+      // * prepared to be sent, an entry of the recent actions), and keeps its colour
+      .bubble-content.has-gradient {
+        background-color: var(--message-out-gradient-content-background, var(--message-background-color));
+      }
+
+      .bubble-gradient {
+        background-color: var(--message-out-gradient-under, var(--message-background-color));
+      }
+    }
+  }
+
+  // * a reaction over a gradient is a see-through tint of the accent, as on iOS and Android
+  // * (`--message-out-gradient-light-primary-color`), and its avatars are cut out of each other rather than parted by a
+  // * ring of its colour: each is cut where the next one, on its inline start, lies over it with its ring
+  .message .reaction {
+    // * a chosen one is of its own colour, a tag's included
+    &:not(.is-chosen),
+    &.is-chosen.backwards {
+      --background-color: var(--message-out-gradient-light-primary-color, var(--light-filled-message-primary-color));
+
+      .stacked-avatars {
+        --border-color: var(--message-out-gradient-content-background, var(--background-color));
+      }
+    }
+
+    .stacked-avatars-avatar-container:not(.is-last) {
+      --cut-radius: calc(var(--avatar-total-size) / 2);
+      --cut-x: calc(-1 * var(--margin-right) - var(--cut-radius));
+      mask-image: radial-gradient(
+        circle at var(--cut-x) 50%,
+        var(--message-out-gradient-content-background, #000) var(--cut-radius),
+        #000 calc(var(--cut-radius) + .5px)
+      );
+
+      .is-rtl & {
+        --cut-x: calc(100% + var(--margin-right) + var(--cut-radius));
+      }
+    }
+  }
+
+  // * a transform on it takes the pieces of its gradient in, which are placed where the frame was read to be before
+  // * it (`holdOutgoingMessageGradient`): a swipe, a ladder's zoom, a move aside for a change of another
+  &.is-gesturing-reply,
+  &.is-gradient-held,
+  .can-zoom-fade {
+    --message-out-gradient-left: var(--message-out-gradient-held-left);
+    --message-out-gradient-top: var(--message-out-gradient-held-top);
+    --message-out-gradient-width: var(--message-out-gradient-held-width);
+    --message-out-gradient-height: var(--message-out-gradient-held-height);
+  }
+
   /* .bubble-content-wrapper {
     > .user-avatar {
       left: auto;
@@ -3483,9 +3894,23 @@
     &.can-have-tail {
       --border-end-end-radius: 0 !important;
 
+      // * reflected by its shape, not by a transform, which would take its piece of the gradient in; at the whole pixel
+      // * the transform drew it at from its -8.4px, as what is not transformed is drawn where it lies (and a send
+      // * flight's copy lands on its pixels)
       .bubble-tail {
-        inset-inline-end: -8.4px;
-        transform: translateY(1px) scaleX(calc(var(--reflect) * -1));
+        inset-inline-end: -8px;
+        bottom: -1px;
+        transform: none;
+        clip-path: path("M8 19H2V2c.193 2.84.876 5.767 2.05 8.782.904 2.325 2.446 4.485 4.625 6.48A1 1 0 0 1 8 19z");
+
+        .is-rtl & {
+          clip-path: path("M3 19h6V2c-.193 2.84-.876 5.767-2.05 8.782-.904 2.325-2.446 4.485-4.625 6.48A1 1 0 0 0 3 19z");
+        }
+      }
+
+      // * of the gradient where the body is (a bubble of the chat's, not a layout of its own elsewhere)
+      .bubble-gradient ~ .bubble-tail {
+        @include message-out-gradient;
       }
 
       &.has-plain-media-tail {
@@ -3529,9 +3954,41 @@
     }
   }
 
-  .document-ico:after {
-    border-top-color: var(--message-background-color);
-    border-right-color: var(--message-background-color);
+  // * the dog-ear's corner is cut off the icon instead of being painted over in the bubble's colour, which a gradient is
+  // * not, and the cut opens with the ear
+  .document:not(.document-with-thumb) .document-ico {
+    --dog-ear: 1.125rem;
+    clip-path: polygon(0 0, calc(100% - var(--dog-ear)) 0, 100% var(--dog-ear), 100% 100%, 0 100%);
+
+    @include animation-level(2) {
+      transition: clip-path .2s ease-in-out;
+    }
+
+    &:after {
+      border-top-color: transparent;
+      border-right-color: transparent;
+    }
+  }
+
+  .document:not(.downloaded) {
+    @include hover() {
+      .document-ico {
+        --dog-ear: 0px;
+      }
+    }
+  }
+
+  .document.downloading .document-ico {
+    --dog-ear: 0px;
+  }
+
+  // * the media's frame shows the bubble's own background, a gradient's part included
+  &.photo,
+  &.video {
+    .attachment {
+      border-color: transparent;
+      background-clip: padding-box;
+    }
   }
 
   &.is-message-empty {
@@ -3716,7 +4173,7 @@
 
     &-icon {
       position: absolute;
-      right: .125rem;
+      inset-inline-end: .125rem;
       top: .125rem;
       display: block;
     }
@@ -3807,7 +4264,7 @@
 }
 
 .bubble-meta-inline-stars {
-  margin-right: 6px;
+  margin-inline-end: 6px;
 }
 
 .unknown-user-bubble {
@@ -3882,7 +4339,7 @@
   left: 50%;
   transform: translate(-50%, -50%);
 
-  @include animation-level(2) {
+  @include animation-level(1) {
     .bubble-content-wrapper {
       transition: var(--bubble-transition-in);
     }
@@ -3896,6 +4353,11 @@
       transform: translateX(0) scale3d(.8, .8, 1);
       //transform: scale(.8) translateX(0);
       opacity: 0;
+
+      // reduced: it fades where it stands
+      @include animation-level-only(1) {
+        transform: none;
+      }
     }
   }
 
@@ -3947,7 +4409,8 @@
     }
 
     .has-service-before {
-      margin-top: .5rem;
+      // `.bubble.service .bubble-content` outranks this and sets `margin: 0 auto`
+      margin-top: .5rem !important;
       border-radius: .875rem !important;
 
       .service-msg {

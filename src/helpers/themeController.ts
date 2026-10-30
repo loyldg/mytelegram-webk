@@ -4,6 +4,7 @@ import type {BaseTheme, Theme, ThemeSettings} from '@layer';
 import {blendWallpaperForTinted, presetThemeId, presetToThemeSettings} from '@config/themePresets';
 import type {AppBackgroundTab} from '@components/sidebarLeft/tabs/background';
 import type {AppChatBackground} from '@components/chat/bubbles/chatBackground';
+import {applyOutgoingMessageGradient, getOutgoingMessageGradient, keepReadableOnOutgoingMessageGradient, MESSAGE_OUT_TINT} from '@helpers/outgoingMessageGradient';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
 import rootScope from '@lib/rootScope';
 import {changeColorAccent, ColorRgb, ensureTextContrast, getAccentColor, getAverageColor, getRgbColorFromTelegramColor, hexToRgb, hslaStringToHex, hslaStringToRgba, hslaToRgba, hsvToRgb, mixColors, relativeLuminance, rgbaToHexa, rgbaToHsla, rgbToHsv} from '@helpers/color';
@@ -52,6 +53,8 @@ const appColorMap: {[name in AppColorName]: AppColor} = {
     darkRgb: true
   },
   'message-out-primary-color': {
+    // * the tint, over a gradient of the bubbles (`--message-out-gradient-light-primary-color`)
+    light: true,
     lightFilled: true,
     rgb: true
   },
@@ -122,7 +125,6 @@ const colorMap: {
     'body-background-color': '#ffffff',
     'border-color': '#dfe1e5',
     'secondary-color': '#c4c9cc',
-    'link-color': '#00488f',
     'input-search-background-color': '#ffffff'
   },
   night: {
@@ -140,7 +142,6 @@ const colorMap: {
     'body-background-color': '#181818',
     'border-color': '#0f0f0f',
     'secondary-color': '#707579',
-    'link-color': '#8774E1', // SCSS resolves to var(--primary-color)
     'input-search-background-color': '#181818'
   },
   tinted: {
@@ -159,12 +160,11 @@ const colorMap: {
     'saved-color': '#3685FA',
     'green-color': '#61D36B',
     // background / body-bg ← windowBackgroundGray, border ← divider (alpha-stripped),
-    // input-search-bg ← chat_messagePanelBackground, link ← windowBackgroundWhiteLinkText
+    // input-search-bg ← chat_messagePanelBackground
     'background-color': '#151E27',
     'body-background-color': '#151E27',
     'border-color': '#0F151B',
     'secondary-color': '#7D8B99',
-    'link-color': '#5EABE1',
     'input-search-background-color': '#212D3B'
   },
   light: {
@@ -184,7 +184,6 @@ const colorMap: {
     'body-background-color': '#FFFFFF',
     'border-color': '#DFE1E5',
     'secondary-color': '#C4C9CC',
-    'link-color': '#238AE3', // windowBackgroundWhiteBlueText
     'input-search-background-color': '#FFFFFF'
   }
 };
@@ -359,9 +358,10 @@ export class ThemeController {
 
   public setTheme(coordinates?: {x: number, y: number}) {
     const _log = log.bindPrefix('setTheme');
-    const fast = !('startViewTransition' in document) || !this.applied;
-    const animationsAvailable = liteMode.isAvailable('animations');
-    _log(`start, fast=${fast}, coordinates=${JSON.stringify(coordinates)}, animations=${animationsAvailable}`);
+    // off: the theme changes at once; reduced: it crossfades instead of spreading from the click
+    const animationLevel = liteMode.getAnimationLevel();
+    const fast = !('startViewTransition' in document) || !this.applied || !animationLevel;
+    _log(`start, fast=${fast}, coordinates=${JSON.stringify(coordinates)}, animationLevel=${animationLevel}`);
 
     if(fast) {
       const silent = !this.applied;
@@ -376,7 +376,7 @@ export class ThemeController {
       return;
     }
 
-    if(!animationsAvailable) {
+    if(animationLevel < 2) {
       coordinates = undefined;
     }
 
@@ -853,6 +853,12 @@ export class ThemeController {
       darkenAlpha: 0.04
     });
 
+    // links are in the accent colour, whichever it is
+    applyAppColor({
+      name: 'link-color',
+      hex: newAccentHex
+    });
+
     applyAppColor({
       name: 'saved-color',
       hex: newAccentHex,
@@ -874,6 +880,11 @@ export class ThemeController {
       applyAppColor({name: 'secondary-color', hex: mainSecondaryColor!});
       applyAppColor({name: 'secondary-text-color', hex: mainSecondaryTextColor!});
     }
+
+    // * increased contrast keeps the bubbles of the one colour it adjusts for the text
+    const outgoingTextColor = hexToRgb(baseColors['primary-text-color']);
+    const outgoingGradient = this.isHighContrast() ? undefined : getOutgoingMessageGradient(themeSettings.message_colors, !!themeSettings.pFlags?.message_colors_animated, outgoingTextColor);
+    applyOutgoingMessageGradient(element, outgoingGradient);
 
     if(!themeSettings.message_colors?.length) {
       return;
@@ -929,10 +940,14 @@ export class ThemeController {
       lightenAlpha: messageLightenAlpha
     });
 
+    const outgoingAccent = rgbaToHexa(accentColor2 ? hsvToRgb(...accentColor2) : myMessagesAccent);
     applyAppColor({
       name: 'message-out-primary-color',
-      hex: isNight ? '#ffffff' : rgbaToHexa(accentColor2 ? hsvToRgb(...accentColor2) : myMessagesAccent),
-      mixColor: newMessageOutBackgroundColor
+      // * the time, the ticks and the links of a bubble of a gradient are read on all of it
+      hex: isNight ? '#ffffff' : outgoingGradient ? keepReadableOnOutgoingMessageGradient(outgoingAccent, outgoingGradient) : outgoingAccent,
+      mixColor: newMessageOutBackgroundColor,
+      // * a reaction's tint, which the colour is read on over a gradient
+      lightenAlpha: MESSAGE_OUT_TINT
     });
 
     // if(accentColor2) {

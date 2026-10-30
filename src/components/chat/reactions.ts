@@ -5,8 +5,7 @@ import positionElementByIndex from '@helpers/dom/positionElementByIndex';
 import {makeMediaSize} from '@helpers/mediaSize';
 import {Middleware, MiddlewareHelper} from '@helpers/middleware';
 import {ReactionCount, SavedReactionTag} from '@layer';
-import appImManager from '@lib/appImManager';
-import {AppManagers} from '@lib/managers';
+import {ReadingManagers} from '@lib/managers';
 import reactionsEqual from '@appManagers/utils/reactions/reactionsEqual';
 import {CustomEmojiRendererElement} from '@lib/customEmoji/renderer';
 import rootScope from '@lib/rootScope';
@@ -16,6 +15,9 @@ import ReactionElement, {ReactionLayoutType, REACTIONS_DISPLAY_COUNTER_AT, REACT
 import {getHeavyAnimationPromise} from '@hooks/useHeavyAnimationCheck';
 import pause from '@helpers/schedulers/pause';
 import {Accessor, Setter} from 'solid-js';
+import {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import {hotListen} from '@helpers/hotModule';
+import {isReactionFlightHeld, launchReactionFlight} from '@components/chat/reactionFlight';
 
 
 const CLASS_NAME = 'reactions';
@@ -46,7 +48,7 @@ export function getPendingPaidReactionKey(message: ReactionsContext) {
 // peer's full info changes (an admin may toggle paid reactions on/off).
 const PAID_REACTION_AVAILABLE: Map<PeerId, MaybePromise<boolean>> = new Map();
 
-function getPaidReactionAvailable(managers: AppManagers, peerId: PeerId): MaybePromise<boolean> {
+function getPaidReactionAvailable(managers: ReadingManagers, peerId: PeerId): MaybePromise<boolean> {
   let value = PAID_REACTION_AVAILABLE.get(peerId);
   if(value === undefined) {
     value = managers.appReactionsManager.isPaidReactionAvailable(peerId);
@@ -62,12 +64,16 @@ function getPaidReactionAvailable(managers: AppManagers, peerId: PeerId): MaybeP
   return value;
 }
 
-rootScope.addEventListener('chat_full_update', (chatId) => {
+hotListen(import.meta.hot, rootScope, 'chat_full_update', (chatId) => {
   PAID_REACTION_AVAILABLE.delete(chatId.toPeerId(true));
 });
 
+hotListen(import.meta.hot, rootScope, 'account_switched', () => {
+  PAID_REACTION_AVAILABLE.clear();
+});
+
 export const savedReactionTags: SavedReactionTag[] = [];
-rootScope.addEventListener('saved_tags', ({savedPeerId, tags}) => {
+hotListen(import.meta.hot, rootScope, 'saved_tags', ({savedPeerId, tags}) => {
   if(savedPeerId) {
     return;
   }
@@ -85,13 +91,18 @@ rootScope.addEventListener('saved_tags', ({savedPeerId, tags}) => {
 });
 
 export default class ReactionsElement extends HTMLElement {
+  public static create() {
+    // the registered class: after a hot update this module's class is a copy, which the element registry does not know
+    return new (customElements.get(TAG_NAME) as typeof ReactionsElement)();
+  }
+
   private context: ReactionsContext;
   private key: string;
   private isPlaceholder: boolean;
   private type: ReactionLayoutType;
   private sorted: ReactionElement[];
   private onConnectCallback: () => void;
-  private managers: AppManagers;
+  private managers: ReadingManagers;
   private middleware: Middleware;
   private middlewareHelpers: Map<ReactionElement, MiddlewareHelper>;
   public customEmojiRenderer: CustomEmojiRendererElement;
@@ -99,6 +110,11 @@ export default class ReactionsElement extends HTMLElement {
   private animationGroup: AnimationItemGroup;
   private lazyLoadQueue: LazyLoadQueue;
   private forceCounter: boolean;
+  // * the bubble is raised for a paid reaction's effect by a class of its own (a `:has()` of it was
+  // * searched through every bubble restyled): given when the effect starts or the strip is put into
+  // * a bubble, whichever comes last
+  private paidEffect: boolean;
+  private paidEffectBubble: HTMLElement;
 
   constructor() {
     super();
@@ -109,6 +125,12 @@ export default class ReactionsElement extends HTMLElement {
   }
 
   connectedCallback() {
+    // * a row made for no message (a picture of one, `copyElement`, put in the page while a bubble changes) is
+    // * no row of any: not registered, nor raising a bubble for an effect
+    if(this.key === undefined) {
+      return;
+    }
+
     let set = REACTIONS_ELEMENTS.get(this.key);
     if(!set) {
       REACTIONS_ELEMENTS.set(this.key, set = new Set());
@@ -120,9 +142,26 @@ export default class ReactionsElement extends HTMLElement {
       this.onConnectCallback();
       this.onConnectCallback = undefined;
     }
+
+    this.syncPaidEffectBubble();
+  }
+
+  private syncPaidEffectBubble() {
+    const bubble = this.paidEffect ? this.closest<HTMLElement>('.bubble') : undefined;
+    if(bubble === this.paidEffectBubble) {
+      return;
+    }
+
+    this.paidEffectBubble?.classList.remove('has-paid-effect');
+    bubble?.classList.add('has-paid-effect');
+    this.paidEffectBubble = bubble;
   }
 
   disconnectedCallback() {
+    if(this.key === undefined) {
+      return;
+    }
+
     const set = REACTIONS_ELEMENTS.get(this.key);
     set.delete(this);
     if(!set.size) {
@@ -307,13 +346,16 @@ export default class ReactionsElement extends HTMLElement {
       totalReactions < REACTIONS_DISPLAY_COUNTER_AT[this.type];
     const customEmojiElements: ReturnType<ReactionElement['render']>[] = new Array(counts.length);
     let paidReactionElement: ReactionElement, pendingPaidReaction: PendingPaidReaction;
+    // the reactions it did not show before
+    const created: Set<ReactionElement> = new Set();
     this.sorted = counts.map((reactionCount, idx, arr) => {
       let reactionElement: ReactionElement = this.sorted.find((reactionElement) => reactionsEqual(reactionElement.reactionCount.reaction, reactionCount.reaction));
       if(!reactionElement) {
         const middlewareHelper = this.middleware.create();
-        reactionElement = new ReactionElement();
+        reactionElement = ReactionElement.create();
         reactionElement.init(this.type, middlewareHelper.get());
         this.middlewareHelpers.set(reactionElement, middlewareHelper);
+        created.add(reactionElement);
       }
 
       reactionElement.classList.toggle('is-last', idx === (arr.length - 1));
@@ -359,13 +401,23 @@ export default class ReactionsElement extends HTMLElement {
       positionElementByIndex(element, this, idx);
     });
 
+    // a reaction chosen for it flies to where it ends, once that is laid out: after the change it is made in, which
+    // the list is kept in place around, and before the change is shown
+    if(!this.isPlaceholder && isReactionFlightHeld(this.key)) {
+      queueMicrotask(() => this.launchFlight(created));
+    }
+
     if(pendingPaidReaction) {
       const {width} = paidReactionElement.getBoundingClientRect();
       paidReactionElement.style.setProperty('--width', width + 'px');
       paidReactionElement.setPaidReactionCounter(pendingPaidReaction.count());
       if(!paidReactionElement.classList.contains('effect-active')) {
         paidReactionElement.classList.add('effect-active');
+        this.paidEffect = true;
+        this.syncPaidEffectBubble();
         pendingPaidReaction.abortController.signal.addEventListener('abort', () => {
+          this.paidEffect = false;
+          this.syncPaidEffectBubble();
           paidReactionElement.classList.remove('effect-active');
           paidReactionElement.querySelectorAll('.reaction-sticker-activate').forEach((it) => it.remove());
           paidReactionElement.destroyPaidReactionCounter();
@@ -428,20 +480,73 @@ export default class ReactionsElement extends HTMLElement {
     }
   }
 
+  private launchFlight(created: Set<ReactionElement>) {
+    const element = this.isConnected && this.sorted.find(({reactionCount}) => {
+      return reactionCount.chosen_order !== undefined && isReactionFlightHeld(this.key, reactionCount.reaction);
+    });
+    if(!element) {
+      return;
+    }
+
+    const flight = element.flight = launchReactionFlight({
+      key: this.key,
+      reaction: element.reactionCount.reaction,
+      target: element.stickerContainer,
+      // one it showed before shows on as the flight lands on it (ReactionsLayoutInBubble's drawImage)
+      hide: created.has(element) ? () => this.hideSticker(element) : undefined
+    });
+    flight?.landed.then(() => {
+      if(element.flight === flight) {
+        element.flight = undefined;
+      }
+    });
+  }
+
+  // a reaction's emoji hidden, and what shows it again; a custom one is drawn by the row's canvas, which leaves out
+  // what is not laid out
+  private hideSticker(element: ReactionElement) {
+    const {stickerContainer} = element;
+    const customEmoji = stickerContainer.querySelector<HTMLElement>('custom-emoji-element');
+    stickerContainer.style.visibility = 'hidden';
+    if(customEmoji) {
+      customEmoji.style.display = 'none';
+      this.customEmojiRenderer?.forceRender();
+    }
+
+    return () => {
+      stickerContainer.style.removeProperty('visibility');
+      if(customEmoji) {
+        customEmoji.style.removeProperty('display');
+        this.customEmojiRenderer?.forceRender();
+      }
+    };
+  }
+
   private async handleChangedResults(changedResults: ReactionCount[], waitPromise?: Promise<any>, withDelay?: boolean) {
     await getHeavyAnimationPromise();
     // ! temp
-    if(this.context.peerId !== appImManager.chat.peerId) return;
-    if(withDelay) {
-      waitPromise = (waitPromise || Promise.resolve()).then(() => pause(150));
-    }
+    const isShown = () => this.context.peerId === hotReloadGuard.appImManager.chat.peerId;
+    const getElement = (reactionCount: ReactionCount) => this.sorted.find((reactionElement) => {
+      return reactionsEqual(reactionElement.reactionCount.reaction, reactionCount.reaction);
+    });
+
+    // one flown to plays as its flight comes near and lands: it loads meanwhile, and takes its place as it starts
+    const flown = changedResults.filter((reactionCount) => getElement(reactionCount)?.flight);
+    if(isShown()) flown.forEach((reactionCount) => {
+      const element = getElement(reactionCount);
+      element.fireAroundAnimation(element.flight.hit, element.flight.landed);
+    });
+
+    // the reactions stand where they end first (the bubble is shown changing till then): an effect takes its place
+    // from its reaction as it loads, before it plays
+    await waitPromise;
+    if(!isShown()) return;
+    waitPromise = withDelay ? pause(150) : undefined;
 
     changedResults.forEach((reactionCount) => {
-      const reactionElement = this.sorted.find((reactionElement) => {
-        return reactionsEqual(reactionElement.reactionCount.reaction, reactionCount.reaction);
-      });
-
-      reactionElement?.fireAroundAnimation(waitPromise);
+      if(!flown.includes(reactionCount)) {
+        getElement(reactionCount)?.fireAroundAnimation(waitPromise);
+      }
     });
   }
 }
@@ -449,3 +554,6 @@ export default class ReactionsElement extends HTMLElement {
 if(!customElements.get(TAG_NAME)) {
   customElements.define(TAG_NAME, ReactionsElement);
 }
+
+// a method edited here takes effect on the reactions on screen, without a reload (see @helpers/hotRegistry)
+if(import.meta.hot) import.meta.hot.accept();

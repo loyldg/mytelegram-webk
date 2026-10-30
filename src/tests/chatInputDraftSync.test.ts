@@ -3,6 +3,9 @@ import '@helpers/peerIdPolyfill';
 import ChatInput from '@components/chat/input';
 import {ChatType} from '@components/chat/chatType';
 import {mountChatInputEditor} from '@/tests/helpers/chatInputEditor';
+import createChatInputEditor from '@components/chat/inputEditor';
+import reloadChatInputEditor from '@components/chat/inputEditor/reload';
+import deferredPromise from '@helpers/cancellablePromise';
 import type {DraftMessage} from '@layer';
 
 vi.mock('@lib/appImManager', () => ({AppImManager: class {}, APP_TABS: {}, default: {}}));
@@ -32,7 +35,7 @@ const unsupportedDraft = (): DraftMessage.draftMessage => ({
 let mounted: ReturnType<typeof mountChatInputEditor>;
 afterEach(() => {mounted?.editor.destroy(); mounted?.input.remove(); frames.length = 0;});
 
-function setup() {
+function setup({canWriteRich = true} = {}) {
   mounted = mountChatInputEditor();
   const {editor, input} = mounted;
   let effect: string;
@@ -42,7 +45,9 @@ function setup() {
     messageInput: input,
     richMessageInput: {
       editor,
-      field: {input, syncFromInput() {}, setValueSilently: (value: string | Node) => editor.setContent(value)}
+      canWriteRich,
+      prepareForRichMessage() {},
+      field: {input, syncFromInput() {}, setValueSilently: (value: string | Node) => host.richMessageInput.editor.setContent(value)}
     },
     inputValueGeneration: 0,
     managers: {appDraftsManager: {syncDraft, getDraft: async(): Promise<undefined> => undefined}},
@@ -50,11 +55,12 @@ function setup() {
     effect: () => effect,
     setEffect: (value?: string) => effect = value,
     clearHelper: vi.fn(),
-    saveDraftDebounced: {isDebounced: () => false},
+    // the field's resets ask for its save a while on (`clearHelper`): a test sets `pending` for that
+    saveDraftDebounced: {pending: false, isDebounced() {return this.pending;}, clearTimeout() {this.pending = false;}},
     clearInput: vi.fn(async(_restore: boolean, _emit: boolean, value = '') => {
       ++host.inputValueGeneration;
       host.appliedInputDraft = undefined;
-      editor.setTextWithEntities(value);
+      host.richMessageInput.editor.setTextWithEntities(value);
     }),
     onMessageInput: vi.fn((_event?: Event, suppressDraftSync?: boolean) => {
       if(!suppressDraftSync && !host.processingDraftMessage) host.saveDraft();
@@ -130,6 +136,94 @@ test('clears an untouched received draft without restoring or echoing it', async
   expect(syncDraft).not.toHaveBeenCalled();
 });
 
+// * left pending, the save the resets before a received draft asked for would hold off the draft's clear coming next
+// * from the server (another session sent it), and then publish the draft back
+test('leaves no save pending once a received draft is in', async() => {
+  const {host, apply} = setup();
+  host.saveDraftDebounced.pending = true;
+  await apply('Remote');
+  expect(host.saveDraftDebounced.isDebounced()).toBe(false);
+});
+
+test('counts the reply of a received draft as received, though it is set once its message is read', async() => {
+  const {host, flush, syncDraft} = setup();
+  host.initMessageReply = async({replyToMsgId}: {replyToMsgId: number}) => {
+    await new Promise((resolve) => setTimeout(resolve));
+    host.replyToMsgId = replyToMsgId;
+  };
+  const draft = richDraft('Remote');
+  draft.reply_to = {_: 'inputReplyToMessage', reply_to_msg_id: 9} as DraftMessage.draftMessage['reply_to'];
+  expect(await host.setDraft(draft, true)).toBe(true);
+  flush();
+  await new Promise((resolve) => setTimeout(resolve));
+  host.saveDraft();
+  expect(syncDraft).not.toHaveBeenCalled();
+});
+
+test('saves an effect chosen while the reply of a received draft is read', async() => {
+  const {host, flush, syncDraft} = setup();
+  const read = deferredPromise<void>();
+  host.initMessageReply = async({replyToMsgId}: {replyToMsgId: number}) => {
+    await read;
+    host.replyToMsgId = replyToMsgId;
+  };
+  const draft = richDraft('Remote');
+  draft.reply_to = {_: 'inputReplyToMessage', reply_to_msg_id: 9} as DraftMessage.draftMessage['reply_to'];
+  await host.setDraft(draft, true);
+  flush();
+  host.setEffect('42');
+  read.resolve();
+  await new Promise((resolve) => setTimeout(resolve));
+  host.saveDraft();
+  expect(syncDraft).toHaveBeenCalledTimes(1);
+  expect(syncDraft.mock.calls[0][0].localDraft.effect).toBe('42');
+});
+
+test('a clear that comes while the reply of a received draft is read leaves no text behind', async() => {
+  const {host, editor, flush} = setup();
+  const asked = deferredPromise<void>(), read = deferredPromise<void>();
+  host.initMessageReply = async({replyToMsgId}: {replyToMsgId: number}) => {
+    asked.resolve();
+    await read;
+    host.replyToMsgId = replyToMsgId;
+  };
+  const draft = richDraft('Remote');
+  draft.reply_to = {_: 'inputReplyToMessage', reply_to_msg_id: 9} as DraftMessage.draftMessage['reply_to'];
+  const applying = host.setDraft(draft, true);
+  await asked;
+  await host.setDraft(undefined, true);
+  read.resolve();
+  await applying;
+  flush();
+  expect(editor.isEmpty()).toBe(true);
+});
+
+test('keeps the undo history of an emptied composer when its own cleared draft comes back', async() => {
+  const {host, editor, syncDraft} = setup();
+  editor.setTextWithEntities('Typed and saved');
+  host.saveDraft();
+  // Cmd+A, Backspace
+  mounted.tiptap.chain().selectAll().deleteSelection().run();
+  expect(editor.isEmpty()).toBe(true);
+  host.saveDraft();
+  expect(syncDraft).toHaveBeenCalledTimes(2);
+  expect(syncDraft.mock.calls[1][0].localDraft).toBeUndefined();
+  // the drafts manager announces the cleared draft to every composer, this one included
+  expect(await host.setDraft(undefined, true)).toBe(true);
+  expect(host.clearInput).not.toHaveBeenCalled();
+  expect(editor.undo()).toBe(true);
+  expect(editor.getRichValue().value).toBe('Typed and saved');
+});
+
+test('a cleared draft still takes a reply off an otherwise empty composer', async() => {
+  const {host} = setup();
+  host.replyToMsgId = 9;
+  host.getReplyTo = () => ({replyToMsgId: 9});
+  await host.setDraft(undefined, true);
+  expect(host.clearInput).toHaveBeenCalledWith(false, false);
+  expect(host.clearHelper).toHaveBeenCalled();
+});
+
 test('treats a programmatic local replacement as a new draft', async() => {
   const {host, apply, flush, syncDraft} = setup();
   await apply('Remote');
@@ -164,4 +258,47 @@ test('saves what is typed over a rich draft the composer could not load', async(
   host.saveDraft();
   expect(syncDraft).toHaveBeenCalledTimes(1);
   expect(syncDraft.mock.calls[0][0].localDraft.message).toBe('My own text');
+});
+
+// as Android has it: where rich text may not be written, a rich draft is not shown, and it stays on
+// the server until something of the field's own replaces it
+test('keeps a rich draft out of a field that may not write rich text', async() => {
+  const {host, editor, syncDraft} = setup({canWriteRich: false});
+  toastNew.mockClear();
+  expect(await host.setDraft(richDraft('Remote'), true)).toBe(false);
+  expect(editor.getRichValue().value).toBe('');
+  expect(toastNew).not.toHaveBeenCalled();
+
+  host.saveDraft();
+  expect(syncDraft).not.toHaveBeenCalled();
+
+  editor.setTextWithEntities('My own text');
+  host.acceptUserEditOverUnsupportedRichMessageDraft();
+  host.saveDraft();
+  expect(syncDraft).toHaveBeenCalledTimes(1);
+  expect(syncDraft.mock.calls[0][0].localDraft.message).toBe('My own text');
+});
+
+// the field picks its schema once rich posting's answer is in, replacing the editor: a draft fetched
+// meanwhile must land in the new one, not be dropped as stale and then saved over as an empty field
+test('restores a draft into the editor the field settles on', async() => {
+  const {host, editor, syncDraft, flush} = setup();
+  let settle: () => void;
+  host.richMessageInput.richReady = new Promise<void>((resolve) => settle = resolve);
+  let answer: (draft: DraftMessage.draftMessage) => void;
+  host.managers.appDraftsManager.getDraft = () => new Promise((resolve) => answer = resolve);
+
+  const restoring = host.setDraft(undefined, false);
+  const replacement = reloadChatInputEditor(editor, createChatInputEditor, {});
+  host.richMessageInput.editor = replacement;
+  mounted.editor = replacement;
+  settle();
+  await Promise.resolve();
+  answer(richDraft('Saved'));
+  expect(await restoring).toBe(true);
+  flush();
+
+  expect(replacement.getRichValue().value).toBe('Saved');
+  host.saveDraft();
+  expect(syncDraft).not.toHaveBeenCalled();
 });

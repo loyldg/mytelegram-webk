@@ -1,5 +1,4 @@
 import PopupElement, {createPopup} from '@components/popups/indexTsx';
-import placeCaretAtEnd from '@helpers/dom/placeCaretAtEnd';
 import {InputInvoice, PaymentRequestedInfo, PaymentsPaymentForm, PaymentsValidatedRequestedInfo} from '@layer';
 import matchEmail from '@lib/richTextProcessor/matchEmail';
 import CountryInputField from '@components/countryInputField';
@@ -8,6 +7,7 @@ import Section from '@components/section';
 import TelInputField from '@components/telInputField';
 import {createCountryZipFields, handleInputFieldsOnChange, InputFieldCorrected} from '@components/popups/paymentCard';
 import PaymentSaveInformationRow from '@components/popups/paymentSaveInformationRow';
+import {toastNew} from '@components/toast';
 
 export type PaymentShippingAddress = PaymentRequestedInfo;
 
@@ -135,8 +135,11 @@ export default function showPaymentShippingPopup(options: {
       const inputField = errorMap[(err as ApiError).type];
       if(inputField) {
         inputField.setError();
-        (err as ApiError).handled = true;
+      } else {
+        toastNew({langPackKey: (err as ApiError).type === 'SHIPPING_NOT_AVAILABLE' ? 'PaymentNoShippingMethod' : 'Error.AnError'});
       }
+
+      (err as ApiError).handled = true;
 
       throw err;
     }
@@ -144,8 +147,9 @@ export default function showPaymentShippingPopup(options: {
 
 
   if(savedInfo) {
+    // the saved information may carry an address this invoice does not ask for
     const shippingAddress = savedInfo.shipping_address;
-    if(shippingAddress) {
+    if(shippingAddress && addressFields) {
       address1InputField.value = shippingAddress.street_line1;
       address2InputField.value = shippingAddress.street_line2;
       cityInputField.value = shippingAddress.city;
@@ -194,6 +198,7 @@ export default function showPaymentShippingPopup(options: {
       class="popup-payment popup-payment-shipping"
       closable
       show
+      initialFocus={() => focusField?.input}
     >
       <PopupElement.Header>
         <PopupElement.CloseButton />
@@ -232,8 +237,4 @@ export default function showPaymentShippingPopup(options: {
       </PopupElement.Footer>
     </PopupElement>
   ));
-
-  if(focusField) {
-    placeCaretAtEnd(focusField.input);
-  }
 }

@@ -7,7 +7,9 @@ import deferredPromise from '@helpers/cancellablePromise';
 import computeLockColor from '@helpers/computeLockColor';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
+import {hasMediaSpoiler} from '@components/wrappers/mediaSpoiler';
 import createVideo from '@helpers/dom/createVideo';
+import isDocumentRTL from '@helpers/dom/isDocumentRTL';
 import renderImageFromUrl, {renderImageFromUrlPromise} from '@helpers/dom/renderImageFromUrl';
 import getImageFromStrippedThumb from '@helpers/getImageFromStrippedThumb';
 import getPreviewURLFromThumb from '@helpers/getPreviewURLFromThumb';
@@ -19,7 +21,7 @@ import {isSavingLottiePreview, saveLottiePreview, saveLottiePreviewFromPlayer} f
 import sequentialDom from '@helpers/sequentialDom';
 import {DocumentAttribute, PhotoSize, VideoSize} from '@layer';
 import appDownloadManager from '@lib/appDownloadManager';
-import {AppManagers} from '@lib/managers';
+import {ReadingManagers} from '@lib/managers';
 import choosePhotoSize from '@appManagers/utils/photos/choosePhotoSize';
 import getStickerEffectThumb from '@appManagers/utils/stickers/getStickerEffectThumb';
 import lottieLoader from '@lib/lottie/lottieLoader';
@@ -37,6 +39,7 @@ import apiManagerProxy from '@lib/apiManagerProxy';
 import Icon from '@components/icon';
 import {SHOULD_HANDLE_VIDEO_LEAK, attachVideoLeakListeners, leakVideoFallbacks, onVideoLeak} from '@helpers/dom/handleVideoLeak';
 import noop from '@helpers/noop';
+import safePlay from '@helpers/dom/safePlay';
 import {IS_WEBM_SUPPORTED} from '@environment/videoSupport';
 import toArray from '@helpers/array/toArray';
 import {createEffect, createRoot, on, onCleanup, Ref, untrack} from 'solid-js';
@@ -53,9 +56,10 @@ const locksUrls: {[docId: string]: string} = {};
 
 export const videosCache: {[key: string]: Promise<any>} = {};
 
+// * neither the premium lock nor a spoiler over the sticker is its thumbnail
 const getThumbFromContainer = (container: HTMLElement) => {
   let element = container.firstElementChild as HTMLElement;
-  if(element && element.classList.contains('premium-sticker-lock')) {
+  while(element && (element.classList.contains('premium-sticker-lock') || element.classList.contains('media-spoiler-container'))) {
     element = element.nextElementSibling as HTMLElement;
   }
 
@@ -82,7 +86,7 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
   needUpscale?: boolean,
   skipRatio?: number,
   static?: boolean,
-  managers?: AppManagers,
+  managers?: ReadingManagers,
   fullThumb?: PhotoSize | Extract<VideoSize, VideoSize.videoSize>,
   isOut?: boolean,
   noPremium?: boolean,
@@ -189,8 +193,10 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
   const isAnimated = !asStatic && (stickerType === StickerType.Lottie || stickerType === StickerType.WebM);
 
   const effectThumb = getStickerEffectThumb(doc);
-  if(isOut !== undefined && effectThumb && !isOut) {
-    div.forEach((div) => div.classList.add('reflect-x'));
+  if(isOut !== undefined && effectThumb) {
+    // * turned toward the middle of the chat from whichever side the message is on (CSS, so a
+    // * language switched on the fly turns it too)
+    div.forEach((div) => div.classList.add(isOut ? 'reflect-x-at-end' : 'reflect-x-at-start'));
   }
 
   const willHaveLock = effectThumb && withLock;
@@ -524,29 +530,34 @@ export default async function wrapSticker({doc, div, middleware, loadStickerMidd
           const video = media = createVideo({middleware});
           video.muted = true;
           if(play) video.autoplay = true;
-          if(loop) video.loop = true;
           video._autoplay = play || false;
-          video._loop = loop || false;
+          // * a number of plays is counted by their ends: with the attribute a wrap shows only in `timeupdate`,
+          // * and a play shorter than its period (an emoji status of 0.11 s) reads 0 there before and after
+          // * every wrap - it played on for ever. So the attribute stays off, and `_loop` with it: the intersector
+          // * puts the attribute back on what has one whenever the settings apply
+          video._loop = typeof(loop) === 'number' ? false : loop || false;
 
-          if(loop && typeof(loop) === 'number') {
-            let previousTime = 0, playedTimes = 0;
-            function onTimeupdate(this: HTMLVideoElement) {
-              if(previousTime > this.currentTime && ++playedTimes === loop as number) {
-                this.autoplay = false;
-                this.loop = false;
-                this.pause();
-                video.removeEventListener('timeupdate', onTimeupdate);
+          if(typeof(loop) === 'number') {
+            let playedTimes = 0;
+            const onEnded = () => {
+              if(++playedTimes < loop) {
+                // * a play of ended media starts it over - while it may still play on its own, as the attribute would
+                // * (Power Saving takes `autoplay` off; the intersector plays the rest once it is back)
+                if(video.autoplay) safePlay(video);
+                return;
               }
 
-              (this as any).timeUpdatedTimes = ((this as any).timeUpdatedTimes || 0) + 1;
+              // * as the lottie player's last lap (`onLap`): nothing plays it again
+              video.autoplay = video._autoplay = false;
+              video.removeEventListener('ended', onEnded);
+            };
 
-              previousTime = this.currentTime;
-            }
-
-            video.addEventListener('timeupdate', onTimeupdate);
+            video.addEventListener('ended', onEnded);
             middleware.onClean(() => {
-              video.removeEventListener('timeupdate', onTimeupdate);
+              video.removeEventListener('ended', onEnded);
             });
+          } else if(loop) {
+            video.loop = true;
           }
         }
 
@@ -766,7 +777,7 @@ export async function fireStickerEffect({e, container, doc, managers, middleware
   e: MouseEvent,
   container: HTMLElement,
   doc: MyDocument,
-  managers: AppManagers,
+  managers: ReadingManagers,
   middleware: Middleware,
   isOut: boolean,
   width: number,
@@ -790,10 +801,12 @@ export async function fireStickerEffect({e, container, doc, managers, middleware
   container.dataset.playing = '1';
 
   await loadPromise;
+  // * the effect flies from the message's side of the chat toward the middle; RTL swaps the sides
+  const isOnRight = !!isOut !== isDocumentRTL();
   const {animationDiv, stickerPromise} = wrapStickerAnimation({
     doc,
     middleware,
-    side: isOut ? 'right' : 'left',
+    side: isOnRight ? 'right' : 'left',
     size: width * STICKER_EFFECT_MULTIPLIER,
     target: container,
     play: true,
@@ -803,7 +816,7 @@ export async function fireStickerEffect({e, container, doc, managers, middleware
     scrollable
   });
 
-  if(isOut !== undefined && !isOut/*  && !relativeEffect */) {
+  if(isOut !== undefined && !isOnRight/*  && !relativeEffect */) {
     animationDiv.classList.add('reflect-x');
   }
 
@@ -818,6 +831,8 @@ function attachStickerEffectHandler(options: Omit<Parameters<typeof fireStickerE
   options.managers.appStickersManager.preloadSticker(options.doc.id, true);
 
   const detach = attachClickEvent(options.container, (e) => {
+    // * one still under its spoiler is revealed first, by the chat's own click
+    if(hasMediaSpoiler(options.container)) return;
     fireStickerEffect({...options, e});
   });
 

@@ -6,8 +6,10 @@ import {StarGiftsGrid} from '@components/stargifts/stargiftsGrid';
 import {ButtonMenuItemOptionsVerifiable} from '@components/buttonMenu';
 import createButtonMenuCheckboxFilters from '@components/buttonMenuCheckboxFilters';
 import {AnimationList} from '@helpers/solid/animationList';
+import Animated from '@helpers/solid/animations';
 import {ChipTab, ChipTabs} from '@components/chipTabs';
 import {I18nTsx} from '@helpers/solid/i18n';
+import I18n from '@lib/langPack';
 import classNames from '@helpers/string/classNames';
 import {StickerTsx} from '@components/wrappers/sticker';
 import {MyDocument} from '@appManagers/appDocsManager';
@@ -25,11 +27,13 @@ import showChooseGiftPopup from '@components/popups/chooseGiftPopup';
 import {MyStarGift} from '@appManagers/appGiftsManager';
 import {copyTextToClipboard} from '@helpers/clipboard';
 import {toastNew} from '@components/toast';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
 
 async function openCreateCollectionPopup({actions, peerId}: {
   actions: StarGiftsProfileActions
   peerId: PeerId
 }): Promise<void> {
+  const managers = bindManagersToSession(rootScope.managers);
   const buttonOptions: PopupConfirmationOptions['button'] = {
     langKey: 'Create'
   };
@@ -51,9 +55,9 @@ async function openCreateCollectionPopup({actions, peerId}: {
     return
   }
 
-  const collection = await rootScope.managers.apiManager.invokeApi('payments.createStarGiftCollection', {
+  const collection = await managers.apiManager.invokeApi('payments.createStarGiftCollection', {
     title: inputField.value,
-    peer: await rootScope.managers.appPeersManager.getInputPeerById(peerId),
+    peer: await managers.appPeersManager.getInputPeerById(peerId),
     stargift: []
   })
 
@@ -65,6 +69,7 @@ async function openRenameCollectionPopup({actions, collection, peerId}: {
   collection: StarGiftCollection
   peerId: PeerId
 }): Promise<void> {
+  const managers = bindManagersToSession(rootScope.managers);
   const buttonOptions: PopupConfirmationOptions['button'] = {
     langKey: 'Edit'
   };
@@ -88,7 +93,7 @@ async function openRenameCollectionPopup({actions, collection, peerId}: {
 
   if(inputField.value === collection.title) return
 
-  const newCollection = await rootScope.managers.appGiftsManager.updateCollection({
+  const newCollection = await managers.appGiftsManager.updateCollection({
     peerId,
     collectionId: collection.collection_id,
     title: inputField.value
@@ -102,6 +107,7 @@ async function openAddGiftsPopup({actions, collectionId, peerId}: {
   collectionId: number
   peerId: PeerId
 }): Promise<void> {
+  const managers = bindManagersToSession(rootScope.managers);
   const result = await new Promise<{selected: MyStarGift[], deselected: MyStarGift[]} | null>((resolve) => {
     showChooseGiftPopup({
       peerId,
@@ -112,7 +118,7 @@ async function openAddGiftsPopup({actions, collectionId, peerId}: {
 
   if(!result) return
 
-  const collection = await rootScope.managers.appGiftsManager.updateCollection({
+  const collection = await managers.appGiftsManager.updateCollection({
     peerId,
     collectionId,
     add: result.selected.map((it) => it.input),
@@ -222,7 +228,8 @@ export function StarGiftsProfileTab(props: {
   }
 
   const slideKeyframes = (_element: Element, removed: boolean): Keyframe[] => {
-    const dir = direction()
+    // * the next collection's chip is toward the inline end — to the left in a right-to-left layout
+    const dir = direction() * (I18n.getIsRTL() ? -1 : 1)
     const yOffset = scrollDiff ? ` translateY(${scrollDiff}px)` : ''
     if(removed) {
       // AnimationList reverses these for exit; Y offset compensates scroll change
@@ -267,48 +274,51 @@ export function StarGiftsProfileTab(props: {
 
   const collectionContent = createMemo(() => {
     store.chosenCollection
+    // * the preloader, the gifts and a notice of none take one another's place with a crossfade
     return untrack(() => (
-      <div class={styles.collectionContent}>
-        <Switch>
-          <Match when={store.loading && store.items.length === 0}>
-            <PreloaderTsx />
-          </Match>
-          <Match when={store.items.length === 0 && store.chosenCollection !== ALL_COLLECTIONS_ID && store.canManageGifts}>
-            <div class={/* @once */ styles.empty}>
-              <I18nTsx class={/* @once */ styles.emptyTitle} key="StarGiftCollectionsEmptyTitle" />
-              <I18nTsx class={/* @once */ styles.emptySubtitle} key="StarGiftCollectionsEmptySubtitle" />
-              <Button
-                class="btn-primary btn-color-primary btn-control"
-                text="StarGiftCollectionsAddGifts"
-                onClick={() => openAddGiftsPopup({
-                  actions,
-                  collectionId: store.chosenCollection,
-                  peerId: props.peerId
-                })}
+      <div class={classNames(styles.collectionContent, 'crossfade-block')}>
+        <Animated type="cross-fade" noItemClass itemClass="crossfade-block-item">
+          <Switch>
+            <Match when={store.loading && store.items.length === 0}>
+              <PreloaderTsx />
+            </Match>
+            <Match when={store.items.length === 0 && store.chosenCollection !== ALL_COLLECTIONS_ID && store.canManageGifts}>
+              <div class={/* @once */ styles.empty}>
+                <I18nTsx class={/* @once */ styles.emptyTitle} key="StarGiftCollectionsEmptyTitle" />
+                <I18nTsx class={/* @once */ styles.emptySubtitle} key="StarGiftCollectionsEmptySubtitle" />
+                <Button
+                  class="btn-primary btn-color-primary btn-control"
+                  text="StarGiftCollectionsAddGifts"
+                  onClick={() => openAddGiftsPopup({
+                    actions,
+                    collectionId: store.chosenCollection,
+                    peerId: props.peerId
+                  })}
+                />
+              </div>
+            </Match>
+            <Match when={store.items.length === 0}>
+              <div class={/* @once */ styles.empty}>
+                <I18nTsx class={/* @once */ styles.emptySubtitle} key="StarGiftCollectionsEmptyOther" />
+              </div>
+            </Match>
+            <Match when={true}>
+              <StarGiftsGrid
+                class={/* @once */ styles.grid}
+                items={unwrap(store.items)}
+                view='profile'
+                profilePeerId={props.peerId}
+                canManageGifts={store.canManageGifts}
+                profileCollections={store.collections ? unwrap(store.collections) : undefined}
+                scrollParent={props.scrollParent}
+                autoplay={false}
+                onClick={(item) => {
+                  showStarGiftInfoPopup({gift: item});
+                }}
               />
-            </div>
-          </Match>
-          <Match when={store.items.length === 0}>
-            <div class={/* @once */ styles.empty}>
-              <I18nTsx class={/* @once */ styles.emptySubtitle} key="StarGiftCollectionsEmptyOther" />
-            </div>
-          </Match>
-          <Match when={true}>
-            <StarGiftsGrid
-              class={/* @once */ styles.grid}
-              items={unwrap(store.items)}
-              view='profile'
-              profilePeerId={props.peerId}
-              canManageGifts={store.canManageGifts}
-              profileCollections={store.collections ? unwrap(store.collections) : undefined}
-              scrollParent={props.scrollParent}
-              autoplay={false}
-              onClick={(item) => {
-                showStarGiftInfoPopup({gift: item});
-              }}
-            />
-          </Match>
-        </Switch>
+            </Match>
+          </Switch>
+        </Animated>
       </div>
     ))
   })
@@ -369,6 +379,7 @@ export function StarGiftsProfileTab(props: {
                   text: 'Delete',
                   danger: true,
                   onClick: async() => {
+                    const managers = bindManagersToSession(rootScope.managers);
                     const collection = store.collections.find((it) => it.collection_id === id)
                     if(!collection) return
                     await confirmationPopup({
@@ -380,9 +391,9 @@ export function StarGiftsProfileTab(props: {
                         isDanger: true
                       }
                     })
-                    rootScope.managers.apiManager.invokeApi('payments.deleteStarGiftCollection', {
+                    managers.apiManager.invokeApi('payments.deleteStarGiftCollection', {
                       collection_id: id,
-                      peer: await rootScope.managers.appPeersManager.getInputPeerById(props.peerId)
+                      peer: await managers.appPeersManager.getInputPeerById(props.peerId)
                     })
                     actions.deleteCollection(id)
                   }

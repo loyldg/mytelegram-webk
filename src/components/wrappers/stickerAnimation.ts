@@ -7,7 +7,7 @@ import {getMiddleware, Middleware} from '@helpers/middleware';
 import throttleWithRaf from '@helpers/schedulers/throttleWithRaf';
 import windowSize from '@helpers/windowSize';
 import {PhotoSize, VideoSize} from '@layer';
-import {AppManagers} from '@lib/managers';
+import {ReadingManagers} from '@lib/managers';
 import LottiePlayer from '@lib/lottie/lottiePlayer';
 import Scrollable from '@components/scrollable';
 import wrapSticker from '@components/wrappers/sticker';
@@ -47,7 +47,7 @@ export default function wrapStickerAnimation({
   side: 'left' | 'center' | 'right',
   skipRatio?: number,
   play: boolean,
-  managers?: AppManagers,
+  managers?: ReadingManagers,
   fullThumb?: PhotoSize | Extract<VideoSize, VideoSize.videoSize>,
   withRandomOffset?: boolean,
   relativeEffect?: boolean,
@@ -201,5 +201,7 @@ export default function wrapStickerAnimation({
     emojiAnimationContainer.append(animationDiv);
   }
 
-  return {animationDiv, stickerPromise};
+  // * `setPosition`: places it at its target again (it is placed as its first frame is drawn, which may be before its
+  // * target stands where it ends)
+  return {animationDiv, stickerPromise, setPosition};
 }

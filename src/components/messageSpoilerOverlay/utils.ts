@@ -1,15 +1,11 @@
-import {animate} from '@helpers/animation';
-import deferredPromise from '@helpers/cancellablePromise';
 import {unwrapEasing} from '@helpers/easings';
 import themeController from '@helpers/themeController';
-import {logger} from '@lib/logger';
+import {hexToRgb} from '@helpers/color';
+import {getOutgoingMessageGradientColorAt, readOutgoingMessageGradient} from '@helpers/outgoingMessageGradient';
 
 export const UnwrapEasing = unwrapEasing;
 
 const MAX_SPACE_BETWEEN_SPOILER_LINES = 2;
-const RESIZE_PAINT_CHECK_ATTEMPTS = 100;
-const RESIZE_PAINT_SKIP_FRAMES = 5;
-const GENEROUS_COMPARISON_ERROR = 0.1;
 
 export type CustomDOMRect = {
   left: number;
@@ -85,38 +81,6 @@ export function getParticleColor() {
   return themeController.isNight() ? 'white' : '#101010';
 }
 
-const resizeLog = logger('resize-paint');
-
-// The element is not immediately the size we need after the resize callback was triggered, so we need to wait until the changes are applied in the DOM
-export async function waitResizeToBePainted(resizeEntry: ResizeObserverEntry) {
-  const deferred = deferredPromise<void>();
-
-  let attempts = 0;
-  let skip = -1;
-
-  const entryRect = resizeEntry.contentRect;
-
-  animate(() => {
-    skip = (skip + 1) % RESIZE_PAINT_SKIP_FRAMES;
-    if(skip) return true;
-
-    const targetRect = resizeEntry.target.getBoundingClientRect();
-    if(
-      Math.abs(targetRect.width - entryRect.width) < GENEROUS_COMPARISON_ERROR &&
-      Math.abs(targetRect.height - entryRect.height) < GENEROUS_COMPARISON_ERROR
-    ) {
-      deferred.resolve();
-      resizeLog('Resize was painted after attempts :>> ', attempts);
-      return;
-    }
-
-    return attempts++ < RESIZE_PAINT_CHECK_ATTEMPTS || deferred.reject();
-  });
-
-  return deferred;
-}
-
-
 function parseRgba(rgba: string): RGBA {
   const match = rgba.match(/rgba?\((\d+), (\d+), (\d+),?\s?(\d?.?\d+)?\)/);
   if(!match) return {
@@ -149,11 +113,12 @@ function blendColors(base: RGBA, overlay: RGBA): RGBA {
   };
 }
 
-export function computeFinalBackgroundColor(element: HTMLElement) {
-  let color = {r: 0, g: 0, b: 0, a: 0};
+// * what the element and its ancestors paint, one over another, up to `until` (not included)
+function blendBackgrounds(element: HTMLElement, until?: Element) {
+  let color: RGBA = {r: 0, g: 0, b: 0, a: 0};
   let maxDepth = 10;
 
-  while(element && color.a < 1 && maxDepth--) {
+  while(element && element !== until && color.a < 1 && maxDepth--) {
     const bgColor = window.getComputedStyle(element).backgroundColor;
     if(bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
       const rgba = parseRgba(bgColor);
@@ -162,29 +127,65 @@ export function computeFinalBackgroundColor(element: HTMLElement) {
     element = element.parentElement;
   }
 
-  return color.a === 1 ? `rgb(${color.r}, ${color.g}, ${color.b})` : undefined;
+  return color;
 }
 
-export function getCustomDOMRectsForSpoilerSpan(el: HTMLElement, parentRect: DOMRect): CustomDOMRect[] {
-  const color = computeFinalBackgroundColor(el);
+const toRgb = (color: RGBA) => `rgb(${color.r}, ${color.g}, ${color.b})`;
 
-  const originalRects = toDOMRectArray(el.getClientRects());
+export function computeFinalBackgroundColor(element: HTMLElement) {
+  const color = blendBackgrounds(element);
+  return color.a === 1 ? toRgb(color) : undefined;
+}
 
-  const normalizedRects = originalRects
-  .map((spoilerRect) => getInnerCustomRect(parentRect, spoilerRect))
-  .map((rect) => ({...rect, color}));
-
-  let blockquote;
-
-  if(blockquote = el.closest('blockquote')) {
-    const bqRect = blockquote.getBoundingClientRect();
-
-    return normalizedRects
-    // Blockquote collapsed case
-    .filter((rect) => rect.top + parentRect.top + rect.height < bqRect.bottom);
+/**
+ * The part of the page a spoiler can be seen in: inside every box between it and the message
+ * that clips what overflows it - a collapsed quote, the content of a details that is closed or opening.
+ * Drawn outside of it, the dots of a hidden spoiler covered the text next to it.
+ */
+function getSpoilerClipRect(el: HTMLElement, root: HTMLElement) {
+  let clip: {left: number, top: number, right: number, bottom: number};
+  for(let element = el.parentElement; element && element !== root; element = element.parentElement) {
+    const style = window.getComputedStyle(element);
+    if(style.overflowX === 'visible' && style.overflowY === 'visible') continue;
+    const rect = element.getBoundingClientRect();
+    clip = clip ? {
+      left: Math.max(clip.left, rect.left),
+      top: Math.max(clip.top, rect.top),
+      right: Math.min(clip.right, rect.right),
+      bottom: Math.min(clip.bottom, rect.bottom)
+    } : {left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom};
   }
 
-  return normalizedRects;
+  return clip;
+}
+
+export function getCustomDOMRectsForSpoilerSpan(el: HTMLElement, parentRect: DOMRect, root: HTMLElement): CustomDOMRect[] {
+  // * a bubble of a gradient paints no colour of its own (`message-out-gradient`): the mask is of what is over the
+  // * gradient (a quote's tint), over the gradient's colour where the spoiler is
+  const content = el.closest('.bubble-content');
+  const gradient = content && readOutgoingMessageGradient(content);
+  const over = gradient && blendBackgrounds(el, content);
+  const color = gradient ? undefined : computeFinalBackgroundColor(el);
+  const getColor = (rect: CustomDOMRect) => {
+    if(!gradient) {
+      return color;
+    }
+
+    const box = {left: rect.left, top: rect.top, right: rect.left + rect.width, bottom: rect.top + rect.height};
+    const [r, g, b] = hexToRgb(getOutgoingMessageGradientColorAt(gradient, box));
+    return toRgb(blendColors({r, g, b, a: 1}, over));
+  };
+
+  const clip = getSpoilerClipRect(el, root);
+
+  return toDOMRectArray(el.getClientRects())
+  .map((rect): CustomDOMRect => {
+    if(!clip) return rect;
+    const left = Math.max(rect.left, clip.left), top = Math.max(rect.top, clip.top);
+    return {left, top, width: Math.min(rect.right, clip.right) - left, height: Math.min(rect.bottom, clip.bottom) - top};
+  })
+  .filter((rect) => rect.width > 0 && rect.height > 0)
+  .map((spoilerRect) => ({...getInnerCustomRect(parentRect, spoilerRect), color: getColor(spoilerRect)}));
 }
 
 export function adjustSpaceBetweenCloseRects(rects: CustomDOMRect[]): CustomDOMRect[] {

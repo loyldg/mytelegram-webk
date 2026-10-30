@@ -1,18 +1,16 @@
 import type {AdminLog, ChatRights} from '@appManagers/appChatsManager';
 import type {RequestWebViewOptions} from '@appManagers/appAttachMenuBotsManager';
 import type {HistoryStorageKey, MessageSendingParams, MessagesStorageKey, MyMessage, RequestHistoryOptions} from '@appManagers/appMessagesManager';
-import {AppImManager, APP_TABS, ChatSetPeerOptions} from '@lib/appImManager';
+import type {AppImManager, ChatSetPeerOptions} from '@lib/appImManager';
 import EventListenerBase from '@helpers/eventListenerBase';
 import {logger, LogTypes} from '@lib/logger';
 import rootScope from '@lib/rootScope';
-import appSidebarRight from '@components/sidebarRight';
 import ChatBubbles, {FullMid, splitFullMid} from '@components/chat/bubbles';
 import ChatContextMenu from '@components/chat/contextMenu';
 import ChatInput from '@components/chat/input';
 import ChatSelection from '@components/chat/selection';
 import ChatTopbar from '@components/chat/topbar';
 import {HIDDEN_PEER_ID, NULL_PEER_ID, REPLIES_HIDDEN_CHANNEL_ID, REPLIES_PEER_ID, SEND_PAID_WITH_STARS_DELAY, SERVICE_PEER_ID, VERIFICATION_CODES_BOT_ID} from '@appManagers/constants';
-import {AppPrivateSearchTab} from '@components/solidJsTabs/tabs';
 import mediaSizes, {ScreenSize} from '@helpers/mediaSizes';
 import ChatSearch from '@components/chat/search';
 import IS_TOUCH_SUPPORTED from '@environment/touchSupport';
@@ -46,7 +44,6 @@ import {unwrap} from 'solid-js/store';
 import callbackify from '@helpers/callbackify';
 import useIsNightTheme from '@hooks/useIsNightTheme';
 import useStars, {setReservedStars} from '@stores/stars';
-import showStarsPopup from '@components/popups/stars';
 import {getPendingPaidReactionKey, PENDING_PAID_REACTION_SENT_ABORT_REASON, PENDING_PAID_REACTIONS} from '@components/chat/reactions';
 import showUndoablePaidTooltip, {paidReactionLangKeys} from '@components/chat/undoablePaidTooltip';
 import namedPromises from '@helpers/namedPromises';
@@ -62,15 +59,32 @@ import useAutoDownloadSettings, {ChatAutoDownloadSettings} from '@hooks/useAutoD
 import usePeerTranslation from '@hooks/usePeerTranslation';
 import debounce from '@helpers/schedulers/debounce';
 import appNavigationController from '@components/appNavigationController';
-import {LEFT_COLUMN_ACTIVE_CLASSNAME} from '@components/sidebarLeft';
+import {LEFT_COLUMN_ACTIVE_CLASSNAME, RIGHT_COLUMN_ACTIVE_CLASSNAME, APP_TABS} from '@lib/appColumns';
+import {doubleRaf} from '@helpers/schedulers';
+import {getHeavyAnimationPromise} from '@hooks/useHeavyAnimationCheck';
 import {AckedResult} from '@lib/superMessagePort';
-import SolidJSHotReloadGuardProvider from '@lib/solidjs/hotReloadGuardProvider';
+import SolidJSHotReloadGuardProvider, {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
 import hasRights from '@appManagers/utils/chats/hasRights';
 import {ChatType} from '@components/chat/chatType';
 import {animateSingle} from '@helpers/animation';
 import focusSearchInput from '@components/chat/focusSearchInput';
+import createStyleRule from '@helpers/dom/createStyleRule';
 
 export type ChatSearchKeys = Pick<RequestHistoryOptions, 'query' | 'isCacheableSearch' | 'isPublicHashtag' | 'savedReaction' | 'fromPeerId' | 'inputFilter' | 'hashtagType'>;
+
+export type FinishPeerChangeOptions = {
+  peerId: PeerId,
+  isTarget?: boolean,
+  isJump?: boolean,
+  lastMsgId?: number,
+  startParam?: string,
+  middleware: () => boolean,
+  text?: string,
+  entities?: MessageEntity[],
+  /** takes the input's own layout (height, centering) to be run once the new history is mounted */
+  deferInputLayout?: (layout: () => void) => void
+};
+
 export const CHAT_SEARCH_KEYS: (keyof ChatSearchKeys)[] = ['query', 'isCacheableSearch', 'isPublicHashtag', 'savedReaction', 'fromPeerId', 'inputFilter', 'hashtagType'];
 
 // * after this long an in-flight peer change is treated as abandoned rather than as a reason to
@@ -111,6 +125,12 @@ export default class Chat extends EventListenerBase<{
 
   public setPeerPromise: Promise<void>;
   private setPeerPromiseStartedAt: number;
+  /** the change in flight opens the chat, not only moves in it */
+  private setPeerPromiseOpens: boolean;
+  /** the change in flight builds the list for a new search (`sameSearch` off) */
+  private setPeerPromiseChangesSearch: boolean;
+  /** where in the chat to go once it has opened, asked for while it was opening */
+  private jumpAfterOpening: ChatSetPeerOptions;
   public peerChanged: boolean;
 
   public log: ReturnType<typeof logger>;
@@ -284,8 +304,31 @@ export default class Chat extends EventListenerBase<{
     if(this.chatInputSurplusPx === surplus) return;
     this.preservePaddingScroll();
     this.chatInputSurplusPx = surplus;
-    this.container.style.setProperty('--chat-input-height-surplus', surplus + 'px');
+    this.setChatInputSurplusRule(surplus);
     this.recomputePaddings();
+  }
+
+  // * `--chat-input-height-surplus` is not inherited (_chat.scss): a rule of the chat's own gives it to
+  // * the few boxes that read it. Set on the chat, a custom property of its is worked out anew for
+  // * every element in it - a thousand in a short chat, on each line the input grows or a reply shown
+  private chatInputSurplusRule: ReturnType<typeof createStyleRule>;
+  private setChatInputSurplusRule(surplus: number) {
+    if(!this.container) {
+      return;
+    }
+
+    if(!this.chatInputSurplusRule) {
+      const className = 'chat-surplus-' + this.animationGroup;
+      this.container.classList.add(className);
+      this.chatInputSurplusRule = createStyleRule(
+        this.container,
+        // * a list rather than an `:is()`: a selector whose own element is a class is looked at for
+        // * elements of that class alone, an `:is()` for every element of every restyle
+        ['.bubbles-viewport', '.bubbles-inner', '.bubbles-group-avatar', '.bubbles-corner-button'].map((c) => `.${className} ${c}`).join(', ')
+      );
+    }
+
+    this.chatInputSurplusRule.set('--chat-input-height-surplus', surplus + 'px');
   }
 
   public updatePinnedFloatingHeight(value: number) {
@@ -293,7 +336,9 @@ export default class Chat extends EventListenerBase<{
     const delta = value - this.pinnedFloatingHeightPx;
     this.pinnedFloatingHeightPx = value;
     const scrollable = this.bubbles?.scrollable;
-    const wasAtEnd = scrollable?.isScrolledToEnd;
+    // * a list still on its way (the chat is opening) is scrolled where it belongs once it is mounted: reading
+    // * the one being replaced only forced a layout of it
+    const wasAtEnd = this.bubbles?.chatInner?.isConnected && scrollable.isScrolledToEnd;
     this.recomputePaddings();
     // Mobile-faithful (verified against iOS ListView + Android ChatActivity):
     // leave a mid-scroll position anchored. recomputePaddings grows the
@@ -613,7 +658,7 @@ export default class Chat extends EventListenerBase<{
   public init(/* peerId: PeerId */) {
     // this.initPeerId = peerId;
 
-    this.topbar = new ChatTopbar(this, appSidebarRight, this.managers);
+    this.topbar = new ChatTopbar(this, hotReloadGuard.appSidebarRight, this.managers);
     this.bubbles = new ChatBubbles(this, this.managers);
     this.input = new ChatInput(this, this.appImManager, this.managers, 'chat-input-main');
     this.contextMenu = new ChatContextMenu(this, this.managers);
@@ -715,7 +760,8 @@ export default class Chat extends EventListenerBase<{
 
     const freezeObservers = (freeze: boolean) => {
       const cb = () => {
-        this.bubbles.observer?.toggleObservingNew(freeze);
+        // * the unfreeze is delayed, and the chat can be destroyed by then (an account switch closes it)
+        this.bubbles?.observer?.toggleObservingNew(freeze);
         animationIntersector.toggleIntersectionGroup(this.animationGroup, freeze);
         if(freeze) {
           animationIntersector.checkAnimations(freeze, this.animationGroup);
@@ -840,7 +886,8 @@ export default class Chat extends EventListenerBase<{
 
   public beforeDestroy() {
     this.destroyPromise = deferredPromise();
-    this.bubbles.cleanup();
+    // * a chat that never had a peer (the first one, closed by an account switch) has no bubbles yet
+    this.bubbles?.cleanup();
     this.searchSignal?.(undefined);
   }
 
@@ -848,7 +895,7 @@ export default class Chat extends EventListenerBase<{
     // const perf = performance.now();
 
     this.destroyPromise?.resolve();
-    this.destroySharedMediaTab();
+    this.destroySharedMediaTabs();
     this.topbar?.destroy();
     this.bubbles?.destroy();
     this.input?.destroy();
@@ -861,8 +908,10 @@ export default class Chat extends EventListenerBase<{
     // * chat, container and shared-media tabs included, which is how 4 951 detached nodes ended up
     // * charged to rootScope in a day-old tab. Peer changes keep cleaning it as before.
     this.middlewareHelper.destroy();
+    this.chatInputSurplusRule?.remove();
 
-    this.topbar =
+    this.chatInputSurplusRule =
+      this.topbar =
       this.bubbles =
       this.input =
       this.contextMenu =
@@ -891,7 +940,8 @@ export default class Chat extends EventListenerBase<{
   }
 
   public get isSensitive() {
-    return isSensitive((this.peer as User.user).restriction_reason || []);
+    // * read when asked: a peer the page does not know yet as the chat opens (its own user) comes later
+    return isSensitive((usePeer(this.peerId) as User.user)?.restriction_reason || []);
   }
 
   public async onChangePeer(options: ChatSetPeerOptions, m: ReturnType<typeof middlewarePromise>) {
@@ -899,7 +949,7 @@ export default class Chat extends EventListenerBase<{
     const {peerId, threadId} = options;
 
     if(!this.excludeParts.elements) {
-      const searchTab = appSidebarRight.getTab(AppPrivateSearchTab);
+      const searchTab = hotReloadGuard.appSidebarRight.getTab(hotReloadGuard.tabs.AppPrivateSearchTab);
       searchTab?.close();
     }
 
@@ -1005,7 +1055,7 @@ export default class Chat extends EventListenerBase<{
     // this.container && this.container.classList.toggle('no-forwards', this.noForwards);
 
     if(!this.excludeParts.sharedMedia) {
-      this.sharedMediaTab = appSidebarRight.createSharedMediaTab();
+      this.sharedMediaTab = hotReloadGuard.appSidebarRight.createSharedMediaTab();
       this.sharedMediaTabs.push(this.sharedMediaTab);
       const linkedMonoforumId = (chat?._ === 'channel' && chat.pFlags?.monoforum && chat.linked_monoforum_id)?.toPeerId?.(true);
       this.sharedMediaTab.setPeer(this.monoforumThreadId || linkedMonoforumId || peerId, threadId);
@@ -1050,6 +1100,7 @@ export default class Chat extends EventListenerBase<{
     }
 
     const samePeer = this.appImManager.isSamePeer(this, options);
+    let takesOverSearchChange = false;
     if(!samePeer) {
       this.appImManager.dispatchEvent('peer_changing', this);
       this.peerIdSignal[1](this.peerId = peerId || NULL_PEER_ID);
@@ -1082,8 +1133,34 @@ export default class Chat extends EventListenerBase<{
       // chat can never be opened again for the lifetime of the tab. Past the deadline, fall through
       // and start a fresh change — `bubbles.setPeer` bumps `setPeerTempId`, which invalidates the
       // abandoned flow.
-      return;
+      //
+      // Going somewhere in the chat (a message, a search) is no duplicate, though: dropped, the next
+      // search result clicked while the last jump still waited for its media went nowhere. It takes
+      // over from a jump on its way the same way; the opening of the chat it waits out, which has
+      // more to finish than the scroll (`finishPeerChange`).
+      const isJump = options.lastMsgId !== undefined || CHAT_SEARCH_KEYS.some((key) => options.hasOwnProperty(key));
+      if(!isJump) {
+        return;
+      }
+
+      if(this.setPeerPromiseOpens) {
+        const jump = this.jumpAfterOpening = options;
+        this.setPeerPromise.then(() => {
+          if(this.jumpAfterOpening !== jump) return;
+          this.jumpAfterOpening = undefined;
+          if(this.appImManager.isSamePeer(this, options)) {
+            this.setPeer(options);
+          }
+        });
+        return;
+      }
+
+      // a jump on its way that was building the list for a new search (a reaction filter, say) hands
+      // that over too: the chat holds the new search already, and its list is still to be built
+      takesOverSearchChange = this.setPeerPromiseChangesSearch;
     }
+
+    this.jumpAfterOpening = undefined;
 
     this.staticMessages = messages || [];
 
@@ -1098,14 +1175,14 @@ export default class Chat extends EventListenerBase<{
       }
 
       callbackify(promise, () => {
-        appSidebarRight.toggleSidebar(false);
+        hotReloadGuard.appSidebarRight.toggleSidebar(false);
         this.cleanup(true);
         this.bubbles.setPeer({peerId, samePeer: false, sameSearch: false});
         this.appImManager.dispatchEvent('peer_changed', this);
 
         if(!this.excludeParts.sharedMedia) {
-          appSidebarRight.replaceSharedMediaTab();
-          this.destroySharedMediaTab();
+          hotReloadGuard.appSidebarRight.replaceSharedMediaTab();
+          this.destroySharedMediaTabs();
           this.sharedMediaTab = undefined;
         }
       });
@@ -1115,7 +1192,7 @@ export default class Chat extends EventListenerBase<{
 
     this.peerChanged = samePeer;
 
-    let sameSearch = true;
+    let sameSearch = !takesOverSearchChange;
     if(!samePeer || CHAT_SEARCH_KEYS.some((key) => options.hasOwnProperty(key))) {
       CHAT_SEARCH_KEYS.forEach((key) => {
         // @ts-ignore
@@ -1148,6 +1225,8 @@ export default class Chat extends EventListenerBase<{
 
     const bubblesSetPeerPromise = this.bubbles.setPeer({...options, samePeer, sameSearch});
     this.setPeerPromiseStartedAt = Date.now();
+    this.setPeerPromiseOpens = !samePeer;
+    this.setPeerPromiseChangesSearch = !sameSearch;
     const setPeerPromise = this.setPeerPromise = bubblesSetPeerPromise.then((result) => {
       return result.promise;
     }).catch(noop).finally(() => {
@@ -1179,13 +1258,19 @@ export default class Chat extends EventListenerBase<{
     });
   }
 
+  /** the current profile and the previous ones kept until it is built (see loadHiddenSharedMedia) */
+  private destroySharedMediaTabs() {
+    this.sharedMediaTabs.slice().forEach((tab) => this.destroySharedMediaTab(tab));
+  }
+
   public destroySharedMediaTab(tab = this.sharedMediaTab) {
     if(!tab) {
       return;
     }
 
     indexOfAndSplice(this.sharedMediaTabs, tab);
-    tab.destroy();
+    // * a returned-to chat's profile may still be filling while this one stands in for it (`replaceSharedMediaTab`)
+    hotReloadGuard.appSidebarRight.destroySharedMediaTab(tab);
   }
 
   public setMessageId(options: Partial<Pick<ChatSetPeerOptions,
@@ -1199,16 +1284,18 @@ export default class Chat extends EventListenerBase<{
     });
   }
 
-  public async finishPeerChange(options: {
-    peerId: PeerId,
-    isTarget?: boolean,
-    isJump?: boolean,
-    lastMsgId?: number,
-    startParam?: string,
-    middleware: () => boolean,
-    text?: string,
-    entities?: MessageEntity[]
-  }) {
+  public async finishPeerChange(options: FinishPeerChangeOptions) {
+    const apply = await this.prepareFinishPeerChange(options, true);
+    apply?.();
+  }
+
+  /**
+   * Gets the chat's parts ready for the new peer and returns what puts them up. The chat on screen stays as it is
+   * until that is called - in the same task as the new bubbles are mounted, so that one style recalc and layout
+   * covers both: a microtask in between let the composer's editor read the selection and lay out the list on its way
+   * out with the parts' changes
+   */
+  public async prepareFinishPeerChange(options: FinishPeerChangeOptions, cleanupNow?: boolean): Promise<() => void> {
     if(this.peerChanged) return;
 
     const peerId = this.peerId;
@@ -1217,44 +1304,80 @@ export default class Chat extends EventListenerBase<{
 
     const {middleware} = options;
 
-    this.cleanup(false);
+    if(cleanupNow) {
+      this.cleanup(false);
+    }
 
     const sharedMediaTab = this.sharedMediaTab;
+    // * a profile on screen is put up with the chat, as one; a hidden one does not hold the opening up and is built
+    // * right after the chat's first frame - the column waits for it if it is opened before that
+    const sharedMediaShown = !!sharedMediaTab && document.body.classList.contains(RIGHT_COLUMN_ACTIVE_CLASSNAME);
 
     const callbacksObj = await namedPromises({
       topbar: this.topbar?.finishPeerChange(options),
       bubbles: this.bubbles?.finishPeerChange(),
       input: this.input?.finishPeerChange(options),
-      sharedMedia: sharedMediaTab?.fillProfileElements(),
+      sharedMedia: sharedMediaShown ? sharedMediaTab.fillProfileElements() : undefined,
       backgrounds: this.handleBackgrounds()
     }, this.log);
 
     const callbacks = Object.values(callbacksObj);
-    sharedMediaTab?.loadSidebarMedia(true);
+    return () => {
+      if(!cleanupNow) {
+        if(!middleware()) {
+          return;
+        }
 
-    if(!middleware()) {
-      return;
-    }
+        this.cleanup(false);
+      }
 
-    callbacks.forEach((callback) => {
-      callback?.();
-    });
+      if(!middleware()) {
+        return;
+      }
 
-    if(sharedMediaTab) {
-      appSidebarRight.replaceSharedMediaTab(sharedMediaTab);
-      this.sharedMediaTabs.filter((tab) => tab !== sharedMediaTab).forEach((tab) => this.destroySharedMediaTab(tab));
-    }
+      callbacks.forEach((callback) => {
+        callback?.();
+      });
 
-    if(this.container) {
-      this.container.dataset.type = this.type === ChatType.Search ? 'chat' : this.type;
-      this.container.classList.toggle('can-click-date', [ChatType.Chat, ChatType.Discussion, ChatType.Saved].includes(this.type));
-    }
+      if(sharedMediaTab) {
+        hotReloadGuard.appSidebarRight.replaceSharedMediaTab(sharedMediaTab);
+        const destroyOthers = () => {
+          this.sharedMediaTabs.filter((tab) => tab !== sharedMediaTab).forEach((tab) => this.destroySharedMediaTab(tab));
+        };
+        if(sharedMediaShown) {
+          // * built with the chat, so its shared media start loading now - also when the column was closed meanwhile:
+          // * nothing else would start them then, not even the column opened again over its history
+          sharedMediaTab.ensureLoaded().catch(noop);
+          destroyOthers();
+        } else {
+          this.loadHiddenSharedMedia(sharedMediaTab, destroyOthers);
+        }
+      }
 
-    this.log.setPrefix('CHAT-' + peerId + '-' + this.type);
+      if(this.container) {
+        this.container.dataset.type = this.type === ChatType.Search ? 'chat' : this.type;
+        this.container.classList.toggle('can-click-date', [ChatType.Chat, ChatType.Discussion, ChatType.Saved].includes(this.type));
+      }
 
-    if(this.isMainChat) {
-      this.appImManager.dispatchEvent('peer_changed', this);
-    }
+      this.log.setPrefix('CHAT-' + peerId + '-' + this.type);
+
+      if(this.isMainChat) {
+        this.appImManager.dispatchEvent('peer_changed', this);
+      }
+    };
+  }
+
+  private loadHiddenSharedMedia(tab: AppSharedMediaTab, onLoaded: () => void) {
+    const middleware = this.middlewareHelper.get();
+    Promise.all([this.setPeerPromise, getHeavyAnimationPromise()])
+    .then(() => doubleRaf())
+    .then(() => {
+      if(!middleware() || this.sharedMediaTab !== tab) return;
+      // * the profiles it replaces go once it listens to the updates itself: the shared media lists they keep are
+      // * common to all of them, and an update in between would be lost to them
+      return tab.ensureLoaded().catch(noop).then(() => middleware() && onLoaded());
+    })
+    .catch(noop);
   }
 
   public getMessage(mid: number | FullMid) {
@@ -1514,7 +1637,7 @@ export default class Chat extends EventListenerBase<{
           pending.abortController.abort();
         }
 
-        showStarsPopup({
+        hotReloadGuard.showStarsPopup({
           itemPrice: count,
           onTopup: () => {
             this.sendReaction(options);
@@ -1694,3 +1817,6 @@ export default class Chat extends EventListenerBase<{
     return true;
   }
 }
+
+// a method edited here takes effect on the open chats, without a reload (see @helpers/hotRegistry)
+if(import.meta.hot) import.meta.hot.accept();
