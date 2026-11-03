@@ -12,6 +12,7 @@ import filterUnique from '@helpers/array/filterUnique';
 import assumeType from '@helpers/assumeType';
 import {EmojiGroup, EmojiList, MessagesEmojiGroups} from '@layer';
 import flatten from '@helpers/array/flatten';
+import forgetFailedRequest from '@helpers/forgetFailedRequest';
 import {EmojiSkinTone, getEmojiSkinToneBase, getEmojiSkinToneVariants} from '@helpers/emojiSkinTone';
 
 type EmojiLangPack = {
@@ -32,6 +33,13 @@ const RECENT_MAX_LENGTH = 32;
 
 type EmojiType = 'native' | 'custom';
 type EmojiGroupType = 'esg' | 'stickers' | 'status' | 'profilePhoto';
+// * the stickers panel has groups of its own, as tdesktop's EmojiStatuses::requestStickerGroups asks for them
+const EMOJI_GROUPS_METHODS: {[type in EmojiGroupType]: 'messages.getEmojiGroups' | 'messages.getEmojiStickerGroups' | 'messages.getEmojiStatusGroups' | 'messages.getEmojiProfilePhotoGroups'} = {
+  esg: 'messages.getEmojiGroups',
+  stickers: 'messages.getEmojiStickerGroups',
+  status: 'messages.getEmojiStatusGroups',
+  profilePhoto: 'messages.getEmojiProfilePhotoGroups'
+};
 
 export class AppEmojiManager extends AppManager {
   private static POPULAR_EMOJI = ['😂', '😘', '❤️', '😍', '😊', '😁', '👍', '☺️', '😔', '😄', '😭', '💋', '😒', '😳', '😜', '🙈', '😉', '😃', '😢', '😝', '😱', '😡', '😏', '😞', '😅', '😚', '🙊', '😌', '😀', '😋', '😆', '👌', '😐', '😕'];
@@ -425,8 +433,8 @@ export class AppEmojiManager extends AppManager {
       });
     };
 
-    return this.emojiGroups[type] ??= this.apiManager.invokeApiSingleProcess({
-      method: type === 'esg' || type === 'stickers' ? 'messages.getEmojiGroups' : (type === 'status' ? 'messages.getEmojiStatusGroups' : 'messages.getEmojiProfilePhotoGroups'),
+    return this.emojiGroups[type] ??= forgetFailedRequest(this.apiManager.invokeApiSingleProcess({
+      method: EMOJI_GROUPS_METHODS[type],
       params: {hash: 0},
       processResult: async(messagesEmojiGroups) => {
         assumeType<MessagesEmojiGroups.messagesEmojiGroups>(messagesEmojiGroups);
@@ -440,7 +448,7 @@ export class AppEmojiManager extends AppManager {
           return {group, document: documents[idx]};
         });
       }
-    });
+    }), () => this.emojiGroups[type], () => this.emojiGroups[type] = undefined);
   }
 
   public searchCustomEmoji(emoticon: string) {

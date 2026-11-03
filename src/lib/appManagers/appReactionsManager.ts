@@ -27,6 +27,7 @@ import forEachReverse from '@helpers/array/forEachReverse';
 import fixEmoji from '@lib/richTextProcessor/fixEmoji';
 import getMessageThreadId from '@appManagers/utils/messages/getMessageThreadId';
 import removeParticipantReactions from '@appManagers/utils/reactions/removeParticipantReactions';
+import forgetFailedRequest from '@helpers/forgetFailedRequest';
 
 const SAVE_DOC_KEYS = [
   'static_icon' as const,
@@ -132,7 +133,11 @@ export class AppReactionsManager extends AppManager {
 
         this.setSavedReactionTags(savedPeerId, tags);
       },
-      updatePaidReactionPrivacy: this.onUpdatePaidReactionPrivacy
+      updatePaidReactionPrivacy: this.onUpdatePaidReactionPrivacy,
+      // * changed elsewhere — cleared on another device: the next picker asks again
+      updateRecentReactions: () => {
+        delete this.reactions.recent;
+      }
     });
 
     this.rootScope.addEventListener('messages_reactions', (arr) => {
@@ -326,6 +331,12 @@ export class AppReactionsManager extends AppManager {
 
   public getRecentReactions() {
     return this.getReactions('recent');
+  }
+
+  /** Forgets the reactions used lately (`messages.clearRecentReactions`), as the reaction picker offers */
+  public clearRecentReactions() {
+    this.reactions.recent = [];
+    return this.apiManager.invokeApi('messages.clearRecentReactions');
   }
 
   public getTagReactions(peerId?: PeerId) {
@@ -1087,7 +1098,7 @@ export class AppReactionsManager extends AppManager {
       this.availableEffects = undefined;
     }
 
-    return this.availableEffects ??= this.apiManager.invokeApiSingleProcess({
+    return this.availableEffects ??= forgetFailedRequest(this.apiManager.invokeApiSingleProcess({
       method: 'messages.getAvailableEffects',
       processResult: (availableEffects) => {
         assumeType<MessagesAvailableEffects.messagesAvailableEffects>(availableEffects);
@@ -1101,7 +1112,7 @@ export class AppReactionsManager extends AppManager {
 
         return this.availableEffects = availableEffects.effects;
       }
-    });
+    }), () => this.availableEffects, () => this.availableEffects = undefined);
   }
 
   public getAvailableEffect(effect: DocId) {

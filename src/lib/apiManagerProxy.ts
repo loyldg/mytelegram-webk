@@ -59,11 +59,12 @@ import {createAppURLForAccount} from '@lib/accounts/createAppURLForAccount';
 import {setAppSettingsSilent} from '@stores/appSettings';
 import {batch} from 'solid-js';
 import createNotificationImage from '@helpers/createNotificationImage';
-import EncryptionKeyStore from '@lib/passcode/keyStore';
+import EncryptionKeyStore, {importEncryptionKey} from '@lib/passcode/keyStore';
 import DeferredIsUsingPasscode from '@lib/passcode/deferredIsUsingPasscode';
 import CacheStorageController, {CacheStorageDbName} from '@lib/files/cacheStorage';
 import type {PushSingleManager} from '@appManagers/pushSingleManager';
 import getDeepProperty from '@helpers/object/getDeepProperty';
+import isObject from '@helpers/object/isObject';
 import {_changeHistoryStorageKey, _deleteHistoryStorage, _iterateHistoryStorages, _useHistoryStorage} from '@stores/historyStorages';
 import {
   reconcileCommunityDialog,
@@ -147,6 +148,8 @@ export type NotificationBuildMessageTaskPayload = {
   fwdCount?: number,
   peerReaction?: MessagePeerReaction,
   peerTypeNotifySettings?: PeerNotifySettings,
+  /** the chat's sound is off: shown without one */
+  noSound?: boolean,
   accountNumber: ActiveAccountNumber,
   isOtherTabActive?: boolean
 };
@@ -401,7 +404,15 @@ class ApiManagerProxy extends MTProtoMessagePort {
           // @ts-ignore
           slicedArray[smth1](...payload.value);
         } else {
-          setHistoryStorage(property as any, payload.value);
+          // * what the worker put there takes the place of what was: a store merges an object into the one before
+          // * it, which would keep what the old had and the new lacks (a keyboard's rows under the force reply after it)
+          batch(() => {
+            if(isObject(historyStorage[property as keyof typeof historyStorage])) {
+              setHistoryStorage(property as any, undefined);
+            }
+
+            setHistoryStorage(property as any, payload.value);
+          });
         }
 
         return false;
@@ -524,8 +535,8 @@ class ApiManagerProxy extends MTProtoMessagePort {
         }
       },
 
-      saveEncryptionKey: (payload) => {
-        EncryptionKeyStore.save(payload);
+      saveEncryptionKey: async(payload) => {
+        EncryptionKeyStore.save(await importEncryptionKey(payload));
       },
 
       toggleLock: (isLocked) => {
@@ -536,9 +547,10 @@ class ApiManagerProxy extends MTProtoMessagePort {
         CacheStorageController.temporarilyToggle(enabled);
       },
 
-      toggleUsingPasscode: (payload) => {
+      toggleUsingPasscode: async(payload) => {
+        const encryptionKey = await importEncryptionKey(payload.encryptionKey);
         DeferredIsUsingPasscode.resolveDeferred(payload.isUsingPasscode);
-        EncryptionKeyStore.save(payload.encryptionKey);
+        EncryptionKeyStore.save(encryptionKey);
       }
 
       // hello: () => {
@@ -850,7 +862,10 @@ class ApiManagerProxy extends MTProtoMessagePort {
   }
 
   private registerServiceWorker() {
-    if(!('serviceWorker' in navigator)) return;
+    if(!('serviceWorker' in navigator)) { // * none in this browser: the worker takes one for online until told otherwise
+      this.invokeVoid('serviceWorkerOnline', false);
+      return;
+    }
 
     if(Modes.noServiceWorker) {
       navigator.serviceWorker.getRegistrations().then(regs => {

@@ -13,6 +13,9 @@ const IMAGE_PROPERTY = '--message-out-gradient-image';
 export const MESSAGE_OUT_GRADIENT_IMAGE_PROPERTY = `${IMAGE_PROPERTY}-0`;
 // * 1 for the freeform gradient: its picture is stretched over the whole frame, not from a column
 const FREEFORM_PROPERTY = '--message-out-gradient-freeform';
+// * whether the theme has a gradient, for what draws it to be laid out (`display`): a piece is a layer of the
+// * compositor's even when it draws nothing
+const DISPLAY_PROPERTY = '--message-out-gradient-display';
 // * the freeform gradient's next phase is drawn by a piece of its own, which comes up over the current one
 const NEXT_DISPLAY_PROPERTY = '--message-out-gradient-next-display';
 // * a bubble of a gradient paints its own colour under its piece of it, in the piece's clip, and not itself: the
@@ -315,6 +318,20 @@ function setClasses(frame: HTMLElement, phase: number, advance?: number) {
   frame.classList.toggle(ADVANCING_CLASS, advance !== undefined);
 }
 
+// * what draws the gradient for a whole chat (`OutgoingGradientUnion`), told of a theme applied: it may give the chat a
+// * gradient or take it away
+const appliedListeners = new Set<VoidFunction>();
+export function subscribeOutgoingMessageGradient(callback: VoidFunction) {
+  appliedListeners.add(callback);
+  return (): void => void appliedListeners.delete(callback);
+}
+
+/** whether the outgoing bubbles where the element is are of a gradient (a read of its computed style) */
+export function hasOutgoingMessageGradient(element: Element) {
+  const image = getComputedStyle(element).getPropertyValue(MESSAGE_OUT_GRADIENT_IMAGE_PROPERTY).trim();
+  return !!image && image !== 'none';
+}
+
 /** the outgoing bubbles' gradient of a theme on the element it is applied on (`themeController`) */
 export function applyOutgoingMessageGradient(element: HTMLElement, gradient: OutgoingMessageGradient | undefined) {
   let background = 'none';
@@ -330,11 +347,13 @@ export function applyOutgoingMessageGradient(element: HTMLElement, gradient: Out
   element.style.setProperty(MESSAGE_OUT_GRADIENT_PROPERTY, background);
   images.forEach((image, index) => element.style.setProperty(`${IMAGE_PROPERTY}-${index}`, image));
   element.style.setProperty(FREEFORM_PROPERTY, gradient?.freeform ? '1' : '0');
+  element.style.setProperty(DISPLAY_PROPERTY, gradient ? 'block' : 'none');
   element.style.setProperty(NEXT_DISPLAY_PROPERTY, gradient?.freeform ? 'block' : 'none');
   // * `initial` is no value, and the bubble's own colour is taken instead
   element.style.setProperty(CONTENT_BACKGROUND_PROPERTY, gradient ? 'transparent' : 'initial');
   element.style.setProperty(UNDER_PROPERTY, gradient ? 'initial' : 'transparent');
   element.style.setProperty(LIGHT_PRIMARY_PROPERTY, gradient ? 'var(--light-message-out-primary-color)' : 'initial');
+  appliedListeners.forEach((callback) => callback());
 }
 
 /**
@@ -412,10 +431,10 @@ export function readOutgoingMessageGradient(content: Element): OutgoingMessageGr
  * states read). The reads are made now; what is returned writes
  */
 export function measureOutgoingMessageGradientHold(elements: HTMLElement[]): VoidFunction | undefined {
-  const held = elements.filter((element) => element.closest('.bubble.is-out'));
+  // * one laid out: a bubble deleted while it moves is not
+  const held = elements.filter((element) => element.offsetParent && element.closest('.bubble.is-out'));
   const frame = held[0]?.closest('.bubbles');
-  const image = frame && getComputedStyle(frame).getPropertyValue(MESSAGE_OUT_GRADIENT_IMAGE_PROPERTY).trim();
-  if(!image || image === 'none') {
+  if(!frame || !hasOutgoingMessageGradient(frame)) {
     return;
   }
 
@@ -438,6 +457,66 @@ export function measureOutgoingMessageGradientHold(elements: HTMLElement[]): Voi
 
 export function holdOutgoingMessageGradient(elements: HTMLElement[]) {
   measureOutgoingMessageGradientHold(elements)?.();
+}
+
+/**
+ * A move of what all the bubbles are in (`container`, by a `translate` along y from `from` to `to`) takes in the pieces
+ * of the gradient in it, the chat's and every bubble's (both phases'), which are then laid out against its padding box, as tall as it is, and a
+ * freeform one as wide: each piece seen on the way is moved from there onto the frame, and back as the container
+ * goes, so that it stays on the frame and the bubbles go through the gradient as they would scrolled there. The reads
+ * are made now, with no transform on the container; what is returned starts the moves, in the container's time
+ */
+export function measureOutgoingMessageGradientCounterMove(container: HTMLElement, from: number, to: number) {
+  const frame = container.closest('.bubbles');
+  const image = frame && getComputedStyle(frame).getPropertyValue(MESSAGE_OUT_GRADIENT_IMAGE_PROPERTY).trim();
+  const {clientWidth: width, clientHeight: height} = container;
+  if(!image || image === 'none' || !height) {
+    return;
+  }
+
+  // * a gradient whose pieces cannot be moved back (no animation of a pseudo-element, an older browser): `null`, so the
+  // * container is not moved at all
+  if(!('pseudoElement' in KeyframeEffect.prototype)) {
+    return null;
+  }
+
+  const frameRect = frame.getBoundingClientRect();
+  const rect = container.getBoundingClientRect();
+  // * scaled from its middle across, from its top down (`message-out-gradient-piece`)
+  const y = frameRect.top - (rect.top + container.clientTop);
+  const scaleY = frameRect.height / height;
+  const freeform = {
+    x: frameRect.left + frameRect.width / 2 - (rect.left + container.clientLeft + width / 2),
+    scaleX: frameRect.width / width
+  };
+  const column = {x: 0, scaleX: 1};
+  const reach = Math.max(Math.abs(from), Math.abs(to));
+  const moves: {element: HTMLElement, pseudoElement: string, across: typeof column}[] = [];
+  // * the chat's piece the bubbles at rest are cut out of (`OutgoingGradientUnion`), and the pieces of those left out
+  container.querySelectorAll<HTMLElement>('.bubbles-gradient, .bubble.is-out .bubble-gradient, .bubble.is-out .bubble-tail').forEach((element) => {
+    // * a transform of its bubble's own has it held there
+    if(element.closest('.is-gradient-held, .is-gesturing-reply, .can-zoom-fade')) {
+      return;
+    }
+
+    const elementRect = element.getBoundingClientRect();
+    if(elementRect.bottom <= frameRect.top - reach || elementRect.top >= frameRect.bottom + reach) {
+      return;
+    }
+
+    for(const pseudoElement of ['::before', '::after']) {
+      const style = getComputedStyle(element, pseudoElement);
+      if(style.position === 'fixed' && style.display !== 'none') {
+        // * a column a pixel wide stretched across any width, or a freeform picture as wide as the frame
+        moves.push({element, pseudoElement, across: parseFloat(style.width) > 1 ? freeform : column});
+      }
+    }
+  });
+
+  return (options: KeyframeAnimationOptions) => moves.map(({element, pseudoElement, across: {x, scaleX}}) => element.animate([
+    {translate: `${x}px ${y - from}px`, scale: `${scaleX} ${scaleY}`},
+    {translate: `${x}px ${y - to}px`, scale: `${scaleX} ${scaleY}`}
+  ], {...options, pseudoElement}));
 }
 
 // * a move with no class of its own to be told by (a change's): the elements are marked while any of theirs lasts

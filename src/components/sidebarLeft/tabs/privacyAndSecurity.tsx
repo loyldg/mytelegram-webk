@@ -13,6 +13,7 @@ import getPrivacyRulesDetails from '@appManagers/utils/privacy/getPrivacyRulesDe
 import PrivacyType from '@appManagers/utils/privacy/privacyType';
 import confirmationPopup, {PopupConfirmationOptions} from '@components/confirmationPopup';
 import noop from '@helpers/noop';
+import createOptimisticSave from '@helpers/createOptimisticSave';
 import {toastNew} from '@components/toast';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import Icon from '@components/icon';
@@ -25,6 +26,7 @@ import {wrapEmailPattern} from '@components/emailVerification';
 import IS_WEB_AUTHN_SUPPORTED from '@environment/webAuthn';
 import showPasskeyPopup from '@components/popups/passkey';
 import {findExistingOrCreateCustomOption} from '@components/sidebarLeft/tabs/autoDeleteMessages/options';
+import InactivityPeriodRow, {ACCOUNT_TTL_OPTIONS} from '@components/sidebarLeft/tabs/inactivityPeriodRow';
 import {useSuperTab} from '@components/solidJsTabs/superTabProvider';
 import {usePromiseCollector} from '@components/solidJsTabs/promiseCollector';
 import type {AppPrivacyAndSecurityTab} from '@components/solidJsTabs/tabs';
@@ -32,6 +34,7 @@ import Row from '@components/rowTsx';
 import {renderComponent} from '@helpers/solid/renderComponent';
 import type {AppPrivacyLastSeenTab} from '@components/solidJsTabs/tabs';
 import {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import toastError from '@components/toastError';
 
 const PrivacyAndSecurity: Component = () => {
   const [tab] = useSuperTab<typeof AppPrivacyAndSecurityTab>();
@@ -50,6 +53,20 @@ const PrivacyAndSecurity: Component = () => {
   const [privacyCaption, setPrivacyCaption] = createSignal<LangPackKey>();
   const [newChatsHidden, setNewChatsHidden] = createSignal(false);
   const [sensitiveHidden, setSensitiveHidden] = createSignal(true);
+  // * undefined while the server has not said: the switch offers nothing until it does (the next open)
+  const topPeersSignal = createSignal<boolean>();
+  // * 0 until `account.getAccountTTL` answers — the screen does not wait for it
+  const accountTTLSignal = createSignal(0);
+
+  // * the manager sends the flips in turn; one refused with none behind it puts back what the server holds
+  const saveTopPeers = createOptimisticSave((enabled: boolean) => {
+    return tab.managers.appUsersManager.toggleTopPeers(enabled);
+  }, (enabled) => {
+    topPeersSignal[1](enabled);
+    toastNew({langPackKey: 'Error.AnError'});
+  }, () => tab.managers.appUsersManager.isTopPeersEnabled());
+  // * the switch has already moved: it showed the other value before
+  const onTopPeersChange = (enabled: boolean) => saveTopPeers(enabled, !enabled);
 
   const onClearClick = () => {
     const options: PopupConfirmationOptions = {
@@ -75,11 +92,12 @@ const PrivacyAndSecurity: Component = () => {
           return;
         }
 
-        toggle();
         toastNew({
           langPackKey: info && payment ? 'PrivacyPaymentsPaymentShippingCleared' : (info ? 'PrivacyPaymentsShippingInfoCleared' : 'PrivacyPaymentsPaymentInfoCleared')
         });
-      });
+      }, (err: ApiError) => {
+        toastError(err, 'clear saved info error');
+      }).finally(toggle);
     }, noop);
   };
 
@@ -89,9 +107,9 @@ const PrivacyAndSecurity: Component = () => {
         langKey: 'Delete',
         callback: () => {
           const toggle = toggleDisability([deleteButton], true);
-          tab.managers.appDraftsManager.clearAllDrafts().then(() => {
-            toggle();
-          });
+          tab.managers.appDraftsManager.clearAllDrafts().catch((err: ApiError) => {
+            toastError(err, 'clear drafts error');
+          }).finally(toggle);
         },
         isDanger: true
       }],
@@ -594,6 +612,10 @@ const PrivacyAndSecurity: Component = () => {
         }
       }
 
+      // * read off the people list the search keeps warm, so the switch opens in its place
+      promises.push(tab.managers.appUsersManager.isTopPeersEnabled().then(topPeersSignal[1], noop));
+      tab.managers.appAccountManager.getAccountTTL().then(accountTTLSignal[1], noop);
+
       await Promise.all(promises);
     };
 
@@ -640,6 +662,28 @@ const PrivacyAndSecurity: Component = () => {
           icon="delete"
           text="PrivacyDeleteCloudDrafts"
           onClick={onDeleteClick}
+        />
+      </Section>
+      <Section name="Contacts" caption="SuggestContactsInfo">
+        <Row>
+          <Row.CheckboxFieldToggle>
+            <CheckboxFieldTsx
+              signal={topPeersSignal}
+              toggle
+              disabled={topPeersSignal[0]() === undefined}
+              onChange={onTopPeersChange}
+            />
+          </Row.CheckboxFieldToggle>
+          <Row.Title>{i18n('SuggestContacts')}</Row.Title>
+        </Row>
+      </Section>
+      <Section name="DeleteAccountTitle" caption="DeleteAccountHelp">
+        <InactivityPeriodRow
+          title="DeleteAccountIfAwayFor2"
+          options={ACCOUNT_TTL_OPTIONS}
+          days={accountTTLSignal}
+          save={(days) => tab.managers.appAccountManager.setAccountTTL(days)}
+          reload={() => tab.managers.appAccountManager.getAccountTTL()}
         />
       </Section>
     </>

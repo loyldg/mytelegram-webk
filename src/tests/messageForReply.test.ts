@@ -1,9 +1,10 @@
-import type {DraftMessage, Message, MessageMedia, PageBlock, RichMessage, RichText} from '@layer';
+import type {Message, MessageMedia, PageBlock, RichMessage, RichText} from '@layer';
 import getMessagePreviewIcon, {
   getTodoItemReplyPreview,
   MESSAGE_PREVIEW_ICON_FALLBACKS
 } from '@components/wrappers/messagePreviewIcon';
 import getMessageForReplyContent from '@components/wrappers/messageForReplyContent';
+import {draftMessage} from '@/tests/helpers/drafts';
 
 const text = (value: string): RichText => ({_: 'textPlain', text: value});
 
@@ -27,16 +28,6 @@ function message(overrides: Partial<Message.message> = {}): Message.message {
     message: '',
     ...overrides
   } as Message.message;
-}
-
-function draft(overrides: Partial<DraftMessage.draftMessage> = {}): DraftMessage.draftMessage {
-  return {
-    _: 'draftMessage',
-    pFlags: {},
-    date: 1,
-    message: '',
-    ...overrides
-  };
 }
 
 describe('getMessageForReplyContent', () => {
@@ -84,7 +75,7 @@ describe('getMessageForReplyContent', () => {
   });
 
   it('uses the structured rich summary for a draft with empty legacy text', () => {
-    const result = getMessageForReplyContent(draft({
+    const result = getMessageForReplyContent(draftMessage({
       rich_message: richMessage([
         {_: 'pageBlockHeading1', text: text('Draft title')},
         {_: 'pageBlockParagraph', text: text('Draft body')}
@@ -116,6 +107,19 @@ describe('getMessagePreviewIcon', () => {
     } as any, 'document']
   ])('classifies %s previews', (_name, media, expected) => {
     expect(getMessagePreviewIcon(message({media}))).toBe(expected);
+  });
+
+  it('marks a Gram transfer with the gem, not with a gift', () => {
+    const transfer = {
+      _: 'messageService',
+      pFlags: {},
+      id: 1,
+      peer_id: {_: 'peerUser', user_id: 1},
+      date: 1,
+      action: {_: 'messageActionGramTransfer', pFlags: {}, amount: '1500000000', peer_address: '', transaction_id: ''}
+    } as Message.messageService;
+
+    expect(getMessagePreviewIcon(transfer)).toBe('gram_filled');
   });
 
   it('classifies call service messages', () => {

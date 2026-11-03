@@ -38,6 +38,7 @@ import callbackify from '@helpers/callbackify';
 import confirmationPopup from '@components/confirmationPopup';
 import noop from '@helpers/noop';
 import clearHistoryWithConfirmation from '@components/clearHistory';
+import {isWalletAvailable, isWalletReleased} from '@lib/wallet/release';
 import blockUserWithConfirmation, {unblockUser} from '@components/blockUser';
 import shareContact, {canShareContact} from '@components/shareContact';
 import addContact from '@components/addContact';
@@ -632,6 +633,24 @@ export default class ChatTopbar {
         this.chat.isChannel || (this.chat.peerId.isUser() && !this.chat.isBot && (await this.managers.appUsersManager.isRegularUser(this.peerId)))
       ) && !(this.chat.type === ChatType.Logs)
     }, {
+      icon: 'wallet',
+      text: 'Wallet.SendMoney',
+      onClick: () => {
+        const peerId = this.peerId;
+        import('@components/wallet').then(({default: showWalletPopup}) => {
+          showWalletPopup({send: {userId: peerId.toUserId()}, fromChat: true});
+        });
+      },
+      verify: async() => (
+        isWalletReleased() &&
+        this.chat.peerId.isUser() &&
+        !this.chat.isBot &&
+        rootScope.myId !== this.peerId &&
+        this.chat.type !== ChatType.Logs &&
+        (await this.managers.appUsersManager.isRegularUser(this.peerId)) &&
+        isWalletAvailable(await apiManagerProxy.getAppConfig())
+      )
+    }, {
       icon: 'message',
       text: 'ChannelDirectMessages.Manage',
       onClick: () => this.onDirectMessagesClick(),
@@ -1133,7 +1152,8 @@ export default class ChatTopbar {
   };
 
   private onMuteClick = () => {
-    showMutePopup(this.peerId);
+    // * the topic's, as the menu item's own check and Unmute read it
+    showMutePopup(this.peerId, this.chat.threadId);
   };
 
   private onUnmuteClick = () => {

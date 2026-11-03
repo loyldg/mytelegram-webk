@@ -115,6 +115,7 @@ import callbackifyAll from '@helpers/callbackifyAll';
 import {createBotforumTopicFromAction} from '@appManagers/utils/dialogs/createBotforumTopicFromAction';
 import {AttachedMedia, CreatePollPayload} from '@components/popups/createPoll/storeContext';
 import StreamedMessageDrafts, {StreamedMessageDraft, StreamedMessageDraftContent, StreamedMessageDraftRemovalReason, StreamedMessageDraftScope, StreamedMessageStopScope, getStreamedMessageContentMatchText} from '@appManagers/utils/messages/streamedMessageDrafts';
+import GramTransferDrafts, {GramTransferDraftContent, WALLET_FIRST_GRAMS_SUGGESTION} from '@lib/wallet/transferMessages';
 
 // console.trace('include');
 // TODO: если удалить диалог находясь в папке, то он не удалится из папки и будет виден в настройках
@@ -134,6 +135,10 @@ const EPHEMERAL_REPLY_RESOLVE_DELAY = 2e3;
 const EPHEMERAL_RETRY_KEEP_DURATION = 15 * 60e3;
 const EPHEMERAL_RETRY_MAX_COUNT = 20;
 const STREAMED_MESSAGE_DRAFT_TTL = 30_000;
+// * messages.reportMessagesDelivery: the messages saved meanwhile go in one request per chat, of at most
+// * as many ids as tdesktop sends (data_histories.cpp, kReportDeliveriesPerRequest)
+const DELIVERY_REPORT_DELAY = 100;
+const DELIVERY_REPORTS_PER_REQUEST = 50;
 
 export const SUGGESTED_POST_MIN_THRESHOLD_SECONDS = 60; // avoid last minute suggests, or if the user was thinking a lot before clicking send
 
@@ -282,6 +287,7 @@ export type MyInputMessagesFilter = 'inputMessagesFilterEmpty'
   | 'inputMessagesFilterRoundVoice'
   | 'inputMessagesFilterRoundVideo'
   | 'inputMessagesFilterMusic'
+  | 'inputMessagesFilterGif'
   | 'inputMessagesFilterUrl'
   | 'inputMessagesFilterMyMentions'
   | 'inputMessagesFilterChatPhotos'
@@ -364,6 +370,13 @@ type RichMessageChecklistEdit = {
   flushPending?: boolean
 };
 
+// * a tick of a to-do list, with the completion it shows (none for an untick)
+type TodoToggle = {
+  taskId: number,
+  action: 'complete' | 'uncomplete',
+  completion?: TodoCompletion
+};
+
 export type MessageSendingParams = Partial<{
   peerId: PeerId,
   threadId: number,
@@ -400,7 +413,9 @@ export type MessageForwardParams = MessageSendingParams & {
   dropCaptions: boolean,
   /** layer 229: `mids` are ephemeral messages, forwarded by their ephemeral ids. INNER USE ONLY */
   fromEphemeral: boolean,
-  allowDropRichAuthor: boolean
+  allowDropRichAuthor: boolean,
+  /** the second a forwarded video starts at for whoever gets it ("Share at 0:42") */
+  videoTimestamp: number
 }>;
 
 export type RequestHistoryOptions = {
@@ -557,7 +572,8 @@ type SendFileArgs = MessageSendingParams & SendFileDetails & Partial<{
 
   stars: number,
   groupedMessage: Message.message,
-  useTempMediaId: boolean,
+  // * the id a paid album's file keeps its media under until it is sent: the album's ids follow each other
+  mediaTempId: number,
 
   // ! only for internal use
   processAfter?: typeof processAfter
@@ -567,7 +583,6 @@ type MakeDocumentAndMetaForSendingFileArgs = Pick<SendFileArgs,
   | 'file'
   | 'strippedBytes'
   | 'entities'
-  | 'useTempMediaId'
   | 'isVoiceMessage'
   | 'width'
   | 'height'
@@ -669,6 +684,8 @@ export class AppMessagesManager extends AppManager {
   private messagesStorageByPeerId: {[peerId: string]: MessagesStorage};
   private groupedMessagesStorage: {[groupId: string]: MessagesStorage}; // will be used for albums
   private scheduledMessagesStorage: {[peerId: PeerId]: MessagesStorage};
+  /** the scheduled storages the server's whole list came into: one a send filled first holds only that message */
+  private scheduledMessagesLoaded = new WeakSet<MessagesStorage>();
   private welcomeMessagesStorage: {[peerId: PeerId]: MessagesStorage};
   private welcomeMessagesHashes: Map<PeerId, Long>;
   private logsMessagesStorage: {[peerId: PeerId]: MessagesStorage}; // messages extracted from admin logs
@@ -738,6 +755,9 @@ export class AppMessagesManager extends AppManager {
   private channelAvailableMinIdRequestGenerations: Map<PeerId, number> = new Map();
   private channelAvailableMinIdsEpoch = 0;
   private richMessageChecklistEdits: Map<string, RichMessageChecklistEdit> = new Map();
+  // * by `${peerId}:${mid}` of a to-do list with ticks not answered yet: the completion the server has of each
+  // * task they touch (none if not completed), which a refused tick goes back to
+  private todoChecklistBases: Map<string, Map<number, TodoCompletion>> = new Map();
 
   private deletedMessages: Set<string> = new Set();
   private missingMessages: Set<string> = new Set();
@@ -795,9 +815,21 @@ export class AppMessagesManager extends AppManager {
   private historyMaxIdSubscribed: Map<HistoryStorageKey, number> = new Map();
 
   private factCheckBatcher: Batcher<PeerId, number, FactCheck>;
-  private checklistBatcher: Batcher<string, {taskId: number, oldItem?: TodoCompletion, action: 'complete' | 'uncomplete'}, void>;
+  // * `${peerId}_${mid}` of every message whose delivery has been reported, so that it is reported once
+  private reportedDeliveries: Set<string> = new Set();
+  // * the messages of each chat waiting for their report, and the chats whose report is on its way: a chat
+  // * sends one at a time, and one that hangs holds up no other (tdesktop's `_pendingDeliveryReport`,
+  // * `_deliveryReportSent`)
+  private pendingDeliveryReports: Map<PeerId, Set<number>> = new Map();
+  private deliveryReportsSending: Set<PeerId> = new Set();
+  private deliveryReportsTimeout: number;
+  private checklistBatcher: Batcher<string, TodoToggle, void>;
 
   private waitingTranscriptions: Map<string, CancellablePromise<MessagesTranscribedAudio>>;
+  // * the finished transcription of a voice or round message by `${peerId}_${mid}`, which is what is
+  // * rated (desktop's `Transcribes::_ids`), and the ones rated already, never asked about again
+  private transcriptionIds: Map<string, MessagesTranscribedAudio['transcription_id']>;
+  private ratedTranscriptionIds: Set<string> = new Set();
   private paidMessagesQueue = new PaidMessagesQueue;
 
   public repayRequestHandler: RepayRequestHandler;
@@ -806,6 +838,8 @@ export class AppMessagesManager extends AppManager {
   private streamedMessageStoppableScopes = new Set<string>();
   private streamedMessageDraftTtl = STREAMED_MESSAGE_DRAFT_TTL;
   private streamedMessageDraftTimeout: number;
+
+  private gramTransferDrafts = new GramTransferDrafts();
 
   private pendingEditingMessages: Map<number, {
     canceled?: boolean;
@@ -1037,11 +1071,7 @@ export class AppMessagesManager extends AppManager {
       processBatch: this.processFactCheckBatch
     });
 
-    this.checklistBatcher = new Batcher({
-      delay: 500,
-      debounce: true,
-      processBatch: this.processChecklistBatch
-    });
+    this.checklistBatcher = this.createChecklistBatcher();
 
     return this.appStateManager.getState().then((state) => {
       if(state.maxSeenMsgId) {
@@ -1052,6 +1082,7 @@ export class AppMessagesManager extends AppManager {
 
   public clear = (init?: boolean) => {
     this.clearStreamedMessageDrafts(init);
+    this.gramTransferDrafts.clear();
 
     if(this.middleware) {
       this.middleware.clean();
@@ -1076,6 +1107,7 @@ export class AppMessagesManager extends AppManager {
     this.threadsToReplies = {};
     this.references = {};
     this.waitingTranscriptions = new Map();
+    this.transcriptionIds = new Map();
     this.pendingNewBotforumTopics = {};
     this.pendingEditingMessages = new Map();
     this.ephemeralMidsByPeerId = new Map();
@@ -1092,6 +1124,8 @@ export class AppMessagesManager extends AppManager {
     }
     this.richMessages.clear();
     this.richMessageRefreshes.clear();
+    this.reportedDeliveries.clear();
+    this.pendingDeliveryReports.clear();
     this.channelAvailableMinIds.clear();
     this.channelAvailableMinIdGenerations.clear();
     this.channelAvailableMinIdRequestGenerations.clear();
@@ -1103,6 +1137,7 @@ export class AppMessagesManager extends AppManager {
       if(state.timer) clearTimeout(state.timer);
     });
     this.richMessageChecklistEdits.clear();
+    this.todoChecklistBases.clear();
 
     if(!init) {
       this.appProfileManager.clearBotCommands();
@@ -3092,7 +3127,7 @@ export class AppMessagesManager extends AppManager {
         this.waitingTranscriptions.set(key, promise = deferredPromise());
         promise.finally(() => {
           this.waitingTranscriptions.delete(key);
-        });
+        }).catch(noop);
       }
     }
 
@@ -3117,7 +3152,34 @@ export class AppMessagesManager extends AppManager {
       }
     });
 
+    if(promise) {
+      // * the update ends the wait; a request that fails without one (a flood wait, the network) ends it too
+      ret.catch((error) => promise.reject(error));
+    }
+
     return promise || ret;
+  }
+
+  /** Whether the message's transcription is finished and not rated yet (desktop's `HasRateTranscribeItem`) */
+  public canRateTranscription(peerId: PeerId, mid: number) {
+    const transcriptionId = this.transcriptionIds.get(`${peerId}_${mid}`);
+    return !!transcriptionId && !this.ratedTranscriptionIds.has('' + transcriptionId);
+  }
+
+  /** Rates the message's transcription once: the session does not ask about it again */
+  public rateTranscribedAudio(peerId: PeerId, mid: number, good: boolean) {
+    const transcriptionId = this.transcriptionIds.get(`${peerId}_${mid}`);
+    if(!this.canRateTranscription(peerId, mid)) {
+      return Promise.resolve(false);
+    }
+
+    this.ratedTranscriptionIds.add('' + transcriptionId);
+    return this.apiManager.invokeApi('messages.rateTranscribedAudio', {
+      peer: this.appPeersManager.getInputPeerById(peerId),
+      msg_id: getServerMessageId(mid),
+      transcription_id: transcriptionId,
+      good
+    });
   }
 
   private getCommonThingsForSending() {
@@ -3144,7 +3206,9 @@ export class AppMessagesManager extends AppManager {
         largeMedia: boolean,
         smallMedia: boolean,
         optional: boolean
-      }>
+      }>,
+      // * a part of a longer text: text whatever it holds (a part that is a die alone is not sent as one)
+      splitPart: boolean
     }>
   ): Promise<void> {
     let {peerId, text} = options;
@@ -3220,6 +3284,7 @@ export class AppMessagesManager extends AppManager {
     // * a custom emoji whose emoticon is a die is sent as itself, as in tdesktop
     if(
       !richMessage &&
+      !options.splitPart &&
       appConfig.emojies_send_dice?.includes(text.trim()) &&
       !options.entities.some((entity) => entity._ === 'messageEntityCustomEmoji')
     ) {
@@ -3247,6 +3312,8 @@ export class AppMessagesManager extends AppManager {
     let entities = splitted.length > 1 && originalEntities?.length ?
       sliceMessageEntities(originalEntities, 0, text.length) :
       originalEntities;
+    // * the part's own entities as they come, to send it again with: parseMarkdown moves the ones it is given
+    const partEntities = copy(entities);
     if(!options.viaBotId && !richMessage) {
       [text, entities] = parseMarkdown(text, entities);
     }
@@ -3288,6 +3355,8 @@ export class AppMessagesManager extends AppManager {
           query_id: options.queryId,
           id: options.resultId,
           clear_draft: options.clearDraft,
+          schedule_date: options.scheduleDate || undefined,
+          silent: options.silent,
           send_as: sendAs,
           allow_paid_stars: paidStars
         }, sentRequestOptions);
@@ -3395,7 +3464,14 @@ export class AppMessagesManager extends AppManager {
           messageCount: 1,
           repayCallback: (override) => {
             this.cancelPendingMessage(message.random_id);
-            this.sendText({...options, ...override})
+            // * this part alone: the parts after it are sent again by their own requests
+            this.sendText({
+              ...options,
+              text: splitted[0],
+              entities: partEntities,
+              splitPart: options.splitPart || splitted.length > 1,
+              ...override
+            })
           },
           paidStars,
           wereStarsReserved: options.confirmedPaymentResult?.canUndo
@@ -3425,6 +3501,7 @@ export class AppMessagesManager extends AppManager {
       promises.push(this.sendText({
         ...options,
         peerId,
+        splitPart: true,
         text: splitted[i],
         entities: originalEntities?.length ? sliceMessageEntities(originalEntities, partOffset, splitted[i].length) : undefined
       }));
@@ -3502,7 +3579,7 @@ export class AppMessagesManager extends AppManager {
       [caption, entities] = parseMarkdown(caption, entities);
     }
 
-    const mediaTempId = options.useTempMediaId ? this.mediaTempId++ : message.id;
+    const mediaTempId = options.mediaTempId ?? message.id;
 
     const documentAndMeta = this.makeDocumentAndMetaForSendingFile({
       mediaTempId,
@@ -3511,7 +3588,6 @@ export class AppMessagesManager extends AppManager {
       entities,
       ...pickKeys(options, [
         'strippedBytes',
-        'useTempMediaId',
         'isVoiceMessage',
         'width',
         'height',
@@ -4234,10 +4310,18 @@ export class AppMessagesManager extends AppManager {
       callbacks.push(cb);
     };
 
-    let firstMessage: Message.message;
+    let firstResult: ReturnType<AppMessagesManager['sendFile']>;
     const isSingleMessageForAlbum = !!options.stars;
     const preserveMediaTempId = this.mediaTempId;
+    if(isSingleMessageForAlbum) {
+      // * the files reserve their ids at once: finalizing the album reads them as following each other
+      this.mediaTempId += options.sendFileDetails.length;
+    }
+
     const _results = options.sendFileDetails.map(async(details, idx) => {
+      // * a paid album is one message, made by the first file: the others are its media and go into it,
+      // * so they wait for it (sendFile awaits before it makes a message)
+      const groupedMessage = isSingleMessageForAlbum && idx ? (await firstResult).message : undefined;
       const o: Parameters<AppMessagesManager['sendFile']>[0] = {
         peerId,
         isGroupedItem: true,
@@ -4250,8 +4334,8 @@ export class AppMessagesManager extends AppManager {
         replyToQuote: options.replyToQuote,
         threadId: options.threadId,
         sendAsPeerId: options.sendAsPeerId,
-        useTempMediaId: isSingleMessageForAlbum,
-        groupedMessage: isSingleMessageForAlbum && firstMessage,
+        mediaTempId: isSingleMessageForAlbum ? preserveMediaTempId + idx : undefined,
+        groupedMessage,
         groupId,
         stars: options.stars,
         processAfter,
@@ -4264,11 +4348,14 @@ export class AppMessagesManager extends AppManager {
         o.effect = options.effect;
       }
 
-      const result = await this.sendFile(o);
-
+      const promise = this.sendFile(o);
       if(idx === 0) {
-        firstMessage = result.message;
-        firstMessage.paid_message_stars = options.confirmedPaymentResult?.starsAmount;
+        firstResult = promise;
+      }
+
+      const result = await promise;
+      if(idx === 0) {
+        result.message.paid_message_stars = options.confirmedPaymentResult?.starsAmount;
       }
 
       return result;
@@ -4464,6 +4551,9 @@ export class AppMessagesManager extends AppManager {
 
     return Promise.all(promises).then((inputs) => {
       inputs = inputs.filter(Boolean);
+      if(!inputs.length) {
+        return;
+      }
 
       if(options.stars) {
         const spliced = inputs.splice(1, Infinity);
@@ -4485,6 +4575,12 @@ export class AppMessagesManager extends AppManager {
         return;
       }
       return invoke(inputs);
+    }, (error) => {
+      // * the album goes whole or not at all (its bubble pairs the sent files with its items by their order):
+      // * a file that cannot be sent leaves the others unsent too, failed with it, so they can be deleted
+      // * instead of waiting for good
+      results.forEach(({message}) => message.error || toggleError(message, error));
+      throw error;
     });
   }
 
@@ -4514,7 +4610,12 @@ export class AppMessagesManager extends AppManager {
     peerId = this.appPeersManager.getPeerMigratedTo(peerId) || peerId;
     options.peerId = peerId;
 
-    const noOutgoingMessage = /* inputMedia?._ === 'inputMediaPhotoExternal' ||  */inputMedia?._ === 'inputMediaDocumentExternal';
+    // * a game shared by its short name has no `Game` here to draw before the server answers - the
+    // * message comes with the update, as tdesktop and Android show it; so does an inline result with no media of its
+    // * own to draw (a text with a link preview, a rich message), which the server makes from the result
+    const noOutgoingMessage = /* inputMedia?._ === 'inputMediaPhotoExternal' ||  */inputMedia?._ === 'inputMediaDocumentExternal' ||
+      inputMedia?._ === 'inputMediaGame' ||
+      (!inputMedia && !!options.viaBotId);
     const ephemeralContext = options.forceOrdinary ?
       options.ephemeral ? {drop: true} as EphemeralSendContext : undefined :
       this.getEphemeralSendContext(
@@ -4564,7 +4665,7 @@ export class AppMessagesManager extends AppManager {
     const message = this.generateOutgoingMessage(peerId, options);
 
     let media: MessageMedia;
-    switch(inputMedia._) {
+    switch(inputMedia?._) {
       case 'inputMediaPoll': {
         // const pollId = '' + message.id;
         const pollId = randomLong();
@@ -5614,6 +5715,107 @@ export class AppMessagesManager extends AppManager {
     return false;
   }
 
+  // MARK: Gram transfer drafts
+
+  /**
+   * Shows a Gram transfer in the recipient's chat while it is out (tdesktop: TransferMessages::create): a local
+   * service message made the moment `wallet.sendTransfer` is invoked with `randomId`, which the served message
+   * replaces like any sent one (`message_sent`). Nothing here sends it — the wallet does. Returns its temporary id.
+   */
+  public createGramTransferDraft(options: GramTransferDraftContent & {peerId: PeerId, randomId: string}) {
+    const {peerId, randomId} = options;
+    if(this.pendingByRandomId[randomId]) {
+      return;
+    }
+
+    // * the newest server id the chat holds; a temporary id is the server id it follows plus a fraction
+    const floor = Math.floor(Math.max(this.getDialogOnly(peerId)?.top_message || 0, this.historiesStorage[peerId]?.maxId || 0));
+    const comment = options.comment || undefined;
+    const commentEncrypted = !!comment && !!options.commentEncrypted;
+    const message: Message.messageService = {
+      _: 'messageService',
+      id: this.generateTempMessageId(peerId),
+      pFlags: {...this.generateFlags(peerId), out: true},
+      from_id: this.generateFromId(peerId),
+      peer_id: this.appPeersManager.getOutputPeer(peerId),
+      saved_peer_id: peerId === this.appPeersManager.peerId ? this.appPeersManager.getOutputPeer(peerId) : undefined,
+      date: this.timeManager.getServerTime(),
+      action: {
+        _: 'messageActionGramTransfer',
+        pFlags: commentEncrypted ? {comment_encrypted: true} : {},
+        amount: options.amount,
+        peer_address: options.address,
+        // * only the server assigns it
+        transaction_id: '',
+        comment
+      },
+      random_id: randomId,
+      pending: true
+    };
+
+    this.gramTransferDrafts.add({
+      randomId,
+      peerId,
+      floor,
+      amount: options.amount,
+      address: options.address,
+      comment,
+      commentEncrypted
+    });
+    // * the history path reads nothing a service message lacks, and with no `send` nothing is sent
+    this.beforeMessageSending(message as MyMessage as Message.message);
+    return message.mid;
+  }
+
+  /**
+   * The transfer did not go out: the draft shows as failed, `error.type` saying why. Its random id stays, so a
+   * served message that comes after all still replaces it.
+   */
+  public failGramTransferDraft(randomId: string, reason: ErrorType) {
+    const message = this.gramTransferDrafts.forget(randomId) && this.getSendingGramTransferDraft(randomId);
+    if(!message) {
+      return false;
+    }
+
+    this.onMessagesSendError([message as MyMessage as Message.message], makeError(reason));
+    this.rootScope.dispatchEvent('messages_pending');
+    return true;
+  }
+
+  /** The transfer was called off before anyone could tell how it went: the draft leaves the chat. */
+  public dropGramTransferDraft(randomId: string) {
+    const message = this.gramTransferDrafts.forget(randomId) && this.getSendingGramTransferDraft(randomId);
+    return !!message && this.cancelPendingMessage(randomId);
+  }
+
+  /** the draft's message while it is still sending: not failed, not replaced, not deleted */
+  private getSendingGramTransferDraft(randomId: string) {
+    const pending = this.pendingByRandomId[randomId];
+    const message = pending && this.getMessageFromStorage(pending.storage, pending.tempId);
+    if(message?.pFlags.is_outgoing && !message.error) {
+      return message;
+    }
+  }
+
+  /** A served transfer no `updateMessageID` claimed takes a draft by content: the random id to finalize it with. */
+  private adoptGramTransferDraft(message: MyMessage) {
+    if(message._ !== 'messageService' || !this.gramTransferDrafts.size) {
+      return;
+    }
+
+    const peerId = message.peerId;
+    const draft = this.gramTransferDrafts.adopt({
+      peerId,
+      mid: message.mid,
+      out: !!message.pFlags.out,
+      action: message.action,
+      held: !!this.getHistoryStorage(peerId).history.findSlice(message.mid),
+      isSending: (draft) => !!this.getSendingGramTransferDraft(draft.randomId)
+    });
+
+    return draft?.randomId;
+  }
+
   /* public async refreshConversations() {
     const limit = 200, outDialogs: Dialog[] = [];
     for(let folderId = 0; folderId < 2; ++folderId) {
@@ -5776,6 +5978,8 @@ export class AppMessagesManager extends AppManager {
     const cutoffGeneration = filterType === FilterType.Saved ?
       undefined :
       this.getChannelAvailableMinIdGeneration();
+    // * read before the request: the dialogs' notification settings are older than what changed since
+    const settingsAskedAt = this.appNotificationsManager.getSettingsClock();
 
     const processResult = (result: MessagesDialogs | MessagesForumTopics | MessagesSavedDialogs) => {
       if(!middleware()) {
@@ -5840,7 +6044,8 @@ export class AppMessagesManager extends AppManager {
           shouldResetPinnedOrder && folderId === FOLDER_ID_ALL ? (order) => {
             log('seeding pinned order', folderId, order);
             this.dialogsStorage.handleDialogsPinned(folderId, order);
-          } : undefined
+          } : undefined,
+          settingsAskedAt
         );
       }
 
@@ -5856,7 +6061,8 @@ export class AppMessagesManager extends AppManager {
         this.dialogsStorage.saveDialog({
           dialog,
           ignoreOffsetDate: !isSearch,
-          saveGlobalOffset
+          saveGlobalOffset,
+          settingsAskedAt
         });
 
         if(dialog.peerId === undefined) {
@@ -6256,6 +6462,7 @@ export class AppMessagesManager extends AppManager {
       drop_media_captions: dropCaptions || undefined,
       send_as: options.sendAsPeerId ? this.appPeersManager.getInputPeerById(options.sendAsPeerId) : undefined,
       top_msg_id: options.threadId ? this.appMessagesIdsManager.generateMessageId(options.threadId) : undefined,
+      video_timestamp: options.videoTimestamp,
       allow_paid_stars: paidStars,
       reply_to: this.getInputReplyTo({
         peerId,
@@ -6908,6 +7115,7 @@ export class AppMessagesManager extends AppManager {
             [...cutoffGenerations].some(([peerId, generation]) => (
               generation !== this.getChannelAvailableMinIdGeneration(peerId)
             ));
+          const settingsAskedAt = this.appNotificationsManager.getSettingsClock();
           const result = await this.apiManager.invokeApi(
             'messages.getPeerDialogs',
             {peers: inputDialogPeers},
@@ -6936,7 +7144,7 @@ export class AppMessagesManager extends AppManager {
             }
           }
 
-          this.dialogsStorage.applyDialogs(result);
+          this.dialogsStorage.applyDialogs(result, undefined, settingsAskedAt);
 
           result.dialogs.forEach((dialog) => {
             if(dialog._ !== 'dialog') {
@@ -7485,7 +7693,10 @@ export class AppMessagesManager extends AppManager {
             return;
           }
 
-          delete (message as Message.message).pFlags.pinned;
+          // * through modifyMessage, as onUpdatePinnedMessages does, so that the tab's copy is unpinned too
+          this.modifyMessage(message as Message.message, (message) => {
+            delete message.pFlags.pinned;
+          }, storage);
         });
 
         this.rootScope.dispatchEvent('peer_pinned_messages', {peerId, threadId, unpinAll: true});
@@ -7659,11 +7870,7 @@ export class AppMessagesManager extends AppManager {
       }
     }
 
-    const mediaContext: ReferenceContext = options.isOutgoing ? undefined : {
-      type: 'message',
-      peerId,
-      messageId: mid
-    };
+    const mediaContext = options.isOutgoing ? undefined : this.getMessageReferenceContext(peerId, mid, options.isScheduled);
     if(isMessage && message.rich_message) {
       message.rich_message = this.processRichMessage(
         message.rich_message,
@@ -7947,10 +8154,74 @@ export class AppMessagesManager extends AppManager {
       this.appPeersManager.registerMessagePeers(message);
     }
 
+    // * only the chat's own copy: a scheduled, log or welcome one is not a delivered message
+    if(isMessage && message.report_delivery_until_date && storage.type === 'history') {
+      this.reportMessageDelivery(message);
+    }
+
     this.setMessageToStorage(storage, message);
 
     return message;
   }
+
+  /**
+   * The server wants to hear that a message reached the device, until `report_delivery_until_date`.
+   * Like tdesktop (history_item.cpp), every message that comes from the server is checked, wherever
+   * from (an update, a history page); each is reported once, with the others of its chat that came
+   * in meanwhile, and a failed report is not repeated.
+   */
+  private reportMessageDelivery(message: Message.message) {
+    const {peerId, mid} = message;
+    const key = `${peerId}_${mid}`;
+    if(
+      this.reportedDeliveries.has(key) ||
+      message.report_delivery_until_date <= this.timeManager.getServerTime() ||
+      this.isEphemeralMessage(message) ||
+      !getServerMessageId(mid)
+    ) {
+      return;
+    }
+
+    this.reportedDeliveries.add(key);
+    let mids = this.pendingDeliveryReports.get(peerId);
+    if(!mids) {
+      this.pendingDeliveryReports.set(peerId, mids = new Set());
+    }
+
+    mids.add(mid);
+    this.scheduleDeliveryReports();
+  }
+
+  private scheduleDeliveryReports() {
+    this.deliveryReportsTimeout ??= ctx.setTimeout(this.sendDeliveryReports, DELIVERY_REPORT_DELAY);
+  }
+
+  private sendDeliveryReports = () => {
+    this.deliveryReportsTimeout = undefined;
+    this.pendingDeliveryReports.forEach((pendingMids, peerId) => {
+      if(this.deliveryReportsSending.has(peerId)) {
+        return;
+      }
+
+      const mids = [...pendingMids].slice(0, DELIVERY_REPORTS_PER_REQUEST);
+      mids.forEach((mid) => pendingMids.delete(mid));
+      if(!pendingMids.size) {
+        this.pendingDeliveryReports.delete(peerId);
+      }
+
+      this.deliveryReportsSending.add(peerId);
+      // * a failed report is dropped: the other clients drop it too
+      this.apiManager.invokeApi('messages.reportMessagesDelivery', {
+        peer: this.appPeersManager.getInputPeerById(peerId),
+        id: mids.map((mid) => getServerMessageId(mid))
+      }).catch(noop).finally(() => {
+        this.deliveryReportsSending.delete(peerId);
+        if(this.pendingDeliveryReports.has(peerId)) {
+          this.scheduleDeliveryReports();
+        }
+      });
+    });
+  };
 
   public saveMessages(messages: any[], options: Partial<{
     storage: MessagesStorage,
@@ -8243,6 +8514,23 @@ export class AppMessagesManager extends AppManager {
         }
       }
     }
+  }
+
+  /**
+   * What renews the file references of a message's media. A scheduled message is asked for by its
+   * own method (tdesktop apiwrap.cpp, iOS AccountViewTracker): its id means another message, or
+   * none, to `messages.getMessages`.
+   */
+  private getMessageReferenceContext(
+    peerId: PeerId,
+    mid: number,
+    isScheduled?: boolean
+  ): ReferenceContext.referenceContextMessage | ReferenceContext.referenceContextScheduledMessage {
+    return {
+      type: isScheduled ? 'scheduledMessage' : 'message',
+      peerId,
+      messageId: mid
+    };
   }
 
   private getRichMessageReferenceContext(
@@ -8704,14 +8992,19 @@ export class AppMessagesManager extends AppManager {
     if(
       this.appPeersManager.isForum(peerId) &&
       dialog._ === 'dialog' &&
-      !dialog.pFlags.view_forum_as_messages &&
-      (read || await this.dialogsStorage.getForumUnreadCount(peerId))
+      !dialog.pFlags.view_forum_as_messages
     ) {
+      // * loads the first topics when none are yet
+      await this.dialogsStorage.getForumUnreadCount(peerId);
       const folder = this.dialogsStorage.getFolder(peerId);
-      for(const topicId of folder.unreadPeerIds) {
-        this.readForumTopic(peerId, topicId);
+      // * a forum shown as topics is read by reading its topics and is never marked unread: only an unread mark
+      // * set elsewhere on one with no unread topic left goes on below, to be cleared
+      if(folder.unreadPeerIds.size || !dialog.pFlags.unread_mark) {
+        for(const topicId of folder.unreadPeerIds) {
+          this.readForumTopic(peerId, topicId);
+        }
+        return;
       }
-      return;
     }
 
     const unread = read || dialog.pFlags?.unread_mark ? undefined : true;
@@ -9069,7 +9362,12 @@ export class AppMessagesManager extends AppManager {
         return false;
       }
 
-      if((messageReplyMarkup as ReplyMarkup.replyKeyboardMarkup).pFlags.selective) {
+      // a selective one is for those its message mentions, and for the author of the message it
+      // answers: the server marks it `mentioned` for them (desktop's `mentionsMe`, Android's)
+      if(
+        (messageReplyMarkup as ReplyMarkup.replyKeyboardMarkup).pFlags.selective &&
+        !(message as Message.message).pFlags.mentioned
+      ) {
         return false;
       }
 
@@ -9661,6 +9959,16 @@ export class AppMessagesManager extends AppManager {
         return false;
       }
 
+      // * a send that failed the server has nothing of: it is called off, which takes the message away and
+      // * forgets the send (else it is still waited for, and slow mode holds every next one back)
+      if(
+        (message as Message.message)?.pFlags?.is_outgoing &&
+        (message as Message.message).error &&
+        this.cancelPendingMessage((message as Message.message).random_id)
+      ) {
+        return false;
+      }
+
       return true;
     });
 
@@ -9857,6 +10165,7 @@ export class AppMessagesManager extends AppManager {
     // only applied here, while another one was in flight, is not one of them: the
     // `finally` below sends it once that one is answered, and counting it here would
     // make it look sent already.
+    const triedBefore = historyStorage.triedToReadMaxId;
     if(apiPromise && !(historyStorage.triedToReadMaxId >= maxId)) {
       historyStorage.triedToReadMaxId = maxId;
     }
@@ -9870,14 +10179,19 @@ export class AppMessagesManager extends AppManager {
       return Promise.resolve();
     }
 
-    apiPromise.finally(() => {
+    apiPromise.catch(() => {
+      // * a read the server did not take is not sent: the next one for it asks again
+      if(historyStorage.triedToReadMaxId === maxId) {
+        historyStorage.triedToReadMaxId = triedBefore;
+      }
+    }).finally(() => {
       delete historyStorage.readPromise;
 
       const {readMaxId} = historyStorage;
       this.log('readHistory: promise finally', maxId, readMaxId);
 
       if(readMaxId > maxId) {
-        this.readHistory({peerId, maxId: readMaxId, threadId, force: true});
+        this.readHistory({peerId, maxId: readMaxId, threadId, monoforumThreadId, force: true});
       }
     });
 
@@ -9956,7 +10270,8 @@ export class AppMessagesManager extends AppManager {
         threadId: isForumTopic(dialog) ? options.threadId : undefined,
         isReaction: key === 'unread_reactions_count',
         isPollVote: key === 'unread_poll_votes_count',
-        add: !!add
+        // * a negative count (all of them read) takes off, it does not add
+        add: +add > 0
       });
     });
 
@@ -10525,6 +10840,7 @@ export class AppMessagesManager extends AppManager {
     ]).then(([_, peerTypeNotifySettings]) => {
       return {
         muted: this.appNotificationsManager.isPeerLocalMuted({peerId, respectType: true, threadId}),
+        soundOff: this.appNotificationsManager.isPeerLocalSoundOff({peerId, threadId}),
         peerTypeNotifySettings
       };
     });
@@ -10559,9 +10875,9 @@ export class AppMessagesManager extends AppManager {
       }
 
       this.getNotifyPeerSettings(notifyPeerId, threadId ? +threadId : undefined)
-      .then(({muted, peerTypeNotifySettings}) => {
+      .then((notifySettings) => {
         const topMessage = notifyPeerToHandle.topMessage;
-        if((muted && !topMessage.pFlags.mentioned) || !topMessage.pFlags.unread) {
+        if((notifySettings.muted && !topMessage.pFlags.mentioned) || !topMessage.pFlags.unread) {
           return;
         }
 
@@ -10569,7 +10885,7 @@ export class AppMessagesManager extends AppManager {
         if(topMessage.pFlags.unread) {
           this.notifyAboutMessage(topMessage, {
             fwdCount: notifyPeerToHandle.fwdCount,
-            peerTypeNotifySettings,
+            notifySettings,
             isInitialSync: notifyPeerToHandle.isInitialSync
           });
         }
@@ -10835,6 +11151,16 @@ export class AppMessagesManager extends AppManager {
     const {peerId} = pendingData;
     const channelId = this.appPeersManager.isChannel(peerId) ? peerId.toChatId() : undefined;
     const mid = this.appMessagesIdsManager.generateMessageId(update.id, channelId);
+    // * a Gram transfer draft is never promoted over a served message already in the chat
+    const pairing = this.gramTransferDrafts.getPairing(randomId, mid, !!this.getMessageFromStorage(pendingData.storage, mid));
+    if(pairing !== 'pair') {
+      if(pairing === 'drop') {
+        this.dropGramTransferDraft(String(randomId));
+      }
+
+      return;
+    }
+
     this.pendingByMessageId[mid] = randomId;
     // const {storage} = pendingData;
     // const message = this.getMessageFromStorage(storage, mid);
@@ -10939,6 +11265,15 @@ export class AppMessagesManager extends AppManager {
           mid: message.reply_to_mid,
           receiptMessage: message
         });
+      }
+
+      // * the server adds the "first Grams" suggestion with the first transfer and pushes nothing
+      if(action._ === 'messageActionGramTransfer' && !isLocalThreadUpdate) {
+        this.appPromoManager.invalidateSuggestion(WALLET_FIRST_GRAMS_SUGGESTION);
+      }
+
+      if(!isLocalThreadUpdate) {
+        this.dispatchTonConnectRequest(message);
       }
 
       if(action._ === 'messageActionTopicEdit' && !isLocalThreadUpdate) {
@@ -11188,27 +11523,25 @@ export class AppMessagesManager extends AppManager {
     const recentReactions = reactions?.recent_reactions;
     const previousReactions = message.reactions;
     const previousRecentReactions = previousReactions?.recent_reactions;
-    const isUnread = recentReactions?.some((reaction) => reaction.pFlags.unread);
     const wasUnread = !!previousRecentReactions?.some((reaction) => reaction.pFlags.unread);
-    if(recentReactions?.length && message.pFlags.out) { // * if user added a reaction to our message
-      const recentReaction = recentReactions[recentReactions.length - 1];
-      if(
-        this.appPeersManager.getPeerId(recentReaction.peer_id) !== this.appPeersManager.peerId && (
-          !previousRecentReactions ||
-          previousRecentReactions.length <= recentReactions.length
-        ) && (
-          !previousRecentReactions ||
-          !deepEqual(recentReaction, previousRecentReactions[previousRecentReactions.length - 1])
-        ) && isUnread !== wasUnread
-      ) {
-        this.getNotifyPeerSettings(peerId).then(({muted, peerTypeNotifySettings}) => {
-          if(/* muted ||  */!peerTypeNotifySettings.show_previews) return;
-          this.notifyAboutMessage(message, {
-            peerReaction: recentReaction,
-            peerTypeNotifySettings
-          });
+    // * the last reaction taken off comes without `recent_reactions` at all, while a `min` object leaves them out
+    // * whatever they are: it says nothing of the unread ones
+    const isUnread = !recentReactions && reactions?.pFlags.min && reactions.results.length ?
+      wasUnread :
+      !!recentReactions?.some((reaction) => reaction.pFlags.unread);
+    // * someone's reaction to our message that has come unread, the newest first: not one read in another session, which
+    // * comes back changed too, read (as tdesktop's CheckReactionNotificationSchedule)
+    const recentReaction = message.pFlags.out && !wasUnread && recentReactions?.find((reaction) => {
+      return reaction.pFlags.unread && this.appPeersManager.getPeerId(reaction.peer_id) !== this.appPeersManager.peerId;
+    });
+    if(recentReaction) {
+      this.getNotifyPeerSettings(peerId).then((notifySettings) => {
+        if(/* notifySettings.muted ||  */!notifySettings.peerTypeNotifySettings.show_previews) return;
+        this.notifyAboutMessage(message, {
+          peerReaction: recentReaction,
+          notifySettings
         });
-      }
+      });
     }
 
     if(message.pFlags.out && isUnread !== wasUnread) {
@@ -11277,9 +11610,30 @@ export class AppMessagesManager extends AppManager {
     }
   };
 
+  /**
+   * A dApp's request in the service chat (TON Connect): the wallet hears of a new one, and of one the server marked
+   * answered — by an edit, which comes whether or not the chat is loaded
+   */
+  private dispatchTonConnectRequest(message: MyMessage) {
+    const action = message?._ === 'messageService' ? message.action : undefined;
+    if(action?._ !== 'messageActionWalletTonConnectRequest' || message.pFlags.out || this.getMessagePeer(message) !== SERVICE_PEER_ID) {
+      return;
+    }
+
+    this.rootScope.dispatchEvent('wallet_tonconnect_request', {
+      sessionId: String(action.session_id),
+      msgId: message.id,
+      expires: action.expires,
+      topic: action.topic,
+      accepted: !!action.pFlags.accepted,
+      declined: !!action.pFlags.declined
+    });
+  }
+
   private onUpdateEditMessage = (update: Update.updateEditMessage | Update.updateEditChannelMessage) => {
     const message = update.message as MyMessage;
     const peerId = this.getMessagePeer(message);
+    this.dispatchTonConnectRequest(message);
     const channelId = this.appPeersManager.isChannel(peerId) ? peerId.toChatId() : undefined;
     const mid = this.appMessagesIdsManager.generateMessageId(message.id, channelId);
     this.invalidateRichMessage(peerId, mid);
@@ -12399,14 +12753,18 @@ export class AppMessagesManager extends AppManager {
     this.saveMessages([message], {storage, isScheduled: true});
     const newMessage = this.getMessageFromStorage(storage, mid);
 
+    // * a send's own message is here before its update when the chat's list came meanwhile: it is still the send's
+    // * to finish, as a new message of the history is (onUpdateNewMessage asks checkPendingMessage either way)
+    const pendingMessage = this.checkPendingMessage(message);
+    if(pendingMessage) {
+      return;
+    }
+
     if(oldMessage) {
       this.handleEditedMessage(oldMessage, newMessage, storage, richMessageChanged);
       this.rootScope.dispatchEvent('message_edit', {storageKey: storage.key, peerId, mid: message.mid, message});
     } else {
-      const pendingMessage = this.checkPendingMessage(message);
-      if(!pendingMessage) {
-        this.rootScope.dispatchEvent('scheduled_new', message as Message.message);
-      }
+      this.rootScope.dispatchEvent('scheduled_new', message as Message.message);
     }
   };
 
@@ -12417,7 +12775,9 @@ export class AppMessagesManager extends AppManager {
     const storage = this.scheduledMessagesStorage[peerId];
     if(storage) {
       const mids = update.messages.map((id) => this.appMessagesIdsManager.generateMessageId(id, channelId));
-      this.handleDeletedMessages(peerId, storage, mids);
+      // * scheduled ids are numbered apart from the history's, and in a channel fall on its messages' mids:
+      // * the history message with the same id is not marked deleted
+      this.handleDeletedMessages(peerId, storage, mids, false);
 
       this.rootScope.dispatchEvent('scheduled_delete', {peerId, mids});
     }
@@ -12458,6 +12818,12 @@ export class AppMessagesManager extends AppManager {
     const mid = this.appMessagesIdsManager.generateMessageId(update.msg_id, channelId);
 
     const key = `${peerId}_${mid}`;
+    if(!update.pFlags.pending && text && update.transcription_id) {
+      this.transcriptionIds.set(key, update.transcription_id);
+    } else {
+      this.transcriptionIds.delete(key);
+    }
+
     const waitingPromise = this.waitingTranscriptions.get(key);
     if(!update.pFlags.pending && waitingPromise) {
       waitingPromise.resolve({
@@ -12547,7 +12913,7 @@ export class AppMessagesManager extends AppManager {
   }
 
   private checkPendingMessage(message: MyMessage) {
-    const randomId = this.pendingByMessageId[message.mid];
+    const randomId = this.pendingByMessageId[message.mid] ?? this.adoptGramTransferDraft(message);
 
     let pendingMessage: ReturnType<AppMessagesManager['finalizePendingMessage']>;
     if(randomId) {
@@ -12561,6 +12927,7 @@ export class AppMessagesManager extends AppManager {
         });
       }
 
+      this.gramTransferDrafts.settle(randomId, message.mid);
       delete this.pendingByMessageId[message.mid];
     }
 
@@ -12604,6 +12971,9 @@ export class AppMessagesManager extends AppManager {
   }
 
   public async canSendToPeer(peerId: PeerId, threadId?: number, action: ChatRights = 'send_messages') {
+    // * as the app starts, a chat can be opened (a link in the address, a quick click) before the peers kept on disk are
+    // * in: asked then, a peer not there yet answered that nothing could be sent, and the field stayed locked for good
+    await (peerId.isUser() ? this.appUsersManager.loaded : this.appChatsManager.loaded)?.catch(noop);
     if(await this.appPeersManager.isPeerRestricted(peerId)) {
       return false;
     }
@@ -12706,7 +13076,7 @@ export class AppMessagesManager extends AppManager {
           if(photo) this.updatePhoto(photo as Photo.photo, id);
           else if(document) this.updateDocument(document as Document.document, id);
         });
-      } else if(message.media._ === 'messageMediaPoll' && tempMessage._ === 'message' && tempMessage.media._ === 'messageMediaPoll') {
+      } else if(message.media._ === 'messageMediaPoll' && tempMessage?._ === 'message' && tempMessage.media._ === 'messageMediaPoll') {
         const updateMedia = (prevMedia: MessageMedia | InputMedia, newMedia: MessageMedia | InputMedia) => {
           if(prevMedia?._ === 'messageMediaPhoto' && newMedia?._ === 'messageMediaPhoto' && newMedia.photo?._ === 'photo') {
             this.updatePhoto(newMedia.photo, '' + prevMedia.photo.id)
@@ -12734,6 +13104,12 @@ export class AppMessagesManager extends AppManager {
     }
 
     this.deleteMessageFromStorage(storage, tempId);
+
+    // * the chat's history was flushed (cleared, deleted, reloaded) while it was being sent: its temp message went
+    // * with it, released already, and has no bubble left to become the sent one
+    if(!tempMessage) {
+      return;
+    }
 
     if(!(tempMessage as Message.message).reply_markup && (message as Message.message).reply_markup) {
       setTimeout(() => { // TODO: refactor it to normal buttons adding
@@ -12972,7 +13348,8 @@ export class AppMessagesManager extends AppManager {
   private async notifyAboutMessage(message: MyMessage, options: Partial<{
     fwdCount: number,
     peerReaction: MessagePeerReaction,
-    peerTypeNotifySettings: PeerNotifySettings,
+    /** the chat's, as {@link getNotifyPeerSettings} gives them: its type's, and whether its sound is off */
+    notifySettings: Awaited<ReturnType<AppMessagesManager['getNotifyPeerSettings']>>,
     /** captured when the notification was queued, since the sync is over by the time it's flushed */
     isInitialSync: boolean
   }> = {}) {
@@ -12982,7 +13359,8 @@ export class AppMessagesManager extends AppManager {
       message,
       fwdCount: options.fwdCount,
       peerReaction: options.peerReaction,
-      peerTypeNotifySettings: options.peerTypeNotifySettings
+      peerTypeNotifySettings: options.notifySettings?.peerTypeNotifySettings,
+      noSound: options.notifySettings?.soundOff
     }, options.isInitialSync);
   }
 
@@ -12999,7 +13377,7 @@ export class AppMessagesManager extends AppManager {
     if(this.appPeersManager.isMonoforum(peerId)) return;
 
     const storage = this.getScheduledMessagesStorage(peerId);
-    if(storage.size) {
+    if(storage.size && this.scheduledMessagesLoaded.has(storage)) {
       return [...storage.keys()];
     }
 
@@ -13013,11 +13391,42 @@ export class AppMessagesManager extends AppManager {
 
         const storage = this.getScheduledMessagesStorage(peerId);
         this.saveMessages(historyResult.messages, {storage, isScheduled: true});
+        this.scheduledMessagesLoaded.add(storage);
         return [...storage.keys()];
       }
 
       return [];
     });
+  }
+
+  /**
+   * A scheduled message asked for again, for the file references of its media. Only the copy kept is
+   * renewed: one sent or deleted, or a cache cleared, while the request is on its way is not brought
+   * back by its answer, and one edited meanwhile, which came with fresh references of its own, is newer
+   * than the answer and stays as it is.
+   */
+  public async reloadScheduledMessage(peerId: PeerId, mid: number) {
+    const storage = this.scheduledMessagesStorage[peerId];
+    const message = storage?.get(mid);
+    if(!message) {
+      return;
+    }
+
+    const messagesResult = await this.apiManager.invokeApiSingle('messages.getScheduledMessages', {
+      peer: this.appPeersManager.getInputPeerById(peerId),
+      id: [getServerMessageId(mid)]
+    });
+    if(this.scheduledMessagesStorage[peerId] !== storage) {
+      return;
+    }
+
+    if(messagesResult._ === 'messages.messagesNotModified' || storage.get(mid) !== message) {
+      return this.getMessageFromStorage(storage, mid);
+    }
+
+    this.appPeersManager.saveApiPeers(messagesResult);
+    this.saveMessages(messagesResult.messages, {storage, isScheduled: true});
+    return this.getMessageFromStorage(storage, mid);
   }
 
   public sendScheduledMessages(peerId: PeerId, mids: number[]) {
@@ -13933,6 +14342,11 @@ export class AppMessagesManager extends AppManager {
     return historyResult;
   }
 
+  /** How many free public post searches are left, and whether this query is one of them */
+  public checkSearchPostsFlood(query: string) {
+    return this.apiManager.invokeApi('channels.checkSearchPostsFlood', {query});
+  }
+
   public requestHistory(
     requestOptions: RequestHistoryOptions,
     overwrite = false
@@ -14619,11 +15033,8 @@ export class AppMessagesManager extends AppManager {
     preserveMedia = false
   ) {
     const media = (message as Message.message).media;
-    const mediaContext: ReferenceContext = {
-      type: 'message',
-      peerId: message.peerId,
-      messageId: message.mid
-    };
+    const isScheduled = storage.type === 'scheduled';
+    const mediaContext = this.getMessageReferenceContext(message.peerId, message.mid, isScheduled);
     if(media) {
       const c = (media as MessageMedia.messageMediaWebPage).webpage as WebPage.webPage || media as MessageMedia.messageMediaPhoto | MessageMedia.messageMediaDocument;
       const smth: Photo.photo | MyDocument = (c as MessageMedia.messageMediaPhoto).photo as any || (c as MessageMedia.messageMediaDocument).document as any;
@@ -14636,7 +15047,6 @@ export class AppMessagesManager extends AppManager {
       }
 
       if('webpage' in media && media.webpage) {
-        const isScheduled = this.getScheduledMessagesStorage(message.peerId) === storage;
         const messageKey = this.appWebPagesManager.getMessageKeyForPendingWebPage(message.peerId, message.mid, isScheduled);
         this.appWebPagesManager.deleteWebPageFromPending(media.webpage, messageKey);
       }
@@ -14730,7 +15140,10 @@ export class AppMessagesManager extends AppManager {
         this.resetPinnedMessagesCache(peerId, [mid], false);
       }
 
-      this.updateMessageRepliesIfNeeded(message, false);
+      // * a scheduled one was never counted among its thread's replies
+      if(shouldClearContexts) {
+        this.updateMessageRepliesIfNeeded(message, false);
+      }
 
       if(!message.pFlags.out && !message.pFlags.is_outgoing && message.pFlags.unread) {
         ++history.unread;
@@ -14763,8 +15176,9 @@ export class AppMessagesManager extends AppManager {
           if(!history.grouped) history.grouped = {};
           (history.grouped[groupedId] || (history.grouped[groupedId] = new Set())).add(mid);
 
+          // * an album deleted whole is not told what is left of it, the others deleted from are
           if(!groupedStorage.size) {
-            delete history.grouped;
+            delete history.grouped[groupedId];
             delete this.groupedMessagesStorage[groupedId];
           }
         }
@@ -15260,8 +15674,9 @@ export class AppMessagesManager extends AppManager {
     //   ]
     // });
 
-    // * don't show sponsored messages in own channels
-    if(!peerId.isUser() && await this.canSendToPeer(peerId)) {
+    // * don't show sponsored messages in own channels, nor to a Premium account that hid them
+    // * (Android's `isSponsoredDisabled`: the own full user, while it is known)
+    if(this.isSponsoredHidden() || (!peerId.isUser() && await this.canSendToPeer(peerId))) {
       return Promise.resolve({
         _: 'messages.sponsoredMessagesEmpty'
       });
@@ -15295,6 +15710,36 @@ export class AppMessagesManager extends AppManager {
 
       return sponsoredMessages;
     });
+  }
+
+  private isSponsoredHidden() {
+    if(!this.rootScope.premium) {
+      return false;
+    }
+
+    const userFull = this.appProfileManager.getCachedFullUser(this.rootScope.myId.toUserId());
+    return !!userFull && !userFull.pFlags.sponsored_enabled;
+  }
+
+  /**
+   * `account.toggleSponsoredMessages` — whether a Premium account still sees ads (its own, say). The
+   * answers cached for five minutes were given under the old choice, so they go, and the open chats
+   * hear of it (`sponsored_messages_toggle`).
+   */
+  public async toggleSponsoredMessages(enabled: boolean) {
+    const result = await this.apiManager.invokeApi('account.toggleSponsoredMessages', {enabled});
+    if(!result) {
+      throw new Error('ACCOUNT_TOGGLE_SPONSORED_MESSAGES_FAILED');
+    }
+
+    this.appProfileManager.modifyCachedFullUser(this.rootScope.myId.toUserId(), (userFull) => {
+      if(enabled) userFull.pFlags.sponsored_enabled = true;
+      else delete userFull.pFlags.sponsored_enabled;
+    });
+    this.apiManager.clearCache('messages.getSponsoredMessages', () => true);
+    this.rootScope.dispatchEvent('sponsored_messages_toggle', enabled);
+
+    return result;
   }
 
   public viewSponsoredMessage(randomId: SponsoredMessage['random_id']) {
@@ -15470,31 +15915,26 @@ export class AppMessagesManager extends AppManager {
       return;
     }
 
-    let oldItem: TodoCompletion;
+    const key = `${params.peerId}:${params.mid}`;
+    const {taskId, action} = params;
+    const toggle: TodoToggle = {
+      taskId,
+      action,
+      completion: action === 'complete' ? {
+        _: 'todoCompletion',
+        id: taskId,
+        completed_by: this.appPeersManager.getOutputPeer(this.rootScope.myId),
+        date: Date.now() / 1000
+      } : undefined
+    };
+
     this.modifyMessage(message, (message) => {
       const checklist = message.media as MessageMedia.messageMediaToDo;
-      if(!checklist.completions) checklist.completions = [];
-      const now = Date.now() / 1000;
-
-      if(params.action === 'complete') {
-        const existing = checklist.completions.findIndex((completion) => completion.id === params.taskId);
-        if(existing !== -1) {
-          checklist.completions.splice(existing, 1);
-        }
-
-        checklist.completions.push({
-          _: 'todoCompletion',
-          id: params.taskId,
-          completed_by: this.appPeersManager.getOutputPeer(this.rootScope.myId),
-          date: now
-        });
-      } else {
-        const existing = checklist.completions.findIndex((completion) => completion.id === params.taskId);
-        if(existing !== -1) {
-          oldItem = checklist.completions[existing];
-          checklist.completions.splice(existing, 1);
-        }
-      }
+      let base = this.todoChecklistBases.get(key);
+      if(!base) this.todoChecklistBases.set(key, base = new Map());
+      // * the first tick of the task that is not answered yet: what the list shows of it is what the server has
+      if(!base.has(taskId)) base.set(taskId, checklist.completions?.find((completion) => completion.id === taskId));
+      this.setTodoCompletion(checklist, taskId, toggle.completion);
     }, storage);
 
     this.rootScope.dispatchEvent('message_edit', {
@@ -15504,31 +15944,44 @@ export class AppMessagesManager extends AppManager {
       message
     });
 
-    const key = `${params.peerId}:${params.mid}`;
-    this.checklistBatcher.addToBatch(key, {taskId: params.taskId, oldItem, action: params.action});
+    this.checklistBatcher.addToBatch(key, toggle);
+  }
+
+  private setTodoCompletion(checklist: MessageMedia.messageMediaToDo, taskId: number, completion?: TodoCompletion) {
+    checklist.completions ??= [];
+    const existing = checklist.completions.findIndex((completion) => completion.id === taskId);
+    if(existing !== -1) checklist.completions.splice(existing, 1);
+    if(completion) checklist.completions.push(completion);
+  }
+
+  private createChecklistBatcher() {
+    return new Batcher<string, TodoToggle, void>({
+      delay: 500,
+      debounce: true,
+      processBatch: this.processChecklistBatch
+    });
   }
 
   private processChecklistBatch = async(batch: AppMessagesManager['checklistBatcher']['batchMap']) => {
     for(const [key, list] of batch) {
+      // * taken out before the request: a tick made while it is on its way starts a list of its own, which
+      // * this loop sends after it (the batcher runs one batch at a time) instead of dropping it with this one
+      batch.delete(key);
       const [peerId, mid] = key.split(':').map(Number);
+      const toggles = [...list.keys()];
 
       const completedIds = new Set<number>();
       const incompletedIds = new Set<number>();
-      const incompletedItems = new Map<number, TodoCompletion>();
 
-      for(const [{taskId, oldItem, action}, promise] of list) {
+      for(const [{taskId, action}, promise] of list) {
         promise.resolve();
 
         if(action === 'complete') {
           incompletedIds.delete(taskId);
-          incompletedItems.delete(taskId);
           completedIds.add(taskId);
         } else {
           completedIds.delete(taskId);
           incompletedIds.add(taskId);
-          if(oldItem) {
-            incompletedItems.set(taskId, oldItem);
-          }
         }
       }
 
@@ -15536,6 +15989,7 @@ export class AppMessagesManager extends AppManager {
         continue;
       }
 
+      let refused = false;
       try {
         const updates = await this.apiManager.invokeApi('messages.toggleTodoCompleted', {
           completed: Array.from(completedIds),
@@ -15547,43 +16001,48 @@ export class AppMessagesManager extends AppManager {
         this.apiUpdatesManager.processUpdateMessage(updates);
       } catch(e) {
         console.error(e);
+        refused = (e as any).type !== 'MESSAGE_NOT_MODIFIED';
+      }
 
-        if((e as any).type !== 'MESSAGE_NOT_MODIFIED') {
-        // revert
-          const storage = this.getHistoryMessagesStorage(peerId);
-          const message = this.getMessageFromStorage(storage, mid) as Message.message;
-          if(!message) {
-            return;
+      const base = this.todoChecklistBases.get(key);
+      if(!refused) {
+        toggles.forEach((toggle) => base?.set(toggle.taskId, toggle.completion));
+      }
+
+      const queued = [...(batch.get(key)?.keys() ?? [])];
+      if(!queued.length) {
+        this.todoChecklistBases.delete(key);
+      }
+
+      // * the tasks of a refused request go back to what the server has, and the ones ticked since it went show
+      // * their newest tick on top of that (the server's answer to this request may have taken it off)
+      const taskIds = new Set([...(refused ? toggles : []), ...queued].map((toggle) => toggle.taskId));
+      const storage = this.getHistoryMessagesStorage(peerId);
+      const message = this.getMessageFromStorage(storage, mid) as Message.message;
+      if(!base || !taskIds.size || !message) {
+        continue;
+      }
+
+      this.modifyMessage(message, (message) => {
+        const checklist = message.media as MessageMedia.messageMediaToDo;
+        for(const taskId of taskIds) {
+          let completion = base.get(taskId);
+          for(const toggle of queued) {
+            if(toggle.taskId === taskId) completion = toggle.completion;
           }
 
-          this.modifyMessage(message, (message) => {
-            const checklist = message.media as MessageMedia.messageMediaToDo;
-            if(!checklist.completions) checklist.completions = []
-
-            for(const oldItem of incompletedItems.values()) {
-              checklist.completions.push(oldItem)
-            }
-
-            for(const taskId of completedIds) {
-              const idx = checklist.completions.findIndex((completion) => completion.id === taskId);
-              if(idx !== -1) {
-                checklist.completions.splice(idx, 1);
-              }
-            }
-          }, storage)
-
-          this.rootScope.dispatchEvent('message_edit', {
-            storageKey: storage.key,
-            peerId,
-            mid,
-            message
-          })
+          this.setTodoCompletion(checklist, taskId, completion);
         }
-      }
-    }
+      }, storage);
 
-    batch.clear()
-  }
+      this.rootScope.dispatchEvent('message_edit', {
+        storageKey: storage.key,
+        peerId,
+        mid,
+        message
+      });
+    }
+  };
 
   public async appendTodo(params: {
     peerId: PeerId,
@@ -16044,6 +16503,7 @@ class Batcher<Key, Id, Result> {
   private delay: number;
   private debounce: boolean;
   private timeoutId: number;
+  private processing: boolean;
   private _processBatch: (batch: Batcher<Key, Id, Result>['batchMap']) => Promise<any>;
 
   constructor(options: {
@@ -16058,15 +16518,24 @@ class Batcher<Key, Id, Result> {
   }
 
   private async processBatch() {
-    await this._processBatch(this.batchMap);
-
-    this.timeoutId = undefined;
-    if(this.batchMap.size) {
-      this.scheduleBatch();
+    this.processing = true;
+    try {
+      await this._processBatch(this.batchMap);
+    } finally {
+      this.processing = false;
+      this.timeoutId = undefined;
+      if(this.batchMap.size) {
+        this.scheduleBatch();
+      }
     }
   }
 
   private scheduleBatch() {
+    // * what is added while a batch is on its way waits for it: one batch at a time, a debounced one too
+    if(this.processing) {
+      return;
+    }
+
     if(this.debounce && this.timeoutId) {
       clearTimeout(this.timeoutId);
       this.timeoutId = undefined;

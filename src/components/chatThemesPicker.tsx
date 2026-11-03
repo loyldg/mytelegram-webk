@@ -8,7 +8,7 @@ import ListenerSetter from '@helpers/listenerSetter';
 import createMiddleware from '@helpers/solid/createMiddleware';
 import {IS_SAFARI} from '@environment/userAgent';
 import {DEFAULT_THEME} from '@config/state';
-import {blendWallpaperForTinted} from '@config/themePresets';
+import {blendWallpaperForTinted, getCloudThemeWallpaper} from '@config/themePresets';
 import {BaseTheme, Theme} from '@layer';
 import rootScope from '@lib/rootScope';
 import I18n from '@lib/langPack';
@@ -191,20 +191,20 @@ export default function ChatThemesPicker(props: ChatThemesPickerProps) {
       const themeId = String(theme.id ?? '');
       const isCurated = themeId === '' || themeId.startsWith('preset:');
 
-      const results = theme.settings
+      // * a tile does not wait for its wallpaper: the colours show at once, and a pattern comes over them once it is
+      // * downloaded (`addWallPaper`) - right after signing in, the strip waited seconds for the patterns
+      theme.settings
       .filter((themeSettings) => AVAILABLE_BASE_THEMES.has(themeSettings.base_theme._))
-      .map((themeSettings) => {
+      .forEach((themeSettings) => {
         const shouldBlend = themeSettings.base_theme._ === 'baseThemeTinted' && !isCurated && themeSettings.wallpaper;
-        const wp = shouldBlend ? blendWallpaperForTinted(themeSettings.wallpaper, themeSettings.accent_color) : themeSettings.wallpaper;
+        const wp = shouldBlend ? blendWallpaperForTinted(themeSettings.wallpaper, themeSettings.accent_color) : getCloudThemeWallpaper(theme, themeSettings);
         const result = AppBackgroundTab.addWallPaper(wp, undefined, themeSettings.base_theme._);
         // addWallPaper returns undefined for a pattern wallpaper with no colors —
         // skip rather than deref (matches the tinted-fallback guard below).
-        if(!result) return undefined;
+        if(!result) return;
         k.wallPaperContainers[themeSettings.base_theme._] = result.container;
         solidRoots.push(result.dispose);
-        return result;
-      })
-      .filter(Boolean);
+      });
 
       // Synthesize a tinted preview from the night entry when the theme ships
       // only Classic/Night, matching applyNewTheme's blend-on-fallback.
@@ -216,7 +216,6 @@ export default function ChatThemesPicker(props: ChatThemesPickerProps) {
           if(result) {
             k.wallPaperContainers['baseThemeTinted'] = result.container;
             solidRoots.push(result.dispose);
-            results.push(result);
           }
         }
       }
@@ -253,7 +252,6 @@ export default function ChatThemesPicker(props: ChatThemesPickerProps) {
       bubbleIn.classList.add('is-in');
       bubble.classList.add('is-out');
 
-      loadPromises.push(...results.map((result) => result.loadPromise));
       container.classList.add('theme-container');
 
       await Promise.all(loadPromises);

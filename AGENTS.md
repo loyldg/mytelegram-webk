@@ -619,7 +619,9 @@ import {Message, Chat, User, InputPeer} from '@layer';
 - **Never duplicate code.** Before adding logic, helpers, components, styles, or
   constants, search the codebase for an existing implementation and reuse or
   extend it. Every final review must explicitly check the completed change for
-  duplicated code and remove any duplication found.
+  duplicated code and remove any duplication found. `scripts/codex-review.sh`
+  makes that check a Codex pass of its own, run beside the first round of the
+  review.
 - **A fix is as small and as local as what it is for.** A one-off need — one
   item, one case, one rename — never goes into a mechanism shared by everything
   (a loop over every item, a global stylesheet, a shared helper): there it is
@@ -669,8 +671,9 @@ import {Message, Chat, User, InputPeer} from '@layer';
   media viewer's paging (`components/mediaViewer`), `test:send:app` a message
   flying out of the composer (`components/chat/sendFlights`), `test:edit:app` a
   message changing where it stands as it is edited or reacted to, and the list keeping up with a streamed answer (`components/chat/bubbleTransitions`,
-  and the shape it shares with the flight, `components/chat/bubbleShape`, and the bubble
-  sandbox, `components/bubbleSandbox`), `test:react:app` a reaction chosen in a
+  and the shape it shares with the flight, `components/chat/bubbleShape`, the bubble
+  sandbox, `components/bubbleSandbox`, and the outgoing gradient drawn once for the list,
+  `components/chat/outgoingGradientUnion`), `test:react:app` a reaction chosen in a
   message's menu flying to its place (`components/chat/reactionFlight`), `test:calls` the calls'
   noise suppressor (`lib/calls/noiseSuppression`), `test:memory:app` what a long
   session leaves in memory (caches, players, registries, the workers), `test:hot:app` (with `test:popups`, and
@@ -903,7 +906,7 @@ pnpm test:a11y:app   # Axe past the login screen (needs PLAYWRIGHT_BASE_URL)
 pnpm test:idle:app   # the profile sidebar goes idle once open, and slides in with its profile filled (needs PLAYWRIGHT_BASE_URL)
 pnpm test:peek:app   # holding a photo peeks at it: chat, rich message, shared media (needs PLAYWRIGHT_BASE_URL)
 pnpm test:viewer:app # the media viewer: its place and header, a step pressed mid-step, paging right to left, a dead picture URL, a video's stand-in (needs PLAYWRIGHT_BASE_URL)
-pnpm test:edit:app   # an edited message changes where it stands: its background goes from its old box to its new one, the old text gives way to the new one (cut by the background as it shrinks), the messages it moves go there without a step, all moved by the compositor and nothing left after; at the reduced level the text only gives way where it stands; a message out of sight just changes; a streamed answer moves the list up a line at a time without a step; the bubble sandbox walks a message through every state it has — its reactions coming and going (none shown twice), their counts, a reply (a quoting one stretching with its mark, one whose quote comes late), buttons, a forward, media, a photo's caption going and coming and a pin shown changing too — and puts it back (sends to Saved Messages, edits and deletes; needs PLAYWRIGHT_BASE_URL)
+pnpm test:edit:app   # an edited message changes where it stands: its background goes from its old box to its new one, the old text gives way to the new one (cut by the background as it shrinks), the messages it moves go there without a step, all moved by the compositor and nothing left after; at the reduced level the text only gives way where it stands; a message out of sight just changes; a streamed answer moves the list up a line at a time without a step; in a theme of a gradient the outgoing bubbles at rest are drawn by one piece of it for the chat, on the very pixels their own pieces draw and with no layer for each, one that changes has its own while it does, custom emoji are seen over either, and the bubbles a scroll down to a message coming at the end brings into sight are of the gradient at once; the bubble sandbox walks a message through every state it has — its reactions coming and going (none shown twice), their counts, a reply (a quoting one stretching with its mark, one whose quote comes late), buttons, a forward, media, a photo's caption going and coming and a pin shown changing too — and puts it back (sends to Saved Messages, edits and deletes; needs PLAYWRIGHT_BASE_URL)
 pnpm test:react:app  # a reaction picked in a message's menu flies from where it was picked, up over it and down onto its sticker in the message (hidden till it lands), on the very box the sticker is drawn in, moved by the compositor and nothing left after; the reaction plays in its place only as it lands; a pick that takes it off and the reduced level fly nothing (in this tab only: the chat's sendReaction is replaced, nothing reaches Telegram; needs PLAYWRIGHT_BASE_URL)
 pnpm test:send:app   # a sent message flies out of the composer and lands on its bubble, on the very pixels it is drawn on, moved by the compositor (nothing of it restyled while it flies) while the list makes room smoothly; its custom emoji fly with it, drawn where they stand; a sticker or a GIF from the panel and the big emoji fly themselves, held still on the frame they were chosen at; nothing flies at the reduced level (sends to Saved Messages and deletes; needs PLAYWRIGHT_BASE_URL)
 pnpm test:calls      # the calls' noise suppressor: RNNoise in its AudioWorklet, in Chromium (~30 s)
@@ -924,7 +927,8 @@ picks themes, `A11Y_STORIES=a,b` picks stories, `A11Y_WORKERS` / `A11Y_STORY_PAR
 tune the split, and `--project=chromium` drops the other engines (~70 s).
 `test:popups` works the same way: parallel, the story sweep split into parts
 (`POPUPS_WORKERS` / `POPUP_STORY_PARTS`), Chromium unless `POPUPS_ALL_ENGINES=1`
-(`test:popups:full`, implied on CI). So does `test:focus`, on the popup suite's
+(`test:popups:full`, implied on CI); `RTL_STORIES=a,b` (or `wallet/*` for a prefix)
+narrows its mirror sweep. So does `test:focus`, on the popup suite's
 kind of server (`playwright.focus.config.ts`): a part per worker but one, which
 the sign-in sweep takes (`FOCUS_WORKERS` / `FOCUS_STORY_PARTS`,
 `FOCUS_STORIES=a,b` picks stories).

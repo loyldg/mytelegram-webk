@@ -17,6 +17,7 @@ import isObject from '@helpers/object/isObject';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import createSerializedQueue, {SerializedQueue} from '@helpers/createSerializedQueue';
 import ctx from '@environment/ctx';
+import forgetFailedRequest from '@helpers/forgetFailedRequest';
 
 export type MyDraftMessage = DraftMessage.draftMessage;
 
@@ -127,7 +128,8 @@ export class AppDraftsManager extends AppManager {
   /** Whose draft an update carries: a peer's, a topic's or a monoforum thread's */
   private getUpdateDraftTarget(update: Update.updateDraftMessage) {
     const peerId = this.appPeersManager.getPeerId(update.peer);
-    const monoforumThreadId = peerId !== this.rootScope.myId && update.saved_peer_id && update.draft._ === 'draftMessage' ?
+    // * an empty draft is the thread's too: one cleared elsewhere, or by a message sent there from another device
+    const monoforumThreadId = peerId !== this.rootScope.myId && update.saved_peer_id ?
       this.appPeersManager.getPeerId(update.saved_peer_id) :
       undefined;
     return {peerId, threadId: update.threadId || update.top_msg_id, monoforumThreadId};
@@ -248,7 +250,7 @@ export class AppDraftsManager extends AppManager {
   }
 
   private getAllDrafts() {
-    return this.getAllDraftPromise ??= this.requestAllDrafts();
+    return this.getAllDraftPromise ??= forgetFailedRequest(this.requestAllDrafts(), () => this.getAllDraftPromise, () => this.getAllDraftPromise = undefined);
   }
 
   public saveDraft({
@@ -549,45 +551,49 @@ export class AppDraftsManager extends AppManager {
   }
 
   public clearAllDrafts() {
+    // * a draft saved while the request is on its way (another tab, a field still typed in) is newer than the clear
+    const cleared = {...this.drafts};
     return this.apiManager.invokeApi('messages.clearAllDrafts').then((bool) => {
       if(!bool) {
         return;
       }
 
-      for(const combined in this.drafts) {
-        const [peerId, strThreadId] = combined.split('_');
-        const threadId = strThreadId ? +strThreadId : undefined;
-
-        this.rootScope.dispatchEvent('draft_updated', {
-          peerId: peerId.toPeerId(),
-          ...(this.appPeersManager.isMonoforum(peerId.toPeerId()) ?
-            {threadId} :
-            {monoforumThreadId: threadId}
-          ),
-          draft: undefined
+      // * the server tells this session nothing: what it keeps goes as well, as Android does after the answer
+      for(const key in cleared) {
+        if(this.drafts[key] !== cleared[key]) continue;
+        const [strPeerId, strThreadId] = key.split('_');
+        const peerId = strPeerId.toPeerId();
+        // * a monoforum's draft is kept under the thread's peer, a forum's under the topic
+        const isMonoforum = !!strThreadId && this.appPeersManager.isMonoforum(peerId);
+        this.dropDraft({
+          peerId,
+          threadId: strThreadId && !isMonoforum ? +strThreadId : undefined,
+          monoforumThreadId: isMonoforum ? strThreadId.toPeerId() : undefined
         });
       }
     });
   }
 
   public clearDraft({peerId, threadId, monoforumThreadId}: ClearDraftArgs) {
-    const emptyDraft: DraftMessage.draftMessageEmpty = {
-      _: 'draftMessageEmpty'
-    };
-
     if(threadId) {
+      const emptyDraft: DraftMessage.draftMessageEmpty = {_: 'draftMessageEmpty'};
       this.syncDraft({peerId, threadId, monoforumThreadId, localDraft: emptyDraft as any, saveOnServer: false, force: true});
     } else {
-      this.saveDraft({
-        peerId,
-        threadId,
-        monoforumThreadId,
-        draft: emptyDraft,
-        notify: true,
-        force: true
-      });
-      this.cancelDraftSync(this.getKey(peerId, monoforumThreadId));
+      this.dropDraft({peerId, monoforumThreadId, force: true});
     }
+  }
+
+  /** drops a draft kept here, tells whoever shows it, and lets no save still on its way bring it back */
+  private dropDraft({peerId, threadId, monoforumThreadId, force}: ClearDraftArgs & {force?: boolean}) {
+    this.saveDraft({
+      peerId,
+      threadId,
+      monoforumThreadId,
+      draft: {_: 'draftMessageEmpty'},
+      notify: true,
+      force
+    });
+    this.cancelDraftSync(this.getKey(peerId, monoforumThreadId || threadId));
   }
 
   public setDraft(peerId: PeerId, threadId: number, message: string, entities?: MessageEntity[]) {

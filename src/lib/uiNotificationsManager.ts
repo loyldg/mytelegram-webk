@@ -2,6 +2,7 @@ import type {PushNotificationObject} from '@lib/serviceWorker/push';
 import {MOUNT_CLASS_TO} from '@config/debug';
 import getPeerTitle from '@components/wrappers/getPeerTitle';
 import wrapMessageForReply from '@components/wrappers/messageForReply';
+import {wrapGramTransferReactionText} from '@components/wallet/transferText';
 import {FontFamily} from '@config/font';
 import {NOTIFICATION_BADGE_PATH, NOTIFICATION_ICON_PATH} from '@config/notifications';
 import {IS_MOBILE} from '@environment/userAgent';
@@ -55,6 +56,8 @@ export type NotifyOptions = Partial<{
   silent: boolean;
   onclick: () => void;
   noIncrement: boolean;
+  /** the chat's sound is off */
+  noSound: boolean;
 }>;
 
 export type NotificationSettings = StateSettings['notifications'];
@@ -444,6 +447,7 @@ export class UiNotificationsManager {
       fwdCount,
       peerReaction,
       peerTypeNotifySettings,
+      noSound,
       isOtherTabActive,
       accountNumber
     } = payload;
@@ -465,10 +469,14 @@ export class UiNotificationsManager {
       if(message._ === 'message' && message.fwd_from && fwdCount > 1) {
         notificationMessage = I18n.format('Notifications.Forwarded', true, [fwdCount]);
       } else {
-        notificationMessage = await wrapMessageForReply({message, plain: true, managers: account.managers});
+        // * the title names the sender: a transfer's text leaves the name out
+        notificationMessage = await wrapMessageForReply({message, plain: true, managers: account.managers, compact: 'notification'});
 
         const emoticon = await this.getReactionEmoticon(account.managers, peerReaction?.reaction);
-        if(emoticon) {
+        if(emoticon && message._ === 'messageService' && message.action._ === 'messageActionGramTransfer') {
+          // * "❤ to your 1.5 Grams transfer" (Android)
+          notificationMessage = wrapGramTransferReactionText(fixEmoji(emoticon), message.action);
+        } else if(emoticon) {
           const langPackKey: LangPackKey = /* isAnyChat ? 'Notification.Group.Reacted' :  */'Notification.Contact.Reacted';
           const args: FormatterArguments = [
             fixEmoji(emoticon), // can be plain heart
@@ -491,6 +499,8 @@ export class UiNotificationsManager {
     if(peerReaction) {
       notification.noIncrement = true;
     }
+
+    notification.noSound = noSound;
 
     const peerTitleOptions/* : Partial<Parameters<typeof getPeerTitle>[0]> */ = {
       plainText: true as const,
@@ -961,7 +971,7 @@ export class UiNotificationsManager {
     this.toggleToggler();
 
     const now = tsNow();
-    if(this.settings.volume > 0 && this.settings.sound && !data.noIncrement) {
+    if(this.settings.volume > 0 && this.settings.sound && !data.noIncrement && !data.noSound) {
       this.testSound(this.settings.volume);
       this.soundsPlayed[data.tag] = now;
     }

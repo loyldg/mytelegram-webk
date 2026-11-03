@@ -9,7 +9,7 @@
 
 import type ChatInput from '../input';
 import {getAppWindow, getOverlayRoot} from '@helpers/appWindow';
-import {POSTING_NOT_ALLOWED_MAP} from '../input';
+import {POSTING_NOT_ALLOWED_MAP} from '@components/chat/postingNotAllowedMap';
 import {ChatType} from '../chatType';
 import opusDecodeController from '@lib/opusDecodeController';
 import VoiceWaveformAnalyser from '@helpers/voiceWaveformAnalyser';
@@ -187,11 +187,6 @@ export default class ChatRecording {
     attachClickEvent(this.input.btnCancelRecord, this.onCancelRecordClick, {listenerSetter: this.input.listenerSetter});
 
     this.recorder.onstop = () => {
-      // the send button's circle flies into the voice message's play button
-      if(this.isStoppedToSend()) {
-        this.input.chat.bubbles?.sendFlights?.captureVoice({button: this.input.btnSend});
-      }
-
       this.setRecording(false);
       this.input.chatInput.classList.remove('is-locked');
 
@@ -843,6 +838,7 @@ export default class ChatRecording {
     this.active = value;
     this.input.inputState.set({isRecording: value});
     this.input.setShrinking(this.active, ['is-recording']);
+    this.input.onRecordingChange(value);
     this.input.updateSendBtn();
   }
 

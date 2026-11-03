@@ -116,6 +116,7 @@ import IS_CONFERENCE_CALL_SUPPORTED from '@environment/conferenceCallSupport';
 import IS_CALL_SUPPORTED from '@environment/callSupport';
 import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
 import verifyMenuItem from '@helpers/verifyMenuItem';
+import {isWalletAvailable, isWalletReleased} from '@lib/wallet/release';
 
 
 type SearchInitResult = {
@@ -579,6 +580,8 @@ export class AppSidebarLeft extends SidebarSlider {
   }
 
   private isAnimatingCollapse = false;
+  // * settles as the bar's resize under way is over (`isAnimatingCollapse` back to false)
+  private collapseAnimation: Promise<void>;
   private onSomethingOpenInsideChange = (force = false) => {
     const wasFloating = this.sidebarEl.classList.contains('has-open-tabs');
     const isFloating = force || this.hasSomethingOpenInside();
@@ -633,7 +636,7 @@ export class AppSidebarLeft extends SidebarSlider {
       !this.isSearchActive && this.sidebarEl.classList.add('force-hide-search');
 
       this.isAnimatingCollapse = true;
-      pause(ANIMATION_TIME + DELAY_AFTER_ANIMATION).then(() => {
+      this.collapseAnimation = pause(ANIMATION_TIME + DELAY_AFTER_ANIMATION).then(() => {
         this.isAnimatingCollapse = false;
         this.sidebarEl.classList.remove(
           'force-hide-large-content',
@@ -652,7 +655,7 @@ export class AppSidebarLeft extends SidebarSlider {
       );
 
       this.isAnimatingCollapse = true;
-      pause(ANIMATION_TIME + DELAY_AFTER_ANIMATION).then(() => {
+      this.collapseAnimation = pause(ANIMATION_TIME + DELAY_AFTER_ANIMATION).then(() => {
         this.sidebarEl.classList.remove(
           'force-fixed',
           'hide-add-folders',
@@ -661,7 +664,7 @@ export class AppSidebarLeft extends SidebarSlider {
 
         appDialogsManager.xd.toggleAvatarUnreadBadges(true, undefined);
 
-        pause(200).then(() => {
+        return pause(200).then(() => {
           this.isAnimatingCollapse = false;
         });
       });
@@ -782,6 +785,14 @@ export class AppSidebarLeft extends SidebarSlider {
       icon: 'user',
       text: 'Contacts',
       onClick: onContactsClick
+    }, {
+      icon: 'wallet',
+      text: 'Wallet.Menu',
+      new: true,
+      onClick: () => {
+        import('@components/wallet').then(({default: showWalletPopup}) => showWalletPopup());
+      },
+      verify: async() => isWalletReleased() && isWalletAvailable(await apiManagerProxy.getAppConfig())
     }, {
       icon: 'phone',
       text: 'Calls',
@@ -1723,13 +1734,34 @@ export class AppSidebarLeft extends SidebarSlider {
 
       const navigationType: NavigationItem['type'] = 'global-search';
       if(!IS_MOBILE_SAFARI && !appNavigationController.findItemByType(navigationType)) {
-        appNavigationController.pushItem({
+        // * the bar still resizing as the search opened (the first ~0.5 s), it closes once that is over, not never:
+        // * the Escape or back that asked for it is taken already. Kept open meanwhile, and then popped the way that
+        // * Escape would have (the field let go of, the history entry taken back) - this search's own item only, at
+        // * most once: closed otherwise meanwhile, its item is gone, and a search opened again is not touched
+        const closeWhenSettled = (): void => {
+          if(this.isAnimatingCollapse) {
+            this.collapseAnimation.then(closeWhenSettled);
+            return;
+          }
+
+          // * what took the focus meanwhile (the composer, a popup) keeps it: only the search's own is let go of
+          const focused = document.activeElement;
+          navigationItem.noBlurOnPop = !!focused && focused !== document.body &&
+            !this.inputSearch.container.contains(focused) && !searchContainer.contains(focused);
+          appNavigationController.backByItem(navigationItem);
+        };
+        const navigationItem: NavigationItem = {
           onPop: () => {
-            if(this.isAnimatingCollapse) return false;
+            if(this.isAnimatingCollapse) {
+              closeWhenSettled();
+              return false;
+            }
+
             close();
           },
           type: navigationType
-        });
+        };
+        appNavigationController.pushItem(navigationItem);
       }
 
       transition(1);
@@ -1781,7 +1813,14 @@ export class AppSidebarLeft extends SidebarSlider {
         return !!focused && focused !== document.body && focused !== this.backBtn &&
           !this.inputSearch.container.contains(focused) && !searchContainer.contains(focused);
       };
-      if(Modes.a11y && enteredWithKeyboard && !claimed()) focusWhenSettled(this.toolsBtn, () => !claimed());
+      if(Modes.a11y && enteredWithKeyboard && !claimed()) {
+        focusWhenSettled(this.toolsBtn, () => !claimed());
+      } else if(Modes.a11y && claimed()) {
+        // * the focus the search was left for, outside it (Tab went on into the center column), stays
+        // * there: Escape closes the search through the navigation, whose pop blurs whatever holds the focus
+        const keeper = document.activeElement as HTMLElement;
+        focusWhenSettled(keeper, () => !document.activeElement || document.activeElement === document.body);
+      }
 
       chatTypeMenu.props.selected = 'all';
     }, {listenerSetter: searchListenerSetter});

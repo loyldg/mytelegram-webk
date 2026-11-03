@@ -65,6 +65,9 @@ export interface MTAppConfig {
   default_emoji_statuses_stickerset_id?:     string;
   premium_promo_order?:                      PremiumPromoFeatureType[];
   business_promo_order?:                     PremiumPromoFeatureType[];
+  business_chat_links_limit?:                number;
+  intro_title_length_limit?:                 number;
+  intro_description_length_limit?:           number;
   premium_bot_username?:                     string;
   premium_invoice_slug?:                     string;
   premium_playmarket_direct_currency_list?:  string[];
@@ -151,6 +154,12 @@ export interface MTAppConfig {
   verify_age_country?:                       string;
   ton_usd_rate?:                             number;
   ton_topup_url?:                            string;
+  ton_blockchain_explorer_url?:              string;
+  wallet_available?:                         boolean;
+  wallet_transfer_min_nanos?:                number;
+  wallet_gasless_min_nanos?:                 number;
+  wallet_gasless_daily_transfers?:           number;
+  old_wallet_bot_username?:                  string;
   ton_stargift_resale_amount_max?:            number;
   ton_stargift_resale_amount_min?:            number;
   ton_stargift_resale_commission_permille?:   number;

@@ -15,6 +15,8 @@ import MediaProgressLine from '@components/mediaProgressLine';
 import VolumeSelector from '@components/volumeSelector';
 import debounce from '@helpers/schedulers/debounce';
 import overlayCounter from '@helpers/overlayCounter';
+import contextMenuController from '@helpers/contextMenuController';
+import Modes from '@config/modes';
 import onMediaLoad from '@helpers/onMediaLoad';
 import {attachClickEvent} from '@helpers/dom/clickEvent';
 import playOrPlayMuted from '@helpers/dom/playOrPlayMuted';
@@ -383,6 +385,8 @@ export default class VideoPlayer extends ControlsHover {
         if(this.listenKeyboardEvents) listenerSetter.add(getAppWindow().document)('keydown', (e: KeyboardEvent) => {
           if(
             overlayCounter.overlaysActive > 1 ||
+            // * with the a11y layer a key a focused control or an open menu took is theirs, not the player's
+            (Modes.a11y && (e.defaultPrevented || contextMenuController.isOpened())) ||
             getAppWindow().document.pictureInPictureElement === video ||
             (this.listenKeyboardEvents === 'fullscreen' && !this.isFullScreen())
           ) { // forward popup is active, etc
@@ -394,7 +398,8 @@ export default class VideoPlayer extends ControlsHover {
           let good = true;
           if(code === 'KeyF') {
             this.toggleFullScreen();
-          } else if(code === 'KeyM') {
+          // * M alone: held with Cmd it minimizes the window on a Mac, with Option it types a character
+          } else if(code === 'KeyM' && !e.ctrlKey && !e.metaKey && !e.altKey) {
             appMediaPlaybackController.muted = !appMediaPlaybackController.muted;
           } else if(code === 'Space' && this.canPause) {
             this.togglePlay();
