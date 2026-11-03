@@ -97,6 +97,7 @@ const ENTITY_DIRECTIONS: {[type in MessageEntity['_']]?: 'ltr' | 'auto'} = {
   messageEntityUrl: 'ltr',
   messageEntityEmail: 'ltr',
   messageEntityPhone: 'ltr',
+  messageEntityBankCard: 'ltr',
   messageEntityBotCommand: 'ltr',
   messageEntityMention: 'ltr',
   messageEntityCashtag: 'ltr',
@@ -467,6 +468,38 @@ export default function wrapRichText(text: string, options: WrapRichTextOptions 
           element.classList.add('phone-url');
           (element as HTMLAnchorElement).href = encodeEntities('tel:' + target);
         }
+        break;
+      }
+
+      // a click opens the card's menu: its number to copy, and what the server knows of it
+      // (`onBankCardClick`, tdesktop's BankCardClickHandler)
+      case 'messageEntityBankCard': {
+        if(!(options.noLinks && !passEntities[entity._]) && !options.wrappingDraft) {
+          element = document.createElement('a');
+          element.classList.add('bank-card');
+          (element as HTMLAnchorElement).href = '#';
+          element.dataset.bankCard = fullEntityText;
+          element.setAttribute('aria-haspopup', 'menu');
+          element.setAttribute('aria-expanded', 'false');
+          element.setAttribute('onclick', 'onBankCardClick(this, event)');
+        }
+        break;
+      }
+
+      // * a TON wallet address the server marked: a click opens what can be done with it (wallet/addressMenu);
+      // * the link itself starts a transfer to it, for wherever the menu is not. Plain text while nothing handles it:
+      // * the menu's handler is there only once the wallet is released (lib/wallet/release)
+      case 'messageEntityTonAddress': {
+        if(!options.noLinks && (window as any).openTonAddress) {
+          element = document.createElement('a');
+          element.classList.add('ton-address');
+          (element as HTMLAnchorElement).href = encodeEntities('tg://sendgrams?to=' + encodeURIComponent(fullEntityText));
+          if(!contextExternal) {
+            element.setAttribute('onclick', 'openTonAddress(this)');
+            element.setAttribute('aria-haspopup', 'menu');
+          }
+        }
+
         break;
       }
 

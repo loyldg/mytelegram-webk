@@ -28,6 +28,7 @@ import {usePromiseCollector} from '@components/solidJsTabs/promiseCollector';
 import {mountSolidComponent, wrapSolidComponent} from '@helpers/solid/wrapSolidComponent';
 import type {AppChatInviteLinkTab, AppChatInviteLinksTab} from '@components/solidJsTabs/tabs';
 import {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
+import toastError from '@components/toastError';
 
 const ChatInviteLinks: Component = () => {
   const [tab] = useSuperTab<typeof AppChatInviteLinksTab>();
@@ -119,11 +120,17 @@ const ChatInviteLinks: Component = () => {
 
         const invite = _menuItem?.invite || primaryInvite;
 
-        const chatInvite = await tab.managers.appChatInvitesManager.editExportedChatInvite({
-          chatId: chatId,
-          link: invite.link,
-          revoked: true
-        });
+        let chatInvite: MessagesExportedChatInvite;
+        try {
+          chatInvite = await tab.managers.appChatInvitesManager.editExportedChatInvite({
+            chatId: chatId,
+            link: invite.link,
+            revoked: true
+          });
+        } catch(err) {
+          toastError(err as ApiError, 'revoke invite link error');
+          return;
+        }
 
         const editedInvite = chatInvite.invite as ChatInvite;
         const newInvite = (chatInvite as MessagesExportedChatInvite.messagesExportedChatInviteReplaced).new_invite as ChatInvite;
@@ -161,7 +168,7 @@ const ChatInviteLinks: Component = () => {
           onRevokedLinksUpdate();
 
           chatInviteLinkTab?.close();
-        });
+        }, (err: ApiError) => toastError(err, 'delete invite link error'));
       },
       verify: () => !!menuInvite?.pFlags?.revoked
     }];
@@ -312,8 +319,14 @@ const ChatInviteLinks: Component = () => {
         });
 
         const toggle = toggleDisability(btn, true);
-        await tab.managers.appChatInvitesManager.deleteRevokedExportedChatInvites(chatId, adminId);
-        toggle();
+        try {
+          await tab.managers.appChatInvitesManager.deleteRevokedExportedChatInvites(chatId, adminId);
+        } catch(err) {
+          toastError(err as ApiError, 'delete revoked links error');
+          return;
+        } finally {
+          toggle();
+        }
 
         Array.from(revokedLinksContent.children).forEach((el) => {
           const cache = invitesMap.get(el as HTMLElement);

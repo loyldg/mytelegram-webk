@@ -8,7 +8,7 @@
 import deepEqual from '@helpers/object/deepEqual';
 import isObject from '@helpers/object/isObject';
 import safeReplaceObject from '@helpers/object/safeReplaceObject';
-import {ChannelAdminLogEvent, ChannelParticipant, ChannelsCreateChannel, ChannelsGetAdminLog, ChannelsGetAdminedPublicChannels, ChannelsSendAsPeers, Chat, ChatAdminRights, ChatBannedRights, ChatFull, ChatInvite, ChatParticipant, ChatPhoto, ChatReactions, EmojiStatus, InputChannel, InputChatPhoto, InputFile, InputPeer, InputUser, MessagesChats, MessagesChatInviteJoinResult, MessagesSponsoredMessages, MissingInvitee, Peer, SponsoredMessage, SponsoredPeer, StickerSet, Update, Updates} from '@layer';
+import {ChannelAdminLogEvent, ChannelParticipant, ChannelsCreateChannel, ChannelsGetAdminLog, ChannelsGetAdminedPublicChannels, ChannelsSendAsPeers, Chat, ChatAdminRights, ChatBannedRights, ChatFull, ChatInvite, ChatParticipant, ChatPhoto, ChatReactions, EmojiStatus, InputChannel, InputChatPhoto, InputFile, InputPeer, InputUser, MessagesChats, Photo, MessagesChatInviteJoinResult, MessagesSponsoredMessages, MissingInvitee, Peer, SponsoredMessage, SponsoredPeer, StickerSet, Update, Updates} from '@layer';
 import {AppManager} from '@appManagers/manager';
 import hasRights, {isSendRight} from '@appManagers/utils/chats/hasRights';
 import getParticipantPeerId from '@appManagers/utils/chats/getParticipantPeerId';
@@ -19,10 +19,14 @@ import tsNow from '@helpers/tsNow';
 import getPeerActiveUsernames from '@appManagers/utils/peers/getPeerActiveUsernames';
 import MTProtoMessagePort from '@lib/mainWorker/mainMessagePort';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
+import {getUpdatesList} from '@lib/calls/helpers/groupCallUpdates';
+import noop from '@helpers/noop';
 import callbackify from '@helpers/callbackify';
 import {SlicedCachedFetcher} from '@appManagers/utils/chats/slicedCachedFetcher';
 import {CHAT_LEGACY_ADMIN_RIGHTS} from '@lib/appManagers/utils/chats/constants';
+import getPhotoInput from '@appManagers/utils/photos/getPhotoInput';
 import {getStickerSetInputById} from '@lib/appManagers/utils/stickers/getStickerSetInput';
+import forgetFailedRequest from '@helpers/forgetFailedRequest';
 
 export type Channel = Chat.channel;
 export type ChatPhotoUpload = {
@@ -65,6 +69,8 @@ type GetAdminLogsFetcherKeyArgs = Pick<FetchAdminLogsArgs, 'channelId' | 'flags'
 
 export class AppChatsManager extends AppManager {
   private storage: AppStoragesManager['storages']['chats'];
+  /** The chats kept on disk are in: what is asked of them before then finds none */
+  public loaded: Promise<unknown>;
 
   private chats: {[id: ChatId]: Exclude<Chat, Chat.chatEmpty>};
   // private usernames: any;
@@ -74,6 +80,9 @@ export class AppChatsManager extends AppManager {
   private recommendations: {[chatId: ChatId]: MaybePromise<MessagesChats>};
   // * the paid messages price the full channel last named for this user (0 — exempt)
   private fullPaidMessagesStars: Map<ChatId, number> = new Map();
+  // * the admin behind a message posted as the channel, by `${chatId}_${mid}`: asked once a session,
+  // * an answer that did not come included (desktop's `LookupMessageAuthor`)
+  private messageAuthors: Map<string, Promise<PeerId>> = new Map();
 
   protected after() {
     this.clear(true);
@@ -84,7 +93,7 @@ export class AppChatsManager extends AppManager {
       updateChatDefaultBannedRights: this.onUpdateChatDefaultBannedRights
     });
 
-    return Promise.all([
+    return this.loaded = Promise.all([
       this.appStateManager.getState(),
       this.appStoragesManager.loadStorage('chats')
     ]).then(([state, {results: chats, storage}]) => {
@@ -368,19 +377,27 @@ export class AppChatsManager extends AppManager {
       delete chat.linked_community_id;
     }
 
-    this.mirrorChat(chat);
-    this.rootScope.dispatchEvent('chat_update', chatId);
+    this.onChatChanged(chat);
     this.appCommunitiesManager.handlePeerLinkedCommunityUpdate({
       peerId: chatId.toPeerId(true),
       previousCommunityId,
       communityId
     });
-    if(this.peersStorage.isPeerNeeded(chatId.toPeerId(true))) {
+    return true;
+  }
+
+  /**
+   * A chat changed in place: the tabs' copy of it (what they read synchronously), the listeners and the copy kept
+   * for the next start follow
+   */
+  private onChatChanged(chat: Exclude<Chat, Chat.chatEmpty>) {
+    this.mirrorChat(chat);
+    this.rootScope.dispatchEvent('chat_update', chat.id);
+    if(this.peersStorage.isPeerNeeded(chat.id.toPeerId(true))) {
       this.storage.set({
-        [chatId]: chat
+        [chat.id]: chat
       });
     }
-    return true;
   }
 
   /**
@@ -526,6 +543,27 @@ export class AppChatsManager extends AppManager {
     if(chat?._ !== 'channel') return false;
 
     return !!(chat.admin_rights?.pFlags?.manage_direct_messages);
+  }
+
+  /**
+   * Who of the admins wrote a message of the channel's direct messages posted as the channel, for
+   * an admin to see (`channels.getMessageAuthor`); nothing when the server does not say
+   */
+  public getMessageAuthor(chatId: ChatId, mid: number) {
+    const key = `${chatId}_${mid}`;
+    let promise = this.messageAuthors.get(key);
+    if(!promise) {
+      promise = this.apiManager.invokeApi('channels.getMessageAuthor', {
+        channel: this.getChannelInput(chatId),
+        id: getServerMessageId(mid)
+      }).then((user) => {
+        this.appUsersManager.saveApiUser(user);
+        return user._ === 'user' ? user.id.toPeerId(false) : undefined;
+      }, (): PeerId => undefined);
+      this.messageAuthors.set(key, promise);
+    }
+
+    return promise;
   }
 
   /**
@@ -987,7 +1025,19 @@ export class AppChatsManager extends AppManager {
       _: 'inputChatPhotoEmpty'
     };
 
-    let promise: any;
+    return this.setChatPhoto(id, inputChatPhoto);
+  }
+
+  /** One of the chat's earlier photos made its photo again ("Set as Main") */
+  public setExistingPhoto(id: ChatId, photoId: Photo.photo['id']) {
+    return this.setChatPhoto(id, {
+      _: 'inputChatPhoto',
+      id: getPhotoInput(this.appPhotosManager.getPhoto(photoId))
+    });
+  }
+
+  private setChatPhoto(id: ChatId, inputChatPhoto: InputChatPhoto) {
+    let promise: Promise<Updates>;
     if(this.isChannel(id) || this.isCommunity(id)) {
       promise = this.apiManager.invokeApi('channels.editPhoto', {
         channel: this.getChannelInput(id),
@@ -1371,13 +1421,50 @@ export class AppChatsManager extends AppManager {
     });
   }
 
+  /**
+   * Approves or dismisses every pending join request at once, or only those that came through
+   * `link`. The pending counter is the server's: its `updatePendingJoinRequests` when the answer carries
+   * one, else the queue read anew - never put at zero, which a request that came meanwhile contradicts.
+   */
+  public hideAllChatJoinRequests(chatId: ChatId, approved: boolean, link?: string) {
+    return this.apiManager.invokeApi('messages.hideAllChatJoinRequests', {
+      peer: this.appChatsManager.getInputPeer(chatId),
+      approved,
+      link
+    }).then((updates) => {
+      this.onChatUpdated(chatId, updates, true);
+      const peerId = chatId.toPeerId(true);
+      const counted = getUpdatesList(updates).some((update) => {
+        return update._ === 'updatePendingJoinRequests' && getPeerId(update.peer) === peerId;
+      });
+
+      if(!counted) {
+        // * not waited for: the requests are answered already
+        this.appChatInvitesManager.reloadPendingJoinRequests(chatId).catch(noop);
+      }
+    });
+  }
+
+  public updateEmojiStatus(chatId: ChatId, emojiStatus: EmojiStatus) {
+    return this.apiManager.invokeApiSingleProcess({
+      method: 'channels.updateEmojiStatus',
+      params: {
+        channel: this.getChannelInput(chatId),
+        emoji_status: emojiStatus
+      },
+      processResult: (updates) => {
+        this.apiUpdatesManager.processUpdateMessage(updates);
+      }
+    });
+  }
+
   public getChannelRecommendations(chatId?: ChatId) {
     const result = this.recommendations[chatId];
     if(result) {
       return result;
     }
 
-    const promise = this.recommendations[chatId] = this.apiManager.invokeApiSingleProcess({
+    const promise = this.recommendations[chatId] = forgetFailedRequest(this.apiManager.invokeApiSingleProcess({
       method: 'channels.getChannelRecommendations',
       params: {
         channel: chatId ? this.getChannelInput(chatId) : undefined
@@ -1391,7 +1478,7 @@ export class AppChatsManager extends AppManager {
 
         return messagesChats;
       }
-    });
+    }), () => this.recommendations[chatId], () => delete this.recommendations[chatId]);
 
     return promise;
   }
@@ -1510,7 +1597,7 @@ export class AppChatsManager extends AppManager {
     const chat = this.chats[chatId] as Chat.chat;
     if(chat) {
       chat.default_banned_rights = update.default_banned_rights;
-      this.rootScope.dispatchEvent('chat_update', chatId);
+      this.onChatChanged(chat);
     }
   };
 }

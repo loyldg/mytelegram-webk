@@ -58,7 +58,9 @@ const SANDBOX_ATTRIBUTES = [
   'allow-popups',
   'allow-forms',
   'allow-modals',
-  'allow-storage-access-by-user-activation'
+  'allow-storage-access-by-user-activation',
+  // * a 3D game made as a mini app captures the mouse as one sent as a game does (GAME_SANDBOX_ATTRIBUTES)
+  'allow-pointer-lock'
 ].join(' ');
 
 const DEVICEMOTION_TIMEOUT = 500;
@@ -628,9 +630,10 @@ export default class WebApp {
     clearTimeout(this.reloadTimeout);
     clearTimeout(this._deviceMotionTimeoutId);
     clearTimeout(this._deviceOrientationTimeoutId);
-    window.removeEventListener('devicemotion', this.handleDeviceMotion);
-    window.removeEventListener('deviceorientation', this.handleDeviceOrientation);
-    window.removeEventListener('deviceorientationabsolute', this.handleDeviceOrientation);
+    // * removed as they were added, in the capture phase: a listener removed without it stays
+    window.removeEventListener('devicemotion', this.handleDeviceMotion, true);
+    window.removeEventListener('deviceorientation', this.handleDeviceOrientation, true);
+    window.removeEventListener('deviceorientationabsolute', this.handleDeviceOrientation, true);
     this.footerCleanup?.();
   }
 
@@ -730,6 +733,7 @@ export default class WebApp {
             pattern = [65, 60, 40];
             break;
         }
+        break;
       case 'selection_change':
         pattern = [30];
         break;
@@ -968,7 +972,7 @@ export default class WebApp {
   }
 
   protected setupDeviceMotion() {
-    window.removeEventListener('devicemotion', this.handleDeviceMotion);
+    window.removeEventListener('devicemotion', this.handleDeviceMotion, true);
     clearTimeout(this._deviceMotionTimeoutId);
 
     if(this._gyroscopeFreqMs !== -1 || this._accelerometerFreqMs !== -1) {
@@ -992,20 +996,25 @@ export default class WebApp {
 
     const {telegramWebView, webViewOptions} = this;
     const managers = bindManagersToSession(this.managers);
+    // * a refused request lets the next one through: left pending, every later one would go unanswered
+    const cancel = () => {
+      this._fileDownloadPending = false;
+      telegramWebView.dispatchWebViewEvent('file_download_requested', {status: 'cancelled'});
+    };
 
     try {
-      const allow = await managers.apiManager.invokeApiSingle('bots.checkDownloadFileParams', {
-        bot: await managers.appUsersManager.getUserInput(webViewOptions.botId),
-        file_name: event.file_name,
-        url: event.url
-      });
+      const allow = await managers.appBotsManager.checkDownloadFileParams(
+        webViewOptions.botId,
+        event.file_name,
+        event.url
+      );
 
       if(!allow) {
-        telegramWebView.dispatchWebViewEvent('file_download_requested', {status: 'cancelled'});
+        cancel();
         return;
       }
     } catch(e) {
-      telegramWebView.dispatchWebViewEvent('file_download_requested', {status: 'cancelled'});
+      cancel();
       return;
     }
 
@@ -1051,8 +1060,7 @@ export default class WebApp {
       ],
       onClose: () => {
         if(this._fileDownloadPending) {
-          this._fileDownloadPending = false;
-          telegramWebView.dispatchWebViewEvent('file_download_requested', {status: 'cancelled'});
+          cancel();
         }
       }
     });
@@ -1112,13 +1120,14 @@ export default class WebApp {
           slug
         };
 
+        const onInvoiceClosed = (status: TelegramWebViewSendEventMap['invoice_closed']['status']) => {
+          telegramWebView.dispatchWebViewEvent('invoice_closed', {slug, status});
+        };
+
         hotReloadGuard.internalLinkProcessor.processInvoiceLink(link).then((popupPayment) => {
-          popupPayment.addEventListener('finish', (result) => {
-            telegramWebView.dispatchWebViewEvent('invoice_closed', {
-              slug,
-              status: result
-            });
-          });
+          popupPayment.addEventListener('finish', onInvoiceClosed);
+        }, () => { // * an invoice that does not open (a bad slug, a form the server refuses) is a failed one, as in tdesktop
+          onInvoiceClosed('failed');
         });
       },
       web_app_request_theme: this.sendTheme,
@@ -1258,7 +1267,7 @@ export default class WebApp {
       web_app_stop_device_orientation: () => {
         this._deviceOrientationFreqMs = -1;
         const eventName = this._deviceOrientationAbsolute ? 'deviceorientationabsolute' : 'deviceorientation';
-        window.removeEventListener(eventName, this.handleDeviceOrientation);
+        window.removeEventListener(eventName, this.handleDeviceOrientation, true);
         this.telegramWebView.dispatchWebViewEvent('device_orientation_stopped', undefined);
         clearTimeout(this._deviceOrientationTimeoutId);
       },

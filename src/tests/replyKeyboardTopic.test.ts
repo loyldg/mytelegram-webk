@@ -1,5 +1,6 @@
 import '@helpers/peerIdPolyfill';
 import ListenerSetter from '@helpers/listenerSetter';
+import EventListenerBase from '@helpers/eventListenerBase';
 import {getMiddleware} from '@helpers/middleware';
 import {ChatType} from '@components/chat/chatType';
 import {ReplyMarkup} from '@layer';
@@ -23,7 +24,8 @@ function makeKeyboard(chat: object) {
     managers: {} as any,
     appendTo: document.createElement('div'),
     btnHover,
-    chatInput: {chat} as any,
+    // * the app's, whose chat changes and column changes it follows
+    chatInput: {chat: {appImManager: new EventListenerBase(), ...chat}} as any,
     middleware: getMiddleware().get()
   });
 
@@ -63,5 +65,62 @@ describe('reply keyboard in a topic', () => {
 
     expect(await replyKeyboard.checkAvailability()).toBe(false);
     expect(btnHover.classList.contains('hide')).toBe(true);
+  });
+});
+
+describe('a force reply\'s answer the user drops', () => {
+  const forceReplyKeyboard = (mid: number): ReplyMarkup.replyKeyboardMarkup => ({
+    ...keyboard(mid),
+    pFlags: {force_reply: true, persistent: true}
+  });
+
+  function makeChat() {
+    const setAppState = vi.fn();
+    const {replyKeyboard} = makeKeyboard({
+      type: ChatType.Chat,
+      peerId: PEER_ID,
+      isBot: true,
+      historyStorage: {key: 'history_100', replyMarkup: forceReplyKeyboard(43)},
+      appState: {},
+      setAppState
+    });
+
+    return {replyKeyboard, setAppState};
+  }
+
+  test('is remembered apart from the keyboards closed, a persistent one to open with the chat still', () => {
+    const {replyKeyboard, setAppState} = makeChat();
+    replyKeyboard.onReplyDropped(43);
+    expect(setAppState.mock.calls).toEqual([['droppedForceReplies', 'history_100', 43]]);
+  });
+
+  test('is the chat\'s own message only, not one of another chat with the same id', () => {
+    const {replyKeyboard, setAppState} = makeChat();
+    replyKeyboard.onReplyDropped(43, (7 as ChatId).toPeerId(true));
+    replyKeyboard.onReplyDropped(44);
+    expect(setAppState).not.toHaveBeenCalled();
+    replyKeyboard.onReplyDropped(43, PEER_ID);
+    expect(setAppState).toHaveBeenCalledWith('droppedForceReplies', 'history_100', 43);
+  });
+});
+
+describe('the placeholder of a closed keyboard', () => {
+  function makeChat() {
+    return makeKeyboard({
+      type: ChatType.Chat,
+      peerId: PEER_ID,
+      historyStorage: {replyMarkup: {...keyboard(43), placeholder: 'Pick one'}}
+    }).replyKeyboard;
+  }
+
+  test('stands in the field that answers the message that brought it', () => {
+    const replyKeyboard = makeChat();
+    expect(replyKeyboard.getPlaceholder(43)).toBe('Pick one');
+    expect(replyKeyboard.getPlaceholder(43, PEER_ID)).toBe('Pick one');
+    expect(replyKeyboard.getPlaceholder(44)).toBeUndefined();
+  });
+
+  test('not in one that answers another chat\'s message with the same id', () => {
+    expect(makeChat().getPlaceholder(43, (7 as ChatId).toPeerId(true))).toBeUndefined();
   });
 });

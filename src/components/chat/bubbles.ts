@@ -26,10 +26,12 @@ import ListenerSetter from '@helpers/listenerSetter';
 import showChatToast from '@components/chat/chatToast';
 import {AudioElement, DeferredMediaElement, isAudioElement} from '@components/audio';
 import {ChannelParticipant, Chat as MTChat, ChatParticipant, Document, Game, Message, MessageEntity,  MessageMedia,  MessageReplyHeader, Photo, PhotoSize, ReactionCount, SponsoredMessage, User, UserFull, WebPage, WebPageAttribute, Reaction, DocumentAttribute, InputStickerSet, TextWithEntities, FactCheck, WebDocument, MessageExtendedMedia, PeerSettings, LangPackString, ForumTopic, MessageAction} from '@layer';
-import {BOT_START_PARAM, NULL_PEER_ID, REPLIES_PEER_ID, SEND_WHEN_ONLINE_TIMESTAMP, STARS_CURRENCY} from '@appManagers/constants';
+import {BOT_START_PARAM, NULL_PEER_ID, REPLIES_PEER_ID, SEND_WHEN_ONLINE_TIMESTAMP, SERVICE_PEER_ID, STARS_CURRENCY} from '@appManagers/constants';
 import {FocusDirection, ScrollStartCallbackDimensions} from '@helpers/fastSmoothScroll';
 import useHeavyAnimationCheck, {getHeavyAnimationPromise, dispatchHeavyAnimationEvent, interruptHeavyAnimation} from '@hooks/useHeavyAnimationCheck';
 import {doubleRaf, fastRaf, fastRafPromise} from '@helpers/schedulers';
+import sequentialDom from '@helpers/sequentialDom';
+import throttleWith from '@helpers/schedulers/throttleWith';
 import withTimeout from '@helpers/schedulers/withTimeout';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import memoizeAsyncWithTTL from '@helpers/memoizeAsyncWithTTL';
@@ -45,6 +47,7 @@ import {hideToast, toastNew} from '@components/toast';
 import {getMiddleware, Middleware, MiddlewareHelper} from '@helpers/middleware';
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent, CLICK_EVENT_NAME, simulateClickEvent} from '@helpers/dom/clickEvent';
+import ensureButtonSemantics from '@helpers/dom/ensureButtonSemantics';
 import htmlToDocumentFragment from '@helpers/dom/htmlToDocumentFragment';
 import reflowScrollableElement from '@helpers/dom/reflowScrollableElement';
 import setInnerHTML, {setDirection} from '@helpers/dom/setInnerHTML';
@@ -87,6 +90,7 @@ import setAttachmentSize, {EXPAND_TEXT_WIDTH} from '@helpers/setAttachmentSize';
 import wrapWebPageDescription from '@components/wrappers/webPageDescription';
 import wrapWebPageTitle from '@components/wrappers/webPageTitle';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
+import {wrapBusinessIntroLines} from '@components/chat/businessIntroPlaceholder';
 import wrapRichText from '@lib/richTextProcessor/wrapRichText';
 import {MESSAGE_LINK_ENTITY_SELECTOR} from '@lib/richTextProcessor/filterDisabledEntities';
 import wrapMessageActionTextNew from '@components/wrappers/messageActionTextNew';
@@ -199,6 +203,7 @@ import {setAppSettings} from '@stores/appSettings';
 import safeWindowOpen from '@helpers/dom/safeWindowOpen';
 import findAndSplice from '@helpers/array/findAndSplice';
 import partition from '@helpers/array/partition';
+import filterUnique from '@helpers/array/filterUnique';
 import generatePhotoForExtendedMediaPreview from '@appManagers/utils/photos/generatePhotoForExtendedMediaPreview';
 import icon from '@components/icon';
 import {MediaSearchContext} from '@components/appMediaPlaybackController';
@@ -213,6 +218,8 @@ import {getCurrentNewMediaPopup} from '@components/popups/newMedia';
 import showStarGiftInfoPopup from '@components/popups/starGiftInfo';
 import {StarGiftBubble, UniqueStarGiftWebPageBox} from '@components/chat/bubbles/starGift';
 import {PremiumGiftBubble} from '@components/chat/bubbles/premiumGift';
+import WalletChatCard from '@components/wallet/chatCard';
+import {isWalletReleased} from '@lib/wallet/release';
 import {UnknownUserBubble} from '@components/chat/bubbles/unknownUser';
 import {
   HIDDEN_LINK_ENTITY_TYPES,
@@ -222,7 +229,8 @@ import {
 import isSuspiciousPeer from '@appManagers/utils/peers/isSuspiciousPeer';
 import ejectBubble from '@components/chat/bubbles/ejectBubble';
 import {generateGradient, generateTail, getGuestChatViaFromId, getMid, isGuestChatMessage, isMessage, isMessageForVerificationBot, isVerificationBot} from '@components/chat/utils';
-import {advanceOutgoingMessageGradient, holdOutgoingMessageGradient} from '@helpers/outgoingMessageGradient';
+import {advanceOutgoingMessageGradient, holdOutgoingMessageGradient, measureOutgoingMessageGradientHold} from '@helpers/outgoingMessageGradient';
+import OutgoingGradientUnion from '@components/chat/outgoingGradientUnion';
 import {ChecklistBubble} from '@components/chat/bubbles/checklist';
 import {getRestrictionReason} from '@helpers/restrictions';
 import {isMessageSensitive} from '@appManagers/utils/messages/isMessageRestricted';
@@ -604,6 +612,7 @@ const webPageTypes: {[type in WebPage.webPage['type']]?: LangPackKey} = {
   telegram_chatlist: 'OpenChatlist',
   telegram_story: 'OpenStory',
   telegram_channel_boost: 'BoostLinkButton',
+  telegram_group_boost: 'BoostLinkButton',
   telegram_giftcode: 'Open',
   telegram_chat: 'OpenGroup',
   telegram_livestream: 'VoipChannelJoinVoiceChatUrl',
@@ -611,6 +620,8 @@ const webPageTypes: {[type in WebPage.webPage['type']]?: LangPackKey} = {
   telegram_collection: 'StarGiftCollectionLinkButton',
   telegram_story_album: 'ViewStoryAlbum',
   telegram_megagroup_request: 'Chat.Message.RequestToJoin',
+  telegram_channel_request: 'Chat.Message.RequestToJoin',
+  telegram_chat_request: 'Chat.Message.RequestToJoin',
   telegram_stickerset: 'OpenStickers',
   telegram_call: 'JoinCall',
   telegram_aicomposetone: 'AiEditor.Chat.ViewStyle'
@@ -928,8 +939,12 @@ export default class ChatBubbles {
   }> = {};
 
   private onAnimateLadder: () => Promise<any> | void;
-  // private ladderDeferred: CancellablePromise<void>;
+  /** the zoom a list rendered anew comes in with (`animateAsLadder`), from the moment it is armed till it is over */
+  private ladderAppearance: CancellablePromise<void>;
+  /** the zoom held back till the list of the peer change (`chat.setPeerPromise`) is mounted (`startHeldLadder`) */
   private resolveLadderAnimation: () => Promise<any>;
+  /** the peer change whose list is mounted: a zoom of its renders is held back no more */
+  private ladderMountedIn: Promise<void>;
   private emptyPlaceholderBubble: HTMLElement;
 
   private viewsMids: Set<FullMid> = new Set();
@@ -994,6 +1009,8 @@ export default class ChatBubbles {
   private renderNewPromises: Set<Promise<any>> = new Set();
   // what is sent flies into its message
   public sendFlights: SendFlights;
+  // * the outgoing bubbles' gradient, drawn once for the list
+  private gradientUnion: OutgoingGradientUnion;
   private updateGradient: boolean;
 
   private extendedMediaMessages: Set<number> = new Set();
@@ -1129,6 +1146,8 @@ export default class ChatBubbles {
     this.myCountryCode = myPhone ? formatPhoneNumber(myPhone).code?.country_code : undefined;
 
     this.constructBubbles();
+    this.gradientUnion = new OutgoingGradientUnion();
+    this.gradientUnion.setInner(this.chatInner);
 
     // * constructor end
 
@@ -1355,7 +1374,12 @@ export default class ChatBubbles {
       }
 
       if(_bubble && message._ === 'message') {
-        this.updateSolidMessageBodyIdentity(_bubble, message, tempId, cancelledBubbleReplacement);
+        // * a link the server knows already comes back with its preview in the answer itself, which the
+        // * bubble drawn without it takes below (the `webPage` branch): its body keeps the structure it was
+        // * drawn with, or that edit would take the preview for one it has and not draw it
+        const bringsWebPage = ((message.media as MessageMedia.messageMediaWebPage)?.webpage)?._ === 'webPage' &&
+          !_bubble.querySelector('.web');
+        this.updateSolidMessageBodyIdentity(_bubble, message, tempId, cancelledBubbleReplacement || bringsWebPage);
         if(cancelledBubbleReplacement) {
           this.retryCancelledBubbleReplacement(_bubble, message, fullMid);
         }
@@ -2654,6 +2678,10 @@ export default class ChatBubbles {
       this.onHistoryReload();
     });
 
+    this.listenerSetter.add(rootScope)('sponsored_messages_toggle', (enabled) => {
+      this.onSponsoredMessagesToggle(enabled);
+    });
+
     this.listenerSetter.add(rootScope)('settings_updated', ({key}) => {
       if(key === 'settings.emoji.big') {
         // const middleware = this.getMiddleware();
@@ -3183,28 +3211,40 @@ export default class ChatBubbles {
 
   private viewsObserverCallback = (entry: IntersectionObserverEntry) => {
     if(entry.isIntersecting) {
-      const fullMid = getBubbleFullMid(entry.target as HTMLElement);
       this.observer.unobserve(entry.target, this.viewsObserverCallback);
-
-      if(this.chat.isPreview) return;
-
-      if(fullMid) {
-        if(this.sponsoredMessagesMids.includes(fullMid)) {
-          const {mid} = splitFullMid(fullMid);
-          const msg = this.sponsoredMessages.find((msg) => msg.mid === mid);
-          const sponsoredMessage = (msg as Message.message)?.sponsoredMessage
-
-          if(sponsoredMessage && !sponsoredMessage.viewed) {
-            this.managers.appMessagesManager.viewSponsoredMessage(sponsoredMessage.random_id)
-          }
-          return
-        }
-
-        this.viewsMids.add(fullMid);
-        this.sendViewCountersDebounced();
-      }
+      this.onViewed(entry.target as HTMLElement);
     }
   };
+
+  /**
+   * What is watched for its views came into view: a post's view is counted, an ad is reported as seen. Of an ad the
+   * button under it is watched, which has no id of its own: its bubble has
+   */
+  private onViewed(target: HTMLElement) {
+    if(this.chat.isPreview) return;
+
+    const fullMid = getBubbleFullMid(findUpClassName(target, 'bubble'));
+    if(!fullMid) return;
+
+    if(this.sponsoredMessagesMids.includes(fullMid)) {
+      const {mid} = splitFullMid(fullMid);
+      const msg = this.sponsoredMessages.find((msg) => msg.mid === mid);
+      const sponsoredMessage = (msg as Message.message)?.sponsoredMessage;
+
+      // * once per ad of the load: a bubble of it rendered anew is not another view. One that failed goes again
+      if(sponsoredMessage && !sponsoredMessage.viewed) {
+        sponsoredMessage.viewed = true;
+        this.managers.appMessagesManager.viewSponsoredMessage(sponsoredMessage.random_id).catch(() => {
+          sponsoredMessage.viewed = false;
+        });
+      }
+
+      return;
+    }
+
+    this.viewsMids.add(fullMid);
+    this.sendViewCountersDebounced();
+  }
 
   // * guarded to at most once per chat-open (like iOS's hasDisplayedGuestChatMessageTooltip); reset in cleanup
   private guestChatHintShown = false;
@@ -6015,6 +6055,15 @@ export default class ChatBubbles {
     }
   }
 
+  /**
+   * What a jump lights up waits for: the scroll to it to settle, and a list rendered anew to have come in — lit up
+   * while it zooms in, the bubble flashes unseen and the text is measured at the zoom's scale, the found words
+   * painted off their place
+   */
+  private waitForJumpToSettle(scroll: Promise<any>) {
+    return Promise.all([scroll, this.ladderAppearance]);
+  }
+
   public highlightBubble(element: HTMLElement, textHighlight?: TextHighlightMatch) {
     const datasetKey = 'highlightTimeout';
     if(element.dataset[datasetKey]) {
@@ -6280,6 +6329,7 @@ export default class ChatBubbles {
     this.releaseChatInnerMiddleware();
     this.sendFlights.abortAll();
     dropReactionFlights(this.scrollable.container);
+    this.gradientUnion.destroy();
 
     this.destroyScrollable();
 
@@ -6378,6 +6428,8 @@ export default class ChatBubbles {
     this.getSponsoredMessagePromise = undefined;
     this.sponsoredMessagesLoaded = false;
     this.sponsoredMessagesMids = [];
+    // * the next chat's ads have the same ids
+    this.sponsoredMessages = [];
     this.sponsoredMessagesAvailable = [];
     this.sponsoredAfterMids.clear();
 
@@ -6428,6 +6480,9 @@ export default class ChatBubbles {
 
     this.onAnimateLadder = undefined;
     this.resolveLadderAnimation = undefined;
+    this.ladderMountedIn = undefined;
+    this.ladderAppearance?.resolve();
+    this.ladderAppearance = undefined;
     this.attachPlaceholderOnRender = undefined;
     this.emptyPlaceholderBubble = undefined;
     this.previousStickyDate = undefined;
@@ -6670,7 +6725,7 @@ export default class ChatBubbles {
           // * plays while the message is still travelling
           const targets = this.getJumpTargets(bubble, lastMsgFullMid, wholeAlbum);
           const focusOn = this.getMessageFocus(bubble, lastMsgFullMid, highlight, pollOption, targets);
-          this.scrollToBubble(bubble, 'center', undefined, undefined, focusOn).then(() => {
+          this.waitForJumpToSettle(this.scrollToBubble(bubble, 'center', undefined, undefined, focusOn)).then(() => {
             if(!middleware()) return;
             targets.forEach((target) => this.highlightBubble(target, highlight));
             this.highlightBubblePollAnswer(bubble, lastMsgFullMid, pollOption);
@@ -6766,6 +6821,7 @@ export default class ChatBubbles {
     }
     this.refreshTestPeerNonContactState();
     const chatInner = this.chatInner = this.createChatInner();
+    this.gradientUnion.setInner(chatInner);
     if(samePeer) {
       chatInner.className = oldChatInner.className;
       chatInner.classList.remove('disable-hover', 'is-scrolling');
@@ -6990,12 +7046,7 @@ export default class ChatBubbles {
       }
 
       this.preloader.detach();
-
-      if(this.resolveLadderAnimation) {
-        this.resolveLadderAnimation();
-        this.resolveLadderAnimation = undefined;
-      }
-
+      this.startHeldLadder();
       this.setPeerCached = undefined;
 
       const scrollable = this.scrollable;
@@ -7095,7 +7146,7 @@ export default class ChatBubbles {
 
           if(willHighlight) {
             // * after the scroll settles, see the same-peer branch above
-            promise.then(() => {
+            this.waitForJumpToSettle(promise).then(() => {
               if(!middleware()) return;
               targets.forEach((target) => this.highlightBubble(target, highlight));
               this.highlightBubblePollAnswer(bubble, lastMsgFullMid, pollOption);
@@ -7289,8 +7340,8 @@ export default class ChatBubbles {
           return this.managers.appReactionsManager.getMessagesReactions(peerId, [...mids]);
         });
 
-        const promise = Promise.all(promises);
-        promise.then(() => {
+        // * a round the server refused is over too: the next one asks again
+        Promise.all(promises).catch(noop).then(() => {
           setTimeout(fetchReactions, 10e3);
         });
       };
@@ -8385,6 +8436,19 @@ export default class ChatBubbles {
   }
 
   /**
+   * Renders a message's bubble again once what its render waited for has come (the story it shows, loaded or gone) -
+   * while it is still this list's bubble of the message. By then the message may be deleted, its bubble sliced away or
+   * rendered anew, another chat opened: rendered all the same, it came back, or went into that chat's list
+   */
+  private rerenderWhenLoaded(bubble: HTMLElement, message: MyMessage) {
+    if(this.getBubble(makeFullMid(message)) !== bubble) {
+      return;
+    }
+
+    void this.safeRenderMessage({message: this.getMessageAsItIsNow(message), reverse: true, bubble});
+  }
+
+  /**
    * A message as the mirror has it now, by `mid` (its server id when its send was confirmed meanwhile); as it
    * was passed when the mirror holds no such message of that chat. A local one is what it is.
    */
@@ -8656,7 +8720,11 @@ export default class ChatBubbles {
     previousMid?: number,
     preserveStructure = false
   ) {
-    const entry = this.getSolidMessageBody(bubble, previousMid) || this.getSolidMessageBody(bubble);
+    const entry = this.getSolidMessageBody(bubble, previousMid) ||
+      this.getSolidMessageBody(bubble, message.mid) ||
+      // * the only body a bubble of one message holds is its own; the one of an album is the caption of whichever
+      // * of its messages has one, which every other's sending would have taken over, the last one leaving it empty
+      (message.grouped_id ? undefined : this.getSolidMessageBody(bubble));
     if(!entry) return;
 
     previousMid = entry.message.mid;
@@ -9536,6 +9604,30 @@ export default class ChatBubbles {
           }), content, middleware);
 
           bubbleContainer.after(content);
+        } else if(action._ === 'messageActionGramTransfer') {
+          // * a wallet transfer in the chat: the card opens its details in the wallet
+          const content = bubbleContainer.cloneNode(false) as HTMLElement;
+          content.classList.add('has-service-before');
+
+          this.wrapSomeSolid(() => WalletChatCard({
+            message: message as Message.messageService,
+            animationGroup: this.chat.animationGroup,
+            middleware
+          }), content, middleware);
+
+          bubbleContainer.after(content);
+        } else if(action._ === 'messageActionWalletTonConnectRequest') {
+          // * a connected app's request: a click reviews it in the wallet while it is pending (Android, tdesktop)
+          if(isWalletReleased() && message.peerId === SERVICE_PEER_ID && !message.pFlags.out && !action.pFlags.accepted && !action.pFlags.declined) {
+            bubbleContainer.classList.add('is-clickable');
+            // * a button to assistive technology, and with the a11y layer a tab stop Enter and Space open
+            ensureButtonSemantics(s);
+            attachClickEvent(s, () => {
+              import('@components/wallet/tonConnect').then(({openTonConnectRequestMessage}) => {
+                openTonConnectRequestMessage(String(action.session_id), (message as Message.messageService).id, action.expires);
+              });
+            }, {listenerSetter: this.listenerSetter});
+          }
         } else if(action._ === 'messageActionChannelJoined') {
           bubble.classList.add('is-similar-channels');
 
@@ -9683,13 +9775,7 @@ export default class ChatBubbles {
         const result = await modifyAckedPromise(this.managers.acknowledged.appStoriesManager.getStoryById(storyPeerId, storyId));
         if(!result.cached) {
           s.append(i18n('Loading'));
-          (result.result as Promise<any>).then(() => {
-            this.safeRenderMessage({
-              message,
-              reverse: true,
-              bubble
-            });
-          });
+          (result.result as Promise<any>).then(() => this.rerenderWhenLoaded(bubble, message), noop);
         } else if(!result.result) {
           let elem: HTMLElement;
           if(isMyStory) elem = i18n('ExpiredStoryMentionYou', [await wrapPeerTitle({peerId: message.peerId})]);
@@ -11788,7 +11874,7 @@ export default class ChatBubbles {
             const won = +outcome.ton_amount > 0;
             const s = document.createElement('span');
             s.append(
-              Icon('ton', 'inline-icon', 'text-text-bottom'),
+              Icon('gram_filled', 'inline-icon', 'text-text-bottom'),
               formatNanoton(won ? outcome.ton_amount : outcome.stake_ton_amount)
             );
 
@@ -12806,12 +12892,7 @@ export default class ChatBubbles {
         canAutoplay: false,
         onExpiredStory: async() => {
           await getHeavyAnimationPromise(); // wait for scroll to end
-          message = this.chat.getMessageByPeer(message.peerId, message.mid) as Message.message;
-          this.safeRenderMessage({
-            message,
-            reverse: true,
-            bubble
-          });
+          this.rerenderWhenLoaded(bubble, message);
         },
         withPreloader: true
       });
@@ -13338,12 +13419,26 @@ export default class ChatBubbles {
     }
   }
 
+  /**
+   * The list of the peer change is mounted: the zoom held back for it comes in, and so does at once one of a later
+   * render of the same change (the fresh page, while the change still waits for its dialog) - held back after this,
+   * nothing would bring it in, and the jump's highlights would wait for it for good
+   */
+  private startHeldLadder() {
+    this.ladderMountedIn = this.chat.setPeerPromise;
+    if(this.resolveLadderAnimation) {
+      this.resolveLadderAnimation();
+      this.resolveLadderAnimation = undefined;
+    }
+  }
+
   private async animateAsLadder(additionalFullMid: FullMid, additionalFullMids: FullMid[], isAdditionalRender: boolean, backLimit: number, maxId: FullMid) {
     /* const middleware = this.getMiddleware();
     await this.ladderDeferred; */
 
     const log = this.log.bindPrefix('ladder');
-    if(this.chat.setPeerPromise && !this.resolveLadderAnimation) {
+    const {setPeerPromise} = this.chat;
+    if(setPeerPromise && setPeerPromise !== this.ladderMountedIn && !this.resolveLadderAnimation) {
       log.warn('will be delayed');
       // @ts-ignore
       this.resolveLadderAnimation = this.animateAsLadder.bind(this, additionalFullMid, additionalFullMids, isAdditionalRender, backLimit, maxId);
@@ -13354,10 +13449,12 @@ export default class ChatBubbles {
       return;
     } */
 
+    const appearance = this.ladderAppearance;
     const fullMids = this.getRenderedHistory('desc');
 
     if(!fullMids.length) {
       log.warn('no bubbles');
+      appearance?.resolve();
       return;
     }
 
@@ -13455,10 +13552,20 @@ export default class ChatBubbles {
       await this.onAnimateLadder();
     }
 
+    // * a scroll while they zoom moves them under the frame: the pieces of the gradient they hold are placed where the
+    // * frame is again, once a frame, read before written
+    let hold: VoidFunction;
+    const onScroll = throttleWith((measure: VoidFunction) => {
+      sequentialDom.measure(measure);
+      sequentialDom.mutate(() => hold?.());
+    }, () => hold = measureOutgoingMessageGradientHold(setBubbles));
+    const {container: scrollContainer} = this.scrollable;
+
     fastRaf(() => {
       // * the list is in place by now, even one that was laid out before it was mounted: the zoom takes the pieces of
       // * the bubbles' gradient in
       holdOutgoingMessageGradient(setBubbles);
+      if(setBubbles.length) scrollContainer.addEventListener('scroll', onScroll, {passive: true});
       this.setStickyDateManually(); // ! maybe it's not efficient
 
       setBubbles.forEach((element) => {
@@ -13475,12 +13582,14 @@ export default class ChatBubbles {
       dispatchHeavyAnimationEvent(promise, timeout)
       .then(() => {
         fastRaf(() => {
+          scrollContainer.removeEventListener('scroll', onScroll);
           setBubbles.forEach((element) => {
             element.style.transitionDelay = '';
             element.classList.remove('can-zoom-fade');
           });
 
           this.chatInner.classList.remove('zoom-fading');
+          appearance?.resolve();
         });
 
         // ! в хроме, каким-то образом из-за zoom-fade класса начинает прыгать скролл при подгрузке сообщений вверх,
@@ -13489,6 +13598,8 @@ export default class ChatBubbles {
         //   this.needReflowScroll = true;
         // }
       });
+    } else {
+      appearance?.resolve();
     }
 
     return promise;
@@ -13548,7 +13659,7 @@ export default class ChatBubbles {
         i18n('ChatYourSelfDescription4')
       ];
     } else if(type === 'greeting') {
-      let subtitle = i18n('NoMessagesGreetingsDescription');
+      let {subtitle} = wrapBusinessIntroLines();
 
       // findAndSplice(this.messagesQueue, q => q.bubble === bubble);
 
@@ -13566,17 +13677,9 @@ export default class ChatBubbles {
 
         const intro = userFull.business_intro;
         if(intro) {
-          if(intro.title) {
-            const _title = document.createElement('span');
-            _title.append(wrapEmojiText(intro.title));
-            _title.className = title.className;
-            elements[elements.indexOf(title)] = _title;
-          }
-
-          if(intro.description) {
-            subtitle = document.createElement('span');
-            subtitle.append(wrapEmojiText(intro.description));
-          }
+          const lines = wrapBusinessIntroLines(intro);
+          elements[elements.indexOf(title)] = lines.title;
+          subtitle = lines.subtitle;
 
           if(intro.sticker) {
             doc = intro.sticker as MyDocument;
@@ -13632,8 +13735,6 @@ export default class ChatBubbles {
       //   reverse: false,
       //   promises: [loadPromise]
       // });
-
-      subtitle.classList.add('center', BASE_CLASS + '-subtitle');
 
       elements.push(subtitle, stickerDiv);
     } else if(type === 'premiumRequired') {
@@ -13781,6 +13882,12 @@ export default class ChatBubbles {
     animate?: boolean
   ) {
     const isSponsored = !!(message as Message.message).pFlags.sponsored;
+    // * an ad rendered as a new message ends here, and its bubble is registered right after with no await between:
+    // * one turned off while it waited (`dropSponsoredMessages`) stops here, one turned off later is deleted. An ad
+    // * between posts is taken from `sponsoredAfterMids`, which the drop empties, and is registered as it is taken
+    if(isSponsored && !this.liveSponsoredMessages.has(message as MyMessage)) {
+      return;
+    }
 
     const onClearedBefore = () => {
       this.log.warn('local message was cleared before render', message);
@@ -14168,8 +14275,40 @@ export default class ChatBubbles {
   private messagesSinceLastSponsored = 0;
   private sponsoredAfterMids = new Map<number, MyMessage>();
   private sponsoredMessagesLoaded = false;
+  /** The ads of the chat's load, forgotten all at once by `dropSponsoredMessages`: a render of one checks it is here */
+  private liveSponsoredMessages = new WeakSet<MyMessage>();
 
-  private async generateSponsoredMessage(sponsoredMessage: SponsoredMessage.sponsoredMessage, idx: number) {
+  /**
+   * Do Not Hide Ads turned off: the ads shown and the ones waiting for their place go at once. Turned
+   * back on, the chat's next load asks for them again, as Android's `addSponsoredMessages` checks the
+   * choice on each.
+   */
+  private onSponsoredMessagesToggle(enabled: boolean) {
+    this.dropSponsoredMessages();
+    this.sponsoredMessagesLoaded = !enabled;
+  }
+
+  /** Takes the chat's ads away: the shown ones, the queued ones and a load on its way. */
+  private dropSponsoredMessages() {
+    const fullMids = this.sponsoredMessagesMids;
+    // * a load on its way checks this promise (`loadSponsoredMessages`)
+    this.getSponsoredMessagePromise = undefined;
+    this.sponsoredMessagesMids = [];
+    this.sponsoredMessages = [];
+    this.sponsoredMessagesAvailable = [];
+    this.sponsoredMessageEvery = 0;
+    this.sponsoredAfterMids.clear();
+    // * an ad whose render still waits has no bubble to delete yet: it finds itself forgotten before it has one
+    this.liveSponsoredMessages = new WeakSet();
+    // * an id twice would destroy its bubble a second time, after the first took it out of `bubbles`
+    this.deleteMessagesByIds(filterUnique(fullMids));
+  }
+
+  private async generateSponsoredMessage(
+    sponsoredMessage: SponsoredMessage.sponsoredMessage,
+    idx: number,
+    middleware: () => boolean
+  ) {
     const offset = SPONSORED_MESSAGE_ID_OFFSET + idx
 
     const msg = await this.generateLocalFirstMessage(false, (message) => {
@@ -14205,7 +14344,13 @@ export default class ChatBubbles {
       };
     }, offset)
 
-    this.sponsoredMessagesMids.push(makeFullMid(this.peerId, msg.mid));
+    // * every load makes the same ids: one dropped while it waited must not register them for the next
+    if(middleware()) {
+      this.sponsoredMessagesMids.push(makeFullMid(this.peerId, msg.mid));
+      // * every ad made, the ones put in their places too: their views are reported by them (`onViewed`)
+      this.sponsoredMessages.push(msg);
+      this.liveSponsoredMessages.add(msg);
+    }
 
     return msg;
   }
@@ -14226,14 +14371,15 @@ export default class ChatBubbles {
       // Ads are appended without moving the reader away from the last post.
       if(sponsoredMessages.posts_between) {
         this.sponsoredMessageEvery = sponsoredMessages.posts_between;
-        Promise.all(sponsoredMessages.messages.map((it, idx) => this.generateSponsoredMessage(it, idx))).then((msgs) => {
+        // * the load lasts until the ads are made, so that one dropped meanwhile (`dropSponsoredMessages`) stays dropped
+        return Promise.all(sponsoredMessages.messages.map((it, idx) => this.generateSponsoredMessage(it, idx, middleware))).then((msgs) => {
+          if(!middleware()) return;
           this.messagesSinceLastSponsored = 0;
-          this.sponsoredMessages = this.sponsoredMessagesAvailable = msgs
+          this.sponsoredMessagesAvailable = msgs
           if(this.scrollable.loadedAll.bottom && msgs.length) {
             this.renderNewMessage(msgs.shift());
           }
         });
-        return;
       }
 
       const sponsoredMessage = sponsoredMessages.messages[0];
@@ -14242,7 +14388,7 @@ export default class ChatBubbles {
         return;
       }
 
-      const messagePromise = this.generateSponsoredMessage(sponsoredMessage, 0);
+      const messagePromise = this.generateSponsoredMessage(sponsoredMessage, 0, middleware);
 
       return Promise.all([
         messagePromise,
@@ -14311,7 +14457,7 @@ export default class ChatBubbles {
 
     const message = await this.generateLocalFirstMessage(false, (message) => {
       message.message = '-'; // will get replaced anyway
-      message.date = Date.now() * 1000;
+      message.date = tsNow(true);
     });
 
     if(!middleware()) {
@@ -14659,21 +14805,36 @@ export default class ChatBubbles {
 
     if(isFirstMessageRender && liteMode.isAvailable('motion')/*  && false */) {
       let times = isAdditionRender ? 2 : 1;
-      this.messagesQueueOnRenderAdditional = () => {
+      this.ladderAppearance?.resolve();
+      const appearance = this.ladderAppearance = deferredPromise();
+      const arm = this.messagesQueueOnRenderAdditional = () => {
         this.log('messagesQueueOnRenderAdditional');
 
         if(--times) return;
 
         this.messagesQueueOnRenderAdditional = undefined;
 
-        const promise = this.animateAsLadder(additionalFullMid, additionalFullMids, isAdditionRender, backLimit, maxId);
-        promise.then(() => {
-          setTimeout(() => { // preload messages
-            this.loadMoreHistory(reverse, true);
-          }, 0);
-        });
+        const preload = () => setTimeout(() => this.loadMoreHistory(reverse, true), 0);
+        // * a page that comes to a list its cached part already fills the screen of (its oldest message reaches past the
+        // * top, before the page goes in; not a date, which sticks to the top) comes in as a page scrolled to does: the
+        // * ladder is the chat's opening, never something added to a chat on screen, maybe being scrolled
+        const oldest = isAdditionRender && this.chatInner.isConnected && this.chatInner.querySelector('.bubble:not(.is-date)');
+        if(oldest && oldest.getBoundingClientRect().top < this.scrollable.container.getBoundingClientRect().top) {
+          appearance.resolve();
+          preload();
+          return;
+        }
+
+        this.animateAsLadder(additionalFullMid, additionalFullMids, isAdditionRender, backLimit, maxId).then(preload);
       };
+
+      // * the renders of this load are through without running it: it does not come
+      waitPromise.catch(noop).then(() => {
+        if(this.messagesQueueOnRenderAdditional === arm) appearance.resolve();
+      });
     } else {
+      // * one armed that has not run by now does not come any more
+      if(this.messagesQueueOnRenderAdditional) this.ladderAppearance?.resolve();
       this.messagesQueueOnRenderAdditional = undefined;
     }
 

@@ -7,7 +7,7 @@
 
 import type {MyTopPeer} from '@appManagers/appUsersManager';
 import tsNow from '@helpers/tsNow';
-import {ChannelParticipantsFilter, ChannelsChannelParticipants, ChannelParticipant, Chat, ChatFull, ChatParticipants, ChatPhoto, ExportedChatInvite, InputChannel, InputFile, InputPhoto, SendMessageAction, Update, UserFull, Photo, PhotoSize, Updates, ChatParticipant, PeerSettings, SendAsPeer, InputGroupCall, Birthday, TextWithEntities, UsersUserFull, MessagesChatFull, ProfileTab, Document, InputCollectible} from '@layer';
+import {ChannelParticipantsFilter, ChannelsChannelParticipants, ChannelParticipant, Chat, ChatFull, ChatParticipants, ChatPhoto, ExportedChatInvite, InputChannel, InputFile, InputPhoto, SendMessageAction, Update, UserFull, Photo, PhotoSize, Updates, ChatParticipant, PeerSettings, SendAsPeer, InputGroupCall, Birthday, TextWithEntities, UsersUserFull, MessagesChatFull, ProfileTab, Document, InputCollectible, ReportReason} from '@layer';
 import SearchIndex from '@lib/searchIndex';
 import {AppManager} from '@appManagers/manager';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
@@ -52,6 +52,8 @@ const defaultGetChannelParticipantsOptions: Partial<GetChannelParticipantsOption
 export class AppProfileManager extends AppManager {
   // private botInfos: any = {};
   private usersFull: {[id: UserId]: UserFull.userFull} = {};
+  // * the block updates (and pages of the blocked list) of users whose full profile is not here
+  private usersBlocked: Map<UserId, boolean> = new Map();
   private chatsFull: {[id: ChatId]: ChatFull} = {};
   private fullExpiration: {[peerId: PeerId]: number} = {};
   private botCommandsByPeer: State['botCommands'] = {};
@@ -152,7 +154,11 @@ export class AppProfileManager extends AppManager {
     });
   }
 
-  private saveFullPeer<T extends UserFull.userFull | ChatFull>(peerId: PeerId, fullPeer: T): T {
+  /**
+   * `settingsAskedAt`: the notification settings clock's tick the full peer was asked for at, so that the settings it
+   * holds do not overwrite what changed since (a mute, a Reset All)
+   */
+  private saveFullPeer<T extends UserFull.userFull | ChatFull>(peerId: PeerId, fullPeer: T, settingsAskedAt?: number): T {
     this.applyCachedBotCommands(peerId, fullPeer);
 
     const isUser = peerId.isUser();
@@ -235,7 +241,8 @@ export class AppProfileManager extends AppManager {
     if('notify_settings' in fullPeer) {
       this.appNotificationsManager.savePeerSettings({
         peerId,
-        settings: fullPeer.notify_settings
+        settings: fullPeer.notify_settings,
+        askedAt: settingsAskedAt
       });
     }
 
@@ -244,6 +251,7 @@ export class AppProfileManager extends AppManager {
     if(isUser) {
       const userId = peerId.toUserId();
       this.usersFull[userId] = fullPeer as UserFull.userFull;
+      this.appWalletManager.saveWalletAddress(userId, (fullPeer as UserFull.userFull).wallet_card?.address);
       this.rootScope.dispatchEvent('user_full_update', userId);
     } else {
       const chatId = peerId.toChatId();
@@ -267,10 +275,10 @@ export class AppProfileManager extends AppManager {
     return fullPeer;
   }
 
-  private saveFullPeerResult(peerId: PeerId, result: UsersUserFull | MessagesChatFull) {
+  private saveFullPeerResult(peerId: PeerId, result: UsersUserFull | MessagesChatFull, settingsAskedAt: number) {
     this.appPeersManager.saveApiPeers(result);
     const fullPeer = (result as UsersUserFull).full_user || (result as MessagesChatFull).full_chat;
-    return this.saveFullPeer(peerId, fullPeer);
+    return this.saveFullPeer(peerId, fullPeer, settingsAskedAt);
   }
 
   public getProfile(id: UserId, override?: boolean) {
@@ -279,13 +287,14 @@ export class AppProfileManager extends AppManager {
       return this.usersFull[id];
     }
 
+    const settingsAskedAt = this.appNotificationsManager.getSettingsClock();
     return this.apiManager.invokeApiSingleProcess({
       method: 'users.getFullUser',
       params: {
         id: this.appUsersManager.getUserInput(id)
       },
       processResult: (usersUserFull) => {
-        return this.saveFullPeerResult(peerId, usersUserFull) as UserFull;
+        return this.saveFullPeerResult(peerId, usersUserFull, settingsAskedAt) as UserFull;
       }
     });
   }
@@ -387,6 +396,38 @@ export class AppProfileManager extends AppManager {
 
   public getCachedFullUser(userId: UserId) {
     return this.usersFull[userId];
+  }
+
+  /**
+   * Whether the user is blocked: as their full profile says, or else as the last block update (or a page of the
+   * blocked list) said, the way tdesktop keeps it on the peer. Waits for nothing, unlike `isUserBlocked`: one not
+   * known yet reads as not blocked, as in tdesktop, and their profile is loaded in the background, so that the next
+   * asking knows
+   */
+  public isUserKnownBlocked(userId: UserId) {
+    const userFull = this.usersFull[userId];
+    if(userFull) {
+      return !!userFull.pFlags.blocked;
+    }
+
+    if(!this.usersBlocked.has(userId)) {
+      Promise.resolve().then(() => this.getProfile(userId)).catch(noop);
+    }
+
+    return !!this.usersBlocked.get(userId);
+  }
+
+  /**
+   * A page of the blocked list (`contacts.getBlocked`): the users it names are blocked, unless a block update or the
+   * full profile has its own word, which may be newer than the page
+   */
+  public saveBlockedPeers(peerIds: PeerId[]) {
+    for(const peerId of peerIds) {
+      const userId = peerId.isUser() && peerId.toUserId();
+      if(userId && !this.usersFull[userId] && !this.usersBlocked.has(userId)) {
+        this.usersBlocked.set(userId, true);
+      }
+    }
   }
 
   public getCachedProfileByPeerId(peerId: PeerId) {
@@ -518,6 +559,7 @@ export class AppProfileManager extends AppManager {
       }
 
       const requestState = this.appCommunitiesManager.captureFullCommunityRequest(id);
+      const settingsAskedAt = this.appNotificationsManager.getSettingsClock();
       return this.apiManager.invokeApiSingleProcess({
         method: 'channels.getFullChannel',
         params: {
@@ -532,7 +574,7 @@ export class AppProfileManager extends AppManager {
             return result.full_chat;
           }
 
-          return this.saveFullPeerResult(peerId, result) as ChatFull.communityFull;
+          return this.saveFullPeerResult(peerId, result, settingsAskedAt) as ChatFull.communityFull;
         }
       });
     }
@@ -554,13 +596,14 @@ export class AppProfileManager extends AppManager {
       }
     }
 
+    const settingsAskedAt = this.appNotificationsManager.getSettingsClock();
     return this.apiManager.invokeApiSingleProcess({
       method: 'messages.getFullChat',
       params: {
         chat_id: id
       },
       processResult: (result) => {
-        return this.saveFullPeerResult(peerId, result) as ChatFull.chatFull;
+        return this.saveFullPeerResult(peerId, result, settingsAskedAt) as ChatFull.chatFull;
       }
     });
   }
@@ -646,6 +689,32 @@ export class AppProfileManager extends AppManager {
 
       return found;
     });
+  }
+
+  /**
+   * What the admin editor starts from: the member as they are, or a plain member made up for someone
+   * not in the chat, whom promoting adds
+   */
+  public async getParticipantOrMissing(id: ChatId, peerId: PeerId): Promise<{
+    participant: ChannelParticipant | ChatParticipant,
+    missing: boolean
+  }> {
+    try {
+      return {participant: await this.getParticipant(id, peerId), missing: false};
+    } catch(err) {
+      if((err as ApiError)?.type !== 'USER_NOT_PARTICIPANT') {
+        throw err;
+      }
+
+      const userId = peerId.toUserId();
+      const date = tsNow(true);
+      return {
+        participant: this.appChatsManager.isChannel(id) || this.appChatsManager.isCommunity(id) ?
+          {_: 'channelParticipant', user_id: userId, date} :
+          {_: 'chatParticipant', user_id: userId, inviter_id: this.rootScope.myId.toUserId(), date},
+        missing: true
+      };
+    }
   }
 
   public getChannelParticipants(options: GetChannelParticipantsOptions) {
@@ -791,6 +860,7 @@ export class AppProfileManager extends AppManager {
     }
 
     const cutoffGeneration = this.appMessagesManager.getChannelAvailableMinIdRequestGeneration(peerId);
+    const settingsAskedAt = this.appNotificationsManager.getSettingsClock();
     return this.apiManager.invokeApiSingleProcess({
       method: 'channels.getFullChannel',
       params: {
@@ -811,7 +881,7 @@ export class AppProfileManager extends AppManager {
           fullChat.available_min_id ?? 0,
           true
         );
-        return this.saveFullPeerResult(peerId, result) as ChatFull.channelFull;
+        return this.saveFullPeerResult(peerId, result, settingsAskedAt) as ChatFull.channelFull;
       },
       processError: (error) => {
         switch(error.type) {
@@ -1128,9 +1198,19 @@ export class AppProfileManager extends AppManager {
     });
   }
 
-  public updateProfilePhoto(photoId: string, fallback?: boolean) {
+  public updateProfilePhoto(photoId: Photo.photo['id'], fallback?: boolean) {
     const photo = this.appPhotosManager.getPhoto(photoId);
     return this.setProfilePhoto({id: getPhotoInput(photo), fallback});
+  }
+
+  /** The old report of a photo, by a reason: profile photos have no option-based flow (`messages.report`) */
+  public reportProfilePhoto(peerId: PeerId, photoId: Photo.photo['id'], reason: ReportReason, message = '') {
+    return this.apiManager.invokeApi('account.reportProfilePhoto', {
+      peer: this.appPeersManager.getInputPeerById(peerId),
+      photo_id: getPhotoInput(this.appPhotosManager.getPhoto(photoId)),
+      reason,
+      message
+    });
   }
 
   public clearFallbackProfilePhoto() {
@@ -1430,14 +1510,16 @@ export class AppProfileManager extends AppManager {
 
     const participants = _participants.participants;
     for(let i = 0, length = participants.length; i < length; i++) {
-      if(participants[i].user_id === update.user_id) {
+      const participant = participants[i] as ChatParticipant.chatParticipant;
+      if(participant.user_id === update.user_id) {
+        // * the update says only who is an admin: who added the member and when stay (the administrators list shows
+        // * that inviter as the one who promoted, and canEditAdmin goes by it), and so does the member tag
         participants[i] = {
           _: update.is_admin ? 'chatParticipantAdmin' : 'chatParticipant',
           user_id: update.user_id,
-          inviter_id: this.appUsersManager.getSelf().id,
-          date: tsNow(true),
-          // * the member tag outlives a promotion or a demotion
-          rank: (participants[i] as ChatParticipant.chatParticipant).rank
+          inviter_id: participant.inviter_id,
+          date: participant.date,
+          rank: participant.rank
         };
         return;
       }
@@ -1585,6 +1667,7 @@ export class AppProfileManager extends AppManager {
     const peerId = this.appPeersManager.getPeerId(update.peer_id);
     if(this.appPeersManager.isUser(peerId)) {
       const userId = peerId.toUserId();
+      this.usersBlocked.set(userId, !!update.pFlags.blocked);
       const userFull = this.usersFull[userId];
       if(userFull) {
         if(update.pFlags.blocked) {

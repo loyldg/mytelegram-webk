@@ -17,6 +17,7 @@ import showMyQrCodePopup from '@components/popups/myQrCode';
 import showSendGiftPicker from '@components/popups/sendGiftPicker';
 import {formatNanoton} from '@helpers/paymentsWrapCurrencyAmount';
 import showLogOutPopup from '@components/popups/logOut';
+import askQuestion, {openTelegramFaq} from '@components/askQuestion';
 import {useSuperTab} from '@components/solidJsTabs/superTabProvider';
 import {usePromiseCollector} from '@components/solidJsTabs/promiseCollector';
 import {subscribeOn} from '@helpers/solid/subscribeOn';
@@ -36,6 +37,15 @@ import A11yButton from '@components/a11yButton';
 import {getAppVersionText} from '@config/app';
 import {getKeptFlags} from '@config/modes';
 import styles from '@components/sidebarLeft/tabs/settings.module.scss';
+import type {WalletStatus} from '@appManagers/appWalletManager';
+import bigInt from 'big-integer';
+import {splitGrams} from '@components/wallet/format';
+import {isWalletAvailable, isWalletReleased} from '@lib/wallet/release';
+
+/** 0.01 GRAM: below it the Money row shows no balance, as on iOS */
+const WALLET_BALANCE_SHOWN_FROM = 10_000_000;
+/** the Money row's "New" goes four weeks after the wallet came out, 2026-09-29 (Android TextCell.applyNewSpanTimed) */
+const WALLET_NEW_UNTIL = 1790679020 + 4 * 7 * 86400;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper — wraps a sub-tab declaration. If the tab has a static `getInitArgs`,
@@ -346,6 +356,33 @@ const Settings = () => {
   const stars = useStars();
   const starsTon = useStars(true);
 
+  // ── Money, the way the iOS app lists it under the profile: the wallet's
+  //    balance on the right once it holds more than a cent's worth. The row
+  //    waits for the app config like the premium section does; the balance is
+  //    the manager's cached answer, refreshed after the tab opens.
+  const [walletAvailable, setWalletAvailable] = createSignal(false);
+  promiseCollector.collect(
+    Promise.resolve(apiManagerProxy.getAppConfig()).then((appConfig) => {
+      setWalletAvailable(isWalletAvailable(appConfig));
+    })
+  );
+  // * "New" until four weeks after the wallet came out, by the server's clock (Android SettingsActivity)
+  const [walletNew, setWalletNew] = createSignal(false);
+  promiseCollector.collect(
+    Promise.resolve(rootScope.managers.timeManager.getServerTime()).then((now) => {
+      setWalletNew(now < WALLET_NEW_UNTIL);
+    }, () => {})
+  );
+  // * two decimals, cut rather than rounded up, the second part smaller — the way iOS writes the row's balance
+  const [walletBalance, setWalletBalance] = createSignal<ReturnType<typeof splitGrams>>();
+  const onWalletStatus = (status: WalletStatus) => {
+    const balance = status.state?.balance;
+    setWalletBalance(balance !== undefined && bigInt(String(balance)).greater(WALLET_BALANCE_SHOWN_FROM) ? splitGrams(balance) : undefined);
+  };
+  subscribeOn(rootScope)('wallet_status', onWalletStatus);
+  // * no wallet asked of the server before its release: there is no row to show its balance in
+  if(isWalletReleased()) rootScope.managers.appWalletManager.getStatus().then(onWalletStatus, () => {});
+
   // ── Self profile (avatar + name + collapse-on-scroll). The avatar inside
   //    `PeerProfileAvatars` is filled async via `setPeer()` (peer photo IPC →
   //    appearance render → thumb load) — without waiting, the gradient header
@@ -389,6 +426,23 @@ const Settings = () => {
         </div>
       </InlinePortal>
       {peerProfileElement}
+      <Show when={walletAvailable()}>
+        <Section>
+          <Row clickable={() => import('@components/wallet').then(({default: showWalletPopup}) => showWalletPopup())}>
+            <Row.Icon icon="gram_filled" />
+            <Row.Title
+              titleRight={walletBalance() && <>
+                {walletBalance().whole}
+                <span style={{'font-size': 'calc(13em / 17)'}}>{walletBalance().fraction}</span>
+              </>}
+              titleRightSecondary
+            >
+              {i18n('Wallet.Menu')}
+              <Show when={walletNew()}><span class="row-title-badge">{i18n('New')}</span></Show>
+            </Row.Title>
+          </Row>
+        </Section>
+      </Show>
       <Section>
         <div class="profile-buttons">
           <For each={subTabConfigs}>
@@ -449,6 +503,17 @@ const Settings = () => {
           </Row>
         </Section>
       </Show>
+      {/* help, the way tdesktop ends its main settings */}
+      <Section>
+        <Row clickable={openTelegramFaq}>
+          <Row.Icon icon="faq_filled" />
+          <Row.Title>{i18n('TelegramFaq')}</Row.Title>
+        </Row>
+        <Row clickable={() => askQuestion(bindManagersToSession(rootScope.managers))}>
+          <Row.Icon icon="message_filled" />
+          <Row.Title>{i18n('AskAQuestion')}</Row.Title>
+        </Row>
+      </Section>
       <A11yButton class={styles.version} onClick={openExperimental}>
         <span dir="ltr">{getAppVersionText()}</span>
         <Show when={experimentalOn()}>

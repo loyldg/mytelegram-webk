@@ -28,6 +28,7 @@ const TLOTTIE_WASM_URL = new URL(
 export type LottieAssetName =
   | 'BusinessHours'
   | 'BusinessLocation'
+  | 'BusinessLinks'
   | 'EmptyFolder'
   | 'Folders_1'
   | 'Folders_2'
@@ -74,6 +75,11 @@ export type LottieAssetName =
   | 'collectible_username'
   | 'collectible_phone'
   | 'Experimental'
+  | 'GramWhite'
+  | 'GramWhiteFast'
+  | 'Gram'
+  | 'WalletWordList'
+  | 'WalletWordCheck'
 ;
 
 /**

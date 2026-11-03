@@ -38,6 +38,12 @@ export default function wrapUrl(url: string, safe?: boolean) {
       onclick = 'premium_offer';
     } else if(/^\+/.test(fullPath) && !PHONE_NUMBER_REG_EXP.test(fullPath)) { // second regexp is for phone numbers (t.me/+38050...)
       onclick = 'joinchat';
+    } else if(
+      // * the wallet's handler is there only once it is released (lib/wallet/release): a username link till then
+      (window as any).sendgrams &&
+      path[0].toLowerCase() === 'sendgrams' && (path.length === 1 || (path.length === 2 && !path[1])) && !prefix
+    ) { // t.me/sendgrams/?to=…&amount=…
+      onclick = 'sendgrams';
     } else if(path[0]) switch(path[0]) {
       case 'm':
       case 'addlist':
@@ -52,6 +58,7 @@ export default function wrapUrl(url: string, safe?: boolean) {
       case 'share':
       case 'nft':
       case 'addstyle':
+      case 'contact':
         if(path.length !== 1 && !prefix) {
           onclick = path[0];
           break;
@@ -71,6 +78,10 @@ export default function wrapUrl(url: string, safe?: boolean) {
     /^\/[^/]+\/\d+/.test(parsedUrl.pathname)
   ) {
     onclick = 'im';
+  } else if(/^ton:\/\/transfer\//i.test(url)) {
+    onclick = 'ton_transfer' as any;
+  } else if(/^tc:/i.test(url)) { // * a TON Connect link: tc://?v=2&id=…&r=…
+    onclick = 'tc_tonconnect' as any;
   } else if((tgMatch = url.match(/^tg:(?:\/\/)?(.+?)(?:\?|$)/))) {
     onclick = 'tg_' + tgMatch[1].split('/')[0] as any;
 
@@ -96,7 +107,9 @@ export default function wrapUrl(url: string, safe?: boolean) {
   } */
 
   if(!(window as any)[onclick]) {
-    onclick = undefined;
+    // * a tg:// link no handler here knows is the server's to explain (`help.getDeepLinkInfo`); an
+    // * `iv` link refused above stays a plain one
+    onclick = tgMatch && onclick && (window as any).unknownDeepLink ? 'unknownDeepLink' : undefined;
   }
 
   out.onclick = onclick;

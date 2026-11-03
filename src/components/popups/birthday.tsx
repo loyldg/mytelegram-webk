@@ -111,9 +111,11 @@ export default async function showBirthdayPopup(props: {
     const nowMonth = now.getMonth() + 1;
     const nowDay = now.getDate();
 
+    // * the day as it was entered: a month or year too short for it clamps what the field shows, and the next one
+    // * is checked against this, not the clamp (31, then April on the way to August, is August 31)
+    let enteredDay = dayField.value;
     function updateDayInput() {
-      const value = dayField.value;
-      const cleanValue = value.replace(/[^0-9]/g, '');
+      const cleanValue = enteredDay.replace(/[^0-9]/g, '');
       if(!cleanValue) {
         setDay(undefined);
         return;
@@ -123,7 +125,7 @@ export default async function showBirthdayPopup(props: {
 
       const valueNum = Number(cleanValue);
       const daysInMonth = month$ ? daysPerMonth()[month$.value - 1] : 31;
-      if(yearField.value === String(nowYear) && month$.value === nowMonth && valueNum > nowDay) {
+      if(yearField.value === String(nowYear) && month$?.value === nowMonth && valueNum > nowDay) {
         dayField.setValueSilently(nowDay.toString());
         setDay(nowDay);
       } else if(valueNum > daysInMonth) {
@@ -133,12 +135,80 @@ export default async function showBirthdayPopup(props: {
         dayField.setValueSilently('1');
         setDay(1);
       } else {
+        if(dayField.value !== enteredDay) dayField.setValueSilently(enteredDay);
         setDay(valueNum);
       }
     }
 
-    dayField.input.addEventListener('input', updateDayInput);
-    monthField.input.addEventListener('beforeinput', (e) => cancelEvent(e));
+    function availableMonths() {
+      if(yearField.value === String(nowYear)) {
+        return monthOptions.filter((m) => m.value <= nowMonth);
+      }
+
+      return monthOptions;
+    }
+
+    function selectMonth(option: MonthOption | undefined) {
+      setMonth(option);
+      updateDayInput();
+    }
+
+    let typedBuffer = '';
+    let typedTimeout: number;
+    const resetTypedBuffer = () => {
+      clearTimeout(typedTimeout);
+      typedBuffer = '';
+    };
+
+    function findTypedMonth(buffer: string) {
+      const options = availableMonths();
+      if(/^\d+$/.test(buffer)) {
+        const n = Number(buffer);
+        return options.find((option) => option.value === n);
+      }
+
+      const lower = buffer.toLocaleLowerCase();
+      return options.find((option) => option.text.toLocaleLowerCase().startsWith(lower));
+    }
+
+    function onMonthTyped(data: string) {
+      clearTimeout(typedTimeout);
+      typedTimeout = window.setTimeout(resetTypedBuffer, 1000);
+
+      typedBuffer += data;
+      let option = findTypedMonth(typedBuffer);
+      if(!option && typedBuffer.length > data.length) {
+        typedBuffer = data;
+        option = findTypedMonth(typedBuffer);
+      }
+
+      if(option) selectMonth(option);
+    }
+
+    dayField.input.addEventListener('input', () => {
+      enteredDay = dayField.value;
+      updateDayInput();
+    });
+    monthField.input.addEventListener('beforeinput', (e: InputEvent) => {
+      cancelEvent(e);
+      if(e.inputType === 'insertText' && e.data) {
+        onMonthTyped(e.data);
+      } else if(e.inputType === 'deleteContentBackward' || e.inputType === 'deleteContentForward') {
+        resetTypedBuffer();
+        selectMonth(undefined);
+        monthField.value = '';
+      }
+    });
+    monthField.input.addEventListener('keydown', (e: KeyboardEvent) => {
+      if(e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      e.preventDefault();
+      const options = availableMonths();
+      const current = month();
+      const idx = current ? options.findIndex((option) => option.value === current.value) : -1;
+      const next = e.key === 'ArrowDown' ? idx + 1 : (idx === -1 ? 0 : idx - 1);
+      const option = options[Math.min(Math.max(next, 0), options.length - 1)];
+      if(option) selectMonth(option);
+    });
     monthField.input.addEventListener('paste', (e) => cancelEvent(e));
 
     const {open: openMonthsMenu, close: closeMonthsMenu} = createButtonMenuSelect<MonthOption>({
@@ -146,18 +216,15 @@ export default async function showBirthdayPopup(props: {
       direction: 'bottom-center',
       get value() { return month() ? [month()] : [] },
       onValueChange: (value) => {
-        setMonth(value[0])
-        monthField.input.focus()
-        updateDayInput()
+        selectMonth(value[0]);
+        monthField.input.focus();
       },
       get options() {
-        if(yearField.value === String(nowYear)) {
-          return monthOptions.filter((m) => m.value <= nowMonth)
-        }
-
-        return monthOptions
+        return availableMonths();
       },
       single: true,
+      // * the field opens it as it gets the focus and takes the keys itself: typing, arrows
+      activateFocus: false,
       optionKey: (v) => v.value.toString(),
       renderOption: (props) => (
         <>
