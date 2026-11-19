@@ -457,7 +457,8 @@ class SuperMessagePort<
   }
 
   private isDataCloneError(error: unknown) {
-    return (error as {name?: string})?.name === 'DataCloneError';
+    // * a payload nested deeper than the clone algorithm's stack goes throws a RangeError, not a DataCloneError
+    return (error as {name?: string})?.name === 'DataCloneError' || error instanceof RangeError;
   }
 
   private sendDataCloneError(port: SendPort, taskId: number) {
@@ -767,6 +768,10 @@ class SuperMessagePort<
 
   protected invokeAs<M extends Listeners, T extends keyof M>(type: T, payload: Parameters<M[T]>[0], port?: SendPort, transfer?: Transferable[]): Promise<Awaited<ReturnType<M[T]>>> {
     return this.invoke(type as any, payload as any, false, port, transfer) as any;
+  }
+
+  protected invokeExceptSourceAsyncAs<M extends Listeners, T extends keyof M>(type: T, payload: Parameters<M[T]>[0], source?: SendPort) {
+    return this.invokeExceptSourceAsync(type as any, payload as any, source);
   }
 
   public invoke<T extends keyof Send>(type: T, payload: Parameters<Send[T]>[0], withAck?: false, port?: SendPort, transfer?: Transferable[], timeout?: number): Promise<Awaited<ReturnType<Send[T]>>>;

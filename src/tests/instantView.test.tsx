@@ -2,6 +2,7 @@ import {render} from 'solid-js/web';
 import {createSignal} from 'solid-js';
 import {Message, Page, PageButton, PageCaption, RichMessage, RichText} from '@layer';
 import {InstantViewBlocks} from '@components/instantView';
+import {expandTextMatchDetails} from '@components/instantView/details';
 import {simulateClickEvent} from '@helpers/dom/clickEvent';
 import Modes from '@config/modes';
 import {RichMessageBubble, isRichMessageTarget} from '@components/chat/bubbles/richMessage';
@@ -482,6 +483,12 @@ describe('Instant View rich rendering', () => {
       />
     ), container);
 
+    // the server's name is no id of the document: the page's prefix makes it its own, and the link still finds it
+    const reference = container.querySelector('.tg-reference');
+    expect(reference.id).not.toBe('fn-note');
+    expect(reference.id.endsWith('fn-note')).toBe(true);
+    expect(document.getElementById('fn-note')).toBeNull();
+
     const link = container.querySelector('a.anchor-url') as HTMLAnchorElement;
     link.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
 
@@ -521,6 +528,40 @@ describe('Instant View rich rendering', () => {
     expect(button.getAttribute('aria-expanded')).toBe('true');
     expect(content.getAttribute('aria-hidden')).toBe('false');
     expect(content.inert).toBe(false);
+  });
+
+  test('opens the collapsed details a highlighted match is in, laid out open as the call returns, and keeps them open', () => {
+    dispose = render(() => (
+      <InstantViewBlocks
+        webPageId={0}
+        page={page([{
+          _: 'pageBlockDetails',
+          pFlags: {},
+          title: text('Outer'),
+          blocks: [{
+            _: 'pageBlockDetails',
+            pFlags: {},
+            title: text('Inner'),
+            blocks: [{_: 'pageBlockParagraph', text: text('Quoted words')}]
+          }]
+        }, {
+          _: 'pageBlockDetails',
+          pFlags: {},
+          title: text('Other'),
+          blocks: [{_: 'pageBlockParagraph', text: text('Elsewhere')}]
+        }])}
+        openNewPage={() => {}}
+        collapse={() => {}}
+      />
+    ), container);
+
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>(`.${instantViewStyles.DetailsSummary}`));
+    const contents = buttons.map((button) => document.getElementById(button.getAttribute('aria-controls')));
+    expect(expandTextMatchDetails(container, {type: 'quote', text: 'Quoted words'})).toBe(true);
+    expect(buttons.map((button) => button.getAttribute('aria-expanded'))).toEqual(['true', 'true', 'false']);
+    expect(contents.map((content) => content.classList.contains(instantViewStyles.DetailsContentOpen))).toEqual([true, true, false]);
+    expect(contents.map((content) => content.inert)).toEqual([false, false, true]);
+    expect(contents.map((content) => content.style.transition)).toEqual(['', '', '']);
   });
 
   test('renders pullquotes with the same structural classes as the editor', () => {

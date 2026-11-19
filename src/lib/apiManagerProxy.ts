@@ -25,6 +25,7 @@ import SuperMessagePort from '@lib/superMessagePort';
 import IS_SHARED_WORKER_SUPPORTED from '@environment/sharedWorkerSupport';
 import {IS_SAFARI} from '@environment/userAgent';
 import toggleStorages from '@helpers/toggleStorages';
+import App from '@config/app';
 import idleController from '@helpers/idleController';
 import ServiceMessagePort from '@lib/serviceWorker/serviceMessagePort';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
@@ -38,7 +39,7 @@ import {NULL_PEER_ID, TEST_NO_STREAMING, THUMB_TYPE_FULL} from '@appManagers/con
 import generateEmptyThumb from '@lib/storages/utils/thumbs/generateEmptyThumb';
 import getStickerThumbKey from '@lib/storages/utils/thumbs/getStickerThumbKey';
 import callbackify from '@helpers/callbackify';
-import isLegacyMessageId from '@appManagers/utils/messageId/isLegacyMessageId';
+import isGlobalHistoryMessageId from '@appManagers/utils/messageId/isGlobalHistoryMessageId';
 import {forgetLoadedURL} from '@helpers/dom/loadedUrlCache';
 import type {SharedObjectURLUpdate} from '@helpers/objectUrlUtils';
 import {replaceAppStateSilent, setAppStateSilent} from '@stores/appState';
@@ -448,7 +449,9 @@ class ApiManagerProxy extends MTProtoMessagePort {
       'account_logged_in',
       'notification_cancel',
       'notification_cancel_up_to',
-      'toggle_using_passcode'
+      'toggle_using_passcode',
+      'widget_storage_delete',
+      'widget_storage_remap'
     ]);
 
     // const perf = performance.now();
@@ -561,8 +564,13 @@ class ApiManagerProxy extends MTProtoMessagePort {
     this.mainBroadcastChannel = createBroadcastChannelWrapper<MainBroadcastChannelEvents>(unversionedMainBroadcastChannelName);
 
     this.mainBroadcastChannel.on('reload', (payload) => {
+      if(payload && payload.olderThan !== undefined && App.build >= payload.olderThan) {
+        return;
+      }
+
       appNavigationController.reload(payload ? getURLWithoutFlags(payload.dropFlags) : undefined);
     });
+
 
     this.cacheStorageThreadedControls = createCacheStorageThreadedControls({apiManagerProxy: this});
 
@@ -623,6 +631,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
     // });
 
     rootScope.addEventListener('language_change', this.onLanguageChange);
+    rootScope.addEventListener('app_config', (appConfig) => this.appConfig = appConfig);
 
     rootScope.addEventListener('state_cleared', () => {
       _iterateHistoryStorages((key, value) => {
@@ -1288,7 +1297,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
 
   public getMessageFromStorage(key: MessagesStorageKey, mid: number) {
     // * use global storage instead
-    if(key.endsWith('history') && isLegacyMessageId(mid)) {
+    if(key.endsWith('history') && isGlobalHistoryMessageId(mid)) {
       key = this.getGlobalHistoryMessagesStorage();
     }
 
@@ -1334,7 +1343,7 @@ class ApiManagerProxy extends MTProtoMessagePort {
   }
 
   public getMessageById(messageId: number) {
-    if(isLegacyMessageId(messageId)) {
+    if(isGlobalHistoryMessageId(messageId)) {
       return this.getMessageFromStorage(this.getGlobalHistoryMessagesStorage(), messageId);
     }
   }

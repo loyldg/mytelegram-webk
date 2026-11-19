@@ -272,7 +272,6 @@
   --skeleton-color: rgba(0, 0, 0, .12);
   --poll-circle-color: var(--border-color);
   --spoiler-background-color: #e3e5e8;
-  --spoiler-draft-background-color: #d9d9d9;
   --monospace-text-color: var(--danger-color);
   --backdrop-opacity: .85;
   --menu-background-color: rgba(var(--surface-color-rgb), var(--backdrop-opacity));
@@ -352,7 +351,6 @@
   --skeleton-color: rgba(255, 255, 255, .12);
   --poll-circle-color: #fff;
   --spoiler-background-color: #373e4e;
-  --spoiler-draft-background-color: #484848;
   --monospace-text-color: var(--primary-text-color);
   --menu-background-color: rgba(var(--surface-color-rgb), .75);
   --lottie-vector-fill: var(--light-secondary-text-color);
@@ -1710,6 +1708,13 @@ hr {
 
   &-inner {
     @include text-overflow();
+
+    // * the title's baseline is its name's, whatever icon stands first (a bot-verification one has
+    // * no text, and a flex box takes its first item's baseline): a row aligned by baseline
+    // * (the chat list's title and time) stays where it is with and without icons
+    .with-icons > & {
+      align-self: baseline;
+    }
   }
 
   &-bot-verification {
@@ -1748,13 +1753,18 @@ hr {
       font-size: var(--font-size-16) !important;
       line-height: 1.375rem;
 
+      // * the time (or a member's tag) stands on the title's line: its text on the title's baseline
+      // * (`.row-title-row` below), in a box as tall as its own line, the sending status centred on it
       &-right-secondary {
         display: flex;
-        align-items: center;
-        height: 1.25rem;
-        margin-top: -.4375rem;
+        align-items: baseline;
+        height: var(--line-height-12);
         font-size: var(--font-size-12) !important;
         line-height: var(--line-height-12) !important;
+
+        .message-status {
+          align-self: center;
+        }
       }
 
       // .peer-title {
@@ -1764,6 +1774,16 @@ hr {
 
     &-row {
       height: 1.375rem;
+    }
+
+    &-title-row {
+      align-items: baseline;
+
+      // * what is taller than the time's line (the sending status, search's "Ad" chip) stands out
+      // * of it rather than being cut
+      > .row-title-right-secondary {
+        overflow: visible;
+      }
     }
   }
 

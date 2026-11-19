@@ -1,3 +1,186 @@
+### Unreleased
+<!-- animated emoji: 🎵 5188621441926438751, 📝 5334882760735598374, ⭐ 5435957248314579621, 👍 5469770542288478598, 🧰 5449428597922079323 -->
+A small update with a few things you'll notice: your music looks right, articles copy the way they look, the Premium star comes alive, and channels get the reactions settings of the other apps.
+
+#### 🎵 Music with its cover
+A song you send now shows its title, artist and cover, taken from the file itself.
+
+No more "Unknown artist": you see the cover already in the window before sending.
+
+#### 📝 Copy from articles
+Copy part of an article and paste it into the message field: headings, lists, quotes and tables stay as they were.
+
+**Copy** in an article's menu takes all of it, and other apps still get its plain text.
+
+#### ⭐ A star you can spin
+The star at the top of the Telegram Premium and Telegram Stars screens is now a 3D star that turns and sparkles.
+
+Give it a spin with your finger or the mouse.
+
+#### 👍 Reactions in channels
+Channel admins can now allow any emoji as a reaction, limit how many reactions a post can get and turn on paid reactions.
+
+Everything is in the channel's **Reactions** settings, just like in Telegram's other apps.
+
+#### More new things
+- An article's menu tells you which packs its custom emoji come from.
+- Articles sit in their message like ordinary messages: rounded photo corners and the time on the last line.
+- A link preview with a large photo fills the whole message, even under a reply.
+- A tap on a quote hidden in a collapsed part of an article opens that part.
+
+<details><summary>🧰 Fixes</summary>
+
+- the message about an update could fail to arrive while another Web K tab was open;
+- that message in the "Telegram" chat could not be deleted;
+- some chats could be missing from the chat list;
+- the chat jumped a line when a sender's name came in a moment late;
+- a reply's quote could flicker when the message it quotes was loaded again;
+- the arrow button at the bottom of a chat scrolled one screen at a time instead of going to the end;
+- a video without a preview picture could not be opened;
+- a bot's widget could freeze Safari;
+- the Stars count on a paid reaction slid aside after the second tap;
+- the close and menu buttons of a mini app disappeared on a dark header;
+- a verification icon next to a name could turn black in dark mode;
+- a forwarded article with videos showed each of them twice;
+- a custom emoji in an article's heading disappeared after the article was edited;
+- after switching to another account, a tab could slow down until it ran out of memory;
+- a bot's widget could keep the colors of the chat opened before it;
+- buttons in windows flickered as the window opened;
+- the monkey on the sign-in code screen appeared a moment late;
+- and smaller fixes in reactions, articles and the moderation window.
+
+</details>
+
+### 2.3 (685)
+<!-- animated emoji: 👋 5472055112702629499, 🎨 5431456208487716895, 👥 5372926953978341366, 🖼️ 5375074927252621134, ✨ 5472164874886846699, 📞 5467539229468793355, 🔐 5472308992514464048, 🐞 5368487491097601104, 💬 5465300082628763143, 📁 5433653135799228968, 🎁 5199749070830197566, 🎬 5375464961822695044, 🔍 5188217332748527444, 📣 5469903029144657419, 🧰 5449428597922079323 -->
+It's been a while since our last post 👋 Web K has changed a lot since then, so here's the best of it, each with a short video.
+
+#### 🎨 A new look
+Web K got a softer, rounder design, and four themes to dress it up.
+
+Pick **Classic**, **Day**, **Night** or **Dark** in General Settings, then choose an accent color. It tints your messages and even the wallpaper, so the whole app matches.
+
+<!-- video: new-look.mp4 -->
+
+#### 👥 Several accounts
+Work and personal can now live in one tab: up to three accounts, or four with Premium.
+
+Add one from the main menu and switch between them without reloading. You decide whether all of them can notify you, or only the one in front of you.
+
+<!-- video: accounts.mp4 -->
+
+#### 🖼️ Photo and video editor
+Crop and draw on a photo, add text or stickers, or trim a video to the good part before sending.
+
+Noticed something only after it went out? Edit the photo or video right from its message's menu.
+
+<!-- video: editor.mp4 -->
+
+#### ✨ Faster and livelier
+Chats open faster, and your messages fly into place as you send them.
+
+Animated stickers no longer drag the app down, and reactions, ticks and unread counters move smoothly instead of jumping. Prefer it calmer? Choose **Reduce Animations** in the main menu.
+
+<!-- video: livelier.mp4 -->
+
+#### 📞 New calls
+Calls have a fresh screen and a list of their own, and noise suppression keeps the background out of the conversation.
+
+Call back right from the **Calls** tab and switch your microphone or camera without hanging up. If the connection drops, the call picks itself back up.
+
+<!-- video: calls.mp4 -->
+
+#### 🔐 Passcode Lock
+Stepping away from your computer? Lock Telegram with a passcode.
+
+Turn it on in **Privacy and Security**. While it's on, what Telegram keeps on your computer is encrypted with that passcode.
+
+<!-- video: passcode.mp4 -->
+
+#### And a lot more
+
+<details><summary>💬 Messages and chats</summary>
+
+- Round video messages: right-click the microphone button and pick **Video Message** (not in Safari yet).
+- The [AI Editor](https://telegram.org/blog/ai-editor-mighty-polls-and-more) rewrites a message in the style you pick, fixes typos or translates it.
+- Write whole articles with headings, lists, tables and photos: Attach → **Article**.
+- [Polls](https://telegram.org/blog/ai-editor-mighty-polls-and-more) with photos and videos in their options, and [checklists](https://telegram.org/blog/checklists-suggested-posts) for shared to-dos.
+- Messages that [repeat](https://telegram.org/blog/live-stories-gift-auctions) every day, week or month, and ones that delete themselves after a while.
+- Translate any message, or a whole chat with Telegram Premium.
+- Hold a photo, a video or a sticker to take a closer look.
+- Give a private chat its own theme or wallpaper, even [one made from a collectible gift](https://telegram.org/blog/profile-music-gift-themes#gift-themes).
+- Spoilers open with a new effect: the text gathers out of its dust, and a photo comes into focus out of its blur.
+- 🎲 Dice, 🎰 slot machines and games from bots play right in the chat.
+
+</details>
+
+<details><summary>📁 Chat list and folders</summary>
+
+- **Archived Chats** wait at the top of the chat list.
+- Move your folders to the left in Settings → Chat Folders, and give each one an emoji.
+- Right-click a folder and choose **Show Unread Only**.
+- Select several chats at once to read, mute, archive or delete them in one go.
+- Join [Communities](https://telegram.org/blog/communities-editor-invisible-messages): groups and channels gathered in one place.
+
+</details>
+
+<details><summary>🎁 Stories, profiles and gifts</summary>
+
+- Send [gifts](https://telegram.org/blog/gifts-verification-platform), turn them into [collectibles](https://telegram.org/blog/collectible-gifts-and-more), and [buy or sell them](https://telegram.org/blog/gift-marketplace-and-more).
+- Pay with [Telegram Stars](https://telegram.org/blog/telegram-stars) in bots and mini apps, or react with them.
+- Video profile photos play everywhere, and your profile can have [its own music](https://telegram.org/blog/profile-music-gift-themes).
+- Stories: change their speed, sort them into [albums](https://telegram.org/blog/post-search-story-albums-and-more), and see who viewed yours.
+- Birthday reminders, and private notes on your contacts.
+- A new look for your QR code: pick its colors, an emoji pattern or a gift, and share it as a picture.
+
+</details>
+
+<details><summary>🎬 Photos, videos and calls</summary>
+
+- Choose a video's quality and speed, and see a preview frame as you move along it.
+- Picture-in-Picture for the whole app in Chrome and Edge: keep chatting in a small window on top of everything else.
+- Instant View opens articles from links right in the app, and an [AI Summary](https://telegram.org/blog/new-design-ai-summaries) sums up a long post.
+- Video chats show who is speaking, and a bar in the chat lets you join one that is going on.
+
+</details>
+
+<details><summary>🔍 Search, settings and security</summary>
+
+- Search in Settings: type "passcode" or "stickers" and land right there.
+- The **Posts** tab of search finds [posts in public channels](https://telegram.org/blog/post-search-story-albums-and-more).
+- Sign in with a [passkey](https://telegram.org/blog/passkeys-and-gift-offers), or get your login code by email.
+- Notifications arrive even when the tab is closed.
+- See what Telegram keeps on your computer in Data and Storage, and clear what you don't need.
+
+</details>
+
+<details><summary>📣 Channels, groups and bots</summary>
+
+- [Direct messages to channels](https://telegram.org/blog/direct-to-channel-trim-voice-and-more), and [suggested posts](https://telegram.org/blog/checklists-suggested-posts).
+- [Welcome messages](https://telegram.org/blog/welcome-messages-buttons-TG-13) greet new members of a group.
+- A bot's answer appears as it is being written.
+- Bots can send interactive widgets that work right inside their messages.
+- [Mini apps](https://telegram.org/blog/fullscreen-miniapps-and-more) go full screen, or open in a window you can move around.
+- [Telegram Business](https://telegram.org/blog/telegram-business): opening hours, location and an intro on your profile.
+
+</details>
+
+<details><summary>🧰 Fixes</summary>
+
+We squashed hundreds of bugs. A few you may have run into:
+
+- a correct two-step verification password was sometimes not accepted;
+- a large image could get stuck while sending;
+- a draft could come back after its message was sent;
+- reading one mention could clear all of them on every device;
+- group video chats in Chrome could connect without sound.
+
+</details>
+
+Spotted a bug? 🐞 Tell us on the [Bugs and Suggestions Platform](https://bugs.telegram.org/?tag_ids=40&type=issues&sort=time).
+
+[Videos and details in our channel](https://t.me/WebK_en/18)
+
 ### 2.1.0 (491)
 You can see the full list of new features and improvements here: https://t.me/WebK_en/16
 

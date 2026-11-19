@@ -1,6 +1,23 @@
 import RichMessageInput, {RichMessageInputController} from '@components/richMessageInput';
 import type {RichMediaUploadServices} from '@components/richMessageInput/media';
 import createAiEditorContext from '@components/chat/inputState/createAiEditorContext';
+import {
+  AiSendStyle,
+  formatAiSendStyleLabel,
+  getAiSendStyleKey,
+  hasTextToRewrite,
+  isSameAiSendStyle,
+  keepAiSendStyle,
+  readKeptAiSendStyle
+} from '@components/chat/aiSendStyles';
+import getAiEditorRequest from '@components/richMessageInput/aiRequest';
+import type {ComposeMessageWithAiResult} from '@appManagers/aiTonesManager';
+import AiSendSparkles from '@components/chat/aiSendSparkles';
+import AiRewriteEffect from '@components/chat/aiRewriteEffect';
+import AiSendFlight from '@components/chat/aiSendFlight';
+import liteMode from '@helpers/liteMode';
+import {appSettings, setAppSettings} from '@stores/appSettings';
+import anchorCallback from '@helpers/dom/anchorCallback';
 import type {MyDocument} from '@appManagers/appDocsManager';
 import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
 import sliceMessageEntities from '@helpers/sliceMessageEntities';
@@ -153,10 +170,11 @@ import {showReplyPickerPopup} from '@components/popups/pickUser';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import {isSavedDialog} from '@appManagers/utils/dialogs/isDialog';
 import getFwdFromName from '@appManagers/utils/messages/getFwdFromName';
+import forwardKeepsAuthor from '@appManagers/utils/messages/forwardKeepsAuthor';
 import apiManagerProxy from '@lib/apiManagerProxy';
 import showTooltip from '@components/tooltip';
 import createContextMenu from '@helpers/dom/createContextMenu';
-import {Accessor, createComponent, createEffect, createRoot, createSignal, Setter} from 'solid-js';
+import {Accessor, createComponent, createEffect, createRoot, createSignal, on, Setter} from 'solid-js';
 import {unwrapSolidElement, wrapSolidComponent} from '@helpers/solid/wrapSolidComponent';
 import SelectedEffect from '@components/chat/selectedEffect';
 import windowSize from '@helpers/windowSize';
@@ -166,6 +184,7 @@ import splitStringByLength from '@helpers/string/splitStringByLength';
 import PaidMessagesInterceptor, {PAYMENT_REJECTED} from '@components/chat/paidMessagesInterceptor';
 import asyncThrottle from '@helpers/schedulers/asyncThrottle';
 import focusInput from '@helpers/dom/focusInput';
+import {setDirection} from '@helpers/dom/setInnerHTML';
 import showChecklistPopup from '@components/popups/checklist';
 import assumeType from '@helpers/assumeType';
 import {formatFullSentTime} from '@helpers/date';
@@ -190,7 +209,8 @@ import {getChatInputEditor} from './inputEditor/registry';
 import canSafelyEditRichMessage from './inputEditor/richMessageEditability';
 import {getAttachRichMediaTarget, RichMediaItemInsertAction} from '@components/chat/inputEditor/mediaPaste';
 import {entitiesFittingPlainMessage} from '@components/chat/inputEditor/model';
-import {richMessageToPlainMessage} from '@lib/richMessage';
+import {flattenRichMessageContent, getInputReplyQuote, richMessageToPlainMessage} from '@lib/richMessage';
+import {getReplyQuote} from '@lib/richQuote';
 import {canShowAttachMenuAction} from '@components/chat/inputEditor/attachMenuPolicy';
 import type {RichMessageAttachMenuAction} from '@components/chat/inputEditor/attachMenuPolicy';
 import {getRichMessageMediaRequiredRight} from '@helpers/files/richMessageMediaInsertPolicy';
@@ -212,6 +232,13 @@ import toastError from '@components/toastError';
 
 const HOT_CHAT_INPUTS = import.meta.hot ? [] as ChatInput[] : null;
 let botCommandsListId = 0;
+
+// * a medium in the field still uploading: what would go without it is refused, saying why
+function showMediaUploadingError(editor: ChatInputEditor) {
+  if(!editor?.hasPendingRichMediaUploads()) return false;
+  toastNew({langPackKey: 'RichMessage.Error.MediaUploading'});
+  return true;
+}
 
 function showRichMessageValidationError(validation: RichMessageValidationResult) {
   if(validation.valid) return false;
@@ -247,14 +274,17 @@ if(import.meta.hot) {
 }
 
 const REPLY_IN_TOPIC = false;
+// * the composer's height with one line in it, beyond which the chat makes room
+export const CHAT_INPUT_BASE_HEIGHT = 48;
 
 type ChatInputHelperType = 'edit' | 'webpage' | 'forward' | 'reply' | 'suggested';
 
 type ChatSendBtnIcon = 'send' | 'record' | 'record-video' | 'edit' | 'schedule' | 'forward' | 'stop';
 /** what one send goes with, besides the field: Send Without Sound, Schedule Message */
-type SendingFlags = Pick<ChatInput, 'scheduleDate' | 'scheduleRepeatPeriod' | 'sendSilent'>;
+type SendingFlags = Pick<ChatInput, 'scheduleDate' | 'scheduleRepeatPeriod' | 'sendSilent' | 'sendWithoutAiStyle'>;
 /** a message that left the field as it went, until the draft clears its send asks for are back (`takeOwnDraftUpdate`) */
-type OwnSend = {clears: number, until: number};
+// * `saveRevision`: the field's saves as the send left it - a save after it is of the next message, not of the clear
+type OwnSend = {clears: number, until: number, saveRevision: number};
 /** how long an own send's draft clears are waited for */
 const OWN_DRAFT_CLEAR_TIMEOUT = 30e3;
 type ChatInputAttachMenuButton = ButtonMenuItemOptionsVerifiable & {
@@ -461,7 +491,7 @@ export default class ChatInput {
   public forwarding: {[fromPeerId: PeerId]: number[]};
   /** the second the forwarded video starts at ("Share at 0:42") */
   public forwardingVideoTimestamp: number;
-  private forwardingHasProtectedRichMessages = false;
+  private forwardingKeepsAuthor = false;
   public replyToMsgId: MessageSendingParams['replyToMsgId'];
   public replyToStoryId: MessageSendingParams['replyToStoryId'];
   public replyToQuote: MessageSendingParams['replyToQuote'];
@@ -476,11 +506,32 @@ export default class ChatInput {
   private sendingMessage: Promise<void>;
   /** messages that left the field whose draft clears have not come back yet */
   private ownSends: OwnSend[] = [];
+  /**
+   * The field's draft as the server has it, as far as the field knows: set as a draft from there fills the field and
+   * as a save of the field's own goes through, dropped as one goes out. A draft from elsewhere takes only a field that
+   * still holds it (`canTakeDraftFromElsewhere`)
+   */
   private appliedInputDraft?: {value?: DraftMessage.draftMessage};
+  /** counts the field's saves: one gone out while a draft from elsewhere waited is newer than that draft */
+  private draftSaveRevision = 0;
   private noWebPage: true;
   public scheduleDate: number;
   public scheduleRepeatPeriod: number;
   public sendSilent: true;
+  /** the press sends the field as it is, past the AI editor's request saved for the chat */
+  public sendWithoutAiStyle: true;
+  /** the chat whose AI editor request the send button's sparkles show (getAiSendStyleKey) */
+  private setAiSendStyleKey: Setter<string>;
+  private aiSendSparkles: {icon: ChatSendBtnIcon, sparkles: AiSendSparkles}[];
+  /** stops the AI editor's request being made on the field before it goes, while it is */
+  private stopAiSendStyle: () => void;
+  /** whether the field could be typed in before that request locked it */
+  private editableBeforeAiSendStyle: boolean;
+  /**
+   * the AI editor's answer the field holds, of which request: while the field is as it left it and that request is
+   * still the chat's, it goes as it is, not rewritten again
+   */
+  private aiStyledContent: {style: AiSendStyle, isCurrent: (editor?: ChatInputEditor) => boolean};
   public startParam: string;
   public invertMedia: boolean;
   public effect: Accessor<DocId>;
@@ -1199,6 +1250,7 @@ export default class ChatInput {
       !this.fakeWrapperTo &&
       !this.messageInputExpanded &&
       !this.chatInput.classList.contains('is-message-input-resizing') &&
+      !this.chatInput.classList.contains('is-choosing-theme') &&
       !this.chatInput.classList.contains('is-hidden');
   }
 
@@ -1218,6 +1270,21 @@ export default class ChatInput {
   public onRecordingChange(recording: boolean) {
     if(recording) this.replyKeyboard?.suspend();
     else this.replyKeyboard?.resume();
+  }
+
+  /**
+   * The theme picker takes the place of the field and of the bot's keyboard under it (`openChatThemeChooser`), as in
+   * tdesktop: the keyboard goes at once while it is up - true if it was open - and comes back once it is closed
+   */
+  public onThemeChooserChange(open: boolean) {
+    if(!open) {
+      this.replyKeyboard?.resume();
+      return false;
+    }
+
+    const wasOpen = !!this.replyKeyboard?.isActive();
+    this.replyKeyboard?.suspend(false);
+    return wasOpen;
   }
 
   private constructBotCommands() {
@@ -1240,6 +1307,8 @@ export default class ChatInput {
 
     this.botCommandsView = document.createElement('div');
     this.botCommandsView.classList.add('new-message-bot-commands-view');
+    // * the bot's own words: cut at their own end, whatever the interface's direction
+    setDirection(this.botCommandsView);
     this.botCommandsToggle.append(scaler, this.botCommandsView);
 
     let webViewTempId = 0, waitingForWebView = false;
@@ -1540,7 +1609,7 @@ export default class ChatInput {
       // * Grams to the person this chat is with, like the desktop client's attach menu
       icon: 'wallet',
       richMessageAction: 'sendMoney',
-      text: 'Wallet.Menu',
+      text: 'WalletAttachMoney',
       onClick: () => {
         const userId = this.chat.peerId.toUserId();
         import('@components/wallet').then(({default: showWalletPopup}) => showWalletPopup({send: {userId}, fromChat: true}));
@@ -1729,6 +1798,11 @@ export default class ChatInput {
       ['stop', 'stop']
     ];
     this.btnSend.append(...icons.map(([name, type, mirror]) => Icon(name, 'animated-button-icon-icon', 'btn-send-icon-' + type, ...(mirror ? [mirror] : []))));
+    // * the sparkles of a request the AI editor makes on what is sent, round the plane or the clock
+    this.aiSendSparkles = (['send', 'schedule'] as const).map((icon) => ({
+      icon,
+      sparkles: new AiSendSparkles(this.btnSend.querySelector<HTMLElement>('.btn-send-icon-' + icon), icon === 'schedule')
+    }));
 
     this.addStarsBadge();
 
@@ -1740,6 +1814,22 @@ export default class ChatInput {
       this.effect = effect;
       this.setEffect = setEffect;
       this.btnSendContainer.append(unwrapSolidElement(SelectedEffect({effect: this.effect})) as HTMLElement);
+
+      // * the sparkles follow the setting, saved in this tab or in another one
+      const [aiSendStyleKey, setAiSendStyleKey] = createSignal<string>();
+      this.setAiSendStyleKey = setAiSendStyleKey;
+      createEffect(() => {
+        const key = aiSendStyleKey();
+        this.btnSend.classList.toggle('has-ai-send-style', !!(key && readKeptAiSendStyle(appSettings.aiSendStyles?.[key])));
+        if(this.sendBtnIcon) {
+          this.updateSendBtnLabel();
+          this.updateAiSendSparkles();
+        }
+      });
+      // * and the animation level, switched while they are there
+      createEffect(on(() => liteMode.getAnimationLevel(), () => {
+        this.aiSendSparkles?.forEach(({sparkles}) => sparkles.updateLevel());
+      }, {defer: true}));
     });
 
     this.sendMenu = new SendMenu({
@@ -1747,6 +1837,15 @@ export default class ChatInput {
         this.sendSilent = true;
         if(this.recording) this.recordingController.finishRecordingFromMenu();
         else this.sendMessage();
+      },
+      aiSendStyleLabel: () => {
+        const style = !this.recording && this.getAiSendStyle();
+        return style ? formatAiSendStyleLabel(style) : undefined;
+      },
+      onSendWithoutAiStyleClick: () => this.sendAsWritten(),
+      onRemoveAiStyleClick: () => {
+        this.setAiSendStyle(undefined);
+        toastNew({langPackKey: 'AiEditor.ApplyOnSend.Removed'});
       },
       onScheduleClick: () => {
         if(this.recording) this.scheduleSending(() => this.recordingController.finishRecordingFromMenu());
@@ -1765,6 +1864,8 @@ export default class ChatInput {
           !this.isWelcomeComposer &&
           // the button is a Stop right now, and stopping has no send options
           this.sendBtnIcon !== 'stop' &&
+          // nor while the AI editor rewrites what is about to go: a press stops that
+          !this.stopAiSendStyle &&
           (this.recording || !this.isInputEmpty() || !!(this.forwarding && Object.keys(this.forwarding).length)) &&
           !this.editMsgId;
         if(good) {
@@ -1785,7 +1886,11 @@ export default class ChatInput {
       withEffects: () => this.chat.peerId.isUser() && this.chat.peerId !== rootScope.myId,
       effectsWithinMenu: () => mediaSizes.isLessThanFloatingLeftSidebar,
       effect: this.effect,
-      onEffect: this.setEffect
+      // * the effect is the draft's as much as its text: chosen, it is saved the same way
+      onEffect: (effect) => {
+        this.setEffect(effect);
+        this.saveDraftDebounced();
+      }
     });
 
     // Move the morphing send/record button into the input row as the last button.
@@ -2024,14 +2129,10 @@ export default class ChatInput {
       }
 
       if(this.chat.threadId !== threadId || this.chat.monoforumThreadId !== monoforumThreadId || this.chat.peerId !== peerId || PEER_EXCEPTIONS.has(this.chat.type)) return;
-      if(!draft) {
-        // a pending local save means the user is actively typing newer content —
-        // let it win and sync normally instead of clobbering it with the remote clear.
-        // but a forced clear is our OWN send completing (clearDraft: true), so always
-        // honour it — otherwise the input never clears after sending while typing.
-        if(!force && this.saveDraftDebounced.isDebounced()) return;
-        this.saveDraftDebounced.clearTimeout();
-      }
+      // a forced clear is our OWN send completing (clearDraft: true): what was still to be saved went with it, and
+      // it clears the field whatever it holds - otherwise the input never clears after sending while typing. Any
+      // other draft takes the field only while it holds what the server has (`canTakeDraftFromElsewhere`)
+      if(!draft && force) this.saveDraftDebounced.clearTimeout();
       this.setDraft(draft, true, force);
     });
 
@@ -2725,11 +2826,7 @@ export default class ChatInput {
           reply_to_peer_id: replyTo.replyToPeerId,
           monoforum_peer_id: replyTo.replyToMonoforumPeerId,
           poll_option: replyTo.replyToPollOption,
-          ...(replyTo.replyToQuote && {
-            quote_text: replyTo.replyToQuote.text,
-            quote_entities: replyTo.replyToQuote.entities,
-            quote_offset: replyTo.replyToQuote.offset
-          })
+          ...(replyTo.replyToQuote && getInputReplyQuote(replyTo.replyToQuote))
         } : undefined,
         media: !richMessage && webPage ? {
           _: 'inputMediaWebPage',
@@ -2777,14 +2874,24 @@ export default class ChatInput {
     // Hydration and leaving a chat must not publish the received draft back to
     // the server. The UI representation may differ from the server's flags.
     if(this.appliedInputDraft && draftsAreEqual(draft, this.appliedInputDraft.value)) return;
+    // * until it is through, the field is ahead of the server
     this.appliedInputDraft = undefined;
-    this.managers.appDraftsManager.syncDraft({
+    const revision = ++this.draftSaveRevision;
+    const generation = this.inputValueGeneration;
+    const middleware = this.getMiddleware();
+    Promise.resolve(this.managers.appDraftsManager.syncDraft({
       peerId: this.chat.peerId,
       threadId: this.chat.threadId,
       monoforumThreadId: this.chat.monoforumThreadId,
       localDraft: draft,
       inputRichMessage: richMessage?.input
-    });
+    })).then((saved) => {
+      // * the field's last save is the server's draft now, and the field holds what the server has while it holds
+      // * what that save carried
+      if(saved && middleware() && revision === this.draftSaveRevision && generation === this.inputValueGeneration) {
+        this.appliedInputDraft = {value: draft};
+      }
+    }, noop);
   }
 
   public mentionUser(peerId: PeerId, isHelper?: boolean) {
@@ -2873,11 +2980,30 @@ export default class ChatInput {
     }
   }
 
+  /**
+   * Whether a draft from elsewhere (the server's, another session's or tab's) may take the field: only while the field
+   * holds what the server has (`appliedInputDraft`) - nothing of its own unsaved or on its way there - and no save of
+   * its own has gone out since the draft came (`saveRevision`, taken then), as tdesktop takes a cloud draft only
+   * over a local one no newer. Kept, the field's older text would be saved over the newer draft on the way out. A
+   * message being edited is no draft at all, and messages picked to forward or a post being suggested (its price and
+   * schedule) are no part of one: the draft's text coming would take them along
+   */
+  private canTakeDraftFromElsewhere(saveRevision: number, currentDraft = this.getCurrentInputAsDraft()) {
+    const applied = this.appliedInputDraft;
+    return saveRevision === this.draftSaveRevision &&
+      !!applied && draftsAreEqual(currentDraft, applied.value) &&
+      !this.editMsgId && !this.forwarding && !this.suggestedPost;
+  }
+
   public async setDraft(draft?: MyDraftMessage, fromUpdate = true, force = false) {
     if(PEER_EXCEPTIONS.has(this.chat.type)) return false;
 
     const middleware = this.getMiddleware();
     const generation = this.inputValueGeneration;
+    const saveRevision = this.draftSaveRevision;
+    // * a draft from elsewhere is measured against the field as it comes: a save of the field's own ending while it
+    // * waits says nothing of a draft that came before it ended
+    const inStepOnArrival = fromUpdate && this.canTakeDraftFromElsewhere(saveRevision);
     // the field settles on the schema rich posting calls for first: an editor replaced while the
     // draft is fetched would drop it as stale, and an untouched rich draft would be converted
     await this.richMessageInput?.richReady;
@@ -2910,17 +3036,21 @@ export default class ChatInput {
               this.onMessageSent(true, undefined, true);
             });
           });
-        } else if(fromUpdate && !this.saveDraftDebounced.isDebounced()) {
-          // A composer that holds no draft has nothing to clear — most often
-          // the cleared draft is its own save of the emptied field coming
-          // back, and resetting the field would drop its undo history.
-          if(!this.getCurrentInputAsDraft()) return fromUpdate;
-          // This is an authoritative clear, not a local edit or a request to
-          // restore the draft again while another remote update is arriving.
-          this.clearInput(false, false);
-          this.clearHelper();
-          this.onMessageInput(undefined, true);
-          this.appliedInputDraft = {value: this.getCurrentInputAsDraft()};
+        } else if(!fromUpdate) {
+          // * restored with nothing there: the field holds what the server has while it holds nothing
+          if(!this.getCurrentInputAsDraft()) this.appliedInputDraft = {value: undefined};
+        } else {
+          // A composer that holds no draft has nothing to clear, and
+          // resetting the field would drop its undo history.
+          const currentDraft = this.getCurrentInputAsDraft();
+          if(currentDraft && inStepOnArrival && this.canTakeDraftFromElsewhere(saveRevision, currentDraft)) {
+            // This is an authoritative clear, not a local edit or a request to
+            // restore the draft again while another remote update is arriving.
+            this.clearInput(false, false);
+            this.clearHelper();
+            this.onMessageInput(undefined, true);
+            this.appliedInputDraft = {value: this.getCurrentInputAsDraft()};
+          }
         }
 
         return fromUpdate;
@@ -2930,7 +3060,12 @@ export default class ChatInput {
     const currentDraft = this.getCurrentInputAsDraft();
     const receivedDraftIsUnchanged = this.appliedInputDraft &&
       draftsAreEqual(currentDraft, this.appliedInputDraft.value);
-    if(!force && !isInputEmpty(this.messageInput) && !receivedDraftIsUnchanged) return false;
+    // * a restore leaves what the user wrote meanwhile; a draft from elsewhere takes the field only while it is in step
+    // * with the server, which a save of the field's own coming back never finds: the field is ahead of it till it is through
+    if(!force && (fromUpdate ?
+      !(inStepOnArrival && this.canTakeDraftFromElsewhere(saveRevision, currentDraft)) :
+      !isInputEmpty(this.messageInput) && !receivedDraftIsUnchanged
+    )) return false;
 
     const replyTo = draft.reply_to as InputReplyTo.inputReplyToMessage;
     const draftReplyToMsgId = replyTo?.reply_to_msg_id;
@@ -2939,10 +3074,17 @@ export default class ChatInput {
       return false;
     }
 
+    // * a draft the field does not show leaves it holding nothing of its own: in step for the next one from
+    // * elsewhere, while the one not shown stays the server's (`suppressDraftSyncForUnsupportedRichMessage`)
+    const keepInStep = () => {
+      if(!force) this.appliedInputDraft = {value: this.getCurrentInputAsDraft()};
+    };
+
     // as Android has it: where rich text may not be written, a rich draft is not shown, and it stays
     // on the server until something of the field's own replaces it
     if(draft.rich_message && this.richMessageInput && !this.richMessageInput.canWriteRich) {
       this.suppressDraftSyncForUnsupportedRichMessage = true;
+      keepInStep();
       return false;
     }
 
@@ -2952,6 +3094,7 @@ export default class ChatInput {
     )) {
       toastNew({langPackKey: 'RichMessage.Error.UnsupportedContent'});
       this.suppressDraftSyncForUnsupportedRichMessage = !!draft.rich_message;
+      keepInStep();
       return false;
     }
 
@@ -2963,14 +3106,10 @@ export default class ChatInput {
     const replySet = draftReplyToMsgId && this.initMessageReply({
       replyToMsgId: draftReplyToMsgId,
       replyToPeerId: replyTo.reply_to_peer_id && getPeerId(replyTo.reply_to_peer_id),
-      replyToQuote: replyTo.quote_text && {
-        text: replyTo.quote_text,
-        entities: replyTo.quote_entities,
-        offset: replyTo.quote_offset
-      },
+      replyToQuote: getReplyQuote(replyTo),
       replyToPollOption: replyTo.poll_option,
       replyToMonoforumPeerId: replyTo.monoforum_peer_id && getPeerId(replyTo.monoforum_peer_id)
-    });
+    }, true);
 
     const inputSet = this.setInputValue(
       draftTextWithEntities(draft),
@@ -2981,11 +3120,12 @@ export default class ChatInput {
     );
     this.suppressDraftSyncForUnsupportedRichMessage = !inputSet && !!draft.rich_message;
     if(!inputSet) {
+      keepInStep();
       return inputSet;
     }
 
     // the field holds the received draft now: a save the resets before it asked for (`clearHelper`) has nothing
-    // of the user's to keep, and pending, it would hold off the draft's next clear and then publish it back
+    // of the user's to keep
     this.saveDraftDebounced.clearTimeout();
 
     // its reply is set once its message is read, after the text: what counts as applied takes the reply in then,
@@ -3182,6 +3322,9 @@ export default class ChatInput {
       setSendAsCallback?.();
       replyKeyboard?.setPeer(peerId);
       sendMenu?.setPeerParams({peerId, isPaid: !!this.chat.starsAmount});
+      this.stopAiSendStyle?.();
+      this.aiStyledContent = undefined;
+      this.setAiSendStyleKey(this.getChatAiSendStyleKey());
 
       let haveSomethingInControl = false;
       if(this.chat && this.frozenBtn) {
@@ -3494,9 +3637,10 @@ export default class ChatInput {
     const useRafs = botCommandsToggle.parentElement ? 0 : 2;
 
     if(botMenuButton && isInputEmpty) {
-      // padding + icon size + icon margin
-      const width = getTextWidth(botMenuButton.text, FontFull) + 24 + 20 + 6;
-      this.newMessageWrapper.style.setProperty('--commands-size', `${Math.ceil(width)}px`);
+      // the text, which iOS keeps to half the panel less 60pt so the field stays usable on a phone, then the padding,
+      // the icon and its margin
+      const width = Math.ceil(getTextWidth(botMenuButton.text, FontFull));
+      this.newMessageWrapper.style.setProperty('--commands-size', `calc(min(${width}px, 50vw - 60px) + ${24 + 20 + 6}px)`);
     } else {
       // this.newMessageWrapper.style.setProperty('--commands-size', `38px`);
       this.newMessageWrapper.style.removeProperty('--commands-size');
@@ -3720,7 +3864,7 @@ export default class ChatInput {
   }
 
   private notifyChatInputHeight() {
-    const baseHeight = 48;
+    const baseHeight = CHAT_INPUT_BASE_HEIGHT;
     const helperPx = this.helperVisible ? 48 : 0;
     const collapsedHeight = Math.max(baseHeight, this.messageInputNaturalHeight + 8) + helperPx;
     this.chatInput?.style.setProperty('--message-input-collapsed-height', `${collapsedHeight}px`);
@@ -3831,7 +3975,7 @@ export default class ChatInput {
 
       if((this.chat.type === ChatType.Chat || this.chat.type === ChatType.Discussion) &&
         this.chat.bubbles.scrollable.loadedAll.bottom) {
-        this.chat.bubbles.readAllHistory();
+        this.managers.appMessagesManager.readAllHistory(this.chat.peerId, this.chat.threadId);
       }
 
       this.onFocusChange?.(true);
@@ -3848,7 +3992,9 @@ export default class ChatInput {
   }
 
   public canSendPlain() {
-    return this.messageInput.isContentEditable && !this.chatInput.classList.contains('is-hidden');
+    // * the AI editor's request locks the field for a while, which the chat's rights have nothing to do with
+    const editable = this.stopAiSendStyle ? this.editableBeforeAiSendStyle : this.messageInput.isContentEditable;
+    return editable && !this.chatInput.classList.contains('is-hidden');
   }
 
   public async isSendingConfirmed() {
@@ -4645,6 +4791,12 @@ export default class ChatInput {
   private onBtnSendClick = async(e: Event) => {
     cancelEvent(e);
 
+    // * the AI editor is rewriting what is about to go: the press stops it, and the message stays in the field
+    if(this.stopAiSendStyle) {
+      this.stopAiSendStyle();
+      return;
+    }
+
     // This click is the release of a long-press that already opened the
     // record-mode menu — swallow it so it doesn't also start a recording.
     if(this.recordingController.consumeLongPressSuppression()) {
@@ -4992,17 +5144,8 @@ export default class ChatInput {
       this.btnSend.classList.toggle(i, icon === i);
     });
 
-    const sendBtnLabelKey: {[key in ChatSendBtnIcon]: LangPackKey} = {
-      'send': 'Send',
-      'record': 'UserRestrictionsSendVoices',
-      'record-video': 'UserRestrictionsSendRound',
-      'edit': 'Edit',
-      'schedule': 'Chat.Send.ScheduledMessage',
-      'forward': 'Forward',
-      // the button stops a draft the server is still streaming in
-      'stop': 'ChatAutomation.Stop'
-    };
-    this.btnSend.setAttribute('aria-label', I18n.format(sendBtnLabelKey[icon], true));
+    this.updateSendBtnLabel();
+    this.updateAiSendSparkles();
 
     this.inputState.set({
       hasSendButton: icon === 'send',
@@ -5023,6 +5166,31 @@ export default class ChatInput {
     // the audio/video sub-mode — collapse to 'record' so they don't need to
     // learn the new variant.
     this.onUpdateSendBtn?.(icon === 'record-video' ? 'record' : icon);
+  }
+
+  private updateSendBtnLabel() {
+    const icon = this.sendBtnIcon;
+    const sendBtnLabelKey: {[key in ChatSendBtnIcon]: LangPackKey} = {
+      'send': 'Send',
+      'record': 'UserRestrictionsSendVoices',
+      'record-video': 'UserRestrictionsSendRound',
+      'edit': 'Edit',
+      'schedule': 'Chat.Send.ScheduledMessage',
+      'forward': 'Forward',
+      // the button stops a draft the server is still streaming in
+      'stop': 'ChatAutomation.Stop'
+    };
+
+    let label = I18n.format(sendBtnLabelKey[icon], true);
+    // * what the AI editor does to the message goes with the button's name, as its stars go with the plane
+    const aiSendStyle = (icon === 'send' || icon === 'schedule') && this.getAiSendStyle();
+    if(this.stopAiSendStyle) {
+      label = I18n.format('AiEditor.ApplyOnSend.Stop', true);
+    } else if(aiSendStyle) {
+      label = I18n.format('AiEditor.ApplyOnSend.SendLabel', true, [label, formatAiSendStyleLabel(aiSendStyle)]);
+    }
+
+    this.btnSend.setAttribute('aria-label', label);
   }
 
   private async addStarsBadge() {
@@ -5079,11 +5247,12 @@ export default class ChatInput {
     this.scheduleDate = undefined;
     this.scheduleRepeatPeriod = undefined;
     this.sendSilent = undefined;
+    this.sendWithoutAiStyle = undefined;
   }
 
   public onMessageSent(clearInput = true, clearReply?: boolean, skipReadHistory = false) {
     if(!skipReadHistory && !PEER_EXCEPTIONS.has(this.chat.type)) {
-      this.chat.bubbles.readAllHistory(true);
+      this.managers.appMessagesManager.readAllHistory(this.chat.peerId, this.chat.threadId, true);
     }
 
     this.resetSendingFlags();
@@ -5174,8 +5343,7 @@ export default class ChatInput {
     const editor = inputField && getChatInputEditor(inputField.input);
     const contentIsCurrent = inputField && captureInputContent(inputField.input, editor);
     const editorHasContent = editor && !editor.isEmpty();
-    if(editor?.hasPendingRichMediaUploads()) {
-      toastNew({langPackKey: 'RichMessage.Error.MediaUploading'});
+    if(showMediaUploadingError(editor)) {
       return false;
     }
     if(editorHasContent) {
@@ -5379,9 +5547,206 @@ export default class ChatInput {
    * that press alone, and never stay on the field for the next message
    */
   private takeSendingFlags(): SendingFlags {
-    const {scheduleDate, scheduleRepeatPeriod, sendSilent} = this;
+    const {scheduleDate, scheduleRepeatPeriod, sendSilent, sendWithoutAiStyle} = this;
     this.resetSendingFlags();
-    return {scheduleDate, scheduleRepeatPeriod, sendSilent};
+    return {scheduleDate, scheduleRepeatPeriod, sendSilent, sendWithoutAiStyle};
+  }
+
+  /**
+   * where the field's chat keeps the AI editor's request: by its topic, or by the conversation of a channel's direct
+   * messages, as its draft is kept
+   */
+  private getChatAiSendStyleKey() {
+    const {peerId, threadId, monoforumThreadId} = this.chat;
+    return getAiSendStyleKey(rootScope.myId, peerId, threadId || monoforumThreadId);
+  }
+
+  /** the AI editor's request saved to be made on every message the field sends in this chat, its topic or conversation */
+  public getAiSendStyle(): AiSendStyle {
+    return this.chat.peerId ? readKeptAiSendStyle(appSettings.aiSendStyles?.[this.getChatAiSendStyleKey()]) : undefined;
+  }
+
+  public setAiSendStyle(style: AiSendStyle | undefined) {
+    setAppSettings('aiSendStyles', this.getChatAiSendStyleKey(), keepAiSendStyle(style));
+  }
+
+  /**
+   * sends the field as it is, past the AI editor's request saved for the chat; `flags` are those of a send the request
+   * stopped, which goes as it was meant to then: scheduled (the date already picked), without sound
+   */
+  public sendAsWritten(flags?: SendingFlags) {
+    if(flags) {
+      this.scheduleDate = flags.scheduleDate;
+      this.scheduleRepeatPeriod = flags.scheduleRepeatPeriod;
+      this.sendSilent = flags.sendSilent;
+    }
+
+    this.sendWithoutAiStyle = true;
+    return this.sendMessage(!!flags?.scheduleDate);
+  }
+
+  /**
+   * The request saved in the AI editor is made on the field before it goes: the field is locked while it is asked,
+   * then holds the answer, which is what is sent. It is not asked of a bot command, of a message that has no words
+   * (emoji, links, usernames), or of the answer to the same request when its send stopped before it went (slow mode, a
+   * payment); nor while a medium in the field still uploads, which the send refuses all the same. A press of the send
+   * button or Escape stops it, leaving the field as it was, and so do an edit of a message, the field going over to
+   * another chat and the chat closing; a chat left open behind another goes on with it, as with any send. A failure
+   * stops it too, saying why and offering to send the message as written. Resolves whether the message may go.
+   */
+  private async applyAiSendStyle(style: AiSendStyle, isCurrent: () => boolean, flags: SendingFlags) {
+    const editor = this.messageInputEditor;
+    const styled = this.aiStyledContent;
+    if(!editor || (styled && isSameAiSendStyle(styled.style, style) && styled.isCurrent(editor))) return true;
+
+    const {text, richMessage} = getAiEditorRequest(this.messageInput, editor);
+    // * by the words written, not a medium's stand-in ("Photo") the request is given to say what it is
+    if(!hasTextToRewrite(richMessage ? flattenRichMessageContent(richMessage.output).text : text.text)) return true;
+
+    // * the same refusal the send makes, before the field is rewritten without the medium
+    if(showMediaUploadingError(editor)) {
+      return false;
+    }
+
+    const {chat, messageInput} = this;
+    const {peerId, threadId} = chat;
+    const middleware = this.getMiddleware();
+    // * the field is still this chat's, and still holds the message (not an edit of another one)
+    const isSameField = () => middleware() && chat.peerId === peerId && chat.threadId === threadId;
+    const isSameChat = () => isSameField() && !this.editMsgId;
+    // * why the message did not go, with a link that sends it as written: long enough to press it
+    const sayWhyNotSent = (langPackKey: LangPackKey, args: (sendAsWritten: HTMLAnchorElement) => FormatterArguments) => {
+      // * of the message that failed: pressed once another one is in the field (it went some other way), it sends nothing
+      const isFailedMessage = captureInputContent(messageInput, this.messageInputEditor);
+      const sendAsWritten = anchorCallback(() => {
+        if(isSameChat() && isFailedMessage(this.messageInputEditor)) this.sendAsWritten(flags);
+      });
+      toastNew({langPackKey, langPackArguments: args(sendAsWritten), duration: 5000});
+    };
+    const wasEditable = messageInput.isContentEditable;
+    const stopped = deferredPromise<void>();
+    // * the field lights up while it is asked, and the answer comes into it word after word
+    const effect = new AiRewriteEffect({
+      field: this.rowsWrapper,
+      root: this.inputMessageContainer,
+      textBox: this.messageInputField.heightWrapper,
+      input: messageInput
+    });
+    // * and the plane is in flight in the send button meanwhile, gone with the message or landing without it
+    const flight = new AiSendFlight(this.btnSend);
+    let locked = true, heightHeld = false;
+    // * at once, before what stopped it looks at the field: an edit takes in whether it may be typed in
+    const unlock = () => {
+      if(!locked) return;
+      locked = false;
+      teardown.destroy();
+      appNavigationController.removeItem(navigationItem);
+      this.stopAiSendStyle = undefined;
+      effect.stop();
+      flight.cancel();
+      this.toggleApplyingAiSendStyle(false);
+      // * a chat opened meanwhile has set the field up for itself
+      if(isSameField()) this.setMessageInputEditable(wasEditable);
+      if(heightHeld) this.messageInputField?.holdHeight(false);
+    };
+    const stop = () => {
+      unlock();
+      stopped.resolve();
+    };
+    const navigationItem: NavigationItem = {type: 'ai-send-style', onPop: stop, noHistory: true};
+    // * the composer torn down meanwhile (its chat closed, or gone): nothing else stops it then, and the light, the
+    // * plane and Escape's entry would wait for the request with it
+    const teardown = middleware.create();
+    teardown.get().onClean(() => {
+      if(locked) stop();
+    });
+    this.stopAiSendStyle = stop;
+    this.editableBeforeAiSendStyle = wasEditable;
+    this.setMessageInputEditable(false);
+    this.toggleApplyingAiSendStyle(true);
+    effect.start();
+    flight.start();
+    appNavigationController.pushItem(navigationItem);
+    let result: ComposeMessageWithAiResult;
+    try {
+      result = await Promise.race([
+        this.managers.aiTonesManager.composeMessageWithAi({...style, text, richMessage: richMessage?.input}),
+        stopped.then((): ComposeMessageWithAiResult => undefined)
+      ]);
+    } catch{}
+
+    // * stopped, by a press or by leaving
+    if(stopped.isFulfilled || !isSameChat()) {
+      unlock();
+      return false;
+    }
+
+    if(!isCurrent()) {
+      unlock();
+      toastNew({langPackKey: 'AiEditor.MessageChanged'});
+      return false;
+    }
+
+    if(result?.ok !== true) {
+      unlock();
+      if(result?.isToneMissing && isSameAiSendStyle(this.getAiSendStyle(), style)) {
+        // * a style that is gone stays off: the next message goes as written. Unless another request was kept
+        // * meanwhile (in another tab): that one stays, and this send just failed
+        this.setAiSendStyle(undefined);
+        sayWhyNotSent('AiEditor.ApplyOnSend.StyleMissing', (link) => [formatAiSendStyleLabel(style), link]);
+      } else if(result?.isPremiumFlood) {
+        sayWhyNotSent('AiEditor.ApplyOnSend.PremiumFlood', (link) => [
+          link,
+          anchorCallback(() => hotReloadGuard.showPremiumPopup())
+        ]);
+      } else {
+        sayWhyNotSent('AiEditor.ApplyOnSend.Error', (link) => [link]);
+      }
+
+      return false;
+    }
+
+    const {resultRichMessage, resultText} = result.data;
+    // * still locked while the new text settles in: it goes then, unless stopped meanwhile (it stays in the field)
+    const applied = await effect.reveal(() => {
+      // * the field neither shrinks before the message goes nor jumps as the new text comes in
+      heightHeld = true;
+      this.messageInputField?.holdHeight(true);
+      // * a step of its own in the field's history: an undo after a stopped send brings the message as it was written
+      editor.separateHistory();
+      const applied = resultRichMessage ?
+        editor.replaceAllRichMessage(resultRichMessage) :
+        editor.replaceAllText(resultText.text, resultText.entities);
+      editor.separateHistory();
+      if(applied) this.aiStyledContent = {style, isCurrent: captureInputContent(messageInput, editor)};
+      return applied;
+    });
+    // * and the field still holds it: nothing took it back while it came in (the expanded field's toolbar has an undo
+    // * of its own), or what went would not be what was shown
+    const goes = applied && !stopped.isFulfilled && isSameChat() && !!this.aiStyledContent?.isCurrent(editor);
+    if(goes) flight.depart();
+    unlock();
+    if(!applied) {
+      sayWhyNotSent('AiEditor.ApplyOnSend.Error', (link) => [link]);
+      return false;
+    }
+
+    return goes;
+  }
+
+  private toggleApplyingAiSendStyle(applying: boolean) {
+    this.btnSend.classList.toggle('is-applying-ai-send-style', applying);
+    // * an ARIA state, not a boolean attribute: it has to say "true"
+    if(applying) this.messageInput.setAttribute('aria-busy', 'true');
+    else this.messageInput.removeAttribute('aria-busy');
+    this.aiSendSparkles.forEach(({sparkles}) => sparkles.setActive(applying));
+    this.updateSendBtnLabel();
+  }
+
+  // * with the plane or the clock, while the chat has a request of the AI editor kept
+  private updateAiSendSparkles() {
+    const kept = this.btnSend.classList.contains('has-ai-send-style');
+    this.aiSendSparkles?.forEach(({icon, sparkles}) => sparkles.setShown(kept && this.sendBtnIcon === icon));
   }
 
   private async sendFieldMessage(force: boolean, ephemeralCommandReceiverId: UserId, flags: SendingFlags) {
@@ -5394,6 +5759,7 @@ export default class ChatInput {
       // the press goes on in the schedule picker: the send it makes goes without sound if this press did
       this.scheduleSending(() => {
         this.sendSilent = flags.sendSilent;
+        this.sendWithoutAiStyle = flags.sendWithoutAiStyle;
         this.sendMessage(true);
       });
       return;
@@ -5413,6 +5779,12 @@ export default class ChatInput {
       (!this.isInputEmpty() || this.forwarding) &&
       (!(await this.isSendingConfirmed()) || !isCurrent())
     ) {
+      return;
+    }
+
+    const aiSendStyle = !flags.sendWithoutAiStyle && !ephemeralCommandReceiverId && !this.isEphemeralComposerMode() &&
+      !this.isInputEmpty() && this.getAiSendStyle();
+    if(aiSendStyle && !(await this.applyAiSendStyle(aiSendStyle, isCurrent, flags))) {
       return;
     }
 
@@ -5440,10 +5812,10 @@ export default class ChatInput {
       chatType: chat.type,
       forwarding,
       forwardParams: forwarding ? {
-        dropAuthor: !this.forwardingHasProtectedRichMessages &&
+        dropAuthor: !this.forwardingKeepsAuthor &&
           this.forwardElements &&
           this.forwardElements.hideSender.checkboxField.checked,
-        dropCaptions: !this.forwardingHasProtectedRichMessages && this.isDroppingCaptions(),
+        dropCaptions: !this.forwardingKeepsAuthor && this.isDroppingCaptions(),
         videoTimestamp: this.forwardingVideoTimestamp
       } : undefined,
       sendTextParams: {
@@ -5477,7 +5849,7 @@ export default class ChatInput {
         this.sendingMessage = undefined;
         // the draft clears its text asks for come back after the field moved on to the next message
         if(textMessages && clearDraft && !ephemeral && !PEER_EXCEPTIONS.has(chat.type)) {
-          this.ownSends.push({clears: textMessages, until: Date.now() + OWN_DRAFT_CLEAR_TIMEOUT});
+          this.ownSends.push({clears: textMessages, until: Date.now() + OWN_DRAFT_CLEAR_TIMEOUT, saveRevision: this.draftSaveRevision});
         }
 
         this.forgetWebPage();
@@ -5496,7 +5868,7 @@ export default class ChatInput {
     }
 
     if(!ephemeral && !PEER_EXCEPTIONS.has(chat.type)) {
-      chat.bubbles.readAllHistory(true);
+      this.managers.appMessagesManager.readAllHistory(chat.peerId, chat.threadId, true);
     }
 
     this.suppressDraftSyncForUnsupportedRichMessage = false;
@@ -5555,6 +5927,11 @@ export default class ChatInput {
       this.forgetOwnSend(ownSend);
     }
 
+    // * the server's draft is cleared as the field was: holding nothing of its own yet, and having saved nothing since
+    // * (the next message, begun and saved and then erased, has its erasing still to save), the field is in step with it
+    if(ownSend.saveRevision === this.draftSaveRevision && !this.getCurrentInputAsDraft()) {
+      this.appliedInputDraft = {value: undefined};
+    }
     return true;
   }
 
@@ -5575,8 +5952,7 @@ export default class ChatInput {
     const message = this.editMessage;
     const canUseRichMessage = !message.media || message.media._ === 'messageMediaWebPage';
     const editorHasContent = !this.messageInputEditor.isEmpty();
-    if(this.messageInputEditor.hasPendingRichMediaUploads()) {
-      toastNew({langPackKey: 'RichMessage.Error.MediaUploading'});
+    if(showMediaUploadingError(this.messageInputEditor)) {
       return;
     }
     if(editorHasContent) await this.messageInputEditor.resolveAutoCodeLanguages();
@@ -5771,6 +6147,10 @@ export default class ChatInput {
   public initMessageEditing(mid: number) {
     const message = this.chat.getMessage(mid) as Message.message;
     if(!message) return;
+    // * the edit takes the field: a rewrite of the message in it stops, and gives the field back first
+    this.stopAiSendStyle?.();
+    // * editing needs the composer the theme picker stands in for
+    this.chat.themeChooser?.close();
     const peerId = this.chat.peerId;
     const threadId = this.chat.threadId;
     let input: LocalTextWithEntities = {text: message.message, entities: message.totalEntities};
@@ -5905,12 +6285,14 @@ export default class ChatInput {
   }
 
   public initMessagesForward(fromPeerIdsMids: {[fromPeerId: PeerId]: number[]}, videoTimestamp?: number) {
+    // * forwarded into this very chat: the composer the theme picker stands in for is needed
+    this.chat.themeChooser?.close();
     const f = async() => {
       // const peerTitles: string[]
       const fromPeerIds = Object.keys(fromPeerIdsMids).map((fromPeerId) => fromPeerId.toPeerId());
       const smth: Set<string> = new Set();
       let length = 0, messagesWithCaptionsLength = 0;
-      let hasRichMessages = false;
+      let keepsAuthor = false;
 
       const p = fromPeerIds.map(async(fromPeerId) => {
         const mids = fromPeerIdsMids[fromPeerId];
@@ -5922,7 +6304,7 @@ export default class ChatInput {
             smth.add('P' + message.fromId);
           }
 
-          hasRichMessages ||= !!message.rich_message;
+          keepsAuthor ||= forwardKeepsAuthor(message, rootScope.premium);
 
           if(
             message.media &&
@@ -5939,7 +6321,6 @@ export default class ChatInput {
       });
 
       await Promise.all(p);
-      const hasProtectedRichMessages = hasRichMessages && !rootScope.premium;
 
       const onlyFirstName = smth.size > 2;
       const peerTitles = [...smth].map((smth) => {
@@ -5954,13 +6335,13 @@ export default class ChatInput {
       });
 
       const {forwardElements} = this;
-      this.forwardingHasProtectedRichMessages = hasProtectedRichMessages;
+      this.forwardingKeepsAuthor = keepsAuthor;
       const authorForm = findUpTag(forwardElements.showSender.checkboxField.label, 'FORM');
       const captionForm = findUpTag(forwardElements.showCaption.checkboxField.label, 'FORM');
-      authorForm.classList.toggle('hide', hasProtectedRichMessages);
-      captionForm.classList.toggle('hide', hasProtectedRichMessages || !messagesWithCaptionsLength);
+      authorForm.classList.toggle('hide', keepsAuthor);
+      captionForm.classList.toggle('hide', keepsAuthor || !messagesWithCaptionsLength);
       const hideCaption = forwardElements.hideCaption.checkboxField.checked;
-      if(hasProtectedRichMessages) {
+      if(keepsAuthor) {
         forwardElements.showSender.checkboxField.setValueSilently(true);
         forwardElements.showCaption.checkboxField.setValueSilently(true);
       } else if(messagesWithCaptionsLength && hideCaption) {
@@ -6051,7 +6432,10 @@ export default class ChatInput {
     return result;
   }
 
-  public async initMessageReply(replyTo: ReturnType<ChatInput['getReplyTo']>) {
+  public async initMessageReply(replyTo: ReturnType<ChatInput['getReplyTo']>, automatic?: boolean) {
+    // * a reply the user starts needs the composer the theme picker stands in for; one the chat sets by itself (a
+    // * draft, a force reply) waits behind it
+    if(!automatic) this.chat.themeChooser?.close();
     if(deepEqual(this.getReplyTo(), replyTo)) {
       return;
     }
@@ -6237,7 +6621,7 @@ export default class ChatInput {
       this.setReplyTo(undefined);
       this.forwarding = undefined;
       this.forwardingVideoTimestamp = undefined;
-      this.forwardingHasProtectedRichMessages = false;
+      this.forwardingKeepsAuthor = false;
     }
 
     if(type !== 'suggested') {

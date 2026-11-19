@@ -14,6 +14,7 @@ import getSelectionElementFromTarget from '@components/chat/getSelectionElementF
 import cancelEvent from '@helpers/dom/cancelEvent';
 import {attachClickEvent, simulateClickEvent} from '@helpers/dom/clickEvent';
 import isSelectionEmpty from '@helpers/dom/isSelectionEmpty';
+import {getWidgetSelectedText} from '@lib/widgetSandbox/selection';
 import {Message, Poll, Chat as MTChat, MessageEntity, MessageMedia, InputStickerSet, StickerSet, Document, Reaction, Photo, SponsoredMessage, TextWithEntities, TodoItem, TodoCompletion, MessageReplyHeader, PollAnswer} from '@layer';
 import assumeType from '@helpers/assumeType';
 import showSponsoredPopup from '@components/popups/sponsored';
@@ -65,6 +66,9 @@ import InputField from '@components/inputField';
 import getMainGroupedMessage from '@appManagers/utils/messages/getMainGroupedMessage';
 import SolidJSHotReloadGuardProvider, {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
 import getRichSelection from '@helpers/dom/getRichSelection';
+import cancelSelection from '@helpers/dom/cancelSelection';
+import {getRichQuoteSelection, makeRichQuoteOfSelection} from '@components/chat/richQuoteSelection';
+import {listenRichMessageCopy} from '@components/chat/richMessageCopy';
 import detectLanguageForTranslation from '@helpers/detectLanguageForTranslation';
 import {getMessageSourceText} from '@stores/peerLanguage';
 import {showAdReport, showMessageReport} from '@components/popups/reportAd';
@@ -103,7 +107,7 @@ import copyMessageMediaWithFeedback from '@components/copyMessageMediaWithFeedba
 import isEphemeralMessage from '@appManagers/utils/messages/isEphemeralMessage';
 import isAnchoredEphemeralMessage from '@appManagers/utils/messages/isAnchoredEphemeralMessage';
 import canReplyToEphemeralMessage from '@appManagers/utils/messages/canReplyToEphemeralMessage';
-import {flattenRichMessageSummary} from '@lib/richMessage';
+import {flattenRichMessageSummary, isRichMessagePart} from '@lib/richMessage';
 import verifyMenuItem from '@helpers/verifyMenuItem';
 import getStickeredMedia from '@appManagers/utils/stickers/getStickeredMedia';
 import {getStickerSetInputById} from '@appManagers/utils/stickers/getStickerSetInput';
@@ -221,6 +225,8 @@ export default class ChatContextMenu {
    */
   private richMedia: CopyableMedia;
   private isTextSelected: boolean;
+  /** Text selected in the message's widget (getWidgetSelectedText): copied as it is, none of the text actions take it. */
+  private isWidgetTextSelected: boolean;
   private isTextFromMultipleMessagesSelected: boolean;
   private isAnchorTarget: boolean;
   private isUsernameTarget: boolean;
@@ -273,6 +279,8 @@ export default class ChatContextMenu {
     this.listenerSetter = new ListenerSetter();
     this.attachListenerSetter = new ListenerSetter();
     this.middleware = getMiddleware();
+    // * a selection in a rich message copies its blocks, by the keyboard as by Copy here
+    listenRichMessageCopy();
   }
 
   public attachTo(element: HTMLElement) {
@@ -341,7 +349,8 @@ export default class ChatContextMenu {
           '.bubble-view-button',
           '.webpage',
           '.bubbles-group-avatar',
-          '.bubble-service-button'
+          '.bubble-service-button',
+          '.time-widget-network'
         ];
         const good = !(e.target as HTMLElement).closest(badSelectors.join(', '));
         if(good) {
@@ -482,7 +491,9 @@ export default class ChatContextMenu {
       this.messagePeerId = bubble ? bubble.dataset.peerId.toPeerId() : undefined;
       this.peerId = this.messagePeerId ?? this.chat.peerId;
       this.target = e.target as HTMLElement;
-      this.isTextSelected = !isSelectionEmpty();
+      // a widget's selected text is not the message's: copying it is all there is to do with it
+      this.isWidgetTextSelected = !!(bubble && getWidgetSelectedText(bubble));
+      this.isTextSelected = !this.isWidgetTextSelected && !isSelectionEmpty();
       this.isAnchorTarget = this.target.tagName === 'A' && (
         (this.target as HTMLAnchorElement).target === '_blank' ||
         this.target.classList.contains('anchor-url')
@@ -943,6 +954,11 @@ export default class ChatContextMenu {
 
     const isGif = this.getMessageDocument()?.type === 'gif';
 
+    // * copying the selected text, or anything that hands it out to be copied (the search field)
+    const canCopySelectedText = () => this.canCopyText() &&
+      !!((this.message as Message.message).message || (this.message as Message.message).rich_message) &&
+      this.isTextSelected;
+
     const verifyFavoriteSticker = async(toAdd: boolean) => {
       const doc = this.getMessageDocument();
       if(!doc?.sticker && !isGif) {
@@ -1056,15 +1072,19 @@ export default class ChatContextMenu {
         !isAnchoredEphemeralMessage(this.message) &&
         !this.message.pFlags.is_outgoing &&
         !!this.chat.input.messageInput &&
-        !!(this.message as Message.message).message &&
+        !!((this.message as Message.message).message || (this.message as Message.message).rich_message) &&
         this.isTextSelected &&
         !this.isTextFromMultipleMessagesSelected &&
         (!this.chat.peerTranslation.enabled() || this.message.pFlags.out) &&
         (this.chat.bubbles.canForward(this.message) || this.chat.canSend()) &&
-        (() => {
+        // * a rich message's quote takes a date or a formula whole by itself
+        ((this.message as Message.message).rich_message ? (() => {
+          const selected = getRichQuoteSelection(getAppWindow().getSelection().getRangeAt(0));
+          return !!selected && !!makeRichQuoteOfSelection(selected, Infinity);
+        })() : (() => {
           const {date} = getMarkupInSelection(['date'], true);
           return !date.elements[0] || isNodeFullyInsideRange(getAppWindow().getSelection().getRangeAt(0), getLinkFirstChild(date.elements[0]));
-        })()
+        })())
     }, {
       icon: 'reply',
       text: 'Reply',
@@ -1159,6 +1179,7 @@ export default class ChatContextMenu {
       verify: () => this.canCopyText() &&
         !!this.selectedMessagesText &&
         !this.isTextSelected &&
+        !this.isWidgetTextSelected &&
         (!this.isAnchorTarget || (this.message as Message.message).message !== this.target.innerText)
     }, {
       icon: 'copy',
@@ -1170,9 +1191,7 @@ export default class ChatContextMenu {
       text: 'Chat.CopySelectedText',
       welcome: true,
       onClick: this.onCopyClick,
-      verify: () => this.canCopyText() &&
-        !!((this.message as Message.message).message || (this.message as Message.message).rich_message) &&
-        this.isTextSelected
+      verify: () => (this.isWidgetTextSelected && this.canCopyText()) || canCopySelectedText()
     }, this.copyMediaButton = {
       icon: 'copy',
       text: 'MediaViewer.Context.Copy',
@@ -1194,8 +1213,8 @@ export default class ChatContextMenu {
         const selection = getAppWindow().getSelection();
         this.chat.initSearch({query: selection.toString()});
       },
-      verify: () => !!((this.message as Message.message).message || (this.message as Message.message).rich_message) &&
-        this.isTextSelected
+      // * the search field would hand protected text out to be copied
+      verify: canCopySelectedText
     }, {
       icon: 'copy',
       text: 'Message.Context.Selection.Copy',
@@ -1256,6 +1275,7 @@ export default class ChatContextMenu {
         const message = this.message;
         const messageLanguage = this.messageLanguage;
         const isTextSelected = this.isTextSelected;
+        const noForwards = !this.canCopyText();
 
         if(!this.chat.peerTranslation.canTranslate(true)) {
           hotReloadGuard.showPremiumPopup({feature: 'translations'});
@@ -1274,7 +1294,8 @@ export default class ChatContextMenu {
             peerId: textWithEntities ? peerId : message.peerId,
             textWithEntities,
             message: textWithEntities ? undefined : message as Message.message,
-            detectedLanguage: messageLanguage
+            detectedLanguage: messageLanguage,
+            noForwards
           }, SolidJSHotReloadGuardProvider);
         }
       },
@@ -1282,7 +1303,7 @@ export default class ChatContextMenu {
     }, {
       // * a transfer in a chat with someone: Grams back to them, as iOS offers it on the transfer itself
       icon: 'wallet',
-      text: 'Wallet.SendMoney',
+      text: 'WalletSendMoney',
       onClick: () => {
         const userId = this.peerId.toUserId();
         import('@components/wallet').then(({default: showWalletPopup}) => showWalletPopup({send: {userId}, fromChat: true}));
@@ -2385,6 +2406,8 @@ export default class ChatContextMenu {
       return peerTitle + ', [' + date + ']';
     })) : [];
 
+    // * one whole rich message is pasted as its blocks, a part of one (the rest not loaded) as its text
+    const richMessage = messages.length === 1 && messages[0].rich_message;
     return prepareTextWithEntitiesForCopying(messages.map((message) => {
       if(message.rich_message) {
         const {text, entities} = flattenRichMessageSummary(message.rich_message);
@@ -2395,7 +2418,7 @@ export default class ChatContextMenu {
         text: message.message,
         entities: (message as Message.message).totalEntities || message.entities
       };
-    }), meta);
+    }), meta, richMessage && !isRichMessagePart(richMessage) ? richMessage.blocks : undefined);
   }
 
   private onSendScheduledClick = async() => {
@@ -2568,7 +2591,7 @@ export default class ChatContextMenu {
   }
 
   private onCopyClick = async() => {
-    if(isSelectionEmpty()) {
+    if(!this.isWidgetTextSelected && isSelectionEmpty()) {
       const {text, html} = this.selectedMessagesText;
       copyTextToClipboard(text, html);
     } else {
@@ -2679,7 +2702,19 @@ export default class ChatContextMenu {
 
   private onQuoteClick = async() => {
     const messageWithText = this.getMessageWithText();
-    const {peerId} = messageWithText;
+    if((messageWithText as Message.message).rich_message) {
+      // * what the selection takes of the message as it is drawn, read before anything can change either
+      const selected = getRichQuoteSelection(getAppWindow().getSelection().getRangeAt(0));
+      cancelSelection();
+      const appConfig = await this.managers.apiManager.getAppConfig();
+      const quote = selected && makeRichQuoteOfSelection(selected, appConfig.quote_length_max ?? 1024);
+      if(quote) {
+        await this.replyWithQuote(messageWithText, quote);
+      }
+
+      return;
+    }
+
     let {text: value, entities = [], offset: startIndex} = this.getQuotedText();
 
     const appConfig = await this.managers.apiManager.getAppConfig();
@@ -2701,22 +2736,24 @@ export default class ChatContextMenu {
       });
     }
 
-    const quote: ChatInputReplyTo['replyToQuote'] = {
+    await this.replyWithQuote(messageWithText, {
       text: value,
       entities: entities.length ? entities : undefined,
       offset: startIndex
-    };
+    });
+  };
 
-    const replyTo = this.chat.input.getChatInputReplyToFromMessage(messageWithText, quote);
+  private async replyWithQuote(message: MyMessage, quote: ChatInputReplyTo['replyToQuote']) {
+    const replyTo = this.chat.input.getChatInputReplyToFromMessage(message, quote);
 
     if(!await this.chat.canSend()) {
-      replyTo.replyToPeerId = peerId;
+      replyTo.replyToPeerId = message.peerId;
       this.chat.input.createReplyPicker(replyTo);
       return;
     }
 
     this.chat.input.initMessageReply(replyTo);
-  };
+  }
 
   private onStatisticsClick = () => {
     this.chat.topbar.appSidebarRight.createTab(AppStatisticsTab).open(this.messagePeerId.toChatId(), this.mid);

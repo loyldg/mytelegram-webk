@@ -122,6 +122,9 @@ const NARROW_HOLD = 300;
 /** … then narrows down to the match over this long (must match the transition in scss) */
 const NARROW_DURATION = 400;
 
+/** elements `extractText` reads as their text (`alt` / `data-sticker-emoji`) instead of what they hold */
+const TEXT_STANDING_SELECTOR = '[data-sticker-emoji], img[alt]:not([alt=""])';
+
 /** icons are text glyphs in a private-use range — never part of the searchable text */
 const DEFAULT_SKIP = `.tgico, .${OVERLAY_CLASS}`;
 
@@ -132,6 +135,12 @@ const WORD_START = `(?<![${WORD_CHARACTER}])`;
 export function getTextSkip(skip?: string) {
   return skip ? `${DEFAULT_SKIP}, ${skip}` : DEFAULT_SKIP;
 }
+
+// a formula, drawn as MathML, stands for its source (`Latex`)
+const getMathSource = (element: HTMLElement) => {
+  const {dataset} = element;
+  return ('inlineMath' in dataset || 'blockMath' in dataset) && dataset.source;
+};
 
 /**
  * collects the visible text of `root` together with the DOM positions it came from; `sourceText`
@@ -166,8 +175,8 @@ export function extractText(root: HTMLElement, skip = DEFAULT_SKIP, {sourceText}
     }
 
     // * emoji images and custom emoji carry their text as `alt` / `data-sticker-emoji`
-    // * (same convention as `getRichElementValue`)
-    const alt = (sourceText && element.dataset.originalText) ||
+    // * (same convention as `getRichElementValue`), a formula its source as `data-source`
+    const alt = (sourceText && (element.dataset.originalText || getMathSource(element))) ||
       element.dataset.stickerEmoji ||
       (element as HTMLImageElement).alt;
     if(alt) {
@@ -264,8 +273,8 @@ function findNearest(text: string, needle: string, hint: number): TextSpan | und
 /**
  * The quote is a verbatim slice of the message text, `offset` is where it started there. The
  * rendered text may differ slightly (dropped line breaks around block quotes, media captions
- * preceded by a file name …), hence the nearest occurrence to the offset and a
- * whitespace-insensitive retry.
+ * preceded by a file name, an emoji completed by its variation selector …), hence the occurrence
+ * nearest to the offset, of the exact text or of the text whitespace and variation selectors aside.
  */
 export function findQuoteSpan(text: string, quote: string, offset = 0): TextSpan | undefined {
   if(!quote || !text) {
@@ -273,16 +282,18 @@ export function findQuoteSpan(text: string, quote: string, offset = 0): TextSpan
   }
 
   const exact = findNearest(text, quote, offset);
-  if(exact) {
-    return exact;
-  }
+  const loose = findLooseQuoteSpan(text, quote, offset);
+  // * the one nearer to where the quote started: an exact one elsewhere is another place of the same text
+  return exact && loose && Math.abs(loose[0] - offset) < Math.abs(exact[0] - offset) ? loose : exact ?? loose;
+}
 
-  const needle = quote.replace(/\s+/g, '');
+function findLooseQuoteSpan(text: string, quote: string, offset: number): TextSpan | undefined {
+  const needle = quote.replace(/[\s\ufe0f]+/g, '');
   if(!needle) {
     return;
   }
 
-  // * strip all whitespace, remembering where every kept character came from
+  // * strip all whitespace and variation selectors, remembering where every kept character came from
   const map: number[] = [];
   let stripped = '';
   let strippedHint = 0;
@@ -291,7 +302,7 @@ export function findQuoteSpan(text: string, quote: string, offset = 0): TextSpan
       strippedHint = stripped.length;
     }
 
-    if(!/\s/.test(text[i])) {
+    if(!/[\s\ufe0f]/.test(text[i])) {
       map.push(i);
       stripped += text[i];
     }
@@ -316,7 +327,9 @@ export function findSpans(text: string, match: TextHighlightMatch): TextSpan[] {
 
 /** turns text spans into DOM ranges over the container's text */
 export function computeRanges(container: HTMLElement, match: TextHighlightMatch, skip?: string) {
-  const {text, segments} = extractText(container, getTextSkip(skip));
+  // * a quote is a slice of the message's text: what is drawn otherwise (a date in local time, a formula) is found as
+  // * the text it stands for
+  const {text, segments} = extractText(container, getTextSkip(skip), {sourceText: match.type === 'quote'});
   const ranges: Range[] = [];
   if(!segments.length) {
     return ranges;
@@ -426,20 +439,40 @@ export function computeLineBoxes(ranges: Range[], origin: DOMRect, lineHeight: n
   }));
 }
 
-/** a range over all the searchable text of the container (skipped subtrees excluded at the ends) */
-export function computeFullRange(container: HTMLElement, skip?: string) {
+/** ranges over all the searchable text of the container shown (skipped subtrees excluded at the ends) */
+export function computeFullRanges(container: HTMLElement, skip?: string) {
   const {segments} = extractText(container, getTextSkip(skip));
-  if(!segments.length) {
-    return;
+  // * an inert part is not shown (a collapsed details): its text is clipped where it is laid out, and its line boxes
+  // * would pile up over what is shown there
+  const hidden = Array.from(container.querySelectorAll('[inert]'));
+  const ranges: Range[] = [];
+  let first: TextSegment, last: TextSegment;
+  const flush = () => {
+    if(!first) {
+      return;
+    }
+
+    const range = new Range();
+    if(first.atomic) range.setStartBefore(first.node);
+    else range.setStart(first.node, 0);
+    if(last.atomic) range.setEndAfter(last.node);
+    else range.setEnd(last.node, last.end - last.start);
+    ranges.push(range);
+    first = last = undefined;
+  };
+
+  for(const segment of segments) {
+    if(hidden.some((element) => element.contains(segment.node))) {
+      flush();
+      continue;
+    }
+
+    first ??= segment;
+    last = segment;
   }
 
-  const first = segments[0], last = segments[segments.length - 1];
-  const range = new Range();
-  if(first.atomic) range.setStartBefore(first.node);
-  else range.setStart(first.node, 0);
-  if(last.atomic) range.setEndAfter(last.node);
-  else range.setEnd(last.node, last.end - last.start);
-  return range;
+  flush();
+  return ranges;
 }
 
 /**
@@ -589,6 +622,8 @@ class TextHighlighter implements TextHighlight {
   /** `animateIn`: still to be played by the first paint */
   private introPending: boolean;
   private introTimeout: number;
+  /** `animateIn`: what the intro was measured on has moved since (media coming in), to be measured as it ends */
+  private introStale: boolean;
   private disposed = false;
 
   constructor(private readonly options: TextHighlightOptions) {
@@ -609,9 +644,19 @@ class TextHighlighter implements TextHighlight {
     if(options.observe !== false) {
       this.mutationObserver = new MutationObserver((records) => {
         // * painting the overlay mutates the container too — do not chase our own changes
-        if(records.some((record) => !this.isOwnMutation(record))) {
-          reapply();
+        records = records.filter((record) => !this.isOwnMutation(record));
+        if(!records.length) {
+          return;
         }
+
+        // * the intro is not cut short by what leaves the text as it is (a video or a picture coming in as the jump
+        // * lands): it plays on, and the match is measured again as it ends
+        if(this.introTimeout && !records.some((record) => this.changesText(record))) {
+          this.introStale = true;
+          return;
+        }
+
+        reapply();
       });
       this.mutationObserver.observe(this.container, {childList: true, characterData: true, subtree: true});
     }
@@ -648,6 +693,38 @@ class TextHighlighter implements TextHighlight {
 
     return record.type === 'childList' &&
       [...record.addedNodes, ...record.removedNodes].every((node) => node === overlay);
+  }
+
+  /**
+   * whether the change is to the text looked in (`extractText`'s): text outside `skip`, or an emoji standing for its
+   * text — not what is drawn inside such an emoji
+   */
+  private changesText(record: MutationRecord) {
+    const {container} = this;
+    const skip = getTextSkip(this.options.skip);
+    const target = record.target;
+    const unread = (target instanceof Element ? target : target.parentElement)?.closest(`${skip}, ${TEXT_STANDING_SELECTOR}`);
+    if(unread && container.contains(unread)) {
+      return false;
+    }
+
+    if(record.type === 'characterData') {
+      return true;
+    }
+
+    const carriesText = (node: Node) => {
+      if(!(node instanceof Element)) {
+        return !!node.textContent;
+      }
+
+      return !node.matches(skip) && (
+        !!node.textContent ||
+        node.matches(TEXT_STANDING_SELECTOR) ||
+        !!node.querySelector(TEXT_STANDING_SELECTOR)
+      );
+    };
+
+    return [...record.addedNodes, ...record.removedNodes].some(carriesText);
   }
 
   private clearRanges() {
@@ -689,12 +766,12 @@ class TextHighlighter implements TextHighlight {
         this.introTimeout = window.setTimeout(() => {
           this.introTimeout = undefined;
           this.overlay.classList.remove(OVERLAY_INTRO_CLASS);
+          if(this.introStale) this.apply();
         }, NARROW_APPEAR);
         return;
       }
 
-      const fullRange = boxes.length && computeFullRange(container, skip);
-      const full = fullRange ? this.computeLineBoxes([fullRange]) : [];
+      const full = boxes.length ? this.computeLineBoxes(computeFullRanges(container, skip)) : [];
       if(full.length) {
         this.narrowIn(full, boxes);
         return;
@@ -757,7 +834,8 @@ class TextHighlighter implements TextHighlight {
       this.introTimeout = window.setTimeout(() => {
         this.introTimeout = undefined;
         overlay.classList.remove(OVERLAY_INTRO_CLASS, OVERLAY_NARROWING_CLASS);
-        this.paintLineBoxes(targets);
+        if(this.introStale) this.apply();
+        else this.paintLineBoxes(targets);
       }, NARROW_DURATION);
     }, NARROW_APPEAR + NARROW_HOLD);
   }
@@ -775,6 +853,7 @@ class TextHighlighter implements TextHighlight {
   }
 
   private clearIntro() {
+    this.introStale = false;
     if(this.introTimeout) {
       clearTimeout(this.introTimeout);
       this.introTimeout = undefined;

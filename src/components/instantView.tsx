@@ -1,4 +1,4 @@
-import {For, createEffect, createContext, useContext, Show, createSignal, createUniqueId, Setter, onCleanup, createMemo, on, Accessor, batch, children, untrack} from 'solid-js';
+import {For, createEffect, createContext, useContext, Show, createSignal, createUniqueId, onCleanup, createMemo, on, Accessor, batch, children, untrack} from 'solid-js';
 import type {JSX} from 'solid-js';
 import {Dynamic} from 'solid-js/web';
 import {createStore, reconcile, unwrap} from 'solid-js/store';
@@ -15,7 +15,7 @@ import {
   RichText
 } from '@layer';
 import wrapTelegramRichText from '@lib/richTextProcessor/wrapTelegramRichText';
-import {getDocumentRowBlockId} from '@lib/richMessage';
+import {getDocumentRowBlockId, isPageCaptionEmpty, isRichTextEmpty, RichMessageBubbleEdges, unwrapPageBlockCover} from '@lib/richMessage';
 import {
   applyInstantViewMediaSize,
   getMaximumHeightMediaSize,
@@ -30,9 +30,10 @@ import {
   type InstantViewHeadingLevel
 } from '@components/instantViewFormatting';
 import {orderedListCounterStyle, orderedListItemStyle} from '@components/instantViewList';
-import {canonicalOrderedListType, getOrderedListTypePresentation} from '@lib/richTextProcessor/orderedList';
+import {canonicalOrderedListType, getOrderedListTypePresentation, orderedListValues} from '@lib/richTextProcessor/orderedList';
 import wrapRichText, {makeQuoteCollapsable} from '@lib/richTextProcessor/wrapRichText';
 import classNames from '@helpers/string/classNames';
+import {isWebPageUrl} from '@lib/richTextProcessor/matchUrlProtocol';
 import {IconTsx} from '@components/iconTsx';
 import GenericTable, {GenericTableCell, GenericTableRow} from '@components/genericTable';
 import {SolidJSHotReloadGuardContextValue, useHotReloadGuard} from '@lib/solidjs/hotReloadGuard';
@@ -78,6 +79,7 @@ import wrapMediaSpoiler, {onMediaSpoilerClick} from '@components/wrappers/mediaS
 import {registerMediaPeekSource} from '@components/mediaPeek/sources';
 import showTooltip from '@components/tooltip';
 import {reconcileStablePageBlockEntries} from '@components/instantView/stablePageBlocks';
+import {DETAILS_CONTENT_CLASS, expandDetailsAncestors, registerDetails} from '@components/instantView/details';
 import {
   MessageTextLayoutEvent,
   MessageTextPhase,
@@ -103,6 +105,8 @@ import {
 } from '@components/wrappers/urlButtonAnchor';
 import {getRichTextButton, RICH_TEXT_BUTTON_SELECTOR} from '@lib/richTextProcessor/richTextButtons';
 import type Chat from '@components/chat/chat';
+import {setRichQuoteSource} from '@components/chat/richQuoteSources';
+import {getRichQuoteNodeId} from '@lib/richQuote';
 import type wrapVideo from '@components/wrappers/video';
 
 export type ReactiveInstantViewValue<T> = T | Accessor<T>;
@@ -143,12 +147,11 @@ type InstantViewContextValue = {
   revealCoordinator?: MessageTextRevealCoordinator,
   onTextLayout?: (event: MessageTextLayoutEvent) => void,
   richTextOptions?: InstantViewRichTextOptions,
-  randomId: string,
+  anchorPrefix: string,
   openNewPage: (url: string) => void,
   collapse: () => void,
   scrollToAnchor: (anchor: string, instantly: boolean) => void,
   customEmojiRenderer: CustomEmojiRendererElement,
-  details: WeakMap<HTMLElement, Setter<boolean>>,
   referenceTooltipClose?: () => void,
   ready: boolean,
   savingScroll: boolean,
@@ -156,7 +159,19 @@ type InstantViewContextValue = {
   onChecklistToggle?: (path: number[], checked: boolean) => void,
   isAlive: () => boolean,
   navigationGeneration: number,
-  media: Array<{ref: HTMLElement, media: Photo.photo | Document.document, caption: PageCaption}>
+  media: Array<{ref: HTMLElement, media: Photo.photo | Document.document, caption: PageCaption}>,
+  bubbleEdges?: InstantViewBubbleEdges
+};
+
+/**
+ * A rich message in a bubble: which of its top-level blocks meet the bubble's edges
+ * (`getRichMessageBubbleEdges`), and the place at the end of its last paragraph that the message's time
+ * floats in, as it floats at the end of a message's own text
+ */
+export type InstantViewBubbleEdges = {
+  edges: Accessor<RichMessageBubbleEdges>,
+  setTimeSlot: (index: number, slot: HTMLElement) => void,
+  releaseTimeSlot: (slot: HTMLElement) => void
 };
 
 const InstantViewContext = createContext<InstantViewContextValue>();
@@ -169,17 +184,24 @@ const FRAGMENT_HREF_RE = /^(?:[a-z]+:\/\/)?(#[^#?]+)$/i;
 // Without a sandbox the frame keeps every capability it is given by default, and an
 // `html` embed additionally inherits this origin, so its scripts would run as
 // web.telegram.org with access to the parent document and its storage.
+// No `allow-modals`: a frame's alert() stops the whole tab until it is answered, and a loop of them
+// never lets it go — an embed's markup is whatever its sender wrote.
 const EMBED_SANDBOX_ATTRIBUTES = [
   'allow-scripts',
   'allow-popups',
   'allow-popups-to-escape-sandbox', // links inside the embed must open as normal pages
-  'allow-forms',
-  'allow-modals'
+  'allow-forms'
 ].join(' ');
 
 // A cross-origin `url` embed already loads under the provider's own origin, so keeping it
 // costs nothing here and preserves the provider's cookies and storage.
 const EMBED_URL_SANDBOX_ATTRIBUTES = EMBED_SANDBOX_ATTRIBUTES + ' allow-same-origin';
+
+// A page's anchors are ids in the document, which every rich message of the chat shares: each page
+// prefixes its own with a number no other page has, ended by a `-` a number never holds, so no
+// prefix and name of one page spell another's.
+let lastAnchorPrefix = 0;
+const createAnchorPrefix = () => `iv${++lastAnchorPrefix}-`;
 
 // The height in a `resize_frame` event is authored by the embedded document — a third-party page,
 // and after a navigation away not even the one the block asked for — so it only ever grows the
@@ -197,21 +219,34 @@ function extractEmbedUrl(html: string) {
     .querySelector('link[rel~="canonical" i]')
     ?.getAttribute('href')
     ?.trim();
-    const url = href && new URL(href);
-    return url && (url.protocol === 'https:' || url.protocol === 'http:') ? url.href : undefined;
+    return getEmbedPageUrl(href);
+  } catch(err) {
+    return undefined;
+  }
+}
+
+// The only URL a frame is pointed at: a web page's. `javascript:` would run in the frame as this page,
+// `data:` and the like are no page of a site — and an embed's URL is whatever its sender wrote.
+function getEmbedPageUrl(href: string) {
+  if(!href) return;
+  try {
+    const url = new URL(href);
+    return isWebPageUrl(url) ? url.href : undefined;
   } catch(err) {
     return undefined;
   }
 }
 
 function getEmbedSandbox(html: string, url: string) {
-  if(html) { // srcdoc — allow-same-origin would hand it this origin, which is the whole problem
+  if(html) { // the embed document is ours — allow-same-origin would hand it this origin, which is the whole problem
     return EMBED_SANDBOX_ATTRIBUTES;
   }
 
   let isCrossOrigin: boolean;
   try {
-    isCrossOrigin = new URL(url, location.href).origin !== location.origin;
+    // * an origin of "null" (`javascript:`, `data:`) is not another site's: such a frame runs as this one
+    const parsed = new URL(url, location.href);
+    isCrossOrigin = isWebPageUrl(parsed) && parsed.origin !== location.origin;
   } catch(err) {
     isCrossOrigin = false;
   }
@@ -245,7 +280,7 @@ function onClick(context: InstantViewContextValue, e: MouseEvent) {
     const m = href.match(FRAGMENT_HREF_RE);
     if(m) {
       cancelEvent(e);
-      const target = document.getElementById(context.randomId + m[1].slice(1));
+      const target = document.getElementById(context.anchorPrefix + m[1].slice(1));
       if(target?.classList.contains('tg-reference')) {
         const textElement = document.createDocumentFragment();
         textElement.append(...Array.from(target.childNodes, (node) => node.cloneNode(true)));
@@ -263,21 +298,6 @@ function onClick(context: InstantViewContextValue, e: MouseEvent) {
       return;
     }
   }
-}
-
-// Expand every collapsed <details> the anchor target sits inside, so it's actually visible before we
-// scroll to it. Shared by the full-page IV and inline RichMessage anchor navigation.
-function expandDetailsAncestors(context: InstantViewContextValue, element: HTMLElement) {
-  let detailsElement: HTMLElement = element;
-  do {
-    detailsElement = findUpClassName(detailsElement, styles.Details);
-    if(!detailsElement) {
-      break;
-    }
-
-    context.details.get(detailsElement)?.(true);
-    detailsElement = detailsElement.parentElement;
-  } while(true);
 }
 
 export function InstantViewBlocks(props: {
@@ -301,6 +321,7 @@ export function InstantViewBlocks(props: {
   paddings?: number,
   displayTextDiff?: boolean,
   onChecklistToggle?: (path: number[], checked: boolean) => void,
+  bubbleEdges?: InstantViewBubbleEdges,
   style?: JSX.CSSProperties
 }) {
   let disposed = false;
@@ -334,7 +355,7 @@ export function InstantViewBlocks(props: {
     onTextLayout: props.onTextLayout,
     revealCoordinator: props.revealCoordinator,
     ready: true,
-    randomId: '' + (Math.random() * 1000 | 0),
+    anchorPrefix: createAnchorPrefix(),
     openNewPage: (url) => {
       if(!hasDisabledNavigation(value)) props.openNewPage(url);
     },
@@ -344,16 +365,15 @@ export function InstantViewBlocks(props: {
         return;
       }
 
-      const element = document.getElementById(value.randomId + anchor.slice(1)) as HTMLElement;
+      const element = document.getElementById(value.anchorPrefix + anchor.slice(1)) as HTMLElement;
       if(!element) {
         return;
       }
 
-      expandDetailsAncestors(value, element);
+      expandDetailsAncestors(element);
       props.scrollToElement?.(element);
     },
     customEmojiRenderer,
-    details: new WeakMap(),
     savingScroll: false,
     isAlive: () => !disposed,
     get navigationGeneration() {
@@ -365,7 +385,8 @@ export function InstantViewBlocks(props: {
     get onChecklistToggle() {
       return props.onChecklistToggle;
     },
-    media: []
+    media: [],
+    bubbleEdges: props.bubbleEdges
   };
 
   onCleanup(() => value.referenceTooltipClose?.());
@@ -455,7 +476,7 @@ export function InstantView(props: {
     },
     sourceRevision: 0,
     phase: 'final',
-    randomId: '' + (Math.random() * 1000 | 0),
+    anchorPrefix: createAnchorPrefix(),
     openNewPage: props.openNewPage,
     collapse: props.collapse,
     scrollToAnchor: (anchor, instantly) => {
@@ -465,12 +486,12 @@ export function InstantView(props: {
         return;
       }
 
-      const element = document.getElementById(value.randomId + anchor.slice(1)) as HTMLElement;
+      const element = document.getElementById(value.anchorPrefix + anchor.slice(1)) as HTMLElement;
       if(!element) {
         return;
       }
 
-      expandDetailsAncestors(value, element);
+      expandDetailsAncestors(element);
       fastSmoothScroll({container: scrollableRef, element, position: 'start', forceDuration});
     },
     customEmojiRenderer: CustomEmojiRendererElement.create({
@@ -478,7 +499,6 @@ export function InstantView(props: {
       middleware: createMiddleware().get(),
       renderNonSticker: true
     }),
-    details: new WeakMap(),
     savingScroll: false,
     isAlive: () => !disposed,
     navigationGeneration: 0,
@@ -668,18 +688,18 @@ function PageDocument(props: {documentId: Long}) {
   );
 }
 
-function Caption(props: {caption: PageCaption}) {
+function Caption(props: {caption: PageCaption, quote?: (part: string) => () => string}) {
   return (
-    <Show when={!isRichTextEmpty(props.caption.text) || !isRichTextEmpty(props.caption.credit)}>
+    <Show when={!isPageCaptionEmpty(props.caption)}>
       <div class={classNames(styles.Padding, styles.Caption)}>
         <Show when={!isRichTextEmpty(props.caption.text)}>
           <div class={styles.CaptionText}>
-            <RichTextRenderer text={props.caption.text} />
+            <RichTextRenderer text={props.caption.text} quote={props.quote?.('caption')} />
           </div>
         </Show>
         <Show when={!isRichTextEmpty(props.caption.credit)}>
           <div class={styles.CaptionCredit}>
-            <RichTextRenderer text={props.caption.credit} />
+            <RichTextRenderer text={props.caption.credit} quote={props.quote?.('credit')} />
           </div>
         </Show>
       </div>
@@ -748,7 +768,8 @@ function EmbedWebView(props: {
   onHeight: (height: number) => void
 }) {
   // Prefer the canonical URL, and only render the markup inline when there is none.
-  const embedUrl = props.block.url || (props.block.html ? extractEmbedUrl(props.block.html) : undefined);
+  const blockUrl = getEmbedPageUrl(props.block.url);
+  const embedUrl = blockUrl || (props.block.html ? extractEmbedUrl(props.block.html) : undefined);
   const embedHtml = embedUrl ? undefined : props.block.html;
   const webView = new TelegramWebView({
     html: embedHtml,
@@ -757,7 +778,7 @@ function EmbedWebView(props: {
   });
   webView.iframe.classList.add(styles.EmbedIframe);
   webView.iframe.allowFullscreen = true;
-  if(props.block.url) {
+  if(blockUrl) {
     webView.iframe.style.width = '100%';
     webView.iframe.style.height = '100%';
     webView.iframe.style.border = '0';
@@ -934,6 +955,18 @@ async function onMediaClick({
   });
 }
 
+/**
+ * The path of a block inside its parent's, made once per block. Written as a prop, it would be a
+ * getter reading the parent's path getter, which reads its parent's, and so on: every block nested in a
+ * message (each level of a list twice) would double the work of all the blocks inside it.
+ */
+function createChildPath(parentPath: () => number[] | undefined, index: () => number) {
+  return createMemo(() => {
+    const path = parentPath();
+    return path && [...path, index()];
+  });
+}
+
 function StablePageBlocks(props: {
   blocks: PageBlock[],
   paddings: number,
@@ -944,13 +977,18 @@ function StablePageBlocks(props: {
   const entries = createStablePageBlockEntries(() => props.blocks);
 
   return (
-    <For each={entries()}>{(entry, index) => (
-      props.render ?
-        props.render(entry.block) :
+    <For each={entries()}>{(entry, index) => {
+      if(props.render) {
+        return props.render(entry.block);
+      }
+
+      const path = createChildPath(() => props.path, index);
+      return (
         <BlockEmojiCanvas block={entry.block}>
-          <Block block={entry.block} paddings={props.paddings} noCaption={props.noCaption} path={props.path && [...props.path, index()]} />
+          <Block block={entry.block} paddings={props.paddings} noCaption={props.noCaption} path={path()} />
         </BlockEmojiCanvas>
-    )}</For>
+      );
+    }}</For>
   );
 }
 
@@ -1154,19 +1192,6 @@ function createMediaSpoilerAttacher(
   };
 }
 
-function orderedListItemValue(block: PageBlock.pageBlockOrderedList, index: number) {
-  const step = block.pFlags.reversed ? -1 : 1;
-  let value = block.start ?? (block.pFlags.reversed ? block.items.length : 1);
-  for(let i = 0; i <= index; ++i) {
-    value = block.items[i].value ?? value;
-    if(i === index) {
-      return value;
-    }
-
-    value += step;
-  }
-}
-
 function toRoman(value: number) {
   if(value <= 0 || value >= 4000) {
     return '' + value;
@@ -1206,13 +1231,12 @@ function toAlpha(value: number) {
 function getOrderedListMarker(
   block: PageBlock.pageBlockOrderedList,
   item: PageListOrderedItem,
-  index: number
+  value: number
 ) {
   if(item.num !== undefined && item.num !== '') {
     return '' + item.num;
   }
 
-  const value = orderedListItemValue(block, index);
   const type = canonicalOrderedListType(item.type || block.type);
   switch(type) {
     case 'a':
@@ -1244,6 +1268,20 @@ function Block(props: {
   const block = props.block;
 
   const CaptionC: typeof Caption = props.noCaption ? (...args: any[]) => false : Caption;
+  // * a top-level block of a rich message in a bubble that meets the bubble's edge (a cover's block is in its place)
+  const blockContext = useContext(InstantViewContext);
+  const isBubbleEdge = (edge: Exclude<keyof RichMessageBubbleEdges, 'lastParagraphText'>) => {
+    const edges = blockContext?.bubbleEdges?.edges();
+    const path = props.path;
+    return !!edges && path?.length === 1 && edges[edge] === path[0];
+  };
+  const mediaEdgeClasses = () => ({
+    [styles.FirstMedia]: isBubbleEdge('firstMedia'),
+    [styles.LastMedia]: isBubbleEdge('lastMedia')
+  });
+  const mediaEdgeClass = () => classNames(...Object.entries(mediaEdgeClasses()).map(([name, on]) => on && name));
+  // * which text of the message a part of the block is, for a quote of a selection in it (`getRichQuoteNodes`)
+  const quote = (part: string) => props.path ? () => getRichQuoteNodeId(props.path, part) : undefined;
   // if(block._ !== 'pageBlockRelatedArticles' && Math.random() !== undefined) {
   //   return;
   // }
@@ -1257,7 +1295,7 @@ function Block(props: {
       const level = (block as typeof block & {headingLevel?: number}).headingLevel || nativeLevel;
       const presentation = getInstantViewHeadingPresentation(Math.max(1, Math.min(6, level)) as InstantViewHeadingLevel);
       return (
-        <Dynamic component={presentation.tag} class={presentation.class}>
+        <Dynamic component={presentation.tag} class={presentation.class} classList={{[styles.FirstText]: isBubbleEdge('firstText')}}>
           <RichTextRenderer text={block.text} />
         </Dynamic>
       );
@@ -1271,18 +1309,32 @@ function Block(props: {
       const level = Number(block._.slice('pageBlockHeading'.length)) as InstantViewHeadingLevel;
       const presentation = getInstantViewHeadingPresentation(level);
       return (
-        <Dynamic component={presentation.tag} class={presentation.class}>
-          <RichTextRenderer text={block.text} />
+        <Dynamic component={presentation.tag} class={presentation.class} classList={{[styles.FirstText]: isBubbleEdge('firstText')}}>
+          <RichTextRenderer text={block.text} quote={quote('text')} />
         </Dynamic>
       );
     }
     case 'pageBlockParagraph': {
       const context = useContext(InstantViewContext);
+      const isTimeHost = () => isBubbleEdge('lastParagraph');
+      let timeSlot: HTMLSpanElement;
+      createEffect(() => {
+        if(!isTimeHost()) return;
+        const slot = timeSlot;
+        context.bubbleEdges.setTimeSlot(props.path[0], slot);
+        onCleanup(() => context.bubbleEdges.releaseTimeSlot(slot));
+      });
       return (
-        <p class={classNames(styles.Padding, styles.Paragraph)}>
-          <RichTextRenderer text={block.text} />
+        <p
+          class={classNames(styles.Padding, styles.Paragraph)}
+          classList={{[styles.FirstText]: isBubbleEdge('firstText'), [styles.TimeHost]: isTimeHost()}}
+        >
+          <RichTextRenderer text={block.text} quote={quote('text')} />
           {/* in a message an empty paragraph is an empty line, as the other apps draw it */}
           {context.message && isRichTextEmpty(block.text) && <br />}
+          {/* the bubble's time floats here when this is the message's last paragraph (`bubbleEdges`); it is
+          the last of the paragraph's nodes, so what is put before it stays before it */}
+          <span ref={timeSlot} class={styles.TimeSlot} />
         </p>
       );
     }
@@ -1292,9 +1344,12 @@ function Block(props: {
       return (
         <Show
           when={block.language === 'math'}
-          fallback={<PreformattedCode text={block.text} language={block.language} />}
+          fallback={<PreformattedCode text={block.text} language={block.language} quote={quote('text')} />}
         >
-          <div class={classNames(styles.Padding, styles.MathBlockWrapper)}>
+          <div
+            ref={(element) => props.path && setRichQuoteSource(element, quote('text'))}
+            class={classNames(styles.Padding, styles.MathBlockWrapper)}
+          >
             <BlockLatex source={richTextToString(block.text)} />
           </div>
         </Show>
@@ -1304,12 +1359,15 @@ function Block(props: {
       // Server-sent `pageBlockMath` (rich messages) — render as a display formula through the same
       // Temml path master uses for markdown `$$…$$` blocks, instead of dumping the raw LaTeX source.
       return (
-        <div class={classNames(styles.Padding, styles.MathBlockWrapper)}>
+        <div
+          ref={(element) => props.path && setRichQuoteSource(element, quote('text'))}
+          class={classNames(styles.Padding, styles.MathBlockWrapper)}
+        >
           <BlockLatex source={block.source} />
         </div>
       );
     case 'pageBlockFooter':
-      return <footer class={classNames(styles.Padding, styles.Footer, 'secondary')}><RichTextRenderer text={block.text} /></footer>;
+      return <footer class={classNames(styles.Padding, styles.Footer, 'secondary')}><RichTextRenderer text={block.text} quote={quote('text')} /></footer>;
     case 'pageBlockDivider':
       return <div class={styles.Divider} />;
     case 'pageBlockOrderedList':
@@ -1318,6 +1376,13 @@ function Block(props: {
       const orderedBlock = block as PageBlock.pageBlockOrderedList;
       const isChecklist = createMemo(() => block.items.length > 0 && block.items.every((item) => item.pFlags?.checkbox));
       const shouldHaveOwnNumbers = createMemo(() => isOrdered && orderedBlock.items.some((item) => item.num !== undefined && item.num !== ''));
+      // * counted once for all the items: each counting from the first would be items² for a long list
+      const orderedValues = createMemo(() => shouldHaveOwnNumbers() ? [...orderedListValues(
+        orderedBlock.items.length,
+        orderedBlock.start,
+        !!orderedBlock.pFlags.reversed,
+        (index) => orderedBlock.items[index].value
+      )] : []);
       const {i18n, wrapEmojiText} = useHotReloadGuard();
       const context = useContext(InstantViewContext);
       return (
@@ -1343,6 +1408,7 @@ function Block(props: {
         >
           <For each={block.items}>{(item, idx) => {
             const orderedItem = isOrdered ? item as PageListOrderedItem : undefined;
+            const path = createChildPath(() => props.path, idx);
             return (
               <li
                 class={classNames(styles.ListItem, shouldHaveOwnNumbers() && styles.ListItemHasNumber)}
@@ -1353,7 +1419,7 @@ function Block(props: {
               >
                 {shouldHaveOwnNumbers() && (
                   <span class={styles.ListItemNumber}>
-                    {wrapEmojiText(getOrderedListMarker(orderedBlock!, orderedItem!, idx()))}
+                    {wrapEmojiText(getOrderedListMarker(orderedBlock!, orderedItem!, orderedValues()[idx()]))}
                     {`. `}
                   </span>
                 )}
@@ -1391,12 +1457,15 @@ function Block(props: {
                 </Show>
                 <div class={styles.ListItemContent}>
                   {item._ === 'pageListItemText' || item._ === 'pageListOrderedItemText' ? (
-                    <RichTextRenderer text={item.text} />
+                    <RichTextRenderer
+                      text={item.text}
+                      quote={path() && (() => getRichQuoteNodeId(path(), 'text'))}
+                    />
                   ) : (
                     <StablePageBlocks
                       blocks={item.blocks}
                       paddings={props.paddings + 1}
-                      path={props.path && [...props.path, idx()]}
+                      path={path()}
                     />
                   )}
                 </div>
@@ -1413,10 +1482,10 @@ function Block(props: {
         <div class={classNames(styles.Padding, styles.BlockquoteWrapper)}>
           {/* reuse the app-standard quote styling (left accent bar + tinted bg + quote glyph) */}
           <CollapsableBlockquote collapsed={block.pFlags.collapsed}>
-            <RichTextRenderer text={block.text} />
+            <RichTextRenderer text={block.text} quote={quote('text')} />
             <Show when={!isRichTextEmpty(block.caption)}>
               <div class={styles.BlockquoteCaption}>
-                <RichTextRenderer text={block.caption} />
+                <RichTextRenderer text={block.caption} quote={quote('caption')} />
               </div>
             </Show>
           </CollapsableBlockquote>
@@ -1431,18 +1500,22 @@ function Block(props: {
             <StablePageBlocks path={props.path} blocks={block.blocks} paddings={props.paddings + 1} />
             <Show when={!isRichTextEmpty(block.caption)}>
               <div class={styles.BlockquoteCaption}>
-                <RichTextRenderer text={block.caption} />
+                <RichTextRenderer text={block.caption} quote={quote('caption')} />
               </div>
             </Show>
           </blockquote>
         </div>
       );
-    case 'pageBlockCover':
+    case 'pageBlockCover': {
+      // * a cover only presents its block, and a cover's cover the same one (tdesktop appends the cover's
+      // * block in its place): a chain of them is one level, not one copy of the rest of it per cover
+      const cover = createMemo(() => unwrapPageBlockCover(block.cover));
       return (
         <div>
-          <StablePageBlocks blocks={[block.cover]} paddings={props.paddings} render={(cover) => <Block block={cover} paddings={props.paddings} path={props.path} />} />
+          <StablePageBlocks blocks={[cover()]} paddings={props.paddings} render={(cover) => <Block block={cover} paddings={props.paddings} path={props.path} />} />
         </div>
       );
+    }
     case 'pageBlockPhoto': {
       const context = useContext(InstantViewContext);
       const {PhotoTsx} = useHotReloadGuard();
@@ -1462,7 +1535,7 @@ function Block(props: {
                 () => block.url
               );
             }}
-            class={classNames(styles.Media, styles.MediaViewable, !props.grouped && styles.MediaFrame)}
+            class={classNames(styles.Media, styles.MediaViewable, !props.grouped && styles.MediaFrame, mediaEdgeClass())}
             photo={photo()}
             {...getSingleMediaBox(photo(), props.grouped)}
             withoutPreloader
@@ -1472,7 +1545,7 @@ function Block(props: {
             }}
             onClick={() => onClick()}
           />
-          <CaptionC caption={block.caption} />
+          <CaptionC caption={block.caption} quote={quote} />
         </>
       );
     }
@@ -1490,7 +1563,7 @@ function Block(props: {
               onClick = prepareMediaForViewer(ref, doc, () => block.caption);
             }}
             doc={doc()}
-            class={classNames(styles.Media, styles.MediaViewable, !props.grouped && styles.MediaFrame)}
+            class={classNames(styles.Media, styles.MediaViewable, !props.grouped && styles.MediaFrame, mediaEdgeClass())}
             withoutPreloader
             withPreview
             {...getChatVideoOptions(doc(), context.chat, props.grouped)}
@@ -1500,7 +1573,7 @@ function Block(props: {
             }}
             onClick={() => onClick()}
           />
-          <CaptionC caption={block.caption} />
+          <CaptionC caption={block.caption} quote={quote} />
         </>
       );
     }
@@ -1511,7 +1584,8 @@ function Block(props: {
       return (
         <>
           <PageDocument documentId={getDocumentRowBlockId(block)} />
-          <CaptionC caption={block.caption} />
+          {/* a file's caption is no text of the message a quote takes, an audio's is */}
+          <CaptionC caption={block.caption} quote={block._ === 'pageBlockAudio' ? quote : undefined} />
         </>
       );
     case 'pageBlockChannel': {
@@ -1561,7 +1635,7 @@ function Block(props: {
       return (
         <div
           class={styles.Anchor}
-          id={useContext(InstantViewContext).randomId + block.name}
+          id={useContext(InstantViewContext).anchorPrefix + block.name}
         />
       );
     case 'pageBlockTable': {
@@ -1574,7 +1648,15 @@ function Block(props: {
           // A function child is mounted by GenericTable's stable cell owner.
           // Its RichTextRenderer therefore survives source changes instead of
           // being recreated by the rows mapping computation.
-          renderContent: () => cell.text ? <RichTextRenderer text={cell.text} /> : undefined,
+          renderContent: () => cell.text ? (
+            <RichTextRenderer
+              text={cell.text}
+              quote={props.path && (() => {
+                const row = block.rows.findIndex((row) => row.cells.includes(cell));
+                return getRichQuoteNodeId(props.path, `cell:${row},${block.rows[row]?.cells.indexOf(cell)}`);
+              })}
+            />
+          ) : undefined,
           get header() {
             return cell.pFlags.header;
           },
@@ -1617,7 +1699,7 @@ function Block(props: {
         <div class={styles.TableWrapper}>
           <Show when={!isRichTextEmpty(block.title)}>
             <div class={classNames(styles.TableName, 'text-bold')}>
-              <RichTextRenderer text={block.title} />
+              <RichTextRenderer text={block.title} quote={quote('title')} />
             </div>
           </Show>
           <div class={classNames(styles.Table, block.pFlags.compact && styles.TableCompact)}>
@@ -1702,7 +1784,7 @@ function Block(props: {
 
       const [height, setHeight] = createSignal(0);
       let mediaRef: HTMLDivElement;
-      const canMountWebView = () => !hasDisabledNavigation(context) && !!(block.html || block.url);
+      const canMountWebView = () => !hasDisabledNavigation(context) && !!(block.html || getEmbedPageUrl(block.url));
       createEffect(() => {
         const width = block.w || 4;
         const blockHeight = block.h || 3;
@@ -1788,31 +1870,35 @@ function Block(props: {
         <>
           <Slideshow
             aspectRatio={aspectRatio()}
-            class={classNames(styles.Slideshow, styles.MediaFrame)}
+            class={classNames(styles.Slideshow, styles.MediaFrame, mediaEdgeClass())}
             items={items()}
             getItemKey={(item) => item.key}
           >
-            {(item, idx) => (
-              <Block
-                block={item.block}
-                paddings={0}
-                noCaption
-                grouped
-                onSize={(size) => {
-                  setSizes((current) => {
-                    if(
-                      current[item.key]?.width === size.width &&
-                      current[item.key]?.height === size.height
-                    ) return current;
-                    const next = {...current};
-                    next[item.key] = size;
-                    return next;
-                  });
-                }}
-              />
-            )}
+            {(item, idx) => {
+              const path = createChildPath(() => props.path, () => idx);
+              return (
+                <Block
+                  block={item.block}
+                  paddings={0}
+                  path={path()}
+                  noCaption
+                  grouped
+                  onSize={(size) => {
+                    setSizes((current) => {
+                      if(
+                        current[item.key]?.width === size.width &&
+                        current[item.key]?.height === size.height
+                      ) return current;
+                      const next = {...current};
+                      next[item.key] = size;
+                      return next;
+                    });
+                  }}
+                />
+              );
+            }}
           </Slideshow>
-          <CaptionC caption={block.caption} />
+          <CaptionC caption={block.caption} quote={quote} />
         </>
       );
     }
@@ -1861,7 +1947,7 @@ function Block(props: {
             />
             <GeoPin />
           </a>
-          <CaptionC caption={block.caption} />
+          <CaptionC caption={block.caption} quote={quote} />
         </>
       );
     }
@@ -1874,7 +1960,7 @@ function Block(props: {
     case 'pageBlockThinking':
       return (
         <p class={classNames(styles.Padding, styles.Paragraph, styles.Thinking)}>
-          <RichTextRenderer text={block.text} />
+          <RichTextRenderer text={block.text} quote={quote('text')} />
         </p>
       );
     // the data attributes are the composer's own markup for a pullquote, so a copied one pastes
@@ -1883,18 +1969,17 @@ function Block(props: {
       return (
         <div class={classNames(styles.Pullquote, 'quote-like')} data-pullquote="">
           <div class={classNames(styles.PullquoteText, 'text-italic')} data-pullquote-text="">
-            <RichTextRenderer text={block.text} />
+            <RichTextRenderer text={block.text} quote={quote('text')} />
           </div>
           <Show when={!isRichTextEmpty(block.caption)}>
             <div class={classNames(styles.BlockquoteCaption, styles.PullquoteAuthor, 'text-bold')} data-pullquote-caption="">
-              <RichTextRenderer text={block.caption} />
+              <RichTextRenderer text={block.caption} quote={quote('caption')} />
             </div>
           </Show>
         </div>
       );
     case 'pageBlockDetails': {
       const [open, setOpen] = createSignal(!!block.pFlags.open);
-      const detailsMap = useContext(InstantViewContext).details;
       let userToggled = false;
       createEffect(() => {
         const serverOpen = !!block.pFlags.open;
@@ -1907,10 +1992,7 @@ function Block(props: {
         content.inert = !open();
       });
       return (
-        <div
-          ref={(ref) => {detailsMap.set(ref, setOpen)}}
-          class={classNames(styles.Details)}
-        >
+        <div class={classNames(styles.Details)}>
           <button
             type="button"
             id={summaryId}
@@ -1927,17 +2009,21 @@ function Block(props: {
               class={classNames(styles.DetailsIcon, open() && styles.DetailsIconOpen)}
             />
             <div class={classNames(styles.DetailsTitle, 'text-bold')}>
-              <RichTextRenderer text={block.title} />
+              <RichTextRenderer text={block.title} quote={quote('title')} />
             </div>
           </button>
           <div
-            ref={content}
+            ref={(ref) => {
+              content = ref;
+              registerDetails(ref, {isOpen: open, setOpen});
+            }}
             id={contentId}
             role="region"
             aria-labelledby={summaryId}
             aria-hidden={!open()}
             class={classNames(
               styles.DetailsContent,
+              DETAILS_CONTENT_CLASS,
               open() && styles.DetailsContentOpen
             )}
           >
@@ -1953,13 +2039,17 @@ function Block(props: {
       const map: Map<HTMLDivElement, {width: number, height: number}> = new Map();
       const [sizeRevision, setSizeRevision] = createSignal(0);
       const items = createStablePageBlockEntries(() => block.items);
+      // * one owner for every item, wherever the layout puts it (prepareAlbum lays more than an album holds out an
+      // * album at a time): an item moved from one part to another keeps its media, a video its playback
       const ret = (
         <div
           ref={ref}
           class={classNames(styles.Collage, styles.Media, styles.MediaFrame)}
+          classList={mediaEdgeClasses()}
         >
-          <For each={items()}>{(item) => {
+          <For each={items()}>{(item, index) => {
             let ref: HTMLDivElement;
+            const path = createChildPath(() => props.path, index);
             onCleanup(() => {
               map.delete(ref);
               setSizeRevision((revision) => revision + 1);
@@ -1972,6 +2062,7 @@ function Block(props: {
                 <Block
                   block={item.block}
                   paddings={props.paddings}
+                  path={path()}
                   grouped
                   onSize={(size) => {
                     map.set(ref, size);
@@ -2000,7 +2091,7 @@ function Block(props: {
         .filter(Boolean)
         .map(({width, height}) => ({w: width, h: height}));
         if(!length || sizes.length !== length) return;
-        const {width, height} = prepareAlbum({
+        const {width, height, stacked} = prepareAlbum({
           container: ref,
           items: sizes,
           maxWidth: layoutWidth() || (ref.isConnected && ref.clientWidth) || 400,
@@ -2011,14 +2102,14 @@ function Block(props: {
           // * context menu read a mid off a `grouped-item`, and these have none
           noGroupedItem: true
         });
+        ref.classList.toggle(styles.CollageStacked, stacked);
         _onMediaResult(ref, width, height, props.paddings);
-        // console.warn('collage map', map, ref.childElementCount);
       });
 
       return (
         <>
           {ret}
-          <CaptionC caption={block.caption} />
+          <CaptionC caption={block.caption} quote={quote} />
         </>
       );
     }
@@ -2029,10 +2120,6 @@ function Block(props: {
         </div>
       );
   }
-}
-
-function isRichTextEmpty(text: RichText) {
-  return text._ === 'textEmpty' || (text._ === 'textPlain' && !text.text.trim());
 }
 
 // Flatten a RichText tree to its plain string (preformatted code is plain text; any inline
@@ -2308,13 +2395,14 @@ function wireInlinePageButtons(context: InstantViewContextValue, fragment: Docum
   });
 }
 
-function RichTextRenderer(props: {text: RichText, customEmojiRenderer?: () => CustomEmojiRendererElement}) {
+/** @param quote which text of a rich message it is (`getRichQuoteNodeId`), when a quote can take it */
+function RichTextRenderer(props: {text: RichText, customEmojiRenderer?: () => CustomEmojiRendererElement, quote?: () => string}) {
   const context = useContext(InstantViewContext);
   const blockEmojiRenderer = useContext(BlockEmojiRendererContext);
   const value = createMemo(() => {
     return wrapTelegramRichText(
       props.text,
-      {webPageId: context.webPageId, url: context.page.url, randomId: context.randomId, displayTextDiff: context.displayTextDiff}
+      {webPageId: context.webPageId, url: context.page.url, anchorPrefix: context.anchorPrefix, displayTextDiff: context.displayTextDiff}
     );
   });
   const hasInlineMath = createMemo(() => value().text.includes('\x02'));
@@ -2383,11 +2471,12 @@ function RichTextRenderer(props: {text: RichText, customEmojiRenderer?: () => Cu
       processFragment={selectedProcessFragment()}
       processFragmentMode="chunk"
       onLayout={context.onTextLayout}
+      onElement={(element) => props.quote && setRichQuoteSource(element, () => props.quote())}
     />
   );
 }
 
-function PreformattedCode(props: {text: RichText, language: string}) {
+function PreformattedCode(props: {text: RichText, language: string, quote?: () => string}) {
   const context = useContext(InstantViewContext);
   const value = createMemo(() => {
     const code = richTextToString(props.text);
@@ -2415,6 +2504,7 @@ function PreformattedCode(props: {text: RichText, language: string}) {
       inline={false}
       class={classNames(styles.Padding, styles.PreformattedWrapper)}
       onLayout={context.onTextLayout}
+      onElement={(element) => props.quote && setRichQuoteSource(element, () => props.quote())}
     />
   );
 }

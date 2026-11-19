@@ -20,7 +20,7 @@ vi.mock('@helpers/dom/textHighlight.scss?inline', () => ({default: '::highlight(
 import liteMode from '@helpers/liteMode';
 import type {TextHighlight, TextHighlightOptions, TextLineBox} from '@helpers/dom/textHighlight';
 import createHighlight, {
-  computeFullRange,
+  computeFullRanges,
   computeLineBoxes,
   computeNarrowing,
   computeRanges,
@@ -111,6 +111,17 @@ describe('findQuoteSpan', () => {
     expect(findQuoteSpan('a  b', 'a b')).toEqual([0, 4]);
   });
 
+  it('retries ignoring variation selectors, an emoji completed in one and not the other', () => {
+    expect(findQuoteSpan('a ❤ b', '❤\ufe0f b')).toEqual([2, 5]);
+  });
+
+  it('takes the nearer of an exact quote and one that differs by a variation selector', () => {
+    // * a paragraph completes its emoji, a code block after it does not: the offset says which was quoted
+    const text = '❤\ufe0f example\n❤ example';
+    expect(findQuoteSpan(text, '❤\ufe0f example', 11)).toEqual([11, 20]);
+    expect(findQuoteSpan(text, '❤\ufe0f example', 0)).toEqual([0, 10]);
+  });
+
   it('gives up when the text is not there', () => {
     expect(findQuoteSpan(text, 'four', 0)).toBeUndefined();
     expect(findQuoteSpan(text, '', 0)).toBeUndefined();
@@ -151,6 +162,12 @@ describe('computeRanges', () => {
     expect(range.startContainer).toBe(element);
     expect(range.startOffset).toBe(1);
     expect(range.toString()).toBe(' b');
+  });
+
+  it('finds a quote in what a formula stands for, not in what it draws', () => {
+    const element = html('a <span data-inline-math="" data-source="x^2"><math><mi>x</mi><mn>2</mn></math></span> b');
+    const [range] = computeRanges(element, {type: 'quote', text: 'a x^2 b'});
+    expect(range.toString()).toBe('a x2 b');
   });
 
   it('never reaches into skipped subtrees', () => {
@@ -204,14 +221,21 @@ describe('computeLineBoxes', () => {
   });
 });
 
-describe('computeFullRange', () => {
+describe('computeFullRanges', () => {
   it('spans all the searchable text, skipped subtrees at the ends excluded', () => {
     const element = html('<span>hello</span> <b>world</b><span class="time">12:00</span>');
-    const range = computeFullRange(element, '.time');
+    const ranges = computeFullRanges(element, '.time');
+    expect(ranges.length).toBe(1);
+    const [range] = ranges;
     expect(range.toString()).toBe('hello world');
     expect(range.startContainer).toBe(element.querySelector('span').firstChild);
     expect(range.endContainer).toBe(element.querySelector('b').firstChild);
-    expect(computeFullRange(html('<span class="time">12:00</span>'), '.time')).toBeUndefined();
+    expect(computeFullRanges(html('<span class="time">12:00</span>'), '.time')).toEqual([]);
+  });
+
+  it('leaves out what an inert part (a collapsed details) holds', () => {
+    const element = html('<p>before</p><div inert><p>hidden</p></div><p>after</p>');
+    expect(computeFullRanges(element).map((range) => range.toString())).toEqual(['before', 'after']);
   });
 });
 

@@ -634,7 +634,7 @@ export default class ChatTopbar {
       ) && !(this.chat.type === ChatType.Logs)
     }, {
       icon: 'wallet',
-      text: 'Wallet.SendMoney',
+      text: 'WalletSendMoney',
       onClick: () => {
         const peerId = this.peerId;
         import('@components/wallet').then(({default: showWalletPopup}) => {
@@ -650,6 +650,11 @@ export default class ChatTopbar {
         (await this.managers.appUsersManager.isRegularUser(this.peerId)) &&
         isWalletAvailable(await apiManagerProxy.getAppConfig())
       )
+    }, {
+      icon: 'image',
+      text: 'SetWallpapers',
+      onClick: () => this.chat.toggleThemeChooser(),
+      verify: () => this.chat.canChooseTheme()
     }, {
       icon: 'message',
       text: 'ChannelDirectMessages.Manage',

@@ -14,7 +14,7 @@ import LazyLoadQueueBase from '@components/lazyLoadQueueBase';
 import deferredPromise, {CancellablePromise} from '@helpers/cancellablePromise';
 import tsNow from '@helpers/tsNow';
 import {nextRandomUint, randomLong} from '@helpers/random';
-import {BotCommand, Chat, ChatFull, Dialog as MTDialog, DocumentAttribute, EphemeralMessage, EphemeralSendMessage, InputMedia, InputMessage, InputMessageReadMetric, InputSingleMedia, Message, MessageAction, MessageEntity, MessageFwdHeader, MessageMedia, MessageReplies, MessageReplyHeader, MessagesBotCallbackAnswer, MessagesDialogs, MessagesFilter, MessagesMessages, MethodDeclMap, PageBlock, PeerNotifySettings, PhotoSize, SendMessageAction, Update, Photo, Updates, ReplyMarkup, InputPeer, InputPhoto, InputDocument, WebPage, GeoPoint, InputChannel, InputDialogPeer, ReactionCount, MessagePeerReaction, MessagesSearchCounter, Peer, MessageReactions, Document, InputFile, Reaction, ForumTopic as MTForumTopic, MessagesForumTopics, MessagesGetReplies, MessagesGetHistory, MessagesAffectedHistory, MessagesTranscribedAudio, ReadParticipantDate, WebDocument, MessagesSearch, MessagesSearchGlobal, InputReplyTo, MessagesSendMessage, MessagesSendMedia, MessagesGetSavedHistory, MessagesSavedDialogs, SavedDialog as MTSavedDialog, User, MissingInvitee, TextWithEntities, ChannelsSearchPosts, FactCheck, MessageExtendedMedia, SponsoredMessage, MessagesSponsoredMessages, InputGroupCall, TodoItem, TodoCompletion, SearchPostsFlood, MessagesDeleteSavedHistory, ChannelsDeleteParticipantHistory, MessagesDeleteHistory, MessagesDeleteTopicHistory, RichMessage} from '@layer';
+import {BotCommand, Chat, ChatFull, Dialog as MTDialog, DocumentAttribute, EphemeralMessage, EphemeralSendMessage, InputMedia, InputMessage, InputMessageReadMetric, InputSingleMedia, Message, MessageAction, MessageEntity, MessageFwdHeader, MessageMedia, MessageReplies, MessageReplyHeader, MessagesBotCallbackAnswer, MessagesDialogs, MessagesFilter, MessagesMessages, MethodDeclMap, PageBlock, PeerNotifySettings, PhotoSize, SendMessageAction, Update, Photo, Updates, ReplyMarkup, InputPeer, InputPhoto, InputDocument, WebPage, GeoPoint, InputChannel, InputDialogPeer, ReactionCount, MessagePeerReaction, MessagesSearchCounter, Peer, MessageReactions, Document, InputFile, Reaction, ForumTopic as MTForumTopic, MessagesForumTopics, MessagesGetReplies, MessagesGetHistory, MessagesAffectedHistory, MessagesAffectedMessages, MessagesTranscribedAudio, ReadParticipantDate, WebDocument, MessagesSearch, MessagesSearchGlobal, InputReplyTo, MessagesSendMessage, MessagesSendMedia, MessagesGetSavedHistory, MessagesSavedDialogs, SavedDialog as MTSavedDialog, User, MissingInvitee, TextWithEntities, ChannelsSearchPosts, FactCheck, MessageExtendedMedia, SponsoredMessage, MessagesSponsoredMessages, InputGroupCall, TodoItem, TodoCompletion, SearchPostsFlood, MessagesDeleteSavedHistory, ChannelsDeleteParticipantHistory, MessagesDeleteHistory, MessagesDeleteTopicHistory, RichMessage, RichText} from '@layer';
 import type {InputRichMessage} from '@layer';
 import {ArgumentTypes, InvokeApiOptions, Modify} from '@types';
 import {LogTypes} from '@lib/logger';
@@ -39,7 +39,9 @@ import {AppManager} from '@appManagers/manager';
 import getPhotoMediaInput from '@appManagers/utils/photos/getPhotoMediaInput';
 import parseMarkdown from '@lib/richTextProcessor/parseMarkdown';
 import getServerMessageId from '@appManagers/utils/messageId/getServerMessageId';
+import getDialogsPaginationOffsets from '@appManagers/utils/dialogs/getDialogsPaginationOffsets';
 import getReadMaxIdIfUnread from '@appManagers/utils/messages/getReadMaxIdIfUnread';
+import isOwnMessage from '@appManagers/utils/messages/isOwnMessage';
 import isEphemeralMessageId from '@appManagers/utils/messageId/isEphemeralMessageId';
 import isEphemeralMessage from '@appManagers/utils/messages/isEphemeralMessage';
 import isAnchoredEphemeralMessage from '@appManagers/utils/messages/isAnchoredEphemeralMessage';
@@ -65,6 +67,7 @@ import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
 import collectInputRichMessageReferences from '@appManagers/utils/richMessage/collectInputRichMessageReferences';
 import toggleRichMessageChecklist from '@appManagers/utils/richMessage/toggleChecklist';
 import toInputRichMessage from '@appManagers/utils/richMessage/toInputRichMessage';
+import {getInputReplyQuote} from '@lib/richMessage';
 import {
   RichMessageValidationOptions,
   resolveRichMessageLimits,
@@ -80,6 +83,8 @@ import getPinnedMessagesKey from '@appManagers/utils/messages/getPinnedMessagesK
 import callbackify from '@helpers/callbackify';
 import wrapMessageEntities from '@lib/richTextProcessor/wrapMessageEntities';
 import isLegacyMessageId from '@appManagers/utils/messageId/isLegacyMessageId';
+import isGlobalHistoryMessageId from '@appManagers/utils/messageId/isGlobalHistoryMessageId';
+import {FullMid, makeFullMid} from '@appManagers/utils/messages/fullMid';
 import {joinDeepPath} from '@helpers/object/setDeepProperty';
 import insertInDescendSortedArray from '@helpers/array/insertInDescendSortedArray';
 import {LOCAL_ENTITIES} from '@lib/richTextProcessor';
@@ -107,15 +112,18 @@ import {makeMessageMediaInputForSuggestedPost} from '@appManagers/utils/messages
 import createObservedState, {wrapObject} from '@helpers/createObservedState';
 import createHistoryStorage, {createHistoryStorageSearchSlicedArray} from '@appManagers/utils/messages/createHistoryStorage';
 import {isTempId} from '@appManagers/utils/messages/isTempId';
+import forwardKeepsAuthor from '@appManagers/utils/messages/forwardKeepsAuthor';
 import fitSymbols from '@helpers/string/fitSymbols';
 import isObject from '@helpers/object/isObject';
 import pickKeys from '@helpers/object/pickKeys';
 import namedPromises from '@helpers/namedPromises';
 import callbackifyAll from '@helpers/callbackifyAll';
+import forgetSettledRequest from '@helpers/forgetSettledRequest';
 import {createBotforumTopicFromAction} from '@appManagers/utils/dialogs/createBotforumTopicFromAction';
 import {AttachedMedia, CreatePollPayload} from '@components/popups/createPoll/storeContext';
 import StreamedMessageDrafts, {StreamedMessageDraft, StreamedMessageDraftContent, StreamedMessageDraftRemovalReason, StreamedMessageDraftScope, StreamedMessageStopScope, getStreamedMessageContentMatchText} from '@appManagers/utils/messages/streamedMessageDrafts';
 import GramTransferDrafts, {GramTransferDraftContent, WALLET_FIRST_GRAMS_SUGGESTION} from '@lib/wallet/transferMessages';
+import getFolderPinLimitType from '@appManagers/utils/dialogs/getFolderPinLimitType';
 
 // console.trace('include');
 // TODO: если удалить диалог находясь в папке, то он не удалится из папки и будет виден в настройках
@@ -193,6 +201,9 @@ export type SendFileDetails = {
    * If it's a GIF (looped)
    */
   isAnimated: boolean,
+  // * a track's name and artist from its own tags (`readAudioTags`)
+  audioTitle: string,
+  audioPerformer: string
 }>;
 
 export type UploadedRichMessageMedia = {
@@ -382,7 +393,8 @@ export type MessageSendingParams = Partial<{
   threadId: number,
   replyToMsgId: number,
   replyToStoryId: number,
-  replyToQuote: {text: string, entities?: MessageEntity[], offset?: number},
+  // * a quote of a rich message is its fragments (`rich`), `text` and `entities` what they read
+  replyToQuote: {text: string, entities?: MessageEntity[], offset?: number, rich?: RichText[]},
   replyToPollOption: Uint8Array,
   replyToPeerId: PeerId,
   replyTo: InputReplyTo,
@@ -468,6 +480,9 @@ type GetHistoryTypeOptions = {
 
 export type SearchStorageFilterKey = string;
 
+// * a local delete of a pending message: its chat is known, and a temporary id does not name one
+type LocalUpdateDeleteMessages = Update.updateDeleteMessages & {peerId?: PeerId};
+
 type GetUnreadMentionsOptions = {
   peerId: PeerId,
   threadId?: number,
@@ -498,9 +513,7 @@ type ReadHistoryArgs = {
 type MarkDialogUnreadArgs = {
   peerId: PeerId,
   read?: boolean,
-  monoforumThreadId?: PeerId,
-  /** how far `read` reads the history; the top message by default */
-  maxId?: number
+  monoforumThreadId?: PeerId
 };
 
 type FlushHistoryArgs = {
@@ -579,6 +592,8 @@ type SendFileArgs = MessageSendingParams & SendFileDetails & Partial<{
   processAfter?: typeof processAfter
 }>;
 
+type SendingAttachType = 'document' | 'audio' | 'video' | 'voice' | 'photo';
+
 type MakeDocumentAndMetaForSendingFileArgs = Pick<SendFileArgs,
   | 'file'
   | 'strippedBytes'
@@ -595,6 +610,8 @@ type MakeDocumentAndMetaForSendingFileArgs = Pick<SendFileArgs,
   | 'noSound'
   | 'thumb'
   | 'isAnimated'
+  | 'audioTitle'
+  | 'audioPerformer'
 > & {
   mediaTempId: number;
   isDocument: boolean;
@@ -720,8 +737,9 @@ export class AppMessagesManager extends AppManager {
   private pendingAfterMsgs: {[peerId: PeerId]: PendingAfterMsg} = {};
   public pendingTopMsgs: {[peerId in PeerId | `${PeerId}_${number}`]: number} = {};
   private fillConversationsPromises: {[folderId: string]: Promise<void>} = {};
+  // * by the chat too, not by the temporary id alone: two empty chats both start at 0.0001
   private tempFinalizeCallbacks: {
-    [tempId: string]: {
+    [fullMid: FullMid]: {
       [callbackName: string]: Partial<{
         deferred: CancellablePromise<void>,
         callback: (message: MyMessage) => Promise<any>
@@ -733,8 +751,12 @@ export class AppMessagesManager extends AppManager {
     newId?: number;
     tempId: number;
     beforeMessageSendCallbacks: Array<() => void>;
-    messageSendCallbacks: Array<() => void>;
+    // * the messages sent to the topic while it is being made: sent once it is, failed if it cannot be
+    queuedMessages: Message.message[];
   }> = {};
+  // * a topic that could not be made, by its chat and temporary id (temporary ids are a chat's own): a send still
+  // * preparing took it as its reply then
+  private failedBotforumTopics: Map<FullMid, ApiError> = new Map();
 
   public sendSmthLazyLoadQueue = new LazyLoadQueueBase(10);
   private conversationPreviewLoadQueue = new LazyLoadQueueBase(4);
@@ -789,6 +811,7 @@ export class AppMessagesManager extends AppManager {
   private mediaTempMap: {[tempId: number]: number} = {};
 
   private typings: {[key: string]: {action: SendMessageAction, timeout?: number}} = {};
+  private uploadActionsSentAt: Map<string, number> = new Map();
 
   private middleware: ReturnType<typeof getMiddleware>;
 
@@ -929,6 +952,10 @@ export class AppMessagesManager extends AppManager {
       updateDeleteScheduledMessages: this.onUpdateDeleteScheduledMessages,
 
       updateMessageExtendedMedia: this.onUpdateMessageExtendedMedia,
+
+      updateMessageWidgetData: this.onUpdateMessageWidgetData,
+
+      updateEditForumTopic: this.onUpdateEditForumTopic,
 
       updateTranscribedAudio: this.onUpdateTranscribedAudio
     });
@@ -1109,6 +1136,7 @@ export class AppMessagesManager extends AppManager {
     this.waitingTranscriptions = new Map();
     this.transcriptionIds = new Map();
     this.pendingNewBotforumTopics = {};
+    this.failedBotforumTopics = new Map();
     this.pendingEditingMessages = new Map();
     this.ephemeralMidsByPeerId = new Map();
     this.anchoredEphemerals = new Map();
@@ -1789,6 +1817,7 @@ export class AppMessagesManager extends AppManager {
       replyTo.quote_text === undefined &&
       replyTo.quote_entities === undefined &&
       replyTo.quote_offset === undefined &&
+      replyTo.quote_rich === undefined &&
       replyTo.todo_item_id === undefined &&
       replyTo.poll_option === undefined &&
       replyTo.reply_to_msg_deleted === undefined
@@ -2516,8 +2545,8 @@ export class AppMessagesManager extends AppManager {
     return validation;
   }
 
-  public invokeAfterMessageIsSent(tempId: number, callbackName: string, callback: (message: MyMessage) => Promise<any>) {
-    const finalize = this.tempFinalizeCallbacks[tempId] ??= {};
+  public invokeAfterMessageIsSent(peerId: PeerId, tempId: number, callbackName: string, callback: (message: MyMessage) => Promise<any>) {
+    const finalize = this.tempFinalizeCallbacks[makeFullMid(peerId, tempId)] ??= {};
     let obj = finalize[callbackName];
     if(!obj) {
       obj = finalize[callbackName] = {deferred: deferredPromise<void>()};
@@ -2529,14 +2558,15 @@ export class AppMessagesManager extends AppManager {
     return obj.deferred;
   }
 
-  private takeTempFinalizeCallbacks(tempId: number) {
-    const callbacks = this.tempFinalizeCallbacks[tempId];
-    delete this.tempFinalizeCallbacks[tempId];
+  private takeTempFinalizeCallbacks(peerId: PeerId, tempId: number) {
+    const key = makeFullMid(peerId, tempId);
+    const callbacks = this.tempFinalizeCallbacks[key];
+    delete this.tempFinalizeCallbacks[key];
     return callbacks;
   }
 
-  public rejectPendingMessageCallbacks(tempId: number, error: ApiError) {
-    const callbacks = this.takeTempFinalizeCallbacks(tempId);
+  public rejectPendingMessageCallbacks(peerId: PeerId, tempId: number, error: ApiError) {
+    const callbacks = this.takeTempFinalizeCallbacks(peerId, tempId);
     if(!callbacks) {
       return;
     }
@@ -2578,7 +2608,7 @@ export class AppMessagesManager extends AppManager {
     const {mid, peerId} = message;
 
     if(message.pFlags.is_outgoing) {
-      return this.invokeAfterMessageIsSent(mid, 'edit', (message) => {
+      return this.invokeAfterMessageIsSent(peerId, mid, 'edit', (message) => {
         // this.log('invoke editMessage callback', message);
         return this.editMessage(message, text, options);
       });
@@ -2663,7 +2693,9 @@ export class AppMessagesManager extends AppManager {
         'objectURLBlob',
         'duration',
         'thumb',
-        'isAnimated'
+        'isAnimated',
+        'audioTitle',
+        'audioPerformer'
       ])
     });
 
@@ -2756,7 +2788,7 @@ export class AppMessagesManager extends AppManager {
       return callInvoke(message);
     }
 
-    return this.invokeAfterMessageIsSent(message.mid, 'edit', (message) => {
+    return this.invokeAfterMessageIsSent(message.peerId, message.mid, 'edit', (message) => {
       if(message?._ !== 'message') return;
       return callInvoke(message);
     });
@@ -2786,7 +2818,7 @@ export class AppMessagesManager extends AppManager {
     onUploadDeferred?.(uploadPromise);
 
     let thumbUploadPromise: ReturnType<typeof this.uploadThumbAndCover>;
-    if(attachType === 'video' && thumb?.blob) {
+    if(this.canUploadThumb(attachType) && thumb?.blob) {
       thumbUploadPromise = this.uploadThumbAndCover({
         blob: thumb.blob,
         isCover: !!thumb.isCover,
@@ -2875,7 +2907,9 @@ export class AppMessagesManager extends AppManager {
         'objectURL',
         'duration',
         'thumb',
-        'isAnimated'
+        'isAnimated',
+        'audioTitle',
+        'audioPerformer'
       ])
     });
     if(
@@ -3490,6 +3524,7 @@ export class AppMessagesManager extends AppManager {
     this.beforeMessageSending(message, {
       isScheduled: !!options.scheduleDate || undefined,
       threadId: options.threadId,
+      replyToMsgId: options.replyToMsgId,
       clearDraft: options.clearDraft,
       sequential: true,
       confirmedPaymentResult: options.confirmedPaymentResult
@@ -3599,7 +3634,9 @@ export class AppMessagesManager extends AppManager {
         'isRoundMessage',
         'noSound',
         'thumb',
-        'isAnimated'
+        'isAnimated',
+        'audioTitle',
+        'audioPerformer'
       ])
     });
 
@@ -3723,7 +3760,7 @@ export class AppMessagesManager extends AppManager {
               const percents = Math.max(1, Math.floor(100 * progress.done / progress.total));
               // an ephemeral send is nobody else's business: the chat is not told of the upload
               if(actionName && !activeEphemeralContext) {
-                this.setTyping(peerId, {_: actionName, progress: percents | 0}, undefined, options.threadId);
+                this.sendUploadAction(peerId, options.threadId, {_: actionName, progress: percents | 0});
               }
               sentDeferred.notifyAll(progress);
             });
@@ -3732,7 +3769,7 @@ export class AppMessagesManager extends AppManager {
           }
 
           let thumbUploadPromise: ReturnType<typeof this.uploadThumbAndCover>;
-          if(attachType === 'video' && options.thumb?.blob) {
+          if(this.canUploadThumb(attachType) && options.thumb?.blob) {
             thumbUploadPromise = this.uploadThumbAndCover({
               blob: options.thumb.blob,
               isCover: !!options.thumb.isCover,
@@ -3831,6 +3868,7 @@ export class AppMessagesManager extends AppManager {
       isGroupedItem: options.isGroupedItem,
       isScheduled: !!options.scheduleDate || undefined,
       threadId: options.threadId,
+      replyToMsgId: options.replyToMsgId,
       clearDraft: options.clearDraft,
       processAfter: options.processAfter,
       noOutgoingMessage: !!activeEphemeralContext && !ephemeralPlaceholder,
@@ -3994,7 +4032,7 @@ export class AppMessagesManager extends AppManager {
   public makeDocumentAndMetaForSendingFile(args: MakeDocumentAndMetaForSendingFileArgs) {
     const {file, isDocument, mediaTempId} = args;
 
-    let attachType: 'document' | 'audio' | 'video' | 'voice' | 'photo', apiFileName: string;
+    let attachType: SendingAttachType, apiFileName: string;
     let mediaUnread: boolean;
 
     const fileType = (file as Document.document).mime_type || file.type;
@@ -4035,6 +4073,11 @@ export class AppMessagesManager extends AppManager {
         waveform: args.waveform,
         duration: args.duration ?? 0
       };
+
+      if(!args.isVoiceMessage) {
+        attribute.title = args.audioTitle;
+        attribute.performer = args.audioPerformer;
+      }
 
       attributes.push(attribute);
     } else if(!args.isMedia || args.forceFile) {
@@ -4153,7 +4196,7 @@ export class AppMessagesManager extends AppManager {
           type: THUMB_TYPE_FULL,
           size: file.size
         };
-      } else if(attachType === 'video') {
+      } else if(this.canUploadThumb(attachType)) {
         if(args.thumb) {
           thumb = {
             _: 'photoSize',
@@ -4202,6 +4245,11 @@ export class AppMessagesManager extends AppManager {
       mediaUnread,
       attributes
     };
+  }
+
+  // * a video's frame and a track's album cover go up as the document's thumbnail
+  private canUploadThumb(attachType: SendingAttachType) {
+    return attachType === 'video' || attachType === 'audio';
   }
 
   private async uploadThumbAndCover({blob, isCover, peer, onUploadPromise}: UploadThumbAndCoverArgs) {
@@ -4603,7 +4651,9 @@ export class AppMessagesManager extends AppManager {
       queryId: string
       resultId: string,
       geoPoint: GeoPoint,
-      webDocument?: WebDocument
+      webDocument?: WebDocument,
+      /** The text under the media as the server will send it (an inline widget's): the bubble shows it from the start. */
+      caption: {message: string, entities?: MessageEntity[]}
     }>
   ) {
     let {peerId, inputMedia} = options;
@@ -4797,6 +4847,11 @@ export class AppMessagesManager extends AppManager {
     }
 
     message.media = media;
+    if(options.caption) {
+      message.message = options.caption.message;
+      message.entities = options.caption.entities;
+      if(options.invertMedia) message.pFlags.invert_media = true;
+    }
 
     const toggleError = (error?: ApiError, repayRequest?: RepayRequest) => {
       this.onMessagesSendError([message], error, repayRequest);
@@ -4884,6 +4939,7 @@ export class AppMessagesManager extends AppManager {
     this.beforeMessageSending(message, {
       isScheduled: !!options.scheduleDate || undefined,
       threadId: options.threadId,
+      replyToMsgId: options.replyToMsgId,
       clearDraft: options.clearDraft,
       sequential: true,
       noOutgoingMessage,
@@ -4935,11 +4991,7 @@ export class AppMessagesManager extends AppManager {
         reply_to_peer_id: options.replyToPeerId && this.appPeersManager.getInputPeerById(options.replyToPeerId),
         top_msg_id: options.threadId ? getServerMessageId(options.threadId) : undefined,
         poll_option: options.replyToPollOption,
-        ...(options.replyToQuote && {
-          quote_text: options.replyToQuote.text,
-          quote_entities: options.replyToQuote.entities,
-          quote_offset: options.replyToQuote.offset
-        })
+        ...(options.replyToQuote && getInputReplyQuote(options.replyToQuote))
       };
     } else if(this.appPeersManager.canManageDirectMessages(options.peerId) && options.replyToMonoforumPeerId) {
       return {
@@ -5028,7 +5080,7 @@ export class AppMessagesManager extends AppManager {
     return this.getCommonThingsForSending();
   }
 
-  public beforeMessageSending(message: Message.message, options: Pick<MessageSendingParams, 'threadId' | 'savedReaction' | 'confirmedPaymentResult'> & Partial<{
+  public beforeMessageSending(message: Message.message, options: Pick<MessageSendingParams, 'threadId' | 'replyToMsgId' | 'savedReaction' | 'confirmedPaymentResult'> & Partial<{
     isGroupedItem: boolean,
     isScheduled: boolean,
     clearDraft: boolean,
@@ -5122,7 +5174,7 @@ export class AppMessagesManager extends AppManager {
     if(!options.isScheduled && !options.isWelcome && peerId.isUser() && peerId !== this.appPeersManager.peerId) {
       const endSuspiciousPeer = async() => this.appProfileManager.endSuspiciousPeer(peerId);
       if(pending) {
-        this.invokeAfterMessageIsSent(messageId, 'endSuspiciousPeer', endSuspiciousPeer);
+        this.invokeAfterMessageIsSent(peerId, messageId, 'endSuspiciousPeer', endSuspiciousPeer);
       } else {
         // * a send that makes no message of its own (an inline result with an outside file) has no pending one to wait for
         message.promise?.then(endSuspiciousPeer, noop);
@@ -5132,6 +5184,7 @@ export class AppMessagesManager extends AppManager {
     if(message.reactions) {
       const reaction = message.reactions.results[0].reaction;
       this.invokeAfterMessageIsSent(
+        peerId,
         messageId,
         'reactions',
         (message) => {
@@ -5151,10 +5204,14 @@ export class AppMessagesManager extends AppManager {
         }
         if(DO_NOT_SEND_MESSAGES) return;
 
-        if(this.pendingNewBotforumTopics[peerId] && !options.threadId) {
-          this.pendingNewBotforumTopics[peerId].messageSendCallbacks.push(() => {
-            message.send();
-          });
+        const topicError = options.replyToMsgId && this.failedBotforumTopics.get(makeFullMid(peerId, options.replyToMsgId));
+        if(topicError) {
+          // * prepared for a topic that could not be made: it fails like those that waited for it, rather than being
+          // * sent as a reply to the temporary id, which comes out as the message before it
+          this.toggleError(message, topicError);
+          message.promise?.reject(topicError);
+        } else if(this.pendingNewBotforumTopics[peerId] && !options.threadId) {
+          this.pendingNewBotforumTopics[peerId].queuedMessages.push(message);
         } else if(SEND_MESSAGES_TO_PAID_QUEUE || options.confirmedPaymentResult?.canUndo) {
           this.paidMessagesQueue.add(peerId, {
             send: () => void message?.send?.(),
@@ -5379,7 +5436,11 @@ export class AppMessagesManager extends AppManager {
       header.reply_to_top_id = replyToTopId;
     }
 
-    if(replyTo.quote_text) {
+    if(replyTo.quote_rich?.length) {
+      header.quote_rich = replyTo.quote_rich;
+      header.quote_offset = replyTo.quote_offset;
+      header.pFlags.quote = true;
+    } else if(replyTo.quote_text) {
       header.quote_text = replyTo.quote_text;
       header.quote_entities = replyTo.quote_entities;
       header.quote_offset = replyTo.quote_offset;
@@ -5389,7 +5450,7 @@ export class AppMessagesManager extends AppManager {
     if(replyToPeerId) {
       if(replyToPeerId.isUser() || !this.appPeersManager.isPeerPublic(replyToPeerId)) {
         delete header.reply_to_msg_id;
-        header.quote_text ??= (originalMessage as Message.message).message;
+        if(!header.quote_rich) header.quote_text ??= (originalMessage as Message.message).message;
       } else {
         header.reply_to_peer_id = this.appPeersManager.getOutputPeer(replyToPeerId);
       }
@@ -5658,6 +5719,33 @@ export class AppMessagesManager extends AppManager {
     this.scheduleHandleNewDialogs(message.peerId, dialog);
   }
 
+  /**
+   * Deletes messages of a chat here, after the server has (`affected`) or with nothing to tell it. The chat is named, not
+   * looked up by the ids: a temporary one is only its chat's, so no chat is found by it. `peerId` is left out only for
+   * server ids, which find their chat themselves: those of the group a supergroup was made of, the call log's.
+   */
+  public processLocalDeleteMessages(peerId: PeerId, mids: number[], affected?: Pick<MessagesAffectedMessages, 'pts' | 'pts_count'>) {
+    if(peerId && this.appPeersManager.isChannel(peerId)) {
+      this.apiUpdatesManager.processLocalUpdate({
+        _: 'updateDeleteChannelMessages',
+        channel_id: peerId.toChatId(),
+        messages: mids,
+        pts: affected?.pts,
+        pts_count: affected?.pts_count
+      });
+      return;
+    }
+
+    const update: LocalUpdateDeleteMessages = {
+      _: 'updateDeleteMessages',
+      messages: mids,
+      pts: affected?.pts,
+      pts_count: affected?.pts_count,
+      peerId
+    };
+    this.apiUpdatesManager.processLocalUpdate(update);
+  }
+
   public cancelPendingMessage(randomId: string, preserveMedia = false) {
     const pendingData = this.pendingByRandomId[randomId];
 
@@ -5669,7 +5757,7 @@ export class AppMessagesManager extends AppManager {
       const {peerId, tempId, storage} = pendingData;
       // a welcome template's placeholder never entered the history: the section drops it
       if(storage.type === 'welcome') {
-        this.rejectPendingMessageCallbacks(tempId, makeError('UPLOAD_CANCELED'));
+        this.rejectPendingMessageCallbacks(peerId, tempId, makeError('UPLOAD_CANCELED'));
         delete this.pendingByRandomId[randomId];
         this.removeWelcomeMessages(peerId, [tempId]);
         return true;
@@ -5684,26 +5772,11 @@ export class AppMessagesManager extends AppManager {
         this.appPollsManager.runUploadingCancelCallbacksForPoll(pollId);
       }
 
-      if(this.appPeersManager.isChannel(peerId)) {
-        this.apiUpdatesManager.processLocalUpdate({
-          _: 'updateDeleteChannelMessages',
-          channel_id: peerId.toChatId(),
-          messages: [tempId],
-          pts: undefined,
-          pts_count: undefined
-        });
-      } else {
-        this.apiUpdatesManager.processLocalUpdate({
-          _: 'updateDeleteMessages',
-          messages: [tempId],
-          pts: undefined,
-          pts_count: undefined
-        });
-      }
+      this.processLocalDeleteMessages(peerId, [tempId]);
 
       historyStorage.history.delete(tempId);
 
-      this.rejectPendingMessageCallbacks(tempId, makeError('UPLOAD_CANCELED'));
+      this.rejectPendingMessageCallbacks(peerId, tempId, makeError('UPLOAD_CANCELED'));
       tempMessage && this.handleReleasingMessage(tempMessage, storage, preserveMedia);
       delete this.pendingByRandomId[randomId];
       this.deleteMessageFromStorage(storage, tempId);
@@ -5960,26 +6033,42 @@ export class AppMessagesManager extends AppManager {
   }> {
     const log = this.log.bindPrefix('getTopMessages-' + nextRandomUint(16));
     // const dialogs = this.dialogsStorage.getFolder(folderId);
-    const offsetId = 0;
+    let offsetId = 0;
     let offsetPeerId: PeerId;
     let offsetIndex = 0;
     query ||= undefined;
 
-    let offsetDate = this.dialogsStorage.getOffsetDate(folderId);
-    if(offsetDate) {
-      offsetIndex = offsetDate * 0x10000;
-      offsetDate += this.timeManager.getServerTimeOffset();
+    const isSearch = !!query;
+    const peerId = this.dialogsStorage.isVirtualFilter(folderId) ? folderId : undefined;
+    // * the main chat list (`messages.getDialogs`) is paged by the date, id and peer of the LAST dialog
+    // * of the previous page, like tdesktop does — not by the oldest date seen, which a single dialog
+    // * returned out of its date order would push far into the past, skipping every dialog in between
+    const isDialogsList = !peerId && !isSearch && filterType !== FilterType.Forum && filterType !== FilterType.Saved;
+    const paginationOffsets = isDialogsList ? this.dialogsStorage.getDialogsPaginationOffsets(folderId) : undefined;
+
+    let offsetDate: number;
+    if(paginationOffsets) {
+      // * raw server values, sent as they are
+      offsetDate = paginationOffsets.date;
+      offsetId = paginationOffsets.id;
+      offsetPeerId = paginationOffsets.peerId;
+      offsetIndex = (offsetDate - this.timeManager.getServerTimeOffset()) * 0x10000;
+    } else {
+      offsetDate = this.dialogsStorage.getOffsetDate(folderId);
+      if(offsetDate) {
+        offsetIndex = offsetDate * 0x10000;
+        offsetDate += this.timeManager.getServerTimeOffset();
+      }
     }
 
     const useLimit = 100;
     const middleware = this.middleware.get();
-    const isSearch = !!query;
-    const peerId = this.dialogsStorage.isVirtualFilter(folderId) ? folderId : undefined;
     const cutoffGeneration = filterType === FilterType.Saved ?
       undefined :
       this.getChannelAvailableMinIdGeneration();
-    // * read before the request: the dialogs' notification settings are older than what changed since
+    // * read before the request: the dialogs' notification settings and drafts are older than what changed since
     const settingsAskedAt = this.appNotificationsManager.getSettingsClock();
+    const draftsAskedAt = this.appDraftsManager.getDraftsClock();
 
     const processResult = (result: MessagesDialogs | MessagesForumTopics | MessagesSavedDialogs) => {
       if(!middleware()) {
@@ -6026,6 +6115,14 @@ export class AppMessagesManager extends AppManager {
         this.appDraftsManager.addMissedDialogs();
       }
 
+      // * from the raw response: saveApiResult and saveDialog rewrite the ids and dates below
+      if(isDialogsList && (result._ === 'messages.dialogs' || result._ === 'messages.dialogsSlice')) {
+        const nextOffsets = getDialogsPaginationOffsets(result.dialogs, result.messages);
+        if(nextOffsets) {
+          this.dialogsStorage.setDialogsPaginationOffsets(folderId, nextOffsets);
+        }
+      }
+
       this.saveApiResult(result);
 
       let maxSeenIdIncremented = !!offsetDate;
@@ -6062,7 +6159,8 @@ export class AppMessagesManager extends AppManager {
           dialog,
           ignoreOffsetDate: !isSearch,
           saveGlobalOffset,
-          settingsAskedAt
+          settingsAskedAt,
+          draftsAskedAt
         });
 
         if(dialog.peerId === undefined) {
@@ -6300,11 +6398,12 @@ export class AppMessagesManager extends AppManager {
     const config = await this.apiManager.getConfig();
     const overflowMids = mids.splice(config.forwarded_count_max, mids.length - config.forwarded_count_max);
 
-    const hasProtectedRichMessages = !options.allowDropRichAuthor && mids.some((mid) => (
-      !!(this.getMessageByPeer(fromPeerId, mid) as Message.message).rich_message
+    const keepsAuthor = mids.some((mid) => forwardKeepsAuthor(
+      this.getMessageByPeer(fromPeerId, mid) as Message.message,
+      !!options.allowDropRichAuthor
     ));
-    const dropCaptions = !!options.dropCaptions && !hasProtectedRichMessages;
-    const dropAuthor = (!!options.dropAuthor || dropCaptions) && !hasProtectedRichMessages;
+    const dropCaptions = !!options.dropCaptions && !keepsAuthor;
+    const dropAuthor = (!!options.dropAuthor || dropCaptions) && !keepsAuthor;
 
     const groups: {
       [groupId: string]: {
@@ -6383,6 +6482,13 @@ export class AppMessagesManager extends AppManager {
             (message.media as MessageMedia.messageMediaDocument).pFlags.nopremium = true;
           }
         }
+      }
+
+      // a widget forwarded is a copy (widget-sandbox docs/tgw-format.md): never the original's chat state, and whether it
+      // may ask the bot is the server's to say (fwd_allow_queries, which the original does not show)
+      if(message.media?._ === 'messageMediaWidget') {
+        message.media.pFlags = {is_copy: true};
+        delete message.media.chat_data;
       }
 
       if(originalMessage.grouped_id) {
@@ -6873,7 +6979,7 @@ export class AppMessagesManager extends AppManager {
     }
 
     // * use global storage instead
-    if(storage?.type === 'history' && isLegacyMessageId(mid)) {
+    if(storage?.type === 'history' && isGlobalHistoryMessageId(mid)) {
       storage = this.getGlobalHistoryMessagesStorage();
     }
 
@@ -6887,7 +6993,7 @@ export class AppMessagesManager extends AppManager {
     // * global storage mirror
     if(
       storage?.type === 'history' &&
-      isLegacyMessageId(mid) &&
+      isGlobalHistoryMessageId(mid) &&
       storage.peerId !== GLOBAL_HISTORY_PEER_ID &&
       !this.isDeliveredEphemeralMessage(message)
     ) {
@@ -6911,7 +7017,7 @@ export class AppMessagesManager extends AppManager {
     const message = storage?.get(mid);
     if(
       storage?.type === 'history' &&
-      isLegacyMessageId(mid) &&
+      isGlobalHistoryMessageId(mid) &&
       storage.peerId !== GLOBAL_HISTORY_PEER_ID &&
       !this.isDeliveredEphemeralMessage(message)
     ) {
@@ -6981,7 +7087,7 @@ export class AppMessagesManager extends AppManager {
   }
 
   public getMessageById(messageId: number) {
-    if(isLegacyMessageId(messageId)) {
+    if(isGlobalHistoryMessageId(messageId)) {
       return this.getMessageFromStorage(this.getGlobalHistoryMessagesStorage(), messageId);
     }
 
@@ -6999,6 +7105,14 @@ export class AppMessagesManager extends AppManager {
     // }
 
     // return this.getMessageFromStorage(null, messageId);
+  }
+
+  /**
+   * The chat a message id is known under by deletedMessages, missingMessages and the single-message requests: a server
+   * id of a basic group is account-wide, so it goes under the global history's; a temporary id stays its chat's.
+   */
+  private getMessageIdPeerId(peerId: PeerId, mid: number) {
+    return peerId.isAnyChat() && isGlobalHistoryMessageId(mid) ? GLOBAL_HISTORY_PEER_ID : peerId;
   }
 
   public getMessageByPeer(peerId: PeerId, messageId: number) {
@@ -7116,6 +7230,7 @@ export class AppMessagesManager extends AppManager {
               generation !== this.getChannelAvailableMinIdGeneration(peerId)
             ));
           const settingsAskedAt = this.appNotificationsManager.getSettingsClock();
+          const draftsAskedAt = this.appDraftsManager.getDraftsClock();
           const result = await this.apiManager.invokeApi(
             'messages.getPeerDialogs',
             {peers: inputDialogPeers},
@@ -7144,7 +7259,7 @@ export class AppMessagesManager extends AppManager {
             }
           }
 
-          this.dialogsStorage.applyDialogs(result, undefined, settingsAskedAt);
+          this.dialogsStorage.applyDialogs(result, undefined, settingsAskedAt, draftsAskedAt);
 
           result.dialogs.forEach((dialog) => {
             if(dialog._ !== 'dialog') {
@@ -7307,6 +7422,8 @@ export class AppMessagesManager extends AppManager {
       }
 
       if(filterMessage) {
+        // a widget's storage goes with its message, also one that is not loaded here
+        this.appWidgetsManager.deleteWidgetStorageOf(peerId, filterMessage);
         const messagesStorage = this.getHistoryMessagesStorage(peerId);
         const ephemeralIds: number[] = [];
         for(const [mid, message] of messagesStorage) {
@@ -7325,18 +7442,7 @@ export class AppMessagesManager extends AppManager {
       }
 
       if(deletedMids.length) {
-        this.apiUpdatesManager.processLocalUpdate(peerId.isUser() ? {
-          _: 'updateDeleteMessages',
-          messages: deletedMids,
-          pts: undefined,
-          pts_count: undefined
-        } : {
-          _: 'updateDeleteChannelMessages',
-          channel_id: peerId.toChatId(),
-          messages: deletedMids,
-          pts: undefined,
-          pts_count: undefined
-        });
+        this.processLocalDeleteMessages(peerId, deletedMids);
       }
 
       if(!affectedHistory.offset) {
@@ -7348,6 +7454,7 @@ export class AppMessagesManager extends AppManager {
         justClear,
         revoke,
         threadOrSavedId,
+        participantPeerId,
         monoforumThreadId,
         minDate,
         maxDate,
@@ -7459,6 +7566,8 @@ export class AppMessagesManager extends AppManager {
         // and a history too big to enumerate comes back as `updateChannelTooLong`, which
         // `processUpdateMessage` turns into a difference fetch.
         this.apiUpdatesManager.processUpdateMessage(updates);
+        // a widget's storage goes with the history up to `max_id`, including messages that were never loaded here
+        this.appWidgetsManager.deletePeerWidgetStorage(peerId, maxId);
 
         // ephemeral messages live on the client alone, so no update can mention them
         this.forgetAnchoredEphemeralsForPeer(peerId);
@@ -7492,6 +7601,9 @@ export class AppMessagesManager extends AppManager {
 
       if(!threadOrSavedId) {
         this.flushStoragesByPeerId(peerId);
+        // here, not in flushStoragesByPeerId: that one also runs when a channel only reloads (a deleted chat's go with
+        // its dialog, dropDialogOnDeletion)
+        if(justClear) this.appWidgetsManager.deletePeerWidgetStorage(peerId);
       }
 
       if(justClear) {
@@ -7574,18 +7686,19 @@ export class AppMessagesManager extends AppManager {
         ss.forEach((message, mid) => {
           delete this.references[peerId + '_' + mid];
         });
-
-        if(!this.appPeersManager.isChannel(peerId)) {
-          const globalStorage = this.getGlobalHistoryMessagesStorage();
-          ss.forEach((message, mid) => {
-            this.deleteMessageFromStorage(globalStorage, mid);
-          });
-        }
       }
 
       ss.forEach((message) => {
         this.handleReleasingMessage(message, ss);
       });
+
+      if(ss.type === 'history' && !this.appPeersManager.isChannel(peerId)) {
+        // * each goes from where the tab reads it: a server id from the global storage, a temporary one from the chat's
+        const globalStorage = this.getGlobalHistoryMessagesStorage();
+        ss.forEach((message, mid) => {
+          this.deleteMessageFromStorage(isGlobalHistoryMessageId(mid) ? globalStorage : ss, mid);
+        });
+      }
 
       ss.clear();
       delete s[peerId];
@@ -7851,8 +7964,7 @@ export class AppMessagesManager extends AppManager {
 
     const mid = this.appMessagesIdsManager.generateMessageId(message.id, channelId);
     message.mid = mid;
-    const missingPeerId = peerId.isAnyChat() && isLegacyMessageId(mid) ? GLOBAL_HISTORY_PEER_ID : peerId;
-    this.missingMessages.delete(`${missingPeerId}_${mid}`);
+    this.missingMessages.delete(`${this.getMessageIdPeerId(peerId, mid)}_${mid}`);
 
     if(isMessage) {
       if(options.isScheduled) {
@@ -8012,6 +8124,14 @@ export class AppMessagesManager extends AppManager {
       }
 
       switch(action._) {
+        case 'messageActionSetChatTheme':
+          action.theme = this.appThemesManager.saveChatTheme(action.theme);
+          break;
+
+        case 'messageActionSetChatWallPaper':
+          action.wallpaper = this.appThemesManager.saveWallPaper(action.wallpaper);
+          break;
+
         // case 'messageActionChannelEditPhoto':
         case 'messageActionChatEditPhoto':
           // action.photo = appPhotosManager.savePhoto(action.photo, mediaContext);
@@ -8366,6 +8486,11 @@ export class AppMessagesManager extends AppManager {
     return availableMinId !== undefined && this.isChannelServerMidAtOrBefore(mid, availableMinId);
   }
 
+  /** Whether an update deleted the message while this session ran. */
+  public isMessageDeleted(peerId: PeerId, mid: number) {
+    return this.deletedMessages.has(`${this.getMessageIdPeerId(peerId, mid)}_${mid}`);
+  }
+
   public getChannelAvailableMinIdGeneration(peerId?: PeerId) {
     return peerId === undefined ?
       this.channelAvailableMinIdsGeneration :
@@ -8403,6 +8528,10 @@ export class AppMessagesManager extends AppManager {
     .filter(Boolean);
 
     const blocks: PageBlock[] = [...(richMessage.blocks || [])];
+    // * one by one: a spread of a block's tens of thousands of children overflows the stack
+    const pushBlocks = (children: PageBlock[]) => {
+      for(const child of children) blocks.push(child);
+    };
     for(let index = 0; index < blocks.length; ++index) {
       const block = blocks[index];
       switch(block._) {
@@ -8415,16 +8544,16 @@ export class AppMessagesManager extends AppManager {
         case 'pageBlockEmbedPost':
         case 'pageBlockDetails':
         case 'pageBlockBlockquoteBlocks':
-          blocks.push(...block.blocks);
+          pushBlocks(block.blocks);
           break;
         case 'pageBlockCollage':
         case 'pageBlockSlideshow':
-          blocks.push(...block.items);
+          pushBlocks(block.items);
           break;
         case 'pageBlockList':
         case 'pageBlockOrderedList':
           for(const item of block.items) {
-            if('blocks' in item) blocks.push(...item.blocks);
+            if('blocks' in item) pushBlocks(item.blocks);
           }
           break;
       }
@@ -8613,13 +8742,7 @@ export class AppMessagesManager extends AppManager {
     this.invalidateRichMessage(peerId, mid);
     const promise = this.getRichMessage(peerId, mid);
     this.richMessageRefreshes.set(key, promise);
-    const release = () => {
-      if(this.richMessageRefreshes.get(key) === promise) {
-        this.richMessageRefreshes.delete(key);
-      }
-    };
-    promise.then(release, release);
-    return promise;
+    return forgetSettledRequest(this.richMessageRefreshes, key, promise);
   }
 
   public async getFirstMessageToEdit({
@@ -8829,11 +8952,6 @@ export class AppMessagesManager extends AppManager {
     return this.filtersStorage.getFilter(filterId);
   }
 
-  /** Which limit a real folder's pins are held to */
-  private getFolderPinLimitType(folderId: number): ApiLimitType {
-    return folderId === FOLDER_ID_ARCHIVE ? 'folderPin' : 'pin';
-  }
-
   /**
    * Refuses a pin that would take a list past its limit. The pins counted are the ones the user can
    * see there (`getVisiblePinnedCount`), and `adding` is how many the pin would add.
@@ -8873,7 +8991,7 @@ export class AppMessagesManager extends AppManager {
       } else if(isTopic) {
         limitType = 'topicPin';
       } else {
-        limitType = this.getFolderPinLimitType(filterId);
+        limitType = getFolderPinLimitType(filterId);
       }
 
       await this.assertPinnedLimit(filterId, limitType, 1, !_isDialog ? 'PINNED_TOO_MUCH' : 'PINNED_DIALOGS_TOO_MUCH');
@@ -8982,7 +9100,7 @@ export class AppMessagesManager extends AppManager {
     }
   }
 
-  public async markDialogUnread({peerId, read, monoforumThreadId, maxId}: MarkDialogUnreadArgs) {
+  public async markDialogUnread({peerId, read, monoforumThreadId}: MarkDialogUnreadArgs) {
     const dialog = monoforumThreadId ?
       this.monoforumDialogsStorage.getDialogByParent(peerId, monoforumThreadId) :
       this.getDialogOnly(peerId);
@@ -9013,7 +9131,7 @@ export class AppMessagesManager extends AppManager {
       const promise = this.readHistory({
         peerId,
         monoforumThreadId,
-        maxId: maxId || dialog.top_message,
+        maxId: dialog.top_message,
         force: true
       });
       if(!dialog.pFlags.unread_mark) {
@@ -9098,7 +9216,7 @@ export class AppMessagesManager extends AppManager {
     }
 
     if(pinned) {
-      await this.assertPinnedLimit(filterId, this.getFolderPinLimitType(filterId), toChange.length, 'PINNED_DIALOGS_TOO_MUCH');
+      await this.assertPinnedLimit(filterId, getFolderPinLimitType(filterId), toChange.length, 'PINNED_DIALOGS_TOO_MUCH');
     }
 
     // a real folder takes one chat at a time, and every pin goes to the top - so bottom up
@@ -9308,7 +9426,13 @@ export class AppMessagesManager extends AppManager {
       message.pFlags.out ||
       this.appChatsManager.getChat(message.peerId.toChatId())._ === 'chat' ||
       this.appChatsManager.hasRights(message.peerId.toChatId(), 'delete_messages')
-    ) && (!message.pFlags.is_outgoing || !!message.error);
+    ) && (
+      !message.pFlags.is_outgoing ||
+      !!message.error ||
+      // * never sent, and no send of it waits (it has no random_id): the changelog put into the service chat on an
+      // * update is the client's alone, and is deleted here (deleteMessagesInner)
+      (message._ === 'message' && !message.random_id)
+    );
   }
 
   public getReplyKeyboard(peerId: PeerId) {
@@ -9874,7 +9998,9 @@ export class AppMessagesManager extends AppManager {
     });
   }
 
-  private async deleteMessagesInner(channelId: ChatId, mids: number[], revoke?: boolean, isRecursion?: boolean) {
+  // * `peerId` is the chat the messages are of, none for those of a group a supergroup was made of (processLocalDeleteMessages)
+  private async deleteMessagesInner(peerId: PeerId, mids: number[], revoke?: boolean, isRecursion?: boolean) {
+    const channelId = peerId && this.appPeersManager.isChannel(peerId) ? peerId.toChatId() : undefined;
     let promise: Promise<any>;
 
     if(channelId && !isRecursion) {
@@ -9901,46 +10027,32 @@ export class AppMessagesManager extends AppManager {
     }).filter(Boolean);
 
     if(DO_NOT_DELETE_MESSAGES) {
-      this.apiUpdatesManager.processLocalUpdate({
-        _: 'updateDeleteMessages',
-        messages: mids,
-        pts: 0,
-        pts_count: 0
-      });
-
+      this.processLocalDeleteMessages(peerId, mids, {pts: 0, pts_count: 0});
       return;
     }
 
-    if(channelId) {
+    if(!serverMessageIds.length) {
+      // * none the server has: the changelog put into the service chat on an update is the client's alone
+      promise = Promise.resolve();
+    } else if(channelId) {
       promise = this.apiManager.invokeApi('channels.deleteMessages', {
         channel: this.appChatsManager.getChannelInput(channelId),
         id: serverMessageIds
-      }).then((affectedMessages) => {
-        this.apiUpdatesManager.processLocalUpdate({
-          _: 'updateDeleteChannelMessages',
-          channel_id: channelId,
-          messages: mids,
-          pts: affectedMessages.pts,
-          pts_count: affectedMessages.pts_count
-        });
       });
     } else {
       promise = this.apiManager.invokeApi('messages.deleteMessages', {
         revoke,
         id: serverMessageIds
-      }).then((affectedMessages) => {
-        this.apiUpdatesManager.processLocalUpdate({
-          _: 'updateDeleteMessages',
-          messages: mids,
-          pts: affectedMessages.pts,
-          pts_count: affectedMessages.pts_count
-        });
       });
     }
 
+    promise = promise.then((affectedMessages?: MessagesAffectedMessages) => {
+      this.processLocalDeleteMessages(peerId, mids, affectedMessages);
+    });
+
     const promises: (typeof promise)[] = [promise];
     if(overflowMids.length) {
-      promises.push(this.deleteMessagesInner(channelId, overflowMids, revoke, true));
+      promises.push(this.deleteMessagesInner(peerId, overflowMids, revoke, true));
     }
 
     return Promise.all(promises).then(noop);
@@ -9972,11 +10084,12 @@ export class AppMessagesManager extends AppManager {
       return true;
     });
 
-    const channelId = this.appPeersManager.isChannel(peerId) ? peerId.toChatId() : undefined;
-    const splitted = this.appMessagesIdsManager.splitMessageIdsByChannels(mids, channelId);
+    const isChannel = this.appPeersManager.isChannel(peerId);
+    const splitted = this.appMessagesIdsManager.splitMessageIdsByChannels(mids, isChannel ? peerId.toChatId() : undefined);
     const promises: Promise<void>[] = ephemeralMids.map((mid) => this.deleteEphemeralMessage(peerId, mid));
     promises.push(...splitted.map(([channelId, {mids}]) => {
-      return this.deleteMessagesInner(channelId, mids, revoke);
+      // * a supergroup's own ids, or the ids of the group it was made of; any other chat's are all its own
+      return this.deleteMessagesInner(channelId ? channelId.toPeerId(true) : (isChannel ? undefined : peerId), mids, revoke);
     }));
 
     return Promise.all(promises).then(noop);
@@ -9997,12 +10110,7 @@ export class AppMessagesManager extends AppManager {
 
       // Calls only ever live in private chats, whose server ids are already
       // tweb mids — no channel offset to apply.
-      this.apiUpdatesManager.processLocalUpdate({
-        _: 'updateDeleteMessages',
-        messages: result.messages,
-        pts: result.pts,
-        pts_count: result.pts_count
-      });
+      this.processLocalDeleteMessages(undefined, result.messages, result);
 
       // `offset` alone drives the loop, but a page that deleted nothing while
       // still reporting more would spin it forever — stop on no progress.
@@ -10448,26 +10556,22 @@ export class AppMessagesManager extends AppManager {
     }
 
     // Inspect the messages BEFORE we strip the local-form mids: we need to
-    // know whether any of them are mentions or carry unread reactions, so we
-    // can issue the dedicated server-side "mark mentions/reactions as read"
-    // calls. `messages.readMessageContents` only clears `media_unread` for
-    // specific mids — it does NOT decrement the chat's `unread_mentions_count`
-    // / `unread_reactions_count` counters on the server (those are tracked
-    // separately and are reset only by `messages.readMentions` /
-    // `messages.readReactions`). Without that, after reload the server keeps
-    // reporting the old badge — exactly what issue #380 describes.
+    // know how many of them are mentions or carry unread reactions.
+    // * `messages.readMessageContents` reads the mention or the reactions of each message seen (tdlib counts a
+    // * mention off on it). `messages.readMentions` / `readReactions` read EVERY one of the chat (topic) on every
+    // * device - "when the last unread mention is read" (core.telegram.org/api/mentions), never before
     const isForum = this.appPeersManager.isForum(peerId);
     const isBotforum = this.appPeersManager.isBotforum(peerId);
-    let hasMention = false;
-    let hasUnreadReaction = false;
+    let mentionsRead = 0;
+    let reactionsRead = 0;
     // For a forum/botforum these reads happen inside a single topic; derive its
     // id from the messages so the server-side reset is scoped to that topic.
     let threadId: number;
     for(const mid of msgIds) {
       const message = this.getMessageByPeer(peerId, mid) as MyMessage;
       if(!message) continue;
-      if(isMentionUnread(message)) hasMention = true;
-      if(getUnreadReactions(message)) hasUnreadReaction = true;
+      if(isMentionUnread(message)) ++mentionsRead;
+      if(getUnreadReactions(message)) ++reactionsRead;
       if((isForum || isBotforum) && !threadId) {
         threadId = getMessageThreadId(message as Message.message, {isForum, isBotforum});
       }
@@ -10479,9 +10583,13 @@ export class AppMessagesManager extends AppManager {
     // forum topic the mention/reaction counters live on the TOPIC dialog (the
     // parent channel dialog tracks them per-topic, not aggregated), so read the
     // badge from the topic — otherwise reactions in topics never get reset.
+    // * The chat's all are read only once these messages are all the badge has left, as Android does for
+    // * reactions (ChatActivity reads the chat's reactions once its count of unseen ones reaches 0) — one
+    // * reaction or mention seen out of thousands read them all before
     const dialog = this.dialogsStorage.getAnyDialog(peerId, threadId) as Dialog | ForumTopic | undefined;
-    const hadUnreadMentions = !!dialog?.unread_mentions_count;
-    const hadUnreadReactions = !!dialog?.unread_reactions_count;
+    const readsAll = (read: number, unread: number) => !!read && !!unread && read >= unread;
+    const readsAllMentions = readsAll(mentionsRead, dialog?.unread_mentions_count);
+    const readsAllReactions = readsAll(reactionsRead, dialog?.unread_reactions_count);
 
     msgIds = msgIds.map((mid) => getServerMessageId(mid));
     let promise: Promise<any>, update: Update.updateChannelReadMessagesContents | Update.updateReadMessagesContents;
@@ -10517,18 +10625,40 @@ export class AppMessagesManager extends AppManager {
 
     this.apiUpdatesManager.processLocalUpdate(update);
 
-    if(hasMention || hasUnreadReaction) {
+    if(readsAllMentions || readsAllReactions) {
       const followUps: Promise<any>[] = [promise];
-      if(hasMention && hadUnreadMentions) {
-        followUps.push(this.readMentions(peerId, threadId).catch(noop));
+      if(readsAllMentions) {
+        followUps.push(promise.then(() => this.readLastMentions(peerId, threadId, msgIds)).catch(noop));
       }
-      if(hasUnreadReaction && hadUnreadReactions) {
+      if(readsAllReactions) {
         followUps.push(this.readMentions(peerId, threadId, true).catch(noop));
       }
       promise = Promise.all(followUps).then(() => {});
     }
 
     return promise;
+  }
+
+  /**
+   * The mentions just read were the last ones by the count kept here, which drifts from the server's (a voice mention
+   * is not counted as it comes, a read of the history counts one off too): the server is asked first. A mention it
+   * still has unread and that is not among them is left for the user to see, and the count is taken from the server
+   */
+  private async readLastMentions(peerId: PeerId, threadId: number, readIds: number[]) {
+    const {messages} = await this.getUnreadMentions({
+      peerId,
+      threadId,
+      offsetId: 0,
+      addOffset: 0,
+      limit: readIds.length + 1
+    }, true);
+
+    if(messages.some((message) => !readIds.includes(message.id))) {
+      this.reloadConversationOrTopic(peerId, threadId);
+      return;
+    }
+
+    return this.readMentions(peerId, threadId);
   }
 
   public async readMentions(peerId: PeerId, threadId?: number, isReaction?: boolean, isPollVote?: boolean): Promise<boolean> {
@@ -10963,6 +11093,32 @@ export class AppMessagesManager extends AppManager {
     });
   }
 
+  private updateChatBackgroundOnNewMessage(message: MyMessage) {
+    const action = (message as Message.messageService).action;
+    if(!message.peerId.isUser()) {
+      return;
+    }
+
+    if(action?._ === 'messageActionSetChatTheme') {
+      const theme = action.theme;
+      this.appProfileManager.modifyCachedFullUser(message.peerId.toUserId(), (userFull) => {
+        if(theme._ === 'chatThemeUniqueGift' || theme.emoticon) {
+          userFull.theme = theme;
+        } else {
+          delete userFull.theme;
+        }
+      });
+    } else if(action?._ === 'messageActionSetChatWallPaper') {
+      // * as tdesktop takes it: a wallpaper of one's own, or one the other side set for both
+      const isOwn = isOwnMessage(message, this.rootScope.myId);
+      if(!isOwn && !action.pFlags.for_both) {
+        return;
+      }
+
+      this.appProfileManager.setCachedChatWallPaper(message.peerId, action.wallpaper, !isOwn);
+    }
+  }
+
   public hasOutgoingMessage(peerId: PeerId) {
     for(const randomId in this.pendingByRandomId) {
       const pending = this.pendingByRandomId[randomId];
@@ -11058,12 +11214,12 @@ export class AppMessagesManager extends AppManager {
 
   private async createPendingBotforumTopic({peerId, title, tempId, randomId, message, iconColor}: CreateBotforumTopicArgs) {
     const beforeMessageSendCallbacks: Array<() => void> = [];
-    const messageSendCallbacks: Array<() => void> = [];
+    const queuedMessages: Message.message[] = [];
 
     this.pendingNewBotforumTopics[peerId] = {
       tempId,
       beforeMessageSendCallbacks,
-      messageSendCallbacks
+      queuedMessages
     };
 
     const temporaryTopic = this.generateTemporaryTopic(message);
@@ -11072,6 +11228,13 @@ export class AppMessagesManager extends AppManager {
     this.rootScope.dispatchEvent('botforum_pending_topic_created', {peerId, tempId});
 
     const pendingTopic = this.pendingNewBotforumTopics[peerId];
+    // * the temporary topic goes, and the topic stops being waited for unless a clear() put another in its place
+    const finish = () => {
+      dumpTemporaryTopic();
+      if(this.pendingNewBotforumTopics[peerId] === pendingTopic) {
+        delete this.pendingNewBotforumTopics[peerId];
+      }
+    };
 
     this.pendingByRandomId[randomId] = {
       tempId: pendingTopic.tempId,
@@ -11080,13 +11243,27 @@ export class AppMessagesManager extends AppManager {
       storage: this.getHistoryMessagesStorage(peerId)
     };
 
-    const updates = await this.apiManager.invokeApi('messages.createForumTopic', {
-      peer: this.appPeersManager.getInputPeerById(peerId),
-      title,
-      icon_color: iconColor,
-      random_id: randomId,
-      title_missing: true
-    });
+    let updates: Updates;
+    try {
+      updates = await this.apiManager.invokeApi('messages.createForumTopic', {
+        peer: this.appPeersManager.getInputPeerById(peerId),
+        title,
+        icon_color: iconColor,
+        random_id: randomId,
+        title_missing: true
+      });
+    } catch(error) {
+      // * the topic is not made: it goes, what waited for it fails (to be deleted or sent again), and the next
+      // * send makes a topic anew
+      this.log.error('botforum topic error:', error);
+      this.failedBotforumTopics.set(makeFullMid(peerId, tempId), error as ApiError);
+      finish();
+      this.cancelPendingMessage(randomId);
+      this.onMessagesSendError(queuedMessages, error as ApiError);
+      this.rootScope.dispatchEvent('messages_pending');
+      this.rootScope.dispatchEvent('botforum_pending_topic_failed', {peerId, tempId});
+      return;
+    }
 
     if(updates._ === 'updates') {
       const messageIdUpdate = updates.updates.find((update) => update._ === 'updateMessageID');
@@ -11100,12 +11277,10 @@ export class AppMessagesManager extends AppManager {
     await this.dialogsStorage.getForumTopicById(peerId, pendingTopic.newId);
     this.rootScope.dispatchEvent('botforum_pending_topic_created', {peerId, tempId, newId: pendingTopic.newId});
 
-    dumpTemporaryTopic();
-
-    delete this.pendingNewBotforumTopics[peerId];
+    finish();
 
     beforeMessageSendCallbacks.forEach((callback) => callback());
-    messageSendCallbacks.forEach((callback) => callback());
+    queuedMessages.forEach((message) => message.send());
   }
 
   private generateTemporaryTopic(message: ReturnType<AppMessagesManager['generateTopicCreatedServiceMessage']> & Pick<Message.messageService, 'peerId'>): MTForumTopic.forumTopic {
@@ -11276,33 +11451,8 @@ export class AppMessagesManager extends AppManager {
         this.dispatchTonConnectRequest(message);
       }
 
-      if(action._ === 'messageActionTopicEdit' && !isLocalThreadUpdate) {
-        const topic = this.dialogsStorage.getForumTopic(peerId, threadId);
-        if(!topic) {
-          this.dialogsStorage.getForumTopicById(peerId, threadId);
-        } else {
-          const oldTopic = copy(topic);
-
-          if(action.title !== undefined) {
-            topic.title = action.title;
-          }
-
-          if(action.closed !== undefined) {
-            setBooleanFlag(topic.pFlags, 'closed', action.closed);
-          }
-
-          if(action.hidden !== undefined) {
-            setBooleanFlag(topic.pFlags, 'hidden', action.hidden);
-          }
-
-          if(action.icon_emoji_id !== undefined) {
-            topic.icon_emoji_id = action.icon_emoji_id;
-          }
-
-          this.scheduleHandleNewDialogs(peerId, topic);
-
-          this.dialogsStorage.processTopicUpdate(topic, oldTopic);
-        }
+      if(action._ === 'messageActionTopicEdit' && !isLocalThreadUpdate && !this.applyForumTopicEdit(peerId, threadId, action)) {
+        this.dialogsStorage.getForumTopicById(peerId, threadId);
       }
 
       if(action._ === 'messageActionPaidMessagesPrice' && this.appPeersManager.isBroadcast(message?.peerId)) {
@@ -11332,6 +11482,8 @@ export class AppMessagesManager extends AppManager {
 
     if(!isLocalThreadUpdate) {
       this.updateMessageRepliesIfNeeded(message, true);
+      // * before the check below: a history loaded meanwhile may have the message already, and the chat its old background
+      this.updateChatBackgroundOnNewMessage(message);
     }
 
     // * so message can exist if reloadConversation came back earlier with mid
@@ -11980,12 +12132,19 @@ export class AppMessagesManager extends AppManager {
           });
 
           if(wasMentionUnread) {
-            this.modifyCachedMentionsAndSave({peerId, mid, threadId, addMention: false});
+            // * a read made here (readMessages) names no topic: the mention comes off the message's own, or the topic's
+            // * count would stay up while the parent's came down
+            const mentionThreadId = threadId ?? (isForum || isBotforum ?
+              getMessageThreadId(message as Message.message, {isForum, isBotforum}) :
+              undefined);
+            this.modifyCachedMentionsAndSave({peerId, mid, threadId: mentionThreadId, addMention: false});
 
             // Forum / botforum: also bring down the parent forum dialog's
             // aggregate mention badge (mirrors the Bug-4 propagation in
             // onUpdateReadHistory).
-            if(threadId && (isForum || isBotforum)) {
+            if(mentionThreadId && (isForum || isBotforum)) {
+              // * the forum viewed as messages jumps through the mentions of every topic
+              this.modifyCachedMentions({peerId, mid, add: false});
               const parentDialog = this.getDialogOnly(peerId);
               if(parentDialog && parentDialog.unread_mentions_count > 0) {
                 const releaseParent = this.dialogsStorage.prepareDialogUnreadCountModifying(parentDialog);
@@ -12376,6 +12535,7 @@ export class AppMessagesManager extends AppManager {
     this.markChannelCutoffHistoryCountsUnknown(peerId);
     addDeleted(this.invalidateRichMessagesAtOrBefore(peerId, availableMinId));
     addDeleted(this.appTranslationsManager.resetPeerTranslationsByChannelCutoff(peerId));
+    this.appWidgetsManager.deleteWidgetStorageByChannelCutoff(peerId, availableMinId);
 
     const pendingSingles = this.needSingleMessages.get(peerId);
     const singleMessageMaps = [
@@ -12421,7 +12581,15 @@ export class AppMessagesManager extends AppManager {
   ) => {
     const channelId = (update as Update.updateDeleteChannelMessages).channel_id;
     let mids = (update as any as Update.updateDeleteChannelMessages).messages.map((id) => this.appMessagesIdsManager.generateMessageId(id, channelId));
-    const peerId: PeerId = channelId ? channelId.toPeerId(true) : this.findPeerIdByMids(mids);
+    const peerId: PeerId = channelId ? channelId.toPeerId(true) : (update as LocalUpdateDeleteMessages).peerId ?? this.findPeerIdByMids(mids);
+
+    // a widget's storage goes with its message, loaded or not, once for the batch: private chats' and basic groups'
+    // server ids are the account's, so a batch may name messages of several chats (a temporary id is only its chat's)
+    if(channelId) {
+      this.appWidgetsManager.deleteWidgetStorage(peerId, mids);
+    } else {
+      this.appWidgetsManager.deleteWidgetStorageByLegacyMids(mids, peerId);
+    }
 
     if(!peerId) {
       return new Set<number>();
@@ -12702,6 +12870,11 @@ export class AppMessagesManager extends AppManager {
 
       for(const mid of mids) {
         const message = storage.get(mid) as Message.message;
+        // * one the server has not given: deleted since, or before the history this member sees
+        if(!message) {
+          continue;
+        }
+
         this.modifyMessage(message, (message) => {
           processMessage(message);
         }, storage);
@@ -12810,6 +12983,96 @@ export class AppMessagesManager extends AppManager {
       pts_count: 0
     });
   };
+
+  /**
+   * A forum topic edited: what is given changes, the rest stays as it is (its service message, messageActionTopicEdit,
+   * or updateEditForumTopic). Returns whether the topic is here to take it.
+   */
+  private applyForumTopicEdit(
+    peerId: PeerId,
+    topicId: number,
+    edit: Pick<MessageAction.messageActionTopicEdit, 'title' | 'icon_emoji_id' | 'closed' | 'hidden'>
+  ) {
+    const topic = this.dialogsStorage.getForumTopic(peerId, topicId);
+    if(!topic) {
+      return false;
+    }
+
+    const oldTopic = copy(topic);
+
+    if(edit.title !== undefined) {
+      topic.title = edit.title;
+    }
+
+    if(edit.closed !== undefined) {
+      setBooleanFlag(topic.pFlags, 'closed', edit.closed);
+    }
+
+    if(edit.hidden !== undefined) {
+      setBooleanFlag(topic.pFlags, 'hidden', edit.hidden);
+    }
+
+    if(edit.icon_emoji_id !== undefined) {
+      topic.icon_emoji_id = edit.icon_emoji_id;
+    }
+
+    this.scheduleHandleNewDialogs(peerId, topic);
+
+    this.dialogsStorage.processTopicUpdate(topic, oldTopic);
+    return true;
+  }
+
+  /** A topic edited with no service message to tell of it; one not loaded here is not asked for, as desktop does. */
+  private onUpdateEditForumTopic = (update: Update.updateEditForumTopic) => {
+    const peerId = this.appPeersManager.getPeerId(update.peer);
+    const channelId = peerId.isAnyChat() ? peerId.toChatId() : undefined;
+    this.applyForumTopicEdit(peerId, this.appMessagesIdsManager.generateMessageId(update.topic_id, channelId), update);
+  };
+
+  /**
+   * A widget's state, without its HTML: the bot edited the chat state or the shared state of one message (in a
+   * supergroup it comes as an edit of the post instead).
+   */
+  private onUpdateMessageWidgetData = (update: Update.updateMessageWidgetData) => {
+    const channelId = (update.peer as Peer.peerChannel).channel_id;
+    const peerId = this.appPeersManager.getPeerId(update.peer);
+    const mid = this.appMessagesIdsManager.generateMessageId(update.msg_id, channelId);
+    this.setMessagesWidgetData([{peerId, mid}], update);
+  };
+
+  /**
+   * A widget's state changed (docs/tgw-format.md, "The widget's state and requests"): the bot's edit, or a shared
+   * widget's public_data polled for the messages that show it. Kept in each loaded message, whose bubble hands it to
+   * the running widget (an edit that keeps the HTML). A field not given stays; an empty string clears it. Under an
+   * anchored ephemeral message standing in for it, it goes into the message kept to put back on Revert.
+   */
+  public setMessagesWidgetData(
+    messages: {peerId: PeerId, mid: number}[],
+    data: Partial<Pick<MessageMedia.messageMediaWidget, 'public_data' | 'public_data_hash' | 'chat_data'>>
+  ) {
+    for(const {peerId, mid} of messages) {
+      const message = this.getMessageByPeer(peerId, mid) as Message.message;
+      const covered = message?.pFlags?.ephemeral_anchored ?
+        [...(this.anchoredEphemerals?.get(peerId)?.values() ?? [])].find((anchored) => anchored.mid === mid) :
+        undefined;
+      const media = covered ? covered.backup.media : message?.media;
+      if(media?._ !== 'messageMediaWidget') continue;
+      if(data.public_data !== undefined) {
+        if(data.public_data) media.public_data = data.public_data;
+        else delete media.public_data;
+        // a shared widget's hash goes with it, an emptied state's too (it is what a poll asks with)
+        if(data.public_data_hash) media.public_data_hash = data.public_data_hash;
+        else delete media.public_data_hash;
+      }
+
+      if(data.chat_data !== undefined) {
+        if(data.chat_data) media.chat_data = data.chat_data;
+        else delete media.chat_data;
+      }
+
+      if(!covered) this.runTempUpdateForMessageEdit(message);
+    }
+  }
 
   private onUpdateTranscribedAudio = (update: Update.updateTranscribedAudio) => {
     const channelId = (update.peer as Peer.peerChannel).channel_id;
@@ -13037,13 +13300,18 @@ export class AppMessagesManager extends AppManager {
     delete this.pendingByRandomId[randomId];
     this.deletePendingTopMsg(peerId, tempId);
 
+    // what its widget kept goes under the server's id, also with no temporary copy left (a flush) to tell a bubble
+    if((finalMessage as Message.message).media?._ === 'messageMediaWidget') {
+      this.appWidgetsManager.onWidgetMessageSent(peerId, tempId, finalMessage.mid);
+    }
+
     this.finalizePendingMessageCallbacks(storage, tempId, finalMessage);
 
     return tempMessage;
   }
 
   public finalizePendingMessageCallbacks(storage: MessagesStorage, tempId: number, message: MyMessage) {
-    const callbacks = this.takeTempFinalizeCallbacks(tempId);
+    const callbacks = this.takeTempFinalizeCallbacks(storage.peerId, tempId);
     // this.log.warn(callbacks, tempId);
     if(callbacks !== undefined) {
       for(const name in callbacks) {
@@ -14729,9 +14997,8 @@ export class AppMessagesManager extends AppManager {
                 promise.resolve(currentMessage);
                 continue;
               }
-              const deletedPeerId = peerId.isAnyChat() && isLegacyMessageId(mid) ? GLOBAL_HISTORY_PEER_ID : peerId;
               if(!this.isMessageIdUnavailableByChannelCutoff(peerId, mid)) {
-                this.missingMessages.add(`${deletedPeerId}_${mid}`);
+                this.missingMessages.add(`${this.getMessageIdPeerId(peerId, mid)}_${mid}`);
               }
               promise.resolve(this.generateEmptyMessage(mid));
             }
@@ -14775,10 +15042,7 @@ export class AppMessagesManager extends AppManager {
       return message;
     }
 
-    if(peerId.isAnyChat() && isLegacyMessageId(mid)) {
-      peerId = GLOBAL_HISTORY_PEER_ID;
-    }
-
+    peerId = this.getMessageIdPeerId(peerId, mid);
     message = this.getMessageByPeer(peerId, mid);
     const unavailableByCutoff = this.isMessageIdUnavailableByChannelCutoff(peerId, mid);
     if(
@@ -14854,6 +15118,8 @@ export class AppMessagesManager extends AppManager {
         id: toRequest.map((mid) => getServerMessageId(mid))
       }).then((updates) => {
         this.apiUpdatesManager.processUpdateMessage(updates);
+      }, noop).then(() => {
+        // * a request the server refused is over as well: the next poll asks for its mids again
         deferred.resolve();
       });
     }
@@ -14933,15 +15199,35 @@ export class AppMessagesManager extends AppManager {
     return threadId ? `${peerId}_${threadId}` : peerId;
   }
 
+  // * a thread's action goes to the chat itself unless the chat has topics
+  private getTypingThreadId(peerId: PeerId, threadId?: number) {
+    return threadId && (this.appPeersManager.isForum(peerId) || this.appPeersManager.isBotforum(peerId)) ?
+      threadId :
+      undefined;
+  }
+
+  // * an upload action goes to a chat at most once in 5 s for each kind of file, as tdesktop's SendProgressManager
+  // * does (every part of every file uploading there reports, and an album's photos and videos interleave), and then
+  // * it goes for sure: the other side shows it for 6 s, past setTyping's own wait for a repeat
+  private sendUploadAction(peerId: PeerId, threadId: number, action: SendMessageAction) {
+    threadId = this.getTypingThreadId(peerId, threadId);
+    const key = this.getTypingKey(peerId, threadId) + '_' + action._;
+    const now = Date.now();
+    if(now - (this.uploadActionsSentAt.get(key) ?? -Infinity) < 5000) {
+      return;
+    }
+
+    this.uploadActionsSentAt.set(key, now);
+    this.setTyping(peerId, action, true, threadId).catch(noop);
+  }
+
   public async setTyping(
     peerId: PeerId,
     action: SendMessageAction,
     force?: boolean,
     threadId?: number
   ): Promise<boolean> {
-    if(threadId && !this.appPeersManager.isForum(peerId) && !this.appPeersManager.isBotforum(peerId)) {
-      threadId = undefined;
-    }
+    threadId = this.getTypingThreadId(peerId, threadId);
 
     const key = this.getTypingKey(peerId, threadId);
     let typing = this.typings[key];
@@ -15101,8 +15387,7 @@ export class AppMessagesManager extends AppManager {
 
     for(const mid of messages) {
       if(markAsDeleted) {
-        const deletedPeerId = peerId.isAnyChat() && isLegacyMessageId(mid) ? GLOBAL_HISTORY_PEER_ID : peerId;
-        const key = `${deletedPeerId}_${mid}`;
+        const key = `${this.getMessageIdPeerId(peerId, mid)}_${mid}`;
         this.deletedMessages.add(key);
         this.missingMessages.delete(key);
       }

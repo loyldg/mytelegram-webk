@@ -4,6 +4,37 @@ import {MOUNT_CLASS_TO} from '@config/debug';
 import {normalizeUrlProtocol} from '@lib/richTextProcessor/matchUrlProtocol';
 import matchTelegramUrlHost, {matchUrlHost, TELESCOPE_LINK_HOST} from '@lib/richTextProcessor/matchTelegramUrlHost';
 
+/** The links that ask to connect through a proxy: a browser cannot, so no handler opens them */
+export const PROXY_LINK_TYPES = ['proxy', 'socks'] as const;
+
+const ANCHOR_HANDLER_NAME_REG_EXP = /^[A-Za-z_$][\w$]*$/;
+
+/**
+ * The window function a link's handler is, as addAnchorListener sets it and an anchor's inline `onclick` calls it:
+ * `<protocol>_<name>`, a link's `-` (tg://ton-connect) spelled `_` - in that code the name is an identifier, or the
+ * call is not one: `tg_ton-connect(this)` subtracts, and throws a ReferenceError on click.
+ */
+export function getAnchorHandlerName(name: string, protocol?: string) {
+  return (protocol ? protocol + '_' : '') + name.replace(/-/g, '_');
+}
+
+/** Whether a handler of this name can be called by it from an inline `onclick` (see `getAnchorHandlerName`) */
+export function isAnchorHandlerName(name: string) {
+  return ANCHOR_HANDLER_NAME_REG_EXP.test(name);
+}
+
+/**
+ * Whether a link handler of this name is there: a function the app set on the window itself. The window also
+ * shows the document's elements by their ids, and a `tg:` link spells the name, which goes into an inline
+ * `onclick` as code: `tg_x=alert(1)(this)` - an element with that id, a rich text's anchor say, is no handler, and
+ * a name the code cannot call it by (see `getAnchorHandlerName`) is none either
+ */
+function hasAnchorHandler(name: string) {
+  return isAnchorHandlerName(name) &&
+    Object.prototype.hasOwnProperty.call(window, name) &&
+    typeof (window as any)[name] === 'function';
+}
+
 export default function wrapUrl(url: string, safe?: boolean) {
   url = normalizeUrlProtocol(url);
 
@@ -30,6 +61,8 @@ export default function wrapUrl(url: string, safe?: boolean) {
 
     const fullPath = parsedUrl.pathname.slice(1);
     const path = fullPath.split('/');
+    // * t.me/<name> or t.me/<name>/, with no username prefix: a link of its own, its parameters in the query
+    const isOneSegment = !prefix && (path.length === 1 || (path.length === 2 && !path[1]));
 
     if(path[0] && path[0][0] === '$' && path[0].length > 1) {
       onclick = 'invoice';
@@ -40,10 +73,17 @@ export default function wrapUrl(url: string, safe?: boolean) {
       onclick = 'joinchat';
     } else if(
       // * the wallet's handler is there only once it is released (lib/wallet/release): a username link till then
-      (window as any).sendgrams &&
-      path[0].toLowerCase() === 'sendgrams' && (path.length === 1 || (path.length === 2 && !path[1])) && !prefix
+      hasAnchorHandler('sendgrams') &&
+      path[0].toLowerCase() === 'sendgrams' && isOneSegment
     ) { // t.me/sendgrams/?to=…&amount=…
       onclick = 'sendgrams';
+    } else if(
+      // * a proxy to connect to, t.me/proxy?server=… as tdesktop reads it (`^proxy/?\?(.+)`), not @proxy
+      (PROXY_LINK_TYPES as readonly string[]).includes(path[0].toLowerCase()) &&
+      isOneSegment &&
+      parsedUrl.search.length > 1
+    ) {
+      onclick = path[0].toLowerCase() as typeof PROXY_LINK_TYPES[number];
     } else if(path[0]) switch(path[0]) {
       case 'm':
       case 'addlist':
@@ -79,11 +119,11 @@ export default function wrapUrl(url: string, safe?: boolean) {
   ) {
     onclick = 'im';
   } else if(/^ton:\/\/transfer\//i.test(url)) {
-    onclick = 'ton_transfer' as any;
+    onclick = getAnchorHandlerName('transfer', 'ton') as any;
   } else if(/^tc:/i.test(url)) { // * a TON Connect link: tc://?v=2&id=…&r=…
-    onclick = 'tc_tonconnect' as any;
+    onclick = getAnchorHandlerName('tonconnect', 'tc') as any;
   } else if((tgMatch = url.match(/^tg:(?:\/\/)?(.+?)(?:\?|$)/))) {
-    onclick = 'tg_' + tgMatch[1].split('/')[0] as any;
+    onclick = getAnchorHandlerName(tgMatch[1].split('/')[0], 'tg') as any;
 
     switch(tgMatch[1]) {
       // * local
@@ -106,10 +146,10 @@ export default function wrapUrl(url: string, safe?: boolean) {
     url = 'tg://unsafe_url?url=' + encodeURIComponent(url);
   } */
 
-  if(!(window as any)[onclick]) {
+  if(!onclick || !hasAnchorHandler(onclick)) {
     // * a tg:// link no handler here knows is the server's to explain (`help.getDeepLinkInfo`); an
     // * `iv` link refused above stays a plain one
-    onclick = tgMatch && onclick && (window as any).unknownDeepLink ? 'unknownDeepLink' : undefined;
+    onclick = tgMatch && onclick && hasAnchorHandler('unknownDeepLink') ? 'unknownDeepLink' : undefined;
   }
 
   out.onclick = onclick;

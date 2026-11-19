@@ -57,6 +57,8 @@ export type BroadcastEvents = {
   'peer_block': {peerId: PeerId, blocked?: boolean, blockedMyStoriesFrom?: boolean},
   'peer_title_edit': {peerId: PeerId, threadId?: number},
   'peer_deleted': PeerId, // left chat, deleted user dialog, left channel
+  'widget_storage_delete': {accountNumber: ActiveAccountNumber, peerId?: PeerId, maxId?: number, mids?: number[]}, // widgets' storage of the account is gone: of messages (of a chat, or by private chats' and basic groups' ids), a chat's with its history (up to a server id), or all of it ("Clear cache")
+  'widget_storage_remap': {accountNumber: ActiveAccountNumber, peerId: PeerId, tempId: number, mid: number}, // a widget message of the account was sent: what its widget kept goes under the server's id
   'peer_full_update': PeerId,
   'peer_settings': {peerId: PeerId, settings: PeerSettings},
   'chat_automation_update': ConnectedBot.connectedBot | undefined,
@@ -142,12 +144,14 @@ export type BroadcastEvents = {
 
   'stickers_installed': StickerSet.stickerSet,
   'stickers_deleted': StickerSet.stickerSet,
-  'stickers_updated': {type: 'recent' | 'faved', stickers: MyDocument[]},
+  // * `reverted`: a change of the user's own that the server did not take, put back
+  'stickers_updated': {type: 'recent' | 'faved', stickers: MyDocument[], reverted?: boolean},
   'stickers_top': Long,
   'stickers_order': {type: 'masks' | 'emojis' | 'stickers', order: Long[]},
   'sticker_updated': {type: 'recent' | 'faved', document: MyDocument, faved: boolean, limitReached?: boolean},
 
-  'gifs_updated': MyDocument[],
+  // * `reverted`: a change of the user's own that the server did not take, put back
+  'gifs_updated': {gifs: MyDocument[], reverted?: boolean},
   'gif_updated': {document: MyDocument, saved: boolean, limitReached?: boolean},
 
   'state_cleared': void,
@@ -284,6 +288,7 @@ export type BroadcastEvents = {
   'monoforum_draft_update': {dialog: MonoforumDialog},
 
   'botforum_pending_topic_created': {peerId: PeerId, tempId: number, newId?: number},
+  'botforum_pending_topic_failed': {peerId: PeerId, tempId: number},
   'promo_data_update': MyPromoData,
   'unconfirmed_authorizations_update': UnconfirmedAuthorization[],
 

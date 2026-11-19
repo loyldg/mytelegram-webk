@@ -6,6 +6,7 @@ import {AppManager} from '@appManagers/manager';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
 import {nanotonToJsNumber} from '@helpers/nanoton';
 import {inputStarGiftEquals} from '@appManagers/utils/gifts/inputStarGiftEquals';
+import getUniqueGiftAttributes from '@appManagers/utils/gifts/getUniqueGiftAttributes';
 import {randomLong} from '@helpers/random';
 import createSerializedQueue, {SerializedQueue} from '@helpers/createSerializedQueue';
 import noop from '@helpers/noop';
@@ -175,29 +176,14 @@ export default class AppGiftsManager extends AppManager {
         sticker: this.appDocsManager.saveDoc(gift.sticker)
       };
     } else {
-      let attrModel: StarGiftAttribute.starGiftAttributeModel;
-      let attrBackdrop: StarGiftAttribute.starGiftAttributeBackdrop;
-      let attrPatern: StarGiftAttribute.starGiftAttributePattern;
-      let attrOrig: StarGiftAttribute.starGiftAttributeOriginalDetails;
-
-      for(const attr of gift.attributes) {
-        switch(attr._) {
-          case 'starGiftAttributeModel':
-            attr.document = this.appDocsManager.saveDoc(attr.document);
-            attrModel = attr;
-            break;
-          case 'starGiftAttributeBackdrop':
-            attrBackdrop = attr;
-            break;
-          case 'starGiftAttributePattern':
-            attr.document = this.appDocsManager.saveDoc(attr.document);
-            attrPatern = attr;
-            break;
-          case 'starGiftAttributeOriginalDetails':
-            attrOrig = attr;
-            break;
-        }
-      }
+      const {
+        model: attrModel,
+        backdrop: attrBackdrop,
+        pattern: attrPatern,
+        original: attrOrig
+      } = getUniqueGiftAttributes(gift);
+      if(attrModel) attrModel.document = this.appDocsManager.saveDoc(attrModel.document);
+      if(attrPatern) attrPatern.document = this.appDocsManager.saveDoc(attrPatern.document);
 
       let resellPriceStars: Long | undefined;
       let resellPriceTon: Long | undefined;
@@ -497,19 +483,22 @@ export default class AppGiftsManager extends AppManager {
     return this.cachedStarGiftOptions = options;
   }
 
+  // * The two below are shown once the server has taken them, as tdesktop shows them (ToggleStarGiftSaved,
+  // * ConvertStarGift): shown before and refused, the gift stayed as it was shown, not as it is - and taking it back
+  // * would have to guess what it is (another screen or tab may have changed it meanwhile)
   public async toggleGiftHidden(gift: InputSavedStarGift, hidden: boolean) {
-    this.rootScope.dispatchEvent('star_gift_update', {input: gift, unsaved: hidden});
     await this.apiManager.invokeApiSingle('payments.saveStarGift', {
       stargift: gift,
       unsave: hidden
     });
+    this.rootScope.dispatchEvent('star_gift_update', {input: gift, unsaved: hidden});
   }
 
   public async convertGift(gift: InputSavedStarGift) {
-    this.rootScope.dispatchEvent('star_gift_update', {input: gift, converted: true});
     await this.apiManager.invokeApiSingle('payments.convertStarGift', {
       stargift: gift
     });
+    this.rootScope.dispatchEvent('star_gift_update', {input: gift, converted: true});
 
     // * the server does not edit the gift's message, so it is marked here for its bubble to say so
     if(gift._ !== 'inputSavedStarGiftUser') return;

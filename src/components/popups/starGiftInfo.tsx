@@ -21,7 +21,7 @@ import {StarGiftBackdrop} from '@components/stargifts/stargiftBackdrop';
 import MediaHeader from '@components/mediaHeader';
 import {ButtonMenuToggleTsx} from '@components/buttonMenuToggleTsx';
 import {copyTextToClipboard} from '@helpers/clipboard';
-import {showSharingPicker2Popup} from '@components/popups/pickUser';
+import {showPickUser2Popup, showSharingPicker2Popup} from '@components/popups/pickUser';
 import {I18nTsx} from '@helpers/solid/i18n';
 import tsNow from '@helpers/tsNow';
 import {useAppState} from '@stores/appState';
@@ -60,6 +60,7 @@ import {getCanManagePeerGifts} from '@components/stargifts/canManageGifts';
 import {hotReloadGuard} from '@lib/solidjs/hotReloadGuardProvider';
 import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
 import {GiftAttributeValue} from '@components/stargifts/giftAttributeValue';
+import toastError from '@components/toastError';
 
 const attributeValueKeyFrames = (element: Element, removed: boolean) => [
   {opacity: 0, transform: `translateY(${removed ? '-14px' : '14px'}) scaleY(0.5)`},
@@ -898,12 +899,18 @@ export default function showStarGiftInfoPopup(options: {
                 icon="delete"
                 aria-label={I18n.format('Delete', true)}
                 onClick={async() => {
-                  const popup = await createPaymentPopup({
-                    inputInvoice: {
-                      _: 'inputInvoiceStarGiftDropOriginalDetails',
-                      stargift: input
-                    }
-                  });
+                  let popup: Awaited<ReturnType<typeof createPaymentPopup>>;
+                  try {
+                    popup = await createPaymentPopup({
+                      inputInvoice: {
+                        _: 'inputInvoiceStarGiftDropOriginalDetails',
+                        stargift: input
+                      }
+                    });
+                  } catch(err) {
+                    toastError(err as ApiError, 'drop original details form error');
+                    return;
+                  }
 
                   popup.addEventListener('finish', (result) => {
                     if(result === 'paid') {
@@ -931,6 +938,30 @@ export default function showStarGiftInfoPopup(options: {
         context.hide();
       });
     }
+
+    // * as tdesktop does it: the chat is picked, the theme set there and the chat opened
+    const handleSetAsTheme = async() => {
+      let peerId: PeerId;
+      try {
+        peerId = await showPickUser2Popup({
+          peerType: ['dialogs', 'contacts'],
+          filterPeerTypeBy: ['isRegularUser', 'isBot'],
+          titleLangKey: 'SelectChat'
+        });
+      } catch(err) {
+        return;
+      }
+
+      context.managers.appThemesManager.setChatTheme(peerId, {
+        _: 'chatThemeUniqueGift',
+        gift,
+        theme_settings: []
+      }).catch(() => {
+        toastNew({langPackKey: 'Error.AnError'});
+      });
+      hotReloadGuard.appImManager.setInnerPeer({peerId});
+      context.hide();
+    };
 
     const handleSell = async(changePrice = false) => {
       if(!isEditableUniqueGift || !saved) return;
@@ -1083,6 +1114,14 @@ export default function showStarGiftInfoPopup(options: {
                     gift: myGift,
                     onFinish: (res) => res === 'created' && context.hide()
                   })
+                },
+                {
+                  icon: 'image',
+                  text: 'GiftThemesSetIn',
+                  // * a gift of this account's, owned or hosted, as Android offers it
+                  verify: () => !!gift.pFlags.theme_available &&
+                    [gift.owner_id, gift.host_id].some((peer) => peer && getPeerId(peer) === rootScope.myId),
+                  onClick: handleSetAsTheme
                 },
                 {
                   icon: 'forward',

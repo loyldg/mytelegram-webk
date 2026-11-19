@@ -29,6 +29,8 @@ import filterUnique from '@helpers/array/filterUnique';
 import noop from '@helpers/noop';
 import App from '@config/app';
 import forgetFailedRequest from '@helpers/forgetFailedRequest';
+import forgetSettledRequest from '@helpers/forgetSettledRequest';
+import OptimisticListChanges from '@appManagers/utils/optimisticListChanges';
 
 const CACHE_TIME = 3600e3;
 // * a page of messages.searchStickers, as tdesktop asks for it (stickers_list_widget.cpp)
@@ -40,6 +42,10 @@ const ARCHIVED_STICKERS_LIMIT = 15;
 // * kReadFeaturedSetsTimeout in tdesktop's apiwrap.cpp: the trending sets seen meanwhile are read together
 const READ_FEATURED_STICKERS_DELAY = 1000;
 
+// * the keys of the changes of a sticker in either list (apiFileManager.invokeApiWithReference), by the sticker's id
+const FAVED_STICKERS_KEY = 'favedStickers:';
+const RECENT_STICKERS_KEY = 'recentStickers:';
+
 export type FoundStickersPage = {
   stickers: MyDocument[],
   // * undefined once the server has nothing more
@@ -49,7 +55,7 @@ export type FoundStickersPage = {
 export class AppStickersManager extends AppManager {
   private storage: AppStorage<Record<Long, MyMessagesStickerSet>, AccountDatabase>;
 
-  private getStickerSetPromises: {[setId: Long]: Promise<MyMessagesStickerSet>};
+  private getStickerSetPromises: Map<string, Promise<MyMessagesStickerSet>>;
   private getStickersByEmoticonsPromises: {[emoticon: string]: Promise<MyDocument[]>};
 
   private greetingStickers: MyDocument[];
@@ -60,6 +66,8 @@ export class AppStickersManager extends AppManager {
   private getAnimatedEmojiSoundsPromise: Promise<void>;
 
   private favedStickers: MyDocument[];
+  // * the changes faveSticker made to the list that the server has yet to answer
+  private favedStickersChanges = new OptimisticListChanges<MyDocument>();
   private recentStickers: MyDocument[];
 
   private names: Record<string, InputStickerSet.inputStickerSetID>;
@@ -98,7 +106,7 @@ export class AppStickersManager extends AppManager {
       if(!this.getGreetingStickersPromise) {
         this.getGreetingStickersTimeout ??= ctx.setTimeout(() => {
           this.getGreetingStickersTimeout = undefined;
-          this.getGreetingSticker(true);
+          this.getGreetingSticker(true).catch(noop);
         }, 5000);
       }
 
@@ -155,7 +163,7 @@ export class AppStickersManager extends AppManager {
   }
 
   public clear = (init?: boolean) => {
-    this.getStickerSetPromises = {};
+    this.getStickerSetPromises = new Map();
     this.getStickersByEmoticonsPromises = {};
     this.sounds = {};
     this.names = {};
@@ -184,16 +192,17 @@ export class AppStickersManager extends AppManager {
       this.getGreetingStickersTimeout = undefined;
     }
 
-    if(!this.getGreetingStickersPromise) {
-      this.getGreetingStickersPromise = this.getStickersByEmoticon({
-        emoticon: '👋⭐️',
-        includeServerStickers: true
-      }).then((docs) => {
-        if(!docs.length) throw 'NO_STICKERS';
-        this.greetingStickers = docs.slice() as Document.document[];
-        this.greetingStickers.sort((a, b) => Math.random() - Math.random());
-      });
-    }
+    // * searched anew: nothing greets yet, so the search kept by the emoji, if any, found nothing. One that fails or
+    // finds nothing is not kept: the next greeting searches again
+    this.getGreetingStickersPromise ??= forgetFailedRequest(this.getStickersByEmoticon({
+      emoticon: '👋⭐️',
+      includeServerStickers: true,
+      overwrite: true
+    }).then((docs) => {
+      if(!docs.length) throw 'NO_STICKERS';
+      this.greetingStickers = docs.slice() as Document.document[];
+      this.greetingStickers.sort((a, b) => Math.random() - Math.random());
+    }), () => this.getGreetingStickersPromise, () => this.getGreetingStickersPromise = undefined);
 
     return this.getGreetingStickersPromise.then(() => {
       let doc: Document.document;
@@ -234,8 +243,9 @@ export class AppStickersManager extends AppManager {
     }
 
     const cacheKey = this.getCacheKey(set);
-    if(this.getStickerSetPromises[cacheKey]) {
-      return this.getStickerSetPromises[cacheKey];
+    const loading = this.getStickerSetPromises.get(cacheKey);
+    if(loading) {
+      return loading;
     }
 
     if(!params.overwrite) {
@@ -245,41 +255,33 @@ export class AppStickersManager extends AppManager {
       }
     }
 
-    const promise = this.getStickerSetPromises[cacheKey] = new Promise(async(resolve) => {
+    // * settles whatever happens: a promise left pending would be kept for the set until a reload
+    const promise = (async(): Promise<MyMessagesStickerSet> => {
       if(!params.overwrite) {
-        const cachedSet = await this.storage.get(cacheKey);
-        if(this.canUseStickerSetCache(cachedSet, params.useCache)) {
-          delete (cachedSet.documents as any).saved;
-          this.saveStickerSetLocal(cachedSet);
-          resolve(cachedSet);
-
-          if(this.getStickerSetPromises[cacheKey] === promise) {
-            delete this.getStickerSetPromises[cacheKey];
+        try {
+          const cachedSet = await this.storage.get(cacheKey);
+          if(this.canUseStickerSetCache(cachedSet, params.useCache)) {
+            delete (cachedSet.documents as any).saved;
+            this.saveStickerSetLocal(cachedSet);
+            return cachedSet;
           }
-
-          return;
+        } catch(err) {
+          // * the copy kept here could not be read: the server is asked
+          this.log.error('getStickerSet: cached set', cacheKey, err);
         }
       }
 
-      try {
-        const stickerSet = await this.apiManager.invokeApi('messages.getStickerSet', {
-          stickerset: set,
-          hash: 0
-        }) as MyMessagesStickerSet;
+      const stickerSet = await this.apiManager.invokeApi('messages.getStickerSet', {
+        stickerset: set,
+        hash: 0
+      }) as MyMessagesStickerSet;
 
-        this.saveStickerSet(stickerSet, cacheKey);
+      this.saveStickerSet(stickerSet, cacheKey);
+      return stickerSet;
+    })().catch((): MyMessagesStickerSet => null);
 
-        resolve(stickerSet);
-      } catch(err) {
-        resolve(null);
-      }
-
-      if(this.getStickerSetPromises[cacheKey] === promise) {
-        delete this.getStickerSetPromises[cacheKey];
-      }
-    });
-
-    return promise;
+    this.getStickerSetPromises.set(cacheKey, promise);
+    return forgetSettledRequest(this.getStickerSetPromises, cacheKey, promise);
   }
 
   public getLocalStickerSet(id: STICKER_LOCAL_SET_ID) {
@@ -299,7 +301,8 @@ export class AppStickersManager extends AppManager {
 
   public getAnimatedEmojiSounds(overwrite?: boolean) {
     if(this.getAnimatedEmojiSoundsPromise && !overwrite) return this.getAnimatedEmojiSoundsPromise;
-    const promise = this.getAnimatedEmojiSoundsPromise = Promise.all([
+    // * one that failed is not kept: the next ask goes to the server again
+    const promise = this.getAnimatedEmojiSoundsPromise = forgetFailedRequest(Promise.all([
       this.apiManager.getAppConfig(overwrite),
       this.apiManager.getConfig()
     ]).then(([appConfig, config]) => {
@@ -343,7 +346,7 @@ export class AppStickersManager extends AppManager {
       // if(TEST_FILE_REFERENCE_REFRESH) {
       //   TEST_FILE_REFERENCE_REFRESH = false;
       // }
-    });
+    }), () => this.getAnimatedEmojiSoundsPromise, () => this.getAnimatedEmojiSoundsPromise = undefined);
 
     return promise;
   }
@@ -384,6 +387,7 @@ export class AppStickersManager extends AppManager {
       const docEmoticon = fixEmoji(doc.stickerEmojiRaw);
       for(const emoticon in this.getStickersByEmoticonsPromises) {
         const promise = this.getStickersByEmoticonsPromises[emoticon];
+        // * a search still on its way may fail: that is for whoever asked for it, with nothing to reorder here
         promise.then((stickers) => {
           const _doc = findAndSplice(stickers, (_doc) => _doc.id === doc.id);
           if(_doc) {
@@ -391,7 +395,7 @@ export class AppStickersManager extends AppManager {
           } else if(emoticon.includes(docEmoticon)) {
             stickers.unshift(doc);
           }
-        });
+        }, noop);
       }
     }
 
@@ -401,10 +405,15 @@ export class AppStickersManager extends AppManager {
       this.onStickersUpdated('recent', false);
     }
 
-    return this.apiManager.invokeApi('messages.saveRecentSticker', {
-      id: getDocumentInput(doc),
-      unsave,
-      attached
+    return this.apiFileManager.invokeApiWithReference({
+      context: doc,
+      change: true,
+      key: RECENT_STICKERS_KEY + doc.id,
+      callback: () => this.apiManager.invokeApi('messages.saveRecentSticker', {
+        id: getDocumentInput(doc),
+        unsave,
+        attached
+      })
     });
   }
 
@@ -745,6 +754,21 @@ export class AppStickersManager extends AppManager {
     return this.getFavedStickers(overwrite).then(() => this.favedStickers);
   }
 
+  /**
+   * The faved or the recent stickers read from the server for the fresh file references of their documents alone (the
+   * references storage's refresh): the list kept here stays as it is. It may hold a change the server has yet to take -
+   * one gone back for a fresh reference among them - which the server's list put in its place would drop.
+   */
+  public refreshStickersReferences(type: 'faved' | 'recent') {
+    const request = type === 'faved' ?
+      this.apiManager.invokeApiSingle('messages.getFavedStickers', {hash: 0}) :
+      this.apiManager.invokeApiSingle('messages.getRecentStickers', {hash: 0});
+    return request.then((res) => {
+      assumeType<MessagesFavedStickers.messagesFavedStickers | MessagesRecentStickers.messagesRecentStickers>(res);
+      this.saveStickers(res.stickers, {type: type === 'faved' ? 'favedStickers' : 'recentStickers'});
+    });
+  }
+
   public getFavedStickersLimit() {
     return this.apiManager.getLimit('favedStickers');
   }
@@ -757,24 +781,32 @@ export class AppStickersManager extends AppManager {
     const limit = await this.getFavedStickersLimit();
 
     const doc = this.appDocsManager.getDoc(docId);
-    findAndSplice(this.favedStickers, (_doc) => _doc.id === doc.id);
-
-    let limitReached = false;
-    if(!unfave) {
-      this.favedStickers.unshift(doc);
-      const spliced = this.favedStickers.splice(limit, this.favedStickers.length - limit);
-      limitReached = spliced.length > 0;
-    }
+    const {change, limitReached} = this.favedStickersChanges.make(this.favedStickers, doc, unfave, limit);
 
     this.rootScope.dispatchEvent('sticker_updated', {type: 'faved', faved: !unfave, document: doc, limitReached});
 
-    return this.apiManager.invokeApi('messages.faveSticker', {
-      id: getDocumentInput(doc),
-      unfave
+    return this.apiFileManager.invokeApiWithReference({
+      context: doc,
+      change: true,
+      key: FAVED_STICKERS_KEY + doc.id,
+      callback: () => this.apiManager.invokeApi('messages.faveSticker', {
+        id: getDocumentInput(doc),
+        unfave
+      })
     }).then(() => {
+      this.favedStickersChanges.answer(change);
       if(unfave) {
         this.onStickersUpdated('faved', true);
       }
+    }, (err) => {
+      // * taken out, the list put back in place, where the list's hash keeps it too, and the panel is told so with no
+      // toast
+      const faved = this.favedStickersChanges.revert(change, this.favedStickers);
+      if(faved) {
+        this.rootScope.dispatchEvent('stickers_updated', {type: 'faved', stickers: faved, reverted: true});
+      }
+
+      throw err;
     });
   }
 
@@ -975,13 +1007,15 @@ export class AppStickersManager extends AppManager {
       return this.getStickersByEmoticonsPromises[cacheKey];
     }
 
-    return this.getStickersByEmoticonsPromises[cacheKey] = Promise.all([
+    const promise = Promise.all([
       includeServerStickers ? this.apiManager.invokeApiHashable({
         method: 'messages.getStickers',
         params: {
           emoticon
         },
-        processResult: (stickers) => stickers
+        processResult: (stickers) => stickers,
+        // * asked anew, the answer is not the one kept by its hash: a refreshed reference comes with it
+        overwrite
       }) : undefined,
       includeOurStickers ? this.preloadStickerSets() : [],
       includeOurStickers ? this.getRecentStickers() : undefined
@@ -1037,6 +1071,13 @@ export class AppStickersManager extends AppManager {
       const stickers = [...new Set(cachedStickersAnimated.concat(cachedStickersStatic, foundStickers))]/* .filter((doc) => !doc.animated) */;
       return this.filterShowableStickers(stickers, excludePremiumEffectStickers);
     });
+
+    // * a search that failed is not kept: the next one for these emoji asks again
+    return this.getStickersByEmoticonsPromises[cacheKey] = forgetFailedRequest(
+      promise,
+      () => this.getStickersByEmoticonsPromises[cacheKey],
+      () => delete this.getStickersByEmoticonsPromises[cacheKey]
+    );
   }
 
   /** Leaves out (in place) what this browser cannot play, and premium effects when asked to */
@@ -1138,6 +1179,8 @@ export class AppStickersManager extends AppManager {
   }
 
   public clearRecentStickers() {
+    // * a change on its way, sent once more for a fresh reference after the clear, would fill the list again
+    this.apiFileManager.supersedeReferenceRequests(RECENT_STICKERS_KEY);
     if(this.recentStickers) {
       this.recentStickers.length = 0;
       this.onStickersUpdated('recent', false);

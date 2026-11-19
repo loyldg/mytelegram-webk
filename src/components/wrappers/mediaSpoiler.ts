@@ -119,6 +119,28 @@ export async function concealMediaSpoilerWithAnimation(options: {
 }
 
 
+// * the media under the spoiler as it is shown: the largest picture of it there is - the blurred fill beside a fitted
+// * photo (wrapPhoto) and a thumbnail still in place are small ones
+function getRevealSource(mediaSpoiler: HTMLElement): CanvasImageSource {
+  const parent = mediaSpoiler.parentElement;
+  if(!parent) return;
+
+  let source: CanvasImageSource, sourceArea = 0;
+  for(const element of parent.querySelectorAll<HTMLElement>('img, video, canvas')) {
+    if(mediaSpoiler.contains(element)) continue;
+    let area = 0;
+    if(element instanceof HTMLImageElement && element.complete) area = element.naturalWidth * element.naturalHeight;
+    else if(element instanceof HTMLVideoElement && element.readyState >= 2) area = element.videoWidth * element.videoHeight;
+    else if(element instanceof HTMLCanvasElement) area = element.width * element.height;
+    if(area > sourceArea) {
+      source = element as HTMLImageElement | HTMLVideoElement | HTMLCanvasElement;
+      sourceArea = area;
+    }
+  }
+
+  return source;
+}
+
 function revealSpoilerWithAnimation(options: {
   mediaSpoiler: HTMLElement,
   event: Event
@@ -138,7 +160,7 @@ function revealSpoilerWithAnimation(options: {
   const rect = canvas.getBoundingClientRect();
   const isInside = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom;
   const from = isInside ? event : {clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2} as MouseEvent;
-  const result = controls.revealWithAnimation(from, thumbnailCanvas);
+  const result = controls.revealWithAnimation(from, thumbnailCanvas, getRevealSource(mediaSpoiler));
   if(!result) return false;
 
   return result.then(() => {
@@ -273,6 +295,7 @@ function wrapMediaSpoilerWithImage(options: {
   const container = createSpoilerContainer(middleware, decorative || inLink);
   const {canvas, readyResult} = DotRenderer.create({
     ...options,
+    thumbnail: image,
     middleware: container.middlewareHelper.get()
   });
 

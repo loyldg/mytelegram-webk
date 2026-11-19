@@ -13,7 +13,7 @@ import appDownloadManager from '@lib/appDownloadManager';
 import {MyMessage} from '@appManagers/appMessagesManager';
 import {MyPhoto} from '@appManagers/appPhotosManager';
 import canSaveMessageMedia from '@appManagers/utils/messages/canSaveMessageMedia';
-import getMediaFromMessage from '@appManagers/utils/messages/getMediaFromMessage';
+import {getMediaFromMessageOrRich} from '@appManagers/utils/messages/getMediaFromMessage';
 import wrapRichText from '@richTextProcessor/wrapRichText';
 import {MediaSearchContext} from '@components/appMediaPlaybackController';
 import AppMediaViewerBase, {MEDIA_VIEWER_CLASSNAME} from '@components/mediaViewer/base';
@@ -43,6 +43,7 @@ import apiManagerProxy from '@lib/apiManagerProxy';
 import {batch, createSignal} from 'solid-js';
 import {render} from 'solid-js/web';
 import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
+import Modes from '@config/modes';
 
 const isItemIndex = (index: number) => typeof(index) === 'number' && index >= 0;
 
@@ -114,7 +115,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
       processItem: (item) => {
         const isForDocument = this.searchContext.inputFilter._ === 'inputMessagesFilterDocument';
         const {mid, peerId} = item;
-        const media = getMediaFromMessage(item, true);
+        const media = getMediaFromMessageOrRich(item);
 
         if(!media) return;
 
@@ -389,7 +390,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
       return;
     }
     const {message, index} = this.target;
-    const media = getMediaFromMessage(message, true, index);
+    const media = getMediaFromMessageOrRich(message, index);
     if(!media) return;
     appDownloadManager.downloadToDisc({media, queueId: hotReloadGuard.appImManager.chat.bubbles.lazyLoadQueue.queueId});
   };
@@ -398,6 +399,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     const {message, index} = this.target;
     copyMessageMediaWithFeedback({
       message,
+      media: getMediaFromMessageOrRich(message, index),
       index,
       video: this.getShownVideo(),
       button: this.btnMenuCopy,
@@ -434,7 +436,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
   };
 
   private getPhotoId({message, index}: AppMediaViewerTargetType) {
-    return (getMediaFromMessage(message, true, index) as MyPhoto).id;
+    return (getMediaFromMessageOrRich(message, index) as MyPhoto).id;
   }
 
   onSetMainPhotoClick = async() => {
@@ -456,7 +458,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
       this.author.nameEl.append(i18n('SponsoredMessageAd'));
     }
 
-    const media = getMediaFromMessage(message, true);
+    const media = getMediaFromMessageOrRich(message);
     const loadPromises: Promise<any>[] = [];
     const richTextOptions: Parameters<typeof wrapRichText>[1] = {
       maxMediaTimestamp: ((media as MyDocument)?.type === 'video' && (media as MyDocument).duration) || undefined,
@@ -605,7 +607,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
       let item = cache.get(thumbKey);
       if(!item) {
         const targetMessage = this.getTargetMessage(target);
-        const media = targetMessage && getMediaFromMessage(targetMessage, true, target.index) as MyPhoto | MyDocument;
+        const media = targetMessage && getMediaFromMessageOrRich(targetMessage, target.index) as MyPhoto | MyDocument;
         if(!media) {
           break;
         }
@@ -723,6 +725,11 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
     actions.forEach(([buttons, hide]) => {
       buttons.forEach((button) => {
         if(button instanceof HTMLElement) {
+          // * hidden on every page until its rights come: with the keyboard layer, the focus it holds stays in the
+          // * viewer rather than dropping to the page's body
+          if(hide && Modes.a11y && button.contains(button.ownerDocument.activeElement)) {
+            this.wholeDiv.focus({preventScroll: true});
+          }
           button.classList.toggle('hide', hide);
         } else {
           button.verify = () => !hide;
@@ -759,7 +766,7 @@ export default class AppMediaViewer extends AppMediaViewerBase<'caption', 'delet
 
     const mid = message.mid;
     const fromId = (message as Message.message).fwd_from && !message.fromId ? getFwdFromName((message as Message.message).fwd_from) : message.fromId;
-    const media = getMediaFromMessage(message, true, index);
+    const media = getMediaFromMessageOrRich(message, index);
 
     const isSponsored = !!(message as Message.message).pFlags.sponsored || !message.fromId;
     const noAuthor = isSponsored;

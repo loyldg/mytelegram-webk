@@ -1,9 +1,11 @@
 import {describe, expect, test, vi} from 'vitest';
 import '@helpers/peerIdPolyfill';
 import deferredPromise from '@helpers/cancellablePromise';
+import tsNow from '@helpers/tsNow';
 import {AppMessagesManager, RichMessagePayload} from '@appManagers/appMessagesManager';
 import {inputPeer, makeMessagesManager, makeUpdates, peerId} from '@/tests/helpers/messageSending';
 import {AppDraftsManager} from '@appManagers/appDraftsManager';
+import {makeDraftSyncManager} from '@/tests/helpers/draftSync';
 import {tiptapToRichMessage} from '@components/chat/inputEditor/richMessage';
 import {createChatInputEditorTestData} from '@components/chat/inputEditor/testData';
 import {DraftMessage, InputRichMessage, Message, PageBlock, PageCaption, RichMessage, WebPage} from '@layer';
@@ -642,8 +644,6 @@ describe('native rich-message manager plumbing', () => {
   });
 
   test('saves an empty-string draft through inputRichMessage', async() => {
-    const manager = new AppDraftsManager();
-    const invokeApi = vi.fn().mockResolvedValue(true);
     const richMessage = makeRichMessage();
     const localDraft: DraftMessage.draftMessage = {
       _: 'draftMessage',
@@ -655,20 +655,14 @@ describe('native rich-message manager plumbing', () => {
     const resolveInputRichMessage = vi.fn((input: InputRichMessage) => input);
     const assertRichMessage = vi.fn().mockResolvedValue(undefined);
     const invokeWithRichMessageReferenceRetry = vi.fn((_input, invoke) => invoke());
-
-    Object.assign(manager as any, {
-      apiManager: {invokeApi},
+    const {manager, invokeApi} = makeDraftSyncManager({
       appMessagesManager: {
         assertRichMessage,
         resolveInputRichMessage,
         invokeWithRichMessageReferenceRetry
       },
-      appPeersManager: {getInputPeerById: () => inputPeer},
-      dialogsStorage: {getDialogOnly: () => ({top_message: 1})},
-      drafts: {},
-      timeManager: {getServerTimeOffset: () => 0, getServerTime: () => Math.floor(Date.now() / 1000)}
+      appPeersManager: {getInputPeerById: () => inputPeer}
     });
-    vi.spyOn(manager, 'saveDraft').mockImplementation(({draft}) => draft as any);
 
     await manager.syncDraft({
       peerId,
@@ -894,12 +888,20 @@ describe('native rich-message manager plumbing', () => {
       });
       expect(manager.getDraft(peerId)).toBe(localDraft);
 
-      vi.advanceTimersByTime(2001);
+      // * older than the save however late it comes; one dated after the save is newer
+      vi.advanceTimersByTime(60e3);
       updateDraftMessage!({
         peer: inputPeer,
         draft: staleDraft
       });
-      expect(manager.getDraft(peerId)).toBe(staleDraft);
+      expect(manager.getDraft(peerId)).toBe(localDraft);
+
+      const newerDraft: DraftMessage.draftMessage = {...staleDraft, date: tsNow(true), message: 'newer'};
+      updateDraftMessage!({
+        peer: inputPeer,
+        draft: newerDraft
+      });
+      expect(manager.getDraft(peerId)).toBe(newerDraft);
     } finally {
       vi.useRealTimers();
     }

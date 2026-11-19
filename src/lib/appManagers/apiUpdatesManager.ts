@@ -5,7 +5,7 @@
  * https://github.com/zhukov/webogram/blob/master/LICENSE
  */
 
-import {ConstructorDeclMap, Message, MessageFwdHeader, Peer, StarsAmount, Update, Updates} from '@layer';
+import {ConstructorDeclMap, Message, MessageFwdHeader, Peer, StarsAmount, Update, Updates, UpdatesChannelDifference, UpdatesDifference} from '@layer';
 import {LogTypes} from '@lib/logger';
 import assumeType from '@helpers/assumeType';
 import App from '@config/app';
@@ -70,6 +70,10 @@ class ApiUpdatesManager {
 
   private channelStates: {[channelId: ChatId]: UpdatesState} = {};
   private attached = false;
+  // * the first difference is asked for: the version's message can go in once it is in
+  private changelogReady = false;
+  // * the versions whose message this worker has put in the "Telegram" chat, or is putting there
+  private changelogVersions: Set<string> = new Set();
   private initialSync = true;
 
   private subscriptions: {[channelId: ChatId]: {count: number, interval?: number}} = {};
@@ -320,6 +324,13 @@ class ApiUpdatesManager {
       qts: -1
     }, {
       timeout: 0x7fffffff
+    }).catch((err: ApiError): Promise<UpdatesDifference.updatesDifferenceTooLong> => {
+      // * a difference this client cannot read is the same one on every try, and the updates after it wait
+      // * for it for good: go on from where the server is now, as from a difference too long
+      if(err.type !== 'NETWORK_RESULT_UNREADABLE') throw err;
+      log.error('unreadable difference, skipping to the current state');
+      return this.apiManager.invokeApi('updates.getState', {}, {noErrorBox: true})
+      .then((state) => ({_: 'updates.differenceTooLong', pts: state.pts}));
     }).then((differenceResult) => {
       log('result', differenceResult);
       updatesState.syncProgressTime = Date.now();
@@ -437,7 +448,12 @@ class ApiUpdatesManager {
       filter: {_: 'channelMessagesFilterEmpty'},
       pts: channelState.pts,
       limit: 1000
-    }, {timeout: 0x7fffffff}).then((differenceResult) => {
+    }, {timeout: 0x7fffffff}).catch((err: ApiError): UpdatesChannelDifference.updatesChannelDifferenceTooLong => {
+      // * as for the account's difference: a channel's this client cannot read reloads the channel
+      if(err.type !== 'NETWORK_RESULT_UNREADABLE') throw err;
+      log.error('unreadable channel difference, reloading the channel');
+      return {_: 'updates.channelDifferenceTooLong', pFlags: {}, dialog: undefined, messages: [], chats: [], users: []};
+    }).then((differenceResult) => {
       log('diff result', differenceResult)
       channelState.pts = 'pts' in differenceResult ? differenceResult.pts : undefined;
       channelState.lastDifferenceTime = channelState.syncProgressTime = Date.now();
@@ -629,6 +645,10 @@ class ApiUpdatesManager {
       /* case 'updateDeleteChannelMessages':
         channelId = update.channel_id;
         break; */
+      // a widget's state in a channel's pts sequence, if the server ever sends it there (it edits the post instead)
+      case 'updateMessageWidgetData':
+        channelId = (update.peer as Peer.peerChannel).channel_id;
+        break;
       case 'updateChannelTooLong':
         channelId = update.channel_id;
         if(!(channelId in this.channelStates)) {
@@ -880,6 +900,86 @@ class ApiUpdatesManager {
     delete this.subscriptions[channelId];
   }
 
+  /**
+   * The message about the version the app was updated to, put in the account's "Telegram" chat once the first
+   * difference is in, once per version. The version is kept as seen only when the message is there, or when the
+   * version has none (no file for it in any language): a start that stops on the way — a reload, a database an
+   * older version's tab kept closed — leaves the message for the next one. A tab may bring the version after the
+   * account's updates have started (the tabs share this worker, and the first one to start may not have known it),
+   * so this is asked again whenever one does (index.worker's `state`).
+   */
+  public deliverChangelog() {
+    const newVersion = this.appStateManager.newVersion;
+    if(!newVersion || !this.changelogReady || this.changelogVersions.has(newVersion)) {
+      return;
+    }
+
+    this.changelogVersions.add(newVersion);
+    return Promise.resolve(this.updatesState.syncLoading).then(async() => {
+      const strs: Record<string, string> = {
+        en: 'was updated to version',
+        ru: 'обновлён до версии'
+      };
+
+      // * true: put in the chat; false: the version has none in this language; a throw: it could not be asked for
+      const getChangelog = async(lang: string) => {
+        const res = await fetch(`changelogs/${lang}_${newVersion.split(' ')[0]}.md`);
+        if(res.status === 404) {
+          return false;
+        }
+
+        if(!res.ok) {
+          throw new Error('CHANGELOG_' + res.status);
+        }
+
+        let text = await res.text();
+        // * a server that answers every address with the app's page (the dev server) has no file for it either
+        if(/^\s*</.test(text)) {
+          return false;
+        }
+
+        const langStr = strs[lang] || strs.en;
+        const pre = `**Telegram Web${App.suffix} ${langStr} ${newVersion}**\n\n`;
+        text = pre + text;
+
+        const [message, entities] = parseMarkdown(text, []);
+        const update: Update.updateServiceNotification = {
+          _: 'updateServiceNotification',
+          entities,
+          message,
+          type: 'local',
+          pFlags: {},
+          inbox_date: tsNow(true),
+          media: undefined
+        };
+
+        this.processLocalUpdate(update);
+        return true;
+      };
+
+      let delivered = false, failed = false;
+      const languages = filterUnique([this.networkerFactory.language, 'en']);
+      for(const language of languages) {
+        try {
+          if(await getChangelog(language)) {
+            delivered = true;
+            break;
+          }
+        } catch(err) {
+          this.log.warn('the version\'s message could not be fetched', language, err);
+          failed = true;
+        }
+      }
+
+      if(delivered || !failed) {
+        this.appStateManager.pushToState('version', newVersion);
+      } else {
+        // * asked again by the next tab that brings the version, or by the next start
+        this.changelogVersions.delete(newVersion);
+      }
+    });
+  }
+
   public attach() {
     if(this.attached) return;
 
@@ -890,8 +990,6 @@ class ApiUpdatesManager {
     this.attached = true;
 
     this.appStateManager.getState().then(({updates: state}) => {
-      const newVersion = this.appStateManager.newVersion/*  || '1.6.0' */;
-
       this.log('got state', state);
 
       // rootScope.broadcast('state_synchronizing');
@@ -952,49 +1050,8 @@ class ApiUpdatesManager {
       this.setProxy();
       // });
 
-      if(newVersion) {
-        this.updatesState.syncLoading.then(async() => {
-          const strs: Record<string, string> = {
-            en: 'was updated to version',
-            ru: 'обновлён до версии'
-          };
-
-          const getChangelog = (lang: string) => {
-            return fetch(`changelogs/${lang}_${newVersion.split(' ')[0]}.md`)
-            .then((res) => (res.status === 200 && res.ok && res.text()) || Promise.reject())
-            .then((text) => {
-              const langStr = strs[lang] || strs.en;
-              const pre = `**Telegram Web${App.suffix} ${langStr} ${newVersion}**\n\n`;
-
-              text = pre + text;
-
-              const [message, entities] = parseMarkdown(text, []);
-
-              const update: Update.updateServiceNotification = {
-                _: 'updateServiceNotification',
-                entities,
-                message,
-                type: 'local',
-                pFlags: {},
-                inbox_date: tsNow(true),
-                media: undefined
-              };
-
-              this.processLocalUpdate(update);
-            });
-          };
-
-          const languages = filterUnique([this.networkerFactory.language, 'en']);
-          for(const language of languages) {
-            try {
-              await getChangelog(language);
-              break;
-            } catch(err) {
-
-            }
-          }
-        });
-      }
+      this.changelogReady = true;
+      this.deliverChangelog();
     });
   }
 }

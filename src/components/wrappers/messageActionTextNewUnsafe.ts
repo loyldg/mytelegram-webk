@@ -9,13 +9,14 @@ import {getWalletFiatRate, loadWalletFiatRate, WalletFiatRate} from '@components
 import {formatTransferGrams, wrapGramTransferCompactText} from '@components/wallet/transferText';
 import {ForumTopic, Message, MessageAction, MessageEntity, MessageMedia, MessageReplyHeader, StarGift, TextWithEntities} from '@layer';
 import getPeerId from '@appManagers/utils/peers/getPeerId';
-import I18n, {FormatterArgument, FormatterArguments, i18n, join, langPack, LangPackKey, _i18n} from '@lib/langPack';
+import I18n, {FormatterArgument, FormatterArguments, i18n, join, langPack, LangPackKey, UNSUPPORTED_LANG_PACK_KEY, _i18n} from '@lib/langPack';
 import {GENERAL_TOPIC_ID, SERVICE_PEER_ID} from '@appManagers/constants';
 import wrapEmojiText from '@lib/richTextProcessor/wrapEmojiText';
 import tsNow from '@helpers/tsNow';
 import wrapPlainText from '@lib/richTextProcessor/wrapPlainText';
 import wrapRichText from '@lib/richTextProcessor/wrapRichText';
 import rootScope from '@lib/rootScope';
+import isOwnMessage from '@appManagers/utils/messages/isOwnMessage';
 import topicAvatar from '@components/topicAvatar';
 import {wrapCustomEmojiAwaited} from '@components/wrappers/customEmoji';
 import getPeerTitle from '@components/wrappers/getPeerTitle';
@@ -102,6 +103,9 @@ type WrapTopicIconOptions = {
   topic: Pick<ForumTopic.forumTopic, 'icon_color' | 'icon_emoji_id' | 'title' | 'id'>,
   plain?: boolean
 } & WrapSomethingOptions;
+
+// * wallet service actions are left out of the `MessageAction` union, so they have no text here
+const UNSUPPORTED_ACTIONS = new Set<string>(['messageActionGramTransfer', 'messageActionWalletTonConnectRequest']);
 
 export async function wrapTopicIcon(options: WrapTopicIconOptions & {plain: true}): Promise<string>;
 export async function wrapTopicIcon(options: WrapTopicIconOptions & {plain?: false}): Promise<HTMLElement | DocumentFragment>;
@@ -658,7 +662,7 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
       }
 
       case 'messageActionSetChatTheme': {
-        const isMe = !!message.pFlags.out;
+        const isMe = isOwnMessage(message, rootScope.myId);
         let authorElement: ReturnType<typeof getNameDivHTML>;
         if(!isMe) {
           authorElement = getNameDivHTML(message.fromId, plain);
@@ -668,7 +672,8 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
 
         const theme = action.theme;
         if(theme._ === 'chatThemeUniqueGift') {
-          // * unsupported now
+          args.push(wrapSomeText(getCollectibleName(theme.gift as StarGift.starGiftUnique), plain));
+          langPackKey = isMe ? 'GiftThemesSetByYou' : 'GiftThemesSetByOther';
         } else if(theme.emoticon) {
           args.push(wrapSomeText(theme.emoticon, plain));
           langPackKey = isMe ? 'ChatThemeChangedYou' : 'ChatThemeChangedTo';
@@ -721,7 +726,7 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
         const asks = state === 'Pending' && name && (action.topic === 'signData' || action.topic === 'disconnect') ? action.topic : '';
         langPackKey = (asks ?
           (asks === 'signData' ? 'Wallet.Action.TonConnectAppSignData' : 'Wallet.Action.TonConnectAppDisconnect') :
-          name ? 'Wallet.Action.TonConnectApp' + state : 'Wallet.Action.TonConnect' + state) as LangPackKey;
+          name ? 'WalletTonConnectRequestApp' + state : 'WalletTonConnectRequest' + state) as LangPackKey;
         args = name ? [wrapSomeText(name, plain, [{_: 'messageEntityBold', offset: 0, length: name.length}])] : [];
         break;
       }
@@ -745,7 +750,7 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
         const withFiat = (rate: WalletFiatRate) => {
           // * "(2 308,64 €)" stays on one line
           const fiat = rate && formatFiat(nanos, rate.perGram, rate.currency).replace(/ /g, '\u00a0');
-          return fiat ? I18n.format('Wallet.Action.AmountFiat', true, [grams, fiat]) : grams;
+          return fiat ? I18n.format('WalletTransferWorth', true, [grams, fiat]) : grams;
         };
         const rate = getWalletFiatRate();
         let amount: FormatterArgument = withFiat(rate);
@@ -800,7 +805,7 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
         ];
 
         if(isUser) {
-          if(message.pFlags.out) {
+          if(isOwnMessage(message, rootScope.myId)) {
             langPackKey = action.pFlags.for_both ?
               'ActionSetWallpaperForThisChatSelfBoth' : (
                 action.pFlags.same ?
@@ -837,6 +842,18 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
         const result = await getPriceChangedActionMessageLangParams(action, isBroadcast, () => getNameDivHTML(message.fromId, plain));
         langPackKey = result.langPackKey;
         args = result.args;
+        break;
+      }
+
+      case 'messageActionNoPaidMessagesTokenUsed': {
+        if(message.pFlags.out) {
+          langPackKey = 'NoPaidMessagesToken.UsedOut';
+          args = [getNameDivHTML(message.peerId, plain)];
+        } else {
+          langPackKey = 'NoPaidMessagesToken.Used';
+          args = [getNameDivHTML(message.fromId, plain)];
+        }
+
         break;
       }
 
@@ -1158,7 +1175,7 @@ export default async function wrapMessageActionTextNewUnsafe(options: WrapMessag
         break;
       }
       default:
-        langPackKey = (langPack[_] || `[${action._}]`) as any;
+        langPackKey = (langPack[_] || (UNSUPPORTED_ACTIONS.has(_) ? UNSUPPORTED_LANG_PACK_KEY : `[${action._}]`)) as any;
         break;
     }
 

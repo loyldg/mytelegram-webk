@@ -380,6 +380,10 @@
       top: 50%;
       transform: translateY(-50%);
     }
+
+    &-label {
+      display: block;
+    }
   }
 
   &.has-custom-action-button {
@@ -873,7 +877,6 @@
 
   &-menu {
     flex: 0 0 auto;
-    color: var(--secondary-text-color);
   }
 }
 

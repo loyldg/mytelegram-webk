@@ -10,10 +10,34 @@ const mocks = vi.hoisted(() => ({
   wrapPeerTitle: vi.fn(),
   showPeerPopup: vi.fn(),
   importContactToken: vi.fn(),
+  importNoPaidMessagesToken: vi.fn(),
   getDeepLinkInfo: vi.fn(),
   resolveUserByUsername: vi.fn(),
-  shareGame: vi.fn()
+  resolveUsername: vi.fn(),
+  shareGame: vi.fn(),
+  joinGroupCall: vi.fn(),
+  joinCallFromLink: vi.fn(),
+  joinLiveStream: vi.fn(),
+  anchorListeners: [] as Array<{name: string, protocol?: string}>
 }));
+
+// * every handler the processor registers is kept here, whatever a test clears
+vi.mock('@helpers/addAnchorListener', async(importOriginal) => {
+  const actual = await importOriginal<typeof import('@helpers/addAnchorListener')>();
+  return {
+    ...actual,
+    default: (options: Parameters<typeof actual.default>[0]) => {
+      const result = actual.default(options);
+      mocks.anchorListeners.push(options);
+      return result;
+    }
+  };
+});
+// * the wallet's links are registered only once it is released
+vi.mock('@lib/wallet/release', () => ({isWalletReleased: () => true, isWalletAvailable: () => true}));
+
+// * where it is not, no link reaches a video chat at all
+vi.mock('@environment/groupCallSupport', () => ({default: true}));
 
 // everything the processor can open, none of which these links reach but through the mocks below
 vi.mock('@components/popups/sharedFolderInvite', () => ({default: vi.fn()}));
@@ -30,6 +54,10 @@ vi.mock('@lib/appImManager', () => ({
   default: {
     setInnerPeer: mocks.setInnerPeer,
     openUsername: mocks.openUsername,
+    joinGroupCall: mocks.joinGroupCall,
+    joinCallFromLink: mocks.joinCallFromLink,
+    joinLiveStream: mocks.joinLiveStream,
+    chat: {},
     getStackFromElement: (): undefined => undefined
   }
 }));
@@ -40,6 +68,7 @@ vi.mock('@components/popups/giftLink', () => ({default: vi.fn()}));
 vi.mock('@components/popups/stars', () => ({default: vi.fn(), showGiftStarsPicker: vi.fn()}));
 vi.mock('@components/popups/sendGift', () => ({default: vi.fn()}));
 vi.mock('@components/popups/sendGiftPicker', () => ({default: vi.fn()}));
+vi.mock('@components/popups/myQrCode', () => ({default: vi.fn()}));
 vi.mock('@stores/stars', () => ({prefetchStars: vi.fn()}));
 vi.mock('@components/popups/starGiftInfo', () => ({default: vi.fn()}));
 vi.mock('@components/sidebarRight', () => ({default: {}}));
@@ -60,20 +89,26 @@ vi.mock('@lib/richTextProcessor/wrapRichText', () => ({
 
 type Processor = import('@lib/internalLinkProcessor').InternalLinkProcessor;
 let processor: Processor;
+// * what the processor set on the window: the functions an inline onclick calls
+let windowFunctions: string[];
 let INTERNAL_LINK_TYPE: typeof import('@lib/internalLink').INTERNAL_LINK_TYPE;
 
 beforeAll(async() => {
   const module = await import('@lib/internalLinkProcessor');
   INTERNAL_LINK_TYPE = (await import('@lib/internalLink')).INTERNAL_LINK_TYPE;
   processor = new module.InternalLinkProcessor();
+  const before = new Set(Object.keys(window));
   processor.construct({
     appUsersManager: {
       importContactToken: mocks.importContactToken,
-      resolveUserByUsername: mocks.resolveUserByUsername
+      importNoPaidMessagesToken: mocks.importNoPaidMessagesToken,
+      resolveUserByUsername: mocks.resolveUserByUsername,
+      resolveUsername: mocks.resolveUsername
     },
     apiManager: {getDeepLinkInfo: mocks.getDeepLinkInfo},
     appGamesManager: {shareGame: mocks.shareGame}
   } as any);
+  windowFunctions = Object.keys(window).filter((key) => !before.has(key) && typeof (window as any)[key] === 'function');
 });
 
 afterEach(() => {
@@ -101,8 +136,30 @@ describe('contact token links', () => {
 
   test('read the token of the tg:// form too', async() => {
     mocks.importContactToken.mockResolvedValue({_: 'user', id: USER_ID, pFlags: {}});
-    await click('tg_contact', 'tg://contact?token=AbCd&free=1');
+    await click('tg_contact', 'tg://contact?token=AbCd');
     expect(mocks.importContactToken).toHaveBeenCalledWith('AbCd');
+  });
+
+  test.each([
+    ['https://t.me/contact/AbCd?free=Fr1', 'contact'],
+    ['tg://contact?token=AbCd&free=Fr1', 'tg_contact']
+  ])('spend the ?free= code of %s on its owner, then open their chat', async(href, handler) => {
+    mocks.importContactToken.mockResolvedValue({_: 'user', id: USER_ID, pFlags: {}});
+    mocks.importNoPaidMessagesToken.mockResolvedValue(true);
+    await click(handler, href);
+
+    expect(mocks.importContactToken).toHaveBeenCalledWith('AbCd');
+    expect(mocks.importNoPaidMessagesToken).toHaveBeenCalledWith(USER_ID, 'Fr1');
+    expect(mocks.setInnerPeer).toHaveBeenCalledWith({peerId: USER_ID.toPeerId(false)});
+    expect(mocks.toastNew).toHaveBeenCalledWith(expect.objectContaining({langPackKey: 'NoPaidMessagesToken.Imported'}));
+  });
+
+  test('spend no code on a dead contact link', async() => {
+    mocks.importContactToken.mockRejectedValue({type: 'CONTACT_TOKEN_INVALID'});
+    await click('contact', 'https://t.me/contact/AbCd?free=Fr1');
+
+    expect(mocks.importNoPaidMessagesToken).not.toHaveBeenCalled();
+    expect(mocks.toastNew).toHaveBeenCalledWith({langPackKey: 'ContactLinkInvalid'});
   });
 
   test.each([
@@ -132,6 +189,36 @@ describe('contact token links', () => {
 
     expect(mocks.importContactToken).not.toHaveBeenCalled();
     expect(mocks.toastNew).toHaveBeenCalledWith({langPackKey: 'ContactLinkInvalid'});
+  });
+});
+
+// * a proxy link asks to connect through a proxy (tdesktop's `^proxy/?\?(.+)`), which a browser cannot
+// * do: it says so, and never opens the profile @proxy the path spells
+describe('proxy links', () => {
+  test.each([
+    ['https://t.me/proxy?server=1.2.3.4&port=443&secret=ee00', 'proxy'],
+    ['https://t.me/proxy/?server=1.2.3.4&port=443&secret=ee00', 'proxy'],
+    ['https://telegram.me/Proxy?server=1.2.3.4&port=443&secret=ee00', 'proxy'],
+    ['https://t.me/socks?server=1.2.3.4&port=1080&user=a&pass=b', 'socks'],
+    ['tg://proxy?server=1.2.3.4&port=443&secret=ee00', 'tg_proxy'],
+    ['tg://socks?server=1.2.3.4&port=1080', 'tg_socks']
+  ])('say %s is not for the web, not resolve a username', async(href, handler) => {
+    const {default: wrapUrl} = await import('@lib/richTextProcessor/wrapUrl');
+    expect(wrapUrl(href).onclick).toBe(handler);
+
+    await click(handler, href);
+    expect(mocks.toastNew).toHaveBeenCalledWith({langPackKey: 'Link.NotSupported'});
+    expect(mocks.openUsername).not.toHaveBeenCalled();
+    expect(mocks.getDeepLinkInfo).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    'https://t.me/proxy',
+    'https://t.me/proxy/123',
+    'https://t.me/socks/1?server=1.2.3.4'
+  ])('leave %s, which names no proxy, to the username', async(href) => {
+    const {default: wrapUrl} = await import('@lib/richTextProcessor/wrapUrl');
+    expect(wrapUrl(href).onclick).toBe('im');
   });
 });
 
@@ -327,5 +414,126 @@ describe('game links', () => {
 
     expect(mocks.resolveUserByUsername).toHaveBeenCalledWith('gamebot');
     expect(mocks.openUsername).toHaveBeenCalledWith(expect.objectContaining({userName: 'gamebot'}));
+  });
+});
+
+// * a link puts no one into a call unasked (tdesktop's joinVoiceChatFromLink): only the chat's own service message
+// * joins as the chat's Join button does, and the address it carries is anyone's to hand over
+describe('video chat links', () => {
+  const CHAT_ID = 77 as ChatId;
+  const PEER_ID = CHAT_ID.toPeerId(true);
+  const HREF = `tg://voicechat?chat_id=${CHAT_ID}&id=123&access_hash=456`;
+
+  async function serviceMessageAnchor() {
+    const {default: wrapJoinVoiceChatAnchor} = await import('@components/wrappers/joinVoiceChatAnchor');
+    return wrapJoinVoiceChatAnchor({
+      _: 'messageService',
+      peerId: PEER_ID,
+      action: {_: 'messageActionGroupCall', call: {_: 'inputGroupCall', id: '123', access_hash: '456'}}
+    } as any) as HTMLAnchorElement;
+  }
+
+  test('ask before joining the call a tg://voicechat link names, from a message or handed to the page', async() => {
+    const {default: wrapUrl} = await import('@lib/richTextProcessor/wrapUrl');
+    expect(wrapUrl(HREF).onclick).toBe('tg_voicechat');
+
+    await click('tg_voicechat', HREF);
+
+    expect(mocks.setInnerPeer).toHaveBeenCalledWith({peerId: PEER_ID});
+    expect(mocks.joinCallFromLink).toHaveBeenCalledWith(PEER_ID, '123', undefined);
+    expect(mocks.joinGroupCall).not.toHaveBeenCalled();
+  });
+
+  test('join from the service message of the call as the chat\'s Join button does', async() => {
+    const a = await serviceMessageAnchor();
+    expect(a.getAttribute('onclick')).toBe('tg_voicechat(this)');
+
+    await (window as any).tg_voicechat(a);
+
+    expect(mocks.joinGroupCall).toHaveBeenCalledWith(PEER_ID, '123');
+    expect(mocks.joinCallFromLink).not.toHaveBeenCalled();
+  });
+
+  test('take a copy of the service message\'s anchor for a link', async() => {
+    const a = (await serviceMessageAnchor()).cloneNode(true) as HTMLAnchorElement;
+
+    await (window as any).tg_voicechat(a);
+
+    expect(mocks.joinCallFromLink).toHaveBeenCalledWith(PEER_ID, '123', undefined);
+    expect(mocks.joinGroupCall).not.toHaveBeenCalled();
+  });
+
+  // * the value is a speaker invite (tdesktop PeerByLinkInfo::voicechatHash), handed to the join
+  test.each([
+    ['https://t.me/somechannel?livestream', undefined],
+    ['https://t.me/somechannel?videochat', undefined],
+    ['https://t.me/somechannel?voicechat=hash', 'hash'],
+    ['tg://resolve?domain=somechannel&livestream', undefined],
+    ['tg://resolve?domain=somechannel&videochat=speaker', 'speaker']
+  ])('ask before joining the chat\'s running call by %s, whatever it calls it', async(href, inviteHash) => {
+    mocks.resolveUsername.mockResolvedValue({_: 'channel', id: CHAT_ID, pFlags: {}});
+    const {default: wrapUrl} = await import('@lib/richTextProcessor/wrapUrl');
+
+    await click(wrapUrl(href).onclick, href);
+
+    expect(mocks.resolveUsername).toHaveBeenCalledWith('somechannel');
+    expect(mocks.setInnerPeer).toHaveBeenCalledWith({peerId: PEER_ID});
+    expect(mocks.joinCallFromLink).toHaveBeenCalledWith(PEER_ID, undefined, inviteHash);
+    expect(mocks.joinLiveStream).not.toHaveBeenCalled();
+    expect(mocks.joinGroupCall).not.toHaveBeenCalled();
+  });
+
+  test('open a user a link of the kind names', async() => {
+    mocks.resolveUsername.mockResolvedValue({_: 'user', id: 5, pFlags: {}});
+
+    await click('im', 'https://t.me/someone?livestream');
+
+    expect(mocks.openUsername).toHaveBeenCalledWith({userName: 'someone'});
+    expect(mocks.joinCallFromLink).not.toHaveBeenCalled();
+    expect(mocks.joinLiveStream).not.toHaveBeenCalled();
+  });
+});
+
+// * an anchor's inline onclick calls its link's handler by name: `tg_ton-connect(this)` subtracted, and threw on click
+describe('link handler names', () => {
+  test('are each one an inline onclick can call', () => {
+    expect(windowFunctions.length).toBeGreaterThan(40);
+    expect(windowFunctions.filter((name) => !/^[A-Za-z_$][\w$]*$/.test(name))).toEqual([]);
+  });
+
+  test('are each the name an anchor of the link calls, and the code calls it', async() => {
+    const {default: wrapUrl, getAnchorHandlerName} = await import('@lib/richTextProcessor/wrapUrl');
+    expect(mocks.anchorListeners.some(({name, protocol}) => name === 'ton-connect' && protocol === 'tg')).toBe(true);
+
+    for(const {name, protocol} of mocks.anchorListeners) {
+      const handlerName = getAnchorHandlerName(name, protocol);
+      expect(windowFunctions).toContain(handlerName);
+      if(protocol !== 'tg') {
+        continue;
+      }
+
+      // * `safe`, and a url to show, for tg://iv
+      const href = `tg://${name}?url=${encodeURIComponent('https://example.com/')}`;
+      const {onclick} = wrapUrl(href, true);
+      expect(onclick, href).toBe(handlerName);
+
+      const a = document.createElement('a');
+      a.href = href;
+      a.setAttribute('onclick', onclick + '(this)');
+      const handler = vi.spyOn(window as any, handlerName).mockReturnValue(undefined);
+      try {
+        // * as the browser runs an inline onclick: the anchor's own code, in the window's scope
+        new Function(a.getAttribute('onclick')).call(a);
+        expect(handler, href).toHaveBeenCalledWith(a);
+      } finally {
+        handler.mockRestore();
+      }
+    }
+  });
+
+  test('cannot be registered unless the code can call them', async() => {
+    const {default: addAnchorListener} = await import('@helpers/addAnchorListener');
+    expect(() => addAnchorListener({name: 'not.a.name' as any, callback: () => {}})).toThrow();
+    expect((window as any)['not.a.name']).toBeUndefined();
   });
 });

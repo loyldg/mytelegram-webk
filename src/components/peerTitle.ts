@@ -28,6 +28,8 @@ export type PeerTitleOptions = {
   limitSymbols?: number,
   withIcons?: boolean,
   withPremiumIcon?: boolean,
+  /** with `withIcons`: no emoji status or premium star, whatever the middleware */
+  noPremiumIcon?: boolean,
   clickableEmojiStatus?: boolean,
   threadId?: number,
   meAsNotes?: boolean,
@@ -98,7 +100,11 @@ export default class PeerTitle {
     this.options = {};
 
     if(options) {
-      this.ready = this.update(options);
+      // * settles whatever the render comes to: a bubble's render waits for it with the rest of its
+      // * loads, and a rejection would end that wait for all of them at once
+      this.ready = this.update(options).catch((err) => {
+        console.error('peer title render failed', err);
+      });
     }
 
     weakMap.set(this.element, this);
@@ -228,7 +234,7 @@ export default class PeerTitle {
           peerId,
           threadId
         }),
-        (this.options.withIcons && generateTitleIcons({peerId, clickableEmojiStatus: this.options.clickableEmojiStatus, wrapOptions: {...this.options.wrapOptions, textColor: this.options.iconsColor || this.options.wrapOptions?.textColor}})) ||
+        (this.options.withIcons && generateTitleIcons({peerId, clickableEmojiStatus: this.options.clickableEmojiStatus, noPremiumIcon: this.options.noPremiumIcon, wrapOptions: {...this.options.wrapOptions, textColor: this.options.iconsColor || this.options.wrapOptions?.textColor}})) ||
           (this.options.withPremiumIcon && generateTitleIcons({peerId, wrapOptions: {...this.options.wrapOptions, textColor: this.options.iconsColor || this.options.wrapOptions?.textColor}, noVerifiedIcon: true, noFakeIcon: true})),
         getTopicIconPromise
       ]);
@@ -266,6 +272,16 @@ export default class PeerTitle {
 
     this.setHasInner(hasInner);
   }
+}
+
+/**
+ * A `PeerTitle` built during a render: the render waits for its `ready` (`loadPromises`), so what it is drawn
+ * into is laid out with the name already in it
+ */
+export function createPeerTitleElement(options: PeerTitleOptions, loadPromises?: Promise<any>[]) {
+  const peerTitle = new PeerTitle(options);
+  loadPromises?.push(peerTitle.ready);
+  return peerTitle.element;
 }
 
 export function changeTitleEmojiColor(element: HTMLElement, color: string) {

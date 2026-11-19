@@ -32,6 +32,13 @@
 }
 
 .rich-message-input {
+  // * the field caps its own height (syncHeight), and a reply or an edit header above it adds to the plate: the
+  // * plate's own cap squeezed the field's row under that header while the field kept its height, and its content
+  // * stood out of the plate's rounded box, over the header and past the bottom edge
+  .chat-input-wrapper {
+    max-height: none;
+  }
+
   &:not(.is-message-input-expanded) {
     .input-message-input {
       --padding-horizontal: 0em;
@@ -42,25 +49,24 @@
     }
 
     .new-message-wrapper {
+      // * shown and hidden where it stands as the AI button is, at its other corner; going as the field shrinks, it
+      // * slides under Send, which hides it there
       .toggle-message-input-size {
-        display: none;
         inset-inline-end: var(--padding-horizontal);
         position: absolute;
         top: var(--padding-vertical);
         z-index: 4;
-      }
+        @include animation-level-icon-toggle(is-shown);
 
-      &.has-message-input-expand-button {
-        .toggle-message-input-size {
-          display: flex;
+        &:not(.is-shown) {
+          z-index: auto;
         }
       }
 
-      &.has-ai-editor-button {
-        > .chat-input-ai-editor-button {
-          inset-inline-end: auto;
-          inset-inline-start: var(--padding-horizontal);
-        }
+      // * in its corner while it goes too
+      > .chat-input-ai-editor-button {
+        inset-inline-end: auto;
+        inset-inline-start: var(--padding-horizontal);
       }
     }
   }

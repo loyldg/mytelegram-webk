@@ -16,7 +16,7 @@ import toggleStorages from '@helpers/toggleStorages';
 import appTabsManager from '@appManagers/appTabsManager';
 import callbackify from '@helpers/callbackify';
 import Modes from '@config/modes';
-import {IS_POPUP_SANDBOX} from '@config/debug';
+import {IS_SANDBOX_PAGE} from '@config/debug';
 import {IS_WORKER} from '@helpers/context';
 import {ActiveAccountNumber} from '@lib/accounts/types';
 import commonStateStorage from '@lib/commonStateStorage';
@@ -66,10 +66,10 @@ port.addMultipleEventsListeners({
   environment: (environment) => {
     setEnvironment(environment);
 
-    // Probes the base DC every 10 s until a WebSocket opens. The popup sandbox runs on fixtures
-    // with no session (this worker's URL carries the page's `?popups=1`): nothing there may reach
-    // Telegram, and nothing needs a transport.
-    if(import.meta.env.VITE_MTPROTO_AUTO && Modes.multipleTransports && !IS_POPUP_SANDBOX) {
+    // Probes the base DC every 10 s until a WebSocket opens. A sandbox runs on fixtures with no
+    // session (this worker's URL carries the page's `?popups=1` / `?widgets=1`): nothing there may
+    // reach Telegram, and nothing needs a transport.
+    if(import.meta.env.VITE_MTPROTO_AUTO && Modes.multipleTransports && !IS_SANDBOX_PAGE) {
       transportController.waitForWebSocket();
     }
   },
@@ -167,6 +167,14 @@ port.addMultipleEventsListeners({
     appStateManager.userId = userId;
     appStateManager.newVersion = newVersion;
     appStateManager.oldVersion = oldVersion;
+
+    // * a tab that knows of a new version the account's updates started without (the tab that started them could
+    // * not read the state, or came first with nothing new): the version's message comes now
+    if(newVersion) {
+      callbackify(appManagersManager.getManagersByAccount(), (managers) => {
+        managers[accountNumber]?.apiUpdatesManager.deliverChangelog();
+      });
+    }
 
     // * preserve self user
     if(userId && resetStorages.has('users')) {

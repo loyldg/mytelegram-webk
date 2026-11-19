@@ -5,6 +5,15 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('wrapUrl contact links', () => {
+  test('hands a contact link to its own handler', () => {
+    vi.stubGlobal('contact', vi.fn());
+    vi.stubGlobal('tg_contact', vi.fn());
+    expect(wrapUrl('https://t.me/contact/AbCdEf?free=xyz').onclick).toBe('contact');
+    expect(wrapUrl('tg://contact?token=AbCdEf&free=xyz').onclick).toBe('tg_contact');
+  });
+});
+
 describe('wrapUrl Telegram links', () => {
   test.each([
     'https://t.me/durov',
@@ -107,6 +116,60 @@ describe('wrapUrl unknown tg:// links', () => {
     expect(wrapUrl('tg://iv?url=' + encodeURIComponent('https://example.com/')).onclick).toBeUndefined();
     // `call` is not registered where group calls are not supported: not a tg:// link either way
     expect(wrapUrl('https://t.me/call/abc').onclick).toBeUndefined();
+  });
+});
+
+describe('wrapUrl handlers are the app\'s own', () => {
+  const shown: string[] = [];
+  // * what a browser's window shows of the document by name - an element of that id, a frame, a form - lives
+  // * on its prototype chain (jsdom has none of it), never on the window itself
+  const showByName = (name: string, value: any) => {
+    Object.defineProperty(Object.getPrototypeOf(window), name, {value, configurable: true});
+    shown.push(name);
+  };
+  afterEach(() => {
+    shown.splice(0).forEach((name) => delete Object.getPrototypeOf(window)[name]);
+  });
+
+  test.each([
+    ['tg://x=alert(1)', 'tg_x=alert(1)'],
+    ['tg:x=alert(document.domain)', 'tg_x=alert(document.domain)'],
+    ['tg://a=fetch(1)//b', 'tg_a=fetch(1)']
+  ])('never takes an element named as %s spells for its handler', (url, name) => {
+    showByName(name, document.createElement('span'));
+    expect(wrapUrl(url).onclick).toBeUndefined();
+
+    vi.stubGlobal('unknownDeepLink', vi.fn());
+    expect(wrapUrl(url).onclick).toBe('unknownDeepLink');
+  });
+
+  test('takes a handler only as a function set on the window itself', () => {
+    // * an `<embed>` or `<object>` was callable in some engines
+    showByName('tg_resolve', () => {});
+    expect(wrapUrl('tg://resolve?domain=durov').onclick).toBeUndefined();
+
+    vi.stubGlobal('tg_resolve', {});
+    expect(wrapUrl('tg://resolve?domain=durov').onclick).toBeUndefined();
+  });
+
+  test('keeps t.me/sendgrams a username link with only an element of that id there', () => {
+    vi.stubGlobal('im', vi.fn());
+    showByName('sendgrams', document.createElement('span'));
+    expect(wrapUrl('https://t.me/sendgrams?to=@durov&amount=1').onclick).toBe('im');
+  });
+
+  // * the name is spelled into an inline onclick: `tg_ton-connect(this)` subtracts, and throws on click
+  test('never takes a function the inline code cannot call by its name', () => {
+    vi.stubGlobal('unknownDeepLink', vi.fn());
+    vi.stubGlobal('tg_ton-connect', vi.fn());
+    vi.stubGlobal('tg_a.b', vi.fn());
+    expect(wrapUrl('tg://ton-connect?v=2').onclick).toBe('unknownDeepLink');
+    expect(wrapUrl('tg://a.b?x=1').onclick).toBe('unknownDeepLink');
+  });
+
+  test('asks no element named unknownDeepLink about a tg:// link', () => {
+    showByName('unknownDeepLink', document.createElement('span'));
+    expect(wrapUrl('tg://nothing_like_it?x=1').onclick).toBeUndefined();
   });
 });
 

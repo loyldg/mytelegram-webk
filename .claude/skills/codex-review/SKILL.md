@@ -133,27 +133,40 @@ noticed in passing. No findings from either pass means the review is done.
   - Then review again, but only if the round's fixes changed the code. A round
     that confirmed nothing, or only findings about untouched code, ends the
     review.
-    - **Rounds 2 and 3:** the whole fixed change, with the same `--about`, and
-      `--fast` if it was asked for. A change reviewed as `--commit <sha>`
-      stays as it was, with the fixes uncommitted on top: from round 2, review
-      the fixes, since round 1 reviewed the commit. Use `--paths <the fixed
-      files>`, or `--patch` with only your hunks when other sessions changed
-      those files too (step 1).
-    - **Rounds 4 and 5,** only while the round before them confirmed a P0–P2
-      finding that you fixed: only the fixes since that round. Add
-      `--since <sha>` to the same target, where `<sha>` is the commit the round
-      before reviewed (its output names it "(as <sha>)"). If the script refuses
-      because HEAD, or the merge base for `--base`, has moved, review the whole
-      change.
-  - If round 3 or later confirmed only P3 findings, fix them without another
-    round, and say in the report that those fixes went unreviewed.
+  - **Every round reviews the whole fixed change**, with the same `--about`
+    (plus what the fixes did), and `--fast` if it was asked for. Never only the
+    fixes since the round before: a round over the fixes alone misses what they
+    broke elsewhere in the change, and a clean one of them does not end the
+    review. `--since` is for a user who asks for a review of the fixes alone.
+    - A change still uncommitted: the target of round 1, brought up to date —
+      `--paths` with every file the fixes added too, a `--patch` written again
+      from the tree as it is now (an old one is the change before the fixes).
+    - A change that is a commit (or a branch), with the fixes uncommitted on top,
+      in a worktree only you work in and with the change's last commit at HEAD:
+      `--base <the change's base>` (`--base <sha>^` for one commit, `--base
+      master` for a branch), which takes the uncommitted fixes too.
+    - Any other committed change with fixes on top — in a checkout other
+      sessions share (`--base` would take their work too), or with commits
+      after it (`--base` would take those too): rebuild it in a worktree of its
+      own. `git worktree add --detach .claude/worktrees/<name> <base>`; apply the
+      change to it (`git diff --binary <base> <its last commit> | git -C
+      <worktree> apply`), then your fixes alone the same way: `git diff --binary
+      HEAD -- <files>` without the other sessions' hunks, as step 1 says for
+      `--patch`, and each file the fixes added, which that leaves out while it
+      is untracked, as `git diff --binary --no-index /dev/null <file>`. Review
+      it there with `--uncommitted`, which no one else's work reaches, and
+      which takes deletions and renames along. If a patch does not apply, tell
+      the user instead of reviewing something else. Remove the worktree after
+      with `git worktree remove --force <path>` (never `git worktree prune`).
+  - A fix of any level, a P3 included, gets another round: only a round that
+    confirms nothing to fix ends the review.
   - **Five reviews at most.** Stop and ask the user, showing what is still open,
     when any of these happens:
-    - round 5 still confirms a P0–P2 finding;
+    - round 5 still confirms a finding;
     - a finding comes back after its fix;
     - the fixes go in circles.
 
-    More rounds will not settle these.
+    More rounds will not settle these. The user may ask for more full rounds.
 
 Tests stay with this session: the files Codex ran to check its findings are not the
 tests the change needs. Run what AGENTS.md's final review calls for.

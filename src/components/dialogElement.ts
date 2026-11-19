@@ -4,6 +4,8 @@ import rootScope from '@lib/rootScope';
 import type {ActiveAccountNumber} from '@lib/accounts/types';
 import Button from '@components/button';
 import SetTransition from '@components/singleTransition';
+import liteMode from '@helpers/liteMode';
+import sequentialDom from '@helpers/sequentialDom';
 import Modes from '@config/modes';
 import PeerTitle from '@components/peerTitle';
 import I18n, {i18n} from '@lib/langPack';
@@ -42,7 +44,8 @@ export type DialogDom = {
   titleSpanContainer: HTMLSpanElement,
   statusSpan: HTMLSpanElement,
   lastTimeSpan: HTMLSpanElement,
-  pinnedBadge?: HTMLElement,
+  /** the pill a pinned row's time stands in, with the pin in front of it */
+  timePill?: HTMLElement,
   /** the grip a pinned row is dragged by while its list can be reordered */
   sortableIcon?: HTMLElement,
   unreadBadge?: HTMLElement,
@@ -211,10 +214,13 @@ export type DialogElementBadgeState = {
   transitionDuration?: number
 };
 
+type DialogElementBadgeKey = Parameters<DialogElement['toggleBadgeByKey']>[0];
+/** the badges that stand in the subtitle, one after another - the avatar's stands on the avatar */
+type DialogElementSubtitleBadgeKey = Exclude<DialogElementBadgeKey, 'unreadAvatarBadge'>;
+
 type DialogElementAppliedBadgeState = {
-  [key in Parameters<DialogElement['toggleBadgeByKey']>[0]]: boolean
+  [key in DialogElementBadgeKey]: boolean
 } & {
-  hasOnlyPinnedBadge: boolean,
   unreadText?: string,
   unreadCount?: number,
   unreadMention?: boolean,
@@ -231,6 +237,10 @@ export class DialogElement {
   public middlewareHelper: MiddlewareHelper;
   public folderTags?: DialogFolderTags;
   private peerTitle: PeerTitle;
+  /** the badges that come in, or back, once the leaving ones are lifted (`holdBadgesInPlace`) */
+  private waitingBadges: Set<HTMLElement>;
+  /** the lifts that wait for their frame (`holdBadgesInPlace`) */
+  private pendingHolds: number;
   private lastBadgeState: DialogElementAppliedBadgeState;
 
   constructor({
@@ -397,7 +407,7 @@ export class DialogElement {
     rightSpan.classList.add('dialog-title-details');
     rightSpan.append(statusSpan, lastTimeSpan);
 
-    this.subtitleRow.classList.add('dialog-subtitle', 'has-multiple-badges');
+    this.subtitleRow.classList.add('dialog-subtitle');
 
     // if(I18n.isRTL) {
     //   // this.subtitle.dir = '';
@@ -481,12 +491,18 @@ export class DialogElement {
     });
   }
 
-  public createPinnedBadge() {
-    if(this.dom.pinnedBadge) return;
-    const badge = this.dom.pinnedBadge = document.createElement('div');
-    badge.className = `dialog-subtitle-badge badge badge-icon badge-${BADGE_SIZE} dialog-subtitle-badge-pinned`;
-    badge.append(Icon('chatspinned'));
-    this.dom.subtitleEl.append(badge);
+  /**
+   * The pill a pinned row's time stands in, with the pin in front of it: drawn only while the row
+   * is pinned, and kept once made, as the grip is. The time itself is rewritten by several hands
+   * (the last message, search, a community row), so the pin stays out of it
+   */
+  public createTimePill() {
+    if(this.dom.timePill) return;
+    const {lastTimeSpan} = this.dom;
+    const pill = this.dom.timePill = document.createElement('span');
+    pill.className = 'dialog-time-pill';
+    lastTimeSpan.replaceWith(pill);
+    pill.append(Icon('pin_status_filled', 'dialog-time-pill-pin'), lastTimeSpan);
   }
 
   /** The grip a pinned row is dragged by, shown only while its list can be reordered */
@@ -573,8 +589,6 @@ export class DialogElement {
 
     const previous = this.lastBadgeState;
     const botApp = !!options.botApp;
-    // * the bot's button takes the pin's place instead of covering it, as the unread badge does
-    const pinned = options.pinned && !botApp;
 
     // * `toggleBadgeByKey` writes what it toggles into the very state `previous` is
     const wasVisible = {
@@ -583,7 +597,6 @@ export class DialogElement {
     };
 
     const mounted = {
-      pinnedBadge: !!this.dom.pinnedBadge,
       unreadBadge: !!this.dom.unreadBadge,
       unreadAvatarBadge: !!this.dom.unreadAvatarBadge,
       mentionsBadge: !!this.dom.mentionsBadge,
@@ -593,11 +606,7 @@ export class DialogElement {
       botAppButton: !!this.dom.botAppButton
     };
 
-    const states: Array<[
-      Parameters<DialogElement['toggleBadgeByKey']>[0],
-      boolean
-    ]> = [
-      ['pinnedBadge', pinned],
+    const states: Array<[DialogElementBadgeKey, boolean]> = [
       ['unreadBadge', options.unread],
       ['unreadAvatarBadge', options.unreadAvatar],
       ['mentionsBadge', options.mentions],
@@ -607,21 +616,20 @@ export class DialogElement {
       ['botAppButton', botApp]
     ];
 
-    // * the bot's button and the badges of the subtitle take turns in one place, so whatever
-    // * leaves it to the other leaves from where it stands - measured before the newcomer is
-    // * appended and pushes it aside
-    if(transitionDuration && previous && previous.botAppButton !== botApp) {
-      this.holdBadgesInPlace(states
-      .filter(([key, visible]) => key !== 'unreadAvatarBadge' && !visible && previous[key] && this.dom[key])
-      .map(([key]) => this.dom[key]));
-    }
+    // * a badge leaves the subtitle from where it stands, out of its flow (`holdBadgesInPlace`)
+    const leaving = transitionDuration && previous && liteMode.isAvailable('animations') ? states
+    .filter(([key, visible]) => key !== 'unreadAvatarBadge' && !visible && previous[key] && this.dom[key])
+    .map(([key]) => key as DialogElementSubtitleBadgeKey) : [];
 
     // * the pinned rows of a list form the block that can be reordered within itself, and
-    // * `Sortable` reads that block off the DOM - see attachPinnedDialogsReorder
+    // * `Sortable` reads that block off the DOM - see attachPinnedDialogsReorder. The class is what
+    // * shows a row pinned too: its time is a pill with a pin (`createTimePill`)
     this.dom.listEl.classList.toggle(PINNED_DIALOG_CLASS_NAME, !!options.pinned);
 
-    if(options.pinned) this.createSortableIcon();
-    if(pinned) this.createPinnedBadge();
+    if(options.pinned) {
+      this.createSortableIcon();
+      this.createTimePill();
+    }
     if(options.unread) this.createUnreadBadge();
     if(options.unreadAvatar) this.createUnreadAvatarBadge();
     if(options.mentions) this.createMentionsBadge();
@@ -630,27 +638,27 @@ export class DialogElement {
     if(options.gram) this.createGramBadge();
     if(botApp) this.createBotAppButton();
 
-    const subtitleBadgesLength = [
-      pinned,
-      options.unread,
-      options.mentions,
-      options.reactions,
-      options.pollVotes,
-      options.gram,
-      botApp
-    ].filter(Boolean).length;
-    const hasOnlyPinnedBadge = pinned && subtitleBadgesLength === 1;
-    // * `SetTransition` keeps `animating` on the element for the whole duration,
-    // * and `.has-only-pinned-badge:not(.animating)` drops the subtitle's trailing
-    // * margin while it is there. Replaying it for an unchanged state makes the
-    // * subtitle of every pinned row widen and snap back — a visible blink.
-    if(!previous || previous.hasOnlyPinnedBadge !== hasOnlyPinnedBadge) {
-      SetTransition({
-        element: this.subtitleRow,
-        className: 'has-only-pinned-badge',
-        forwards: hasOnlyPinnedBadge,
-        duration: transitionDuration
-      });
+    // * one made just now goes in, and so do one that waited out of the row and was sent away before
+    // * it came in, and one called back on its way out (`holdBadgesInPlace`) - where badges leave, or
+    // * wait to be lifted since an earlier call, only once they are lifted, as one laid out now would
+    // * push them aside (the bot's button and the badges take turns in one place): till then the new
+    // * one waits out of the row, the one called back where it is held
+    const coming = states
+    .filter(([key, visible]) => {
+      const badge = this.dom[key];
+      return key !== 'unreadAvatarBadge' && visible && badge &&
+        (!mounted[key] || !badge.parentElement || badge.classList.contains('is-held-in-place'));
+    })
+    .map(([key]) => ({key: key as DialogElementSubtitleBadgeKey, badge: this.dom[key]}));
+    if(leaving.length || (this.pendingHolds && coming.length)) {
+      coming.forEach(({badge}) => badge.classList.contains('is-held-in-place') || badge.remove());
+      this.holdBadgesInPlace(leaving, coming);
+    } else {
+      for(const {badge} of coming) {
+        if(!badge.parentElement && !this.waitingBadges?.has(badge)) {
+          this.subtitleRow.append(badge);
+        }
+      }
     }
 
     for(const [key, visible] of states) {
@@ -701,7 +709,6 @@ export class DialogElement {
     }
 
     this.lastBadgeState = {
-      pinnedBadge: pinned,
       unreadBadge: options.unread,
       unreadAvatarBadge: options.unreadAvatar,
       mentionsBadge: options.mentions,
@@ -709,7 +716,6 @@ export class DialogElement {
       pollVotesBadge: options.pollVotes,
       gramBadge: !!options.gram,
       botAppButton: botApp,
-      hasOnlyPinnedBadge,
       unreadText: options.unreadText,
       unreadCount: options.unreadCount,
       unreadMention: options.unreadMention,
@@ -723,33 +729,68 @@ export class DialogElement {
   }
 
   /**
-   * Lifts the leaving badges out of the subtitle's flow, each where it stands: the one coming
-   * in their place does not push them aside, and their going leaves no gap to snap shut
+   * Lifts the leaving badges out of the subtitle's flow, each where it stands: the message takes the
+   * room they leave as they start going and comes out from under them, as in the mobile apps, rather
+   * than widening in one step once they are gone. Their places are read with the other rows' reads,
+   * before anything is written (`sequentialDom`) - a whole folder read at once lets go of many badges
+   * in one task - and the badges `coming` in their place, or back, go in (or out of their hold) only then
    */
-  private holdBadgesInPlace(badges: HTMLElement[]) {
+  private holdBadgesInPlace(
+    keys: DialogElementSubtitleBadgeKey[],
+    coming: {key: DialogElementSubtitleBadgeKey, badge: HTMLElement}[]
+  ) {
     const row = this.subtitleRow;
-    if(!badges.length || !row.isConnected) {
-      return;
-    }
+    // * one called back meanwhile stays where it is, and one sent away meanwhile does not come
+    const isStill = ({key, badge}: typeof coming[0], shown: boolean) => {
+      return this.dom[key] === badge && !!this.lastBadgeState?.[key] === shown;
+    };
 
-    // * all measured before any is lifted, as lifting one moves the rest
-    const isRTL = I18n.getIsRTL();
-    const width = row.clientWidth;
-    const places = badges.map((badge) => ({
-      badge,
-      top: badge.offsetTop,
-      inlineEnd: isRTL ? badge.offsetLeft : width - badge.offsetLeft - badge.offsetWidth
-    }));
+    const waiting = this.waitingBadges ??= new Set();
+    coming.forEach(({badge}) => waiting.add(badge));
+    this.pendingHolds = (this.pendingHolds || 0) + 1;
 
-    for(const {badge, top, inlineEnd} of places) {
-      badge.style.setProperty('--held-top', top + 'px');
-      badge.style.setProperty('--held-inline-end', inlineEnd + 'px');
-      badge.classList.add('is-held-in-place');
-    }
+    const leaving = keys.map((key) => ({key, badge: this.dom[key]}));
+    let places: {badge: HTMLElement, top: number, inlineEnd: number}[] = [];
+    sequentialDom.measure(() => {
+      if(!row.isConnected) {
+        return;
+      }
+
+      // * all measured before any is lifted, as lifting one moves the rest; one with no box to measure
+      // * (a row out of sight - the subtitle of a collapsed list) just goes
+      const isRTL = I18n.getIsRTL();
+      const width = row.clientWidth;
+      places = leaving.filter((badge) => {
+        return isStill(badge, false) && badge.badge.parentElement === row && !!badge.badge.offsetParent;
+      }).map(({badge}) => ({
+        badge,
+        top: badge.offsetTop,
+        inlineEnd: isRTL ? badge.offsetLeft : width - badge.offsetLeft - badge.offsetWidth
+      }));
+    });
+
+    sequentialDom.mutate(() => {
+      --this.pendingHolds;
+      for(const {badge, top, inlineEnd} of places) {
+        badge.style.setProperty('--held-top', top + 'px');
+        badge.style.setProperty('--held-inline-end', inlineEnd + 'px');
+        badge.classList.add('is-held-in-place');
+      }
+
+      for(const badge of coming) {
+        waiting.delete(badge.badge);
+        if(isStill(badge, true)) {
+          badge.badge.classList.remove('is-held-in-place');
+          if(badge.badge.parentElement !== row) {
+            row.append(badge.badge);
+          }
+        }
+      }
+    });
   }
 
   public toggleBadgeByKey(
-    key: Extract<keyof DialogDom, 'unreadBadge' | 'unreadAvatarBadge' | 'mentionsBadge' | 'reactionsBadge' | 'pollVotesBadge' | 'gramBadge' | 'pinnedBadge' | 'botAppButton'>,
+    key: Extract<keyof DialogDom, 'unreadBadge' | 'unreadAvatarBadge' | 'mentionsBadge' | 'reactionsBadge' | 'pollVotesBadge' | 'gramBadge' | 'botAppButton'>,
     hasBadge: boolean,
     justCreated: boolean,
     batch?: boolean
@@ -761,8 +802,8 @@ export class DialogElement {
       this.lastBadgeState[key] = hasBadge;
     }
 
-    // * called back before it was gone
-    if(hasBadge) {
+    // * called back before it was gone - unless it waits for the leaving ones to be lifted first
+    if(hasBadge && !this.waitingBadges?.has(this.dom[key])) {
       this.dom[key].classList.remove('is-held-in-place');
     }
 

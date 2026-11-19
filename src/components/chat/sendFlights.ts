@@ -61,6 +61,7 @@ import lottieLoader from '@lib/lottie/lottieLoader';
 import type LottiePlayer from '@lib/lottie/lottiePlayer';
 import {getSendingStatusIconState, setSendingStatusIconState, settleSendingStatusIconCopy} from '@components/sendingStatusIcon';
 import {getOutgoingMessageGradientColorAt, OutgoingMessageGradientPlace, readOutgoingMessageGradient} from '@helpers/outgoingMessageGradient';
+import shallowCopy from '@helpers/dom/shallowCopy';
 import {
   Axes,
   bubbleShapeStyles,
@@ -88,6 +89,7 @@ import {
   layOut,
   makeBox,
   moveBox,
+  paintShapeGradient,
   Point,
   setShapeRadii,
   ShapeParts,
@@ -452,9 +454,7 @@ function borrow(element: HTMLElement, into: HTMLElement, bubble: HTMLElement, si
   // as big, any other (the big emoji, laid out by their pictures and their line) by a copy of it
   let placeholder: HTMLElement;
   if(element.style.width && element.style.height) {
-    placeholder = document.createElement(element.tagName);
-    placeholder.className = element.className;
-    placeholder.style.cssText = element.style.cssText;
+    placeholder = shallowCopy(element);
     placeholder.style.boxSizing = 'border-box';
     placeholder.style.width = `${size.width}px`;
     placeholder.style.height = `${size.height}px`;
@@ -476,9 +476,7 @@ function borrow(element: HTMLElement, into: HTMLElement, bubble: HTMLElement, si
   }
 
   for(const ancestor of chain) {
-    const shell = document.createElement(ancestor.tagName);
-    shell.className = ancestor.className;
-    shell.style.cssText = ancestor.style.cssText;
+    const shell = shallowCopy(ancestor);
     shell.classList.add(styles.context);
     // under what else the box shows
     holder.insertBefore(shell, holder === into ? into.firstChild : null);
@@ -1365,12 +1363,16 @@ class TextFlight extends SendFlight {
     clipStart.part.append(clipEnd.across);
     this.root.append(background, clipStart.across);
     this.parts = {background, bands, corners, tail, clipStart, clipEnd, bubble, field, panelReply};
+    if(this.gradient) {
+      this.paintGradient(this.end);
+    }
+
     this.followStatus();
     this.followShape();
   }
 
-  // * a bubble of a gradient is (nearly) all of the gradient's colour where it lands: the copy flies in that, and in
-  // * the new one when its place moves (a message sent right after it)
+  // * a bubble of a gradient is of the part of it where it lands: the copy flies in that, and in the new one when its
+  // * place moves (a message sent right after it)
   private paint(end: Box) {
     if(!this.gradient) {
       return;
@@ -1379,7 +1381,17 @@ class TextFlight extends SendFlight {
     this.background.color = getOutgoingMessageGradientColorAt(this.gradient, end);
     if(this.fill) {
       this.fill.style.color = this.background.color;
+      this.paintGradient(end);
     }
+  }
+
+  // * where the pieces end up on the page: where the way ends, moved with the list as far as it went (`end`)
+  private paintGradient(end: Box) {
+    const {origin} = this;
+    paintShapeGradient(this.parts as ShapeParts, this.gradient, this.getPlaces(true), {
+      x: origin.x + end.left - this.end.left,
+      y: origin.y + end.top - this.end.top
+    });
   }
 
   protected followLanding(end: Box) {
@@ -1414,6 +1426,9 @@ class TextFlight extends SendFlight {
       const content = this.target;
       const radii = this.background.radii = getRadii(getComputedStyle(content), content.getBoundingClientRect());
       setShapeRadii(this.parts.corners, radii);
+      if(this.gradient) {
+        this.paintGradient(this.getLanding());
+      }
       this.parts.tail?.across.classList.toggle(styles.hidden, !isVisible(content.querySelector('.bubble-tail')));
       this.animate();
     });

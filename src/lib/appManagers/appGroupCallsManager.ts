@@ -642,6 +642,22 @@ export class AppGroupCallsManager extends AppManager {
   }
 
   /**
+   * The chat's call as the server has it now, if one is running there and is `id` when that is given — what a
+   * link may put us into (tdesktop SessionNavigation::joinVoiceChatFromLink asks channels.getFullChannel first:
+   * a call the cache still holds may be over). None otherwise.
+   */
+  public async getRunningGroupCall(chatId: ChatId, id?: GroupCallId): Promise<GroupCall.groupCall> {
+    const chatFull = await this.appProfileManager.getChatFull(chatId, true);
+    const input = (chatFull as ChatFull.channelFull | ChatFull.chatFull).call as InputGroupCall.inputGroupCall;
+    if(input?._ !== 'inputGroupCall' || (id !== undefined && String(input.id) !== String(id))) {
+      return;
+    }
+
+    const call = await this.getGroupCallFull(input.id);
+    return call._ === 'groupCall' ? call : undefined;
+  }
+
+  /**
    * Resolve any conference reference (canonical id, slug or invite message)
    * through the domain manager before UI policy decides whether this is the
    * call that is already open. Keeping this here also makes sure the returned
@@ -1253,6 +1269,8 @@ export class AppGroupCallsManager extends AppManager {
         muted: options.isMuted,
         video_stopped: !options.joinVideo
       };
+
+      if(options.inviteHash) request.invite_hash = options.inviteHash;
 
       // Conference (TdE2E) extras — only set when the caller drove the join
       // through the e2e path. Server distinguishes a conference join by the

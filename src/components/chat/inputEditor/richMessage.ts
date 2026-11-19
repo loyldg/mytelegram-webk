@@ -21,6 +21,7 @@ import checkRTL from '@helpers/string/checkRTL';
 import getDocumentInput from '@appManagers/utils/docs/getDocumentInput';
 import getPhotoInput from '@appManagers/utils/photos/getPhotoInput';
 import {MESSAGES_ALBUM_MAX_SIZE} from '@appManagers/constants';
+import chunk from '@helpers/array/chunk';
 import {
   CHAT_TABLE_TITLE_NODE_NAME,
   CHAT_TABLE_WRAPPER_NODE_NAME
@@ -73,13 +74,7 @@ export function splitOversizedRichMediaCollage(
 > {
   if(block.items.length <= MESSAGES_ALBUM_MAX_SIZE) return [block];
 
-  const chunks = Array.from(
-    {length: Math.ceil(block.items.length / MESSAGES_ALBUM_MAX_SIZE)},
-    (_value, index) => block.items.slice(
-      index * MESSAGES_ALBUM_MAX_SIZE,
-      (index + 1) * MESSAGES_ALBUM_MAX_SIZE
-    )
-  );
+  const chunks = chunk(block.items, MESSAGES_ALBUM_MAX_SIZE);
   return chunks.map((items, index) => {
     const caption = index === chunks.length - 1 ? block.caption : emptyPageCaption();
     const item = items[0];
@@ -167,11 +162,52 @@ function wrapRichTextMark(text: RichText, mark: NonNullable<JSONContent['marks']
   }
 }
 
-function applyRichTextMarks(text: RichText, marks: JSONContent['marks'] = []): RichText {
-  for(let index = marks.length - 1; index >= 0; --index) {
-    text = wrapRichTextMark(text, marks[index]);
+type MarkedRichText = {
+  text: RichText,
+  marks: NonNullable<JSONContent['marks']>,
+  keys: string[]
+};
+
+/**
+ * Inline texts as one rich text: a mark that runs over several of them wraps them once, as an entity
+ * spans its range, and the one that runs the farthest goes outermost. Wrapped each on its own they
+ * are neighbouring equal wrappers, which the server merges — losing a custom emoji that is the first
+ * one's only content: an edited `[textBold(emoji), textBold(" A new look")]` came back as
+ * `textBold(" A new look")`.
+ */
+function wrapMarkRuns(items: MarkedRichText[]): RichText {
+  const texts: RichText[] = [];
+  for(let index = 0; index < items.length;) {
+    const {marks, keys} = items[index];
+    if(!marks.length) {
+      texts.push(items[index++].text);
+      continue;
+    }
+
+    let markIndex = 0, end = index + 1;
+    keys.forEach((key, candidate) => {
+      let candidateEnd = index + 1;
+      while(candidateEnd < items.length && items[candidateEnd].keys.includes(key)) ++candidateEnd;
+      if(candidateEnd > end) {
+        markIndex = candidate;
+        end = candidateEnd;
+      }
+    });
+
+    const key = keys[markIndex];
+    const run = items.slice(index, end).map((item) => {
+      const at = item.keys.indexOf(key);
+      return {
+        text: item.text,
+        marks: item.marks.filter((_, markAt) => markAt !== at),
+        keys: item.keys.filter((_, keyAt) => keyAt !== at)
+      };
+    });
+    texts.push(wrapRichTextMark(wrapMarkRuns(run), marks[markIndex]));
+    index = end;
   }
-  return text;
+
+  return concatRichText(texts);
 }
 
 function stringAttribute(node: JSONContent, ...names: string[]) {
@@ -199,52 +235,57 @@ function richButtonToAttrs(button: {text: RichText, type: PageButton['type'], st
   return value && richButtonAttributes(value, richTextToTiptapInlineContent(button.text));
 }
 
+/** An inline node's own text, without its marks */
 function inlineNodeToRichText(node: JSONContent): RichText {
   if(node.type === RICH_BUTTON_NODE_NAME) {
-    // a button's look is its style; formatting around it does not carry over
     const button = richButtonFromAttrs(node.attrs);
     return button ? {_: 'textButton', ...button} : EMPTY_RICH_TEXT;
   }
 
-  let text: RichText;
   if(node.type === 'text') {
-    text = plainRichText(node.text || '');
+    return plainRichText(node.text || '');
   } else if(node.type === 'hardBreak') {
-    text = plainRichText('\n');
+    return plainRichText('\n');
   } else if(node.type === 'customEmoji') {
     const documentId = node.attrs?.documentId ?? node.attrs?.id;
     const alt = stringAttribute(node, 'emoji', 'alt', 'name');
-    text = documentId === undefined || documentId === null ? plainRichText(alt) : {
+    return documentId === undefined || documentId === null ? plainRichText(alt) : {
       _: 'textCustomEmoji',
       document_id: documentId,
       alt
     };
   } else if(node.type === 'inlineMath') {
     const source = stringAttribute(node, 'source', 'latex');
-    text = source ? {_: 'textMath', source} : EMPTY_RICH_TEXT;
+    return source ? {_: 'textMath', source} : EMPTY_RICH_TEXT;
   } else if(node.type === 'mention') {
     const label = stringAttribute(node, 'label', 'text');
     const userId = node.attrs?.userId ?? node.attrs?.id;
     const inner = plainRichText(label);
-    text = userId === undefined || userId === null ? inner : {
+    return userId === undefined || userId === null ? inner : {
       _: 'textMentionName',
       text: inner,
       user_id: userId
     };
   } else if(node.type === 'inlineRichAnchor') {
     const name = stringAttribute(node, 'name');
-    text = name ? {_: 'textAnchor', text: EMPTY_RICH_TEXT, name} : EMPTY_RICH_TEXT;
+    return name ? {_: 'textAnchor', text: EMPTY_RICH_TEXT, name} : EMPTY_RICH_TEXT;
   } else if(node.content?.length) {
-    text = inlineContentToRichText(node.content);
-  } else {
-    text = plainRichText(stringAttribute(node, 'label', 'alt', 'source', 'caption'));
+    return inlineContentToRichText(node.content);
   }
 
-  return applyRichTextMarks(text, node.marks);
+  return plainRichText(stringAttribute(node, 'label', 'alt', 'source', 'caption'));
 }
 
 export function inlineContentToRichText(content: JSONContent[] = []): RichText {
-  return concatRichText(content.map(inlineNodeToRichText));
+  return wrapMarkRuns(content.map((node) => {
+    // a button's look is its style; formatting around it does not carry over
+    const marks = node.type === RICH_BUTTON_NODE_NAME ? [] : node.marks || [];
+    return {
+      text: inlineNodeToRichText(node),
+      marks,
+      keys: marks.map((mark) => JSON.stringify(mark))
+    };
+  }));
 }
 
 function joinRichTextLines(lines: RichText[]): RichText {

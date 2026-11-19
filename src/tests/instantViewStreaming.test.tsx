@@ -1,9 +1,15 @@
 import {batch, createSignal, onMount} from 'solid-js';
 import {createStore, reconcile} from 'solid-js/store';
 import {render} from 'solid-js/web';
-import {Message, Page, PageBlock, RichText} from '@layer';
+import {Message, Page, PageBlock, PageListOrderedItem, RichText} from '@layer';
+import styles from '@components/instantViewStyles';
 import type {TextRevealFrameScheduler} from '@components/chat/bubbleParts/solidMessageText';
 import onQuoteClick from '@helpers/dom/onQuoteClick';
+import {RICH_QUOTE_SOURCE_ATTRIBUTE, getRichQuoteSource} from '@components/chat/richQuoteSources';
+import {getRichQuoteNodes} from '@lib/richQuote';
+import type TelegramWebView from '@components/telegramWebView';
+
+type WebViewOptions = ConstructorParameters<typeof TelegramWebView>[0];
 
 const instantViewMocks = vi.hoisted(() => ({
   openMedia: vi.fn(),
@@ -16,6 +22,7 @@ const instantViewMocks = vi.hoisted(() => ({
   webViewDestroyed: vi.fn(),
   webViews: [] as Array<{
     iframe: HTMLIFrameElement,
+    options: WebViewOptions,
     emitResize: (height: number) => void
   }>
 }));
@@ -52,7 +59,7 @@ beforeAll(async() => {
       public iframe = document.createElement('iframe');
       private resizeListener: (event: {height: number}) => void;
 
-      constructor() {
+      constructor(public options: WebViewOptions) {
         instantViewMocks.webViews.push(this);
       }
 
@@ -1168,6 +1175,41 @@ describe('InstantViewBlocks streaming updates', () => {
     dispose();
   });
 
+  test('points an embed\'s frame at a web page only, and lets it hold up no tab', async() => {
+    // A script URL in a frame runs as the page holding it — the app, its storage and its keys.
+    const canonical = '<link rel="canonical" href="https://embed.example/x">';
+    const frameOf = async(url: string, html?: string) => {
+      instantViewMocks.webViews.length = 0;
+      const container = document.createElement('div');
+      const dispose = render(() => (
+        <InstantViewBlocks
+          webPageId={1}
+          page={{...makePage('', ''), blocks: [{_: 'pageBlockEmbed', pFlags: {}, url, html, w: 16, h: 9, caption}]}}
+          sourceRevision={1}
+          openNewPage={() => {}}
+          collapse={() => {}}
+        />
+      ), container);
+      await Promise.resolve();
+      const options = instantViewMocks.webViews[0]?.options;
+      dispose();
+      return options && {
+        url: options.url,
+        html: !!options.html,
+        sameOrigin: options.sandbox.split(' ').includes('allow-same-origin'),
+        // an alert() of the frame's would hold the whole tab, a loop of them for good
+        modals: options.sandbox.split(' ').includes('allow-modals')
+      };
+    };
+
+    expect(await frameOf('javascript:parent.document.title="x"')).toBeUndefined();
+    expect(await frameOf('data:text/html,<script>alert(1)</script>')).toBeUndefined();
+    expect(await frameOf('https://example.com/embed')).toEqual({url: 'https://example.com/embed', html: false, sameOrigin: true, modals: false});
+    // a script URL beside markup: the markup's page, or the markup itself in a frame of no origin
+    expect(await frameOf('javascript:alert(1)', canonical)).toEqual({url: 'https://embed.example/x', html: false, sameOrigin: true, modals: false});
+    expect(await frameOf('javascript:alert(1)', '<p>embed</p>')).toEqual({url: undefined, html: true, sameOrigin: false, modals: false});
+  });
+
   test('cancels delayed embed scroll restore when policy unmounts the webview', async() => {
     const [navigationDisabled, setNavigationDisabled] = createSignal(false);
     const page: Page.page = {
@@ -1214,18 +1256,13 @@ describe('InstantViewBlocks streaming updates', () => {
     dispose();
   });
 
-  test('keeps hidden caption links disabled inside the media viewer', async() => {
+  /** Opens the only photo of a page, under `captionText`, in the media viewer: the message it is shown with */
+  async function openCaptionedPhoto(
+    captionText: RichText,
+    richTextOptions?: Parameters<typeof InstantViewBlocks>[0]['richTextOptions']
+  ) {
     const page = makeMediaPage([1]);
-    (page.blocks[0] as PageBlock.pageBlockPhoto).caption = {
-      _: 'pageCaption',
-      text: {
-        _: 'textUrl',
-        text: text('hidden link'),
-        url: 'https://example.com',
-        webpage_id: 0
-      },
-      credit: {_: 'textEmpty'}
-    };
+    (page.blocks[0] as PageBlock.pageBlockPhoto).caption = {_: 'pageCaption', text: captionText, credit: {_: 'textEmpty'}};
     const container = document.createElement('div');
     document.body.append(container);
     const dispose = render(() => (
@@ -1233,21 +1270,43 @@ describe('InstantViewBlocks streaming updates', () => {
         webPageId={1}
         page={page}
         sourceRevision={1}
-        richTextOptions={{noNavigation: true}}
+        richTextOptions={richTextOptions}
         openNewPage={() => {}}
         collapse={() => {}}
       />
     ), container);
-    await Promise.resolve();
 
-    (container.querySelector('[data-photo-id="1"]') as HTMLElement).click();
-    await vi.waitFor(() => expect(instantViewMocks.openMedia).toHaveBeenCalledOnce());
-    const options = instantViewMocks.openMedia.mock.calls[0][0] as {
-      message: {totalEntities?: Array<{_: string}>}
-    };
-    expect(options.message.totalEntities?.some((entity) => entity._ === 'messageEntityTextUrl')).toBe(false);
-    dispose();
-    container.remove();
+    try {
+      await Promise.resolve();
+      (container.querySelector('[data-photo-id="1"]') as HTMLElement).click();
+      await vi.waitFor(() => expect(instantViewMocks.openMedia).toHaveBeenCalledOnce());
+      const options = instantViewMocks.openMedia.mock.calls[0][0] as {
+        message: {message: string, totalEntities?: Array<{_: string}>}
+      };
+      return options.message;
+    } finally {
+      dispose();
+      container.remove();
+    }
+  }
+
+  test('keeps hidden caption links disabled inside the media viewer', async() => {
+    const message = await openCaptionedPhoto({
+      _: 'textUrl',
+      text: text('hidden link'),
+      url: 'https://example.com',
+      webpage_id: 0
+    }, {noNavigation: true});
+    expect(message.totalEntities?.some((entity) => entity._ === 'messageEntityTextUrl')).toBe(false);
+  });
+
+  test('gives the media viewer a caption\'s anchor as its text only, never the server\'s name as an id', async() => {
+    const message = await openCaptionedPhoto({
+      _: 'textConcat',
+      texts: [text('See '), {_: 'textAnchor', name: 'column-center', text: text('the note')}]
+    });
+    expect(message.message).toBe('See the note');
+    expect(message.totalEntities?.some((entity) => entity._ === 'messageEntityAnchor')).toBe(false);
   });
 
   test('drops an in-flight media open after policy changes or its owner is disposed', async() => {
@@ -1475,5 +1534,159 @@ describe('InstantViewBlocks streaming updates', () => {
 
     dispose();
     container.remove();
+  });
+
+  test('draws lists nested deep at once, each text knowing where it stands', async() => {
+    // Every level of a list used to read its parent's place twice over, so a few hundred bytes of nested
+    // lists took the tab seconds, and a few more levels its memory.
+    const DEPTH = 10;
+    let block: PageBlock = {_: 'pageBlockParagraph', text: text('deepest')};
+    for(let level = DEPTH; level > 0; --level) {
+      block = {_: 'pageBlockList', items: [
+        {_: 'pageListItemText', pFlags: {}, text: text(`item ${level}`)},
+        {_: 'pageListItemBlocks', pFlags: {}, blocks: [{_: 'pageBlockParagraph', text: text(`level ${level}`)}, block]}
+      ]};
+    }
+    const blocks: PageBlock[] = [{_: 'pageBlockParagraph', text: text('first')}, block];
+    const container = document.createElement('div');
+    document.body.append(container);
+    const startedAt = performance.now();
+    const dispose = render(() => (
+      <InstantViewBlocks
+        webPageId={1}
+        page={{_: 'page', pFlags: {}, url: '', blocks, photos: [], documents: [], views: 0}}
+        openNewPage={() => {}}
+        collapse={() => {}}
+      />
+    ), container);
+    await Promise.resolve();
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+
+    const drawn = [...container.querySelectorAll(`[${RICH_QUOTE_SOURCE_ATTRIBUTE}]`)].map(getRichQuoteSource);
+    expect(drawn).toEqual(getRichQuoteNodes(blocks).map((node) => node.id));
+    expect(drawn).toHaveLength(2 + DEPTH * 2);
+
+    dispose();
+    container.remove();
+  });
+
+  const renderPage = (blocks: PageBlock[], extra: Partial<Page.page> = {}) => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const startedAt = performance.now();
+    const dispose = render(() => (
+      <InstantViewBlocks
+        webPageId={1}
+        page={{_: 'page', pFlags: {}, url: '', blocks, photos: [], documents: [], views: 0, ...extra}}
+        openNewPage={() => {}}
+        collapse={() => {}}
+      />
+    ), container);
+    return {container, took: performance.now() - startedAt, dispose: () => (dispose(), container.remove())};
+  };
+
+  test('numbers a long ordered list at once, by its start and the values its items carry', async() => {
+    // an item numbered by the list counted the items before it, for every item: thousands of them took seconds,
+    // twenty times the list drawn by the browser's own numbers (measured against it, the machine's load cancels out)
+    const list = (withOwnNumbers: boolean): PageBlock => ({_: 'pageBlockOrderedList', pFlags: {}, start: 7, items: Array.from({length: 2000}, (_, index): PageListOrderedItem => ({
+      _: 'pageListOrderedItemText',
+      pFlags: {},
+      text: text('item'),
+      ...(withOwnNumbers && index === 0 && {num: 'A'}),
+      ...(index === 100 && {value: 500})
+    }))});
+    const plain = renderPage([list(false)]);
+    await Promise.resolve();
+    plain.dispose();
+    const {container, took, dispose} = renderPage([list(true)]);
+    await Promise.resolve();
+    expect(took).toBeLessThan(plain.took * 3 + 500);
+    const markers = [...container.querySelectorAll(`.${styles.ListItemNumber}`)].map((element) => element.textContent);
+    expect([markers[0], markers[1], markers[99], markers[100], markers[101], markers[1999]])
+    .toEqual(['A. ', '8. ', '106. ', '500. ', '501. ', '2399. ']);
+    dispose();
+  });
+
+  test('lays a collage of more than an album out an album at a time, one under another, its caption under it', async() => {
+    // an album's layout has no shape for more than an album holds: it threw on the 13th item
+    const ids = Array.from({length: 25}, (_, index) => index + 1);
+    const page = makeMediaPage(ids, true);
+    (page.blocks[0] as PageBlock.pageBlockCollage).caption = {_: 'pageCaption', text: text('the caption'), credit: {_: 'textEmpty'}};
+    const {container, dispose} = renderPage(page.blocks, {photos: page.photos});
+    const item = (id: number) => container.querySelector(`[data-photo-id="${id}"]`).parentElement as HTMLElement;
+    await vi.waitFor(() => expect(item(25).style.top).not.toBe(''));
+
+    expect(container.querySelectorAll(`.${styles.Collage}`)).toHaveLength(1);
+    // held to the height of its parts, not to one media's
+    expect(container.querySelector(`.${styles.Collage}`).classList.contains(styles.CollageStacked)).toBe(true);
+    const top = (id: number) => parseFloat(item(id).style.top);
+    const bottom = (id: number) => top(id) + parseFloat(item(id).style.height);
+    const part = (from: number, to: number) => ids.slice(from - 1, to);
+    expect(Math.max(...part(1, 10).map(bottom))).toBeLessThanOrEqual(Math.min(...part(11, 20).map(top)));
+    expect(Math.max(...part(11, 20).map(bottom))).toBeLessThanOrEqual(Math.min(...part(21, 25).map(top)));
+    expect(container.textContent.split('the caption')).toHaveLength(2);
+    const caption = [...container.querySelectorAll('*')].find((element) => !element.children.length && element.textContent === 'the caption');
+    expect(container.querySelector(`.${styles.Collage}`).compareDocumentPosition(caption) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    dispose();
+  });
+
+  test('keeps the media of a collage\'s item that a change moves to another album of it', async() => {
+    const ids = Array.from({length: 10}, (_, index) => index + 1);
+    const [state, setState] = createStore({page: makeMediaPage(ids, true), revision: 1});
+    const container = document.createElement('div');
+    document.body.append(container);
+    const dispose = render(() => (
+      <InstantViewBlocks
+        webPageId={1}
+        page={() => state.page}
+        sourceRevision={() => state.revision}
+        openNewPage={() => {}}
+        collapse={() => {}}
+      />
+    ), container);
+    const photo = (id: number) => container.querySelector(`[data-photo-id="${id}"]`);
+    await vi.waitFor(() => expect((photo(10).parentElement as HTMLElement).style.top).not.toBe(''));
+    const photos = ids.map(photo);
+    const collage = () => container.querySelector(`.${styles.Collage}`);
+    expect(collage().classList.contains(styles.CollageStacked)).toBe(false);
+
+    // an eleventh item first: the tenth goes to the second album
+    batch(() => {
+      setState('page', reconcile(makeMediaPage([11, ...ids], true)));
+      setState('revision', 2);
+    });
+    await vi.waitFor(() => expect(container.querySelectorAll('[data-photo-id]')).toHaveLength(11));
+
+    expect(ids.map(photo)).toEqual(photos);
+    expect(instantViewMocks.photoMounted.mock.calls.filter(([id]) => id === 10)).toHaveLength(1);
+    await vi.waitFor(() => expect(collage().classList.contains(styles.CollageStacked)).toBe(true));
+    dispose();
+    container.remove();
+  });
+
+  test('draws a chain of covers as the block they cover', async() => {
+    // every cover copied the rest of the chain, and drew it a level deeper: a long chain took seconds, then the stack
+    let block: PageBlock = {_: 'pageBlockParagraph', text: text('covered')};
+    for(let level = 0; level < 2000; ++level) block = {_: 'pageBlockCover', cover: block};
+    const {container, took, dispose} = renderPage([block]);
+    await Promise.resolve();
+    expect(took).toBeLessThan(1000);
+    expect(container.querySelectorAll('p')).toHaveLength(1);
+    expect(container.querySelector('p').textContent).toBe('covered');
+    dispose();
+  });
+
+  test('gives each page anchors of its own', async() => {
+    // with a random number of 0-999 joined to a name, "12" + "3x" was "123" + "x": a link of one message went to another's
+    const anchor = (name: string): PageBlock => ({_: 'pageBlockParagraph', text: {_: 'textAnchor', text: text('here'), name}});
+    const first = renderPage([anchor('3x')]);
+    const second = renderPage([anchor('x')]);
+    await Promise.resolve();
+    const ids = [first, second].map(({container}) => container.querySelector('[id]').id);
+    expect(ids[0]).not.toBe(ids[1]);
+    expect(ids[0].endsWith('-3x') && ids[1].endsWith('-x')).toBe(true);
+    expect(ids[0].slice(0, -'3x'.length)).not.toBe(ids[1].slice(0, -'x'.length));
+    first.dispose();
+    second.dispose();
   });
 });

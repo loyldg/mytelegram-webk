@@ -14,6 +14,7 @@ import BluffSpoilerController from '@components/bluffSpoilerController';
 import DotRenderer from '@components/dotRenderer';
 import {observeResize} from '@components/resizeObserver';
 import {drawImageFromSource} from '@components/messageSpoilerOverlay/drawImageFromSource';
+import drawGlyphMask from '@components/messageSpoilerOverlay/glyphMask';
 import {
   adjustSpaceBetweenCloseRects,
   computeMaxDistToMargin,
@@ -75,11 +76,14 @@ function MessageSpoilerOverlay(props: InternalMessageSpoilerOverlayProps) {
   const controls: MessageSpoilerOverlayControls = {
     update() {
       update();
+      // * the canvas drawn here is cleared by being sized: it is drawn again at once, as on a resize
+      if(!useWorker) draw();
     }
   };
 
   props.controlsRef(controls);
 
+  let glyphsKey: string;
   let unwrapTimeout: number;
   let cancelAnimation: () => void;
 
@@ -218,25 +222,49 @@ function MessageSpoilerOverlay(props: InternalMessageSpoilerOverlayProps) {
     pushOverlayState();
   }
 
+  // * the worker's canvas in device pixels: a step taller than the message, not its height - a message growing on
+  // * every frame (a details opening) does not resize the worker's canvas on every frame, only the spoilers move in it
+  function getOverlaySize(rect: DOMRect) {
+    return {
+      width: Math.round(rect.width * dpr()),
+      height: Math.round(Math.ceil(rect.height / OVERLAY_HEIGHT_STEP) * OVERLAY_HEIGHT_STEP * dpr())
+    };
+  }
+
   function pushOverlayState() {
     if(!overlayHandle) return;
 
     const rect = props.parentElement.getBoundingClientRect();
-    // * A step taller than the message, not its height: a message growing on every frame (a details
-    // * opening) does not resize the worker's canvas on every frame, only the spoilers move in it
-    const height = Math.ceil(rect.height / OVERLAY_HEIGHT_STEP) * OVERLAY_HEIGHT_STEP;
 
     // * shown at the size of the picture the worker last drew (`--committed-size`): one sized here
     // * changed a frame before the picture of that size came, and the old one was stretched over it
     canvas.style.setProperty('--dpr', '' + dpr());
 
     overlayHandle.update({
-      width: Math.round(rect.width * dpr()),
-      height: Math.round(height * dpr()),
+      ...getOverlaySize(rect),
       rects: spanRects(),
       backgroundColor: backgroundColor(),
       particleColor: particleColor()
     });
+  }
+
+  // * what the dust of Spoiler 2.0 gathers into: the letters of the hidden text, measured as it is tapped - only a
+  // * reveal needs them, and a message that resizes (a details opening) would measure them again on every frame
+  function pushGlyphs() {
+    const rects = spanRects();
+    if(!overlayHandle || !rects.length) return;
+
+    const rect = props.parentElement.getBoundingClientRect();
+    const {width, height} = getOverlaySize(rect);
+    // * the text itself: an edit of the same length and boxes (equal-width digits) has other letters
+    const text = Array.from(props.messageElement.querySelectorAll('.spoiler-text'), (span) => span.textContent).join('\n');
+    const key = width + 'x' + height + ':' + text + ':' +
+      rects.map((spanRect) => Math.round(spanRect.left) + ',' + Math.round(spanRect.top) + ',' + Math.round(spanRect.width)).join(';');
+    if(key === glyphsKey) return;
+
+    glyphsKey = key;
+    const bitmap = drawGlyphMask(props.messageElement, rect, width, height, dpr());
+    if(bitmap) overlayHandle.glyphs(bitmap);
   }
 
   // * The overlay follows a frame behind the layout, so the text under it stays hidden while the message
@@ -321,11 +349,13 @@ function MessageSpoilerOverlay(props: InternalMessageSpoilerOverlayProps) {
 
     props.messageElement.classList.remove('is-hovering-spoiler');
 
+    pushGlyphs();
+
     // the worker mirrors the same curve for the pixels; the signal animation below
     // keeps driving the visibility class and the click guards
-    overlayHandle?.unwrap(clickCoordinates(), maxDist(), getTimeForDist(maxDist()));
+    overlayHandle?.unwrap(clickCoordinates(), maxDist(), getTimeForDist(maxDist(), useWorker));
 
-    cancelAnimation = animateValue(0, 1, getTimeForDist(maxDist()), setUnwrapProgress, {
+    cancelAnimation = animateValue(0, 1, getTimeForDist(maxDist(), useWorker), setUnwrapProgress, {
       easing: UnwrapEasing,
       onEnd: () => {
         unwrapTimeout = window.setTimeout(() => {
@@ -471,19 +501,30 @@ function MessageSpoilerOverlay(props: InternalMessageSpoilerOverlayProps) {
   return <>{canvas}</>;
 }
 
+const overlayControls = new WeakMap<Element, MessageSpoilerOverlayControls>();
+
+/**
+ * The overlays in `root` measure their spoilers and the colours under them again: what they read while something
+ * painted the message's background for it (a bubble changing, `bubbleTransitions`) was not the message's
+ */
+export function updateMessageSpoilerOverlays(root: ParentNode) {
+  root.querySelectorAll('.message-spoiler-overlay').forEach((element) => overlayControls.get(element)?.update());
+}
+
 export function createMessageSpoilerOverlay(props: MessageSpoilerOverlayProps, HotReloadGuardProvider: typeof SolidJSHotReloadGuardProvider) {
   const element = document.createElement('div');
   element.classList.add('message-spoiler-overlay');
 
   let controls: MessageSpoilerOverlayControls;
 
-  const dispose = render(
+  const disposeRender = render(
     () => (
       <HotReloadGuardProvider>
         <MessageSpoilerOverlay
           parentElement={element}
           controlsRef={(value) => {
             controls = value;
+            overlayControls.set(element, value);
           }}
           {...props}
         />
@@ -497,6 +538,9 @@ export function createMessageSpoilerOverlay(props: MessageSpoilerOverlayProps, H
     get controls() {
       return controls;
     },
-    dispose
+    dispose: () => {
+      overlayControls.delete(element);
+      disposeRender();
+    }
   };
 }

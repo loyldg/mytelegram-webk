@@ -1,9 +1,10 @@
 import {PageBlock, PageCaption, RichMessage, RichText} from '@layer';
 import wrapTelegramRichText from '@lib/richTextProcessor/wrapTelegramRichText';
-import {flattenRichMessageContent, flattenRichMessageSummary, isRichMessageFullWidth, richMessageToPage, richMessageToPlainMessage} from '@lib/richMessage';
+import {flattenRichMessageContent, flattenRichMessageSummary, getRichMessageBubbleEdges, isRichMessageFullWidth, richMessageToPage, richMessageToPlainMessage} from '@lib/richMessage';
 import {entitiesFittingPlainMessage} from '@components/chat/inputEditor/model';
 
 const text = (value: string): RichText => ({_: 'textPlain', text: value});
+const noCaption: PageCaption = {_: 'pageCaption', text: {_: 'textEmpty'}, credit: {_: 'textEmpty'}};
 
 function richMessage(blocks: PageBlock[], pFlags: RichMessage.richMessage['pFlags'] = {}): RichMessage {
   return {
@@ -142,7 +143,7 @@ describe('flattenRichMessageSummary', () => {
         _: 'pageBlockVideo',
         pFlags: {},
         video_id: 2,
-        caption: {_: 'pageCaption', text: {_: 'textEmpty'}, credit: {_: 'textEmpty'}}
+        caption: noCaption
       }
     ]));
 
@@ -155,7 +156,7 @@ describe('flattenRichMessageSummary', () => {
         _: 'pageBlockPhoto',
         pFlags: {},
         photo_id: 1,
-        caption: {_: 'pageCaption', text: {_: 'textEmpty'}, credit: {_: 'textEmpty'}}
+        caption: noCaption
       },
       {
         _: 'pageBlockVideo',
@@ -334,6 +335,49 @@ describe('flattenRichMessageSummary', () => {
   });
 });
 
+describe('rich text of any shape in bounded time', () => {
+  test('a summary keeps thousands of entities after thousands of formulas where they are', () => {
+    // each entity used to add up the shifts of every formula in the text
+    const texts: RichText[] = [];
+    for(let index = 0; index < 3000; ++index) {
+      texts.push({_: 'textMath', source: 'x'} as RichText, {_: 'textBold', text: text('b')});
+    }
+    const startedAt = performance.now();
+    const summary = flattenRichMessageSummary(richMessage([{_: 'pageBlockParagraph', text: {_: 'textConcat', texts}}]));
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    expect(summary.text).toBe('xb'.repeat(3000));
+    expect(summary.entities[2999]).toEqual({_: 'messageEntityBold', offset: 5999, length: 1});
+  });
+
+  test('a list item\'s marker the size of a message is not repeated the size of a message per line', () => {
+    const blocks: PageBlock[] = Array.from({length: 2000}, () => ({_: 'pageBlockParagraph', text: text('line')}));
+    const startedAt = performance.now();
+    const summary = flattenRichMessageSummary(richMessage([{
+      _: 'pageBlockOrderedList',
+      pFlags: {},
+      items: [{_: 'pageListOrderedItemBlocks', pFlags: {}, num: '9'.repeat(100000), blocks}]
+    }]));
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    const lines = summary.text.split('\n');
+    expect(lines).toHaveLength(2000);
+    expect(lines[0]).toBe('9'.repeat(16) + '.... line');
+  });
+
+  test('a text nested a thousand concatenations deep is wrapped at once', () => {
+    // every level copied every entity under it into its own list
+    let richText: RichText = text('');
+    for(let level = 0; level < 1200; ++level) {
+      richText = {_: 'textConcat', texts: [richText, ...Array.from({length: 10}, (): RichText => ({_: 'textBold', text: text('b')}))]};
+    }
+    const startedAt = performance.now();
+    const {text: wrapped, entities} = wrapTelegramRichText(richText);
+    expect(performance.now() - startedAt).toBeLessThan(500);
+    expect(wrapped).toBe('b'.repeat(12000));
+    expect(entities).toHaveLength(12000);
+    expect(entities.every((entity, index) => entity._ === 'messageEntityBold' && entity.offset === index && entity.length === 1)).toBe(true);
+  });
+});
+
 describe('layer 229 rich text', () => {
   test('shows the label of a page button until pages can draw real buttons', () => {
     const button: RichText = {
@@ -382,7 +426,7 @@ describe('isRichMessageFullWidth', () => {
       buttonRow,
       {_: 'pageBlockDetails', pFlags: {}, blocks: [paragraph], title: text('More')},
       {_: 'pageBlockPullquote', text: text('pull'), caption: {_: 'textEmpty'}},
-      {_: 'pageBlockPhoto', photo_id: '1', caption: {_: 'pageCaption', text: {_: 'textEmpty'}, credit: {_: 'textEmpty'}}}
+      {_: 'pageBlockPhoto', photo_id: '1', caption: noCaption}
     ] as PageBlock[];
     blocks.forEach((block) => expect(isRichMessageFullWidth([paragraph, block])).toBe(true));
   });
@@ -393,6 +437,45 @@ describe('isRichMessageFullWidth', () => {
     expect(isRichMessageFullWidth([{_: 'pageBlockList', items: [{_: 'pageListItemText', pFlags: {}, text: text('item')}]} as PageBlock])).toBe(false);
     expect(isRichMessageFullWidth([{_: 'pageBlockList', items: [{_: 'pageListItemBlocks', pFlags: {}, blocks: [buttonRow]}]} as PageBlock])).toBe(true);
     expect(isRichMessageFullWidth([{_: 'pageBlockOrderedList', pFlags: {}, items: [{_: 'pageListOrderedItemBlocks', pFlags: {}, num: '1', blocks: [table]}]} as PageBlock])).toBe(true);
+  });
+});
+
+// tdesktop's rich message: media at an edge takes the bubble's corners, text at the top the message's own place,
+// and only a paragraph with text at the end takes the time on its last line
+describe('getRichMessageBubbleEdges', () => {
+  const photo = {_: 'pageBlockPhoto', photo_id: '1', caption: noCaption} as PageBlock;
+  const anchor = {_: 'pageBlockAnchor', name: 'a'} as PageBlock;
+  const paragraph: PageBlock = {_: 'pageBlockParagraph', text: text('the end')};
+
+  test('media at either edge, passing over anchors, a cover\'s too', () => {
+    expect(getRichMessageBubbleEdges([anchor, photo, paragraph, anchor])).toEqual({
+      firstMedia: 1, firstText: -1, lastMedia: -1, lastParagraph: 2, lastParagraphText: 'the end'
+    });
+    const slideshow = {_: 'pageBlockSlideshow', items: [photo], caption: noCaption} as PageBlock;
+    const cover = {_: 'pageBlockCover', cover: {_: 'pageBlockCover', cover: slideshow}} as PageBlock;
+    expect(getRichMessageBubbleEdges([cover, paragraph, slideshow])).toMatchObject({firstMedia: 0, lastMedia: 2, lastParagraph: -1});
+  });
+
+  test('media followed only by anchors is at the bottom edge, one with a caption under it is not', () => {
+    expect(getRichMessageBubbleEdges([paragraph, photo, anchor, anchor])).toMatchObject({lastMedia: 1, lastParagraph: -1});
+    const captioned = {_: 'pageBlockPhoto', photo_id: '1', caption: {_: 'pageCaption', text: text('caption'), credit: {_: 'textEmpty'}}} as PageBlock;
+    expect(getRichMessageBubbleEdges([paragraph, captioned, anchor]).lastMedia).toBe(-1);
+    const credited = {_: 'pageBlockVideo', video_id: '2', caption: {_: 'pageCaption', text: {_: 'textEmpty'}, credit: text('credit')}} as PageBlock;
+    expect(getRichMessageBubbleEdges([paragraph, {_: 'pageBlockCover', cover: credited} as PageBlock]).lastMedia).toBe(-1);
+    // * a caption is under the media, not over it
+    expect(getRichMessageBubbleEdges([captioned, paragraph]).firstMedia).toBe(0);
+  });
+
+  test('a paragraph or a heading starts with text, other blocks with neither', () => {
+    expect(getRichMessageBubbleEdges([{_: 'pageBlockHeading2', text: text('Title')}, paragraph])).toMatchObject({firstText: 0, firstMedia: -1});
+    expect(getRichMessageBubbleEdges([{_: 'pageBlockPreformatted', text: text('code'), language: ''}, paragraph])).toMatchObject({firstText: -1, firstMedia: -1});
+  });
+
+  test('the time takes only a last paragraph with text', () => {
+    expect(getRichMessageBubbleEdges([paragraph, {_: 'pageBlockHeading2', text: text('Title')}]).lastParagraph).toBe(-1);
+    expect(getRichMessageBubbleEdges([paragraph, {_: 'pageBlockList', items: [{_: 'pageListItemText', pFlags: {}, text: text('item')}]} as PageBlock]).lastParagraph).toBe(-1);
+    expect(getRichMessageBubbleEdges([paragraph, {_: 'pageBlockParagraph', text: text('  ')}]).lastParagraph).toBe(-1);
+    expect(getRichMessageBubbleEdges([]).lastParagraph).toBe(-1);
   });
 });
 

@@ -6,7 +6,9 @@
 
 import noop from '@helpers/noop';
 import browserStyles from '@components/browser.module.scss';
+import type {AiSendStyle} from '@components/chat/aiSendStyles';
 import {defineStories, PopupStory} from '../registry';
+import type {PopupStoryContext} from '../context';
 
 import {
   EMBEDDED_PAGE_URL,
@@ -21,6 +23,31 @@ import {
   storyItem,
   userFullWithRating
 } from '../fixtures';
+
+// * the AI editor on a draft, as the composer's button opens it; with `savedSendStyle`, the request the chat keeps
+async function openAiEditorStory(ctx: PopupStoryContext, savedSendStyle?: AiSendStyle) {
+  const [{openAiEditorPopup}, {default: HotReloadGuard}] = await Promise.all([
+    import('@components/popups/aiEditorPopup'),
+    import('@lib/solidjs/hotReloadGuardProvider')
+  ]);
+
+  openAiEditorPopup({
+    peerId: ctx.peer('private'),
+    text: {_: 'textWithEntities', text: 'a draft the editor will rewrite', entities: []},
+    onApply: noop,
+    onSend: () => true,
+    savedSendStyle,
+    onSaveSendStyle: () => true
+  }, HotReloadGuard);
+}
+
+// * a real photo: a real preview size also exercises the edit/spoiler/delete controls
+async function loadSandboxPhoto(name: string) {
+  const {CHAT_INPUT_EDITOR_TEST_MEDIA_URL} = await import('@components/chat/inputEditor/testData');
+  const response = await fetch(CHAT_INPUT_EDITOR_TEST_MEDIA_URL);
+  if(!response.ok) throw new Error('Sandbox media fixture could not be loaded');
+  return new File([await response.blob()], name, {type: 'image/jpeg'});
+}
 
 defineStories('Live streams', [false, true].map((active) => ({
   id: `rtmp/${active ? 'active' : 'start'}`,
@@ -66,12 +93,44 @@ defineStories('Composer & bots', [
     title: 'Attach media',
     open: async(ctx) => {
       const {default: showNewMediaPopup} = await import('@components/popups/newMedia');
-      // a real photo: a real preview size also exercises the edit/spoiler/delete controls
-      const {CHAT_INPUT_EDITOR_TEST_MEDIA_URL} = await import('@components/chat/inputEditor/testData');
-      const response = await fetch(CHAT_INPUT_EDITOR_TEST_MEDIA_URL);
-      if(!response.ok) throw new Error('Sandbox media fixture could not be loaded');
-      const file = new File([await response.blob()], 'sandbox-photo.jpg', {type: 'image/jpeg'});
-      showNewMediaPopup(ctx.chat(), [file], 'media');
+      showNewMediaPopup(ctx.chat(), [await loadSandboxPhoto('sandbox-photo.jpg')], 'media');
+    }
+  },
+  {
+    // an empty file is left out of what is sent, named in a toast (tdesktop's FileIsEmpty)
+    id: 'newMedia/empty',
+    fixtureOnly: true,
+    title: 'Attach media with an empty file',
+    open: async(ctx) => {
+      const {default: showNewMediaPopup} = await import('@components/popups/newMedia');
+      showNewMediaPopup(ctx.chat(), [await loadSandboxPhoto('sandbox-photo.jpg'), new File([], 'empty.txt', {type: 'text/plain'})], 'media');
+    }
+  },
+  {
+    // a track is named, and shows its cover, by its own tags
+    id: 'newMedia/music',
+    fixtureOnly: true,
+    title: 'Attach a tagged track',
+    open: async(ctx) => {
+      const {default: showNewMediaPopup} = await import('@components/popups/newMedia');
+      const {makeMp3, id3TextFrame, id3PictureFrame} = await import('@/tests/fixtures/taggedMp3');
+      const {default: canvasToBlob} = await import('@helpers/canvas/canvasToBlob');
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 64;
+      const context = canvas.getContext('2d');
+      const gradient = context.createLinearGradient(0, 0, 64, 64);
+      gradient.addColorStop(0, '#ff8a00');
+      gradient.addColorStop(1, '#5b2ee5');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, 64, 64);
+      const cover = await canvasToBlob(canvas, 'image/png');
+      const mp3 = makeMp3([
+        // long enough to be cut short before the row's delete button
+        id3TextFrame('TIT2', 'Sandbox Song With a Name Too Long for One Row', 1),
+        id3TextFrame('TPE1', 'Sandbox Artist', 0),
+        id3PictureFrame('image/png', new Uint8Array(await cover.arrayBuffer()))
+      ]);
+      showNewMediaPopup(ctx.chat(), [new File([mp3], 'sandbox-track.mp3', {type: 'audio/mpeg'})], 'document');
     }
   },
   {
@@ -116,12 +175,13 @@ defineStories('Composer & bots', [
       showStickersPopup({_: 'inputStickerSetShortName', short_name: 'sandbox_stickers'});
     }
   })),
-  {
-    id: 'translate',
-    title: 'Translate a message',
+  // a chat that forbids copying shows the text with nothing to copy it by
+  ...[false, true].map((noForwards): Omit<PopupStory, 'group'> => ({
+    id: noForwards ? 'translate/noForwards' : 'translate',
+    title: noForwards ? 'Translate a message that cannot be copied' : 'Translate a message',
     managers: {
       appTranslationsManager: {
-        translateText: () => [{_: 'textWithEntities', text: 'Переведённый текст', entities: []}]
+        translateText: () => ({_: 'textWithEntities', text: 'Переведённый текст', entities: []})
       }
     },
     open: async(ctx) => {
@@ -133,10 +193,11 @@ defineStories('Composer & bots', [
       openTranslatePopup({
         peerId: ctx.peer('private'),
         message: ctx.message('private'),
-        detectedLanguage: 'en'
+        detectedLanguage: 'en',
+        noForwards
       }, HotReloadGuard);
     }
-  },
+  })),
   {
     // layer 229 in a page: rows of buttons, buttons inside the text, a folded quote, a compact
     // table. Read outside a message, only links, copying and profiles act; a callback is inert.
@@ -218,18 +279,20 @@ defineStories('Composer & bots', [
   {
     id: 'aiEditor',
     title: 'AI editor',
-    open: async(ctx) => {
-      const [{openAiEditorPopup}, {default: HotReloadGuard}] = await Promise.all([
-        import('@components/popups/aiEditorPopup'),
-        import('@lib/solidjs/hotReloadGuardProvider')
-      ]);
-
-      openAiEditorPopup({
-        peerId: ctx.peer('private'),
-        text: {_: 'textWithEntities', text: 'a draft the editor will rewrite', entities: []},
-        onApply: noop
-      }, HotReloadGuard);
-    }
+    open: (ctx) => openAiEditorStory(ctx)
+  },
+  {
+    // * opened with a request kept for the chat: on its tab, made on the draft, with "Always use in this chat" on
+    id: 'aiEditor/applyOnSend',
+    title: 'AI editor — applied on send',
+    managers: {
+      aiTonesManager: {
+        composeMessageWithAi: () => ({ok: true, data: {
+          resultText: {_: 'textWithEntities', text: 'A draft the editor will rewrite.', entities: []}
+        }})
+      }
+    },
+    open: (ctx) => openAiEditorStory(ctx, {proofRead: true})
   },
   {
     // A local document tests the iframe chrome without booting another Telegram client.

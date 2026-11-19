@@ -21,6 +21,8 @@
 const fs = require('fs');
 const path = require('path');
 const babel = require('@babel/core');
+// the app's own, its types stripped by Node
+const escapeRegExp = require('../helpers/string/escapeRegExp.ts').default;
 
 const ROOT = path.join(__dirname, '..', '..');
 const SRC = path.join(ROOT, 'src');
@@ -74,7 +76,7 @@ const SECTION_ICONS = {
  */
 const PROCESSOR_PATHS = new Set([
   '', 'edit/birthday', 'edit/add-account', 'emoji-status', 'saved-messages', 'ton',
-  'my-profile/posts/all-stories', 'my-profile/archived-posts'
+  'my-profile/posts/all-stories', 'my-profile/archived-posts', 'qr-code', 'qr-code/share'
 ]);
 
 // Paths whose Web K column names the row but not the tab behind it (the text is
@@ -280,8 +282,6 @@ const isLangKey = (value) => {
 const MAX_TEMPLATE_KEYS = 40;
 const MIN_TEMPLATE_LENGTH = 8;
 
-const escapeForRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
 /**
  * The keys a title expression can produce. A literal names one; a template names
  * every existing key of its shape (`LiteMode.Key.${key}.Title`), which is how
@@ -313,7 +313,7 @@ const langKeysFromExpression = (node, fileLiterals) => {
       // an interpolated part is one step of the key, never the whole tail, and it
       // has to be a value the file actually has — a commented-out row must not
       // bring its strings into the index
-      const pattern = new RegExp('^' + statics.map(escapeForRegExp).join('([^.]*)') + '$');
+      const pattern = new RegExp('^' + statics.map(escapeRegExp).join('([^.]*)') + '$');
       const matched = [...LANG_KEYS.keys()].filter((key) => {
         const match = pattern.exec(key);
         return match && match.slice(1).every((part) => fileLiterals.has(part)) && isLangKey(key);

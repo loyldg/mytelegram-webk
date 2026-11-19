@@ -156,10 +156,10 @@ declare global {
     'flac' | 'opus' | 'oga' | 'ogg' | 'ogv' | 'json' |
     'png' | 'avif' | 'jxl' | 'bmp' | 'heic' | 'heif';
 
-  type ApiFileManagerError = 'DOWNLOAD_CANCELED' | 'UPLOAD_CANCELED' | 'FILE_TOO_BIG' | 'REFERENCE_IS_NOT_REFRESHED';
+  type ApiFileManagerError = 'DOWNLOAD_CANCELED' | 'UPLOAD_CANCELED' | 'FILE_TOO_BIG' | 'FILE_EMPTY' | 'REFERENCE_IS_NOT_REFRESHED';
   type StorageError = 'STORAGE_OFFLINE' | 'NO_ENTRY_FOUND' | 'IDB_CREATE_TIMEOUT';
   type ReferenceError = 'NO_NEW_CONTEXT' | 'NO_CONTEXT';
-  type NetworkerError = 'NETWORK_BAD_RESPONSE' | 'NETWORK_BAD_REQUEST' | 'BIND_FAILED';
+  type NetworkerError = 'NETWORK_BAD_RESPONSE' | 'NETWORK_BAD_REQUEST' | 'NETWORK_RESULT_UNREADABLE' | 'BIND_FAILED';
   type FiltersError = 'PINNED_DIALOGS_TOO_MUCH' | 'PINNED_DIALOGS_CHANGED';
   type LottieError = 'FRAME_OUT_OF_RANGE' | 'ITEM_DESTROYED' | 'FILE_INVALID';
 
@@ -191,6 +191,7 @@ declare global {
     | 'VOICE_MESSAGES_FORBIDDEN'
     | 'PHOTO_INVALID_DIMENSIONS'
     | 'PHOTO_SAVE_FILE_INVALID'
+    | 'WALLPAPER_INVALID'
     | 'USER_ALREADY_PARTICIPANT'
     | 'USER_WAS_KICKED'
     | 'USERNAME_INVALID'
@@ -226,6 +227,9 @@ declare global {
     | 'NO_USER'
     | 'USER_PRIVACY_RESTRICTED'
     | 'REACTION_INVALID'
+    | 'CHAT_NOT_MODIFIED'
+    | 'REACTIONS_TOO_MANY'
+    | 'LIMIT_PER_POST_INVALID'
     | 'INVITE_HASH_EXPIRED'
     | 'PHONE_NOT_OCCUPIED'
     | 'PHONE_NUMBER_INVALID'
@@ -275,6 +279,10 @@ declare global {
     | 'REQ_INFO_PHONE_INVALID'
     | 'FILE_REFERENCE_INVALID'
     | 'USER_NOT_MUTUAL_CONTACT'
+    | 'USER_BOT'
+    | 'BOTS_TOO_MUCH'
+    | 'YOU_BLOCKED_USER'
+    | 'USER_KICKED'
     | 'FROZEN_METHOD_INVALID'
     | 'EMAIL_INVALID'
     | 'EMAIL_NOT_ALLOWED'
@@ -303,6 +311,7 @@ declare global {
     | 'PHONE_CODE_EMPTY'
     | 'PHONE_CODE_EXPIRED'
     | 'PHONE_CODE_INVALID'
+    | 'WIDGET_RESPONSE_TIMEOUT'
   ;
 
   type WalletErrorType =

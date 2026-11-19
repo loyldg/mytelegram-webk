@@ -1,6 +1,7 @@
 // * zoom part from WebZ
 // * https://github.com/Ajaxy/telegram-tt/blob/069f4f5b2f2c7c22529ccced876842e7f9cb81f4/src/components/mediaViewer/MediaViewerSlides.tsx
 
+import applyWithoutTransition from '@helpers/dom/applyWithoutTransition';
 import type {MyDocument} from '@appManagers/appDocsManager';
 import type {ActiveAccountNumber} from '@lib/accounts/types';
 import type {MyPhoto} from '@appManagers/appPhotosManager';
@@ -38,6 +39,7 @@ import ListLoader from '@helpers/listLoader';
 import EventListenerBase from '@helpers/eventListenerBase';
 import {MyMessage} from '@appManagers/appMessagesManager';
 import {NULL_PEER_ID} from '@appManagers/constants';
+import {getMessageWithRichMedia} from '@appManagers/utils/richMessage/getRichMessageMedia';
 import {isFullScreen} from '@helpers/dom/fullScreen';
 import {attachClickEvent, hasMouseMovedSinceDown} from '@helpers/dom/clickEvent';
 import SearchListLoader from '@helpers/searchListLoader';
@@ -69,7 +71,8 @@ import setCurrentTime from '@helpers/dom/setCurrentTime';
 import {MediaSize} from '@helpers/mediaSize';
 import {getRtmpStreamUrl} from '@lib/rtmp/url';
 import boxBlurCanvasRGB from '@vendor/fastBlur';
-import {i18n} from '@lib/langPack';
+import I18n, {i18n} from '@lib/langPack';
+import iconButtonLabel from '@helpers/dom/iconButtonLabel';
 import {setDirection} from '@helpers/dom/setInnerHTML';
 import isDocumentRTL from '@helpers/dom/isDocumentRTL';
 import getInlineArrowKeys from '@helpers/dom/getInlineArrowKeys';
@@ -80,6 +83,7 @@ import formatBytes from '@helpers/formatBytes';
 import {getMediaSourceClip} from '@components/mediaViewer/clipPath';
 import getEffectiveCornerRadii from '@components/mediaViewer/cornerRadii';
 import snapshotRenderedMedia, {copyRenderedImage, RenderedMedia} from '@components/mediaViewer/snapshotRenderedMedia';
+import createViewerFocusTrap from '@components/mediaViewer/viewerFocusTrap';
 import getMediaViewerDocumentSize from '@components/mediaViewer/documentSize';
 import getShownVideo from '@components/mediaViewer/shownVideo';
 import createSlideMenu from '@components/mediaViewer/slideMenu';
@@ -299,6 +303,7 @@ export default class AppMediaViewerBase<
   protected closing: boolean;
   /** The control that opened the viewer: it gets the focus back when the viewer closes. */
   protected returnFocusTo: HTMLElement;
+  protected focusTrap: ReturnType<typeof createViewerFocusTrap>;
 
   protected lastTransform: Transform = this.transform;
   protected lastZoomCenter: {x: number, y: number} = this.transform;
@@ -344,6 +349,10 @@ export default class AppMediaViewerBase<
 
     this.wholeDiv = document.createElement('div');
     this.wholeDiv.classList.add(MEDIA_VIEWER_CLASSNAME + '-whole');
+    // * over the page as a popup is, and the keyboard's alone while it is open (`createViewerFocusTrap`)
+    this.wholeDiv.setAttribute('role', 'dialog');
+    this.wholeDiv.setAttribute('aria-modal', 'true');
+    this.wholeDiv.setAttribute('aria-label', I18n.format('KeyboardShortcuts.Section.MediaViewer', true));
 
     this.overlaysDiv = document.createElement('div');
     this.overlaysDiv.classList.add('overlays');
@@ -385,7 +394,8 @@ export default class AppMediaViewerBase<
       // Desktop), so it carries the left-pointing glyph while keeping the plain
       // `rotate` key in this.buttons.
       const icon: Icon = name === 'rotate' ? 'rotate_left' : name as Icon;
-      const button = ButtonIcon(icon, {noRipple: true});
+      // * the icon has no name of its own (iconButtonLabel): it turns the media left
+      const button = ButtonIcon(icon, {noRipple: true, ariaLabel: name === 'rotate' ? 'MediaEditor.RotateLeft' : undefined});
       this.buttons[name] = button;
       buttonsDiv.append(button);
     });
@@ -403,7 +413,8 @@ export default class AppMediaViewerBase<
       step: 0.01,
       min: ZOOM_MIN_VALUE,
       max: ZOOM_MAX_VALUE,
-      withTransition: true
+      withTransition: true,
+      ariaLabel: 'AccDescr.Zoom'
     }, ZOOM_INITIAL_VALUE);
     this.zoomElements.rangeSelector.setListeners();
     this.zoomElements.rangeSelector.setHandlers({
@@ -421,6 +432,8 @@ export default class AppMediaViewerBase<
     });
 
     this.zoomElements.container.append(this.zoomElements.btnOut, this.zoomElements.rangeSelector.container, this.zoomElements.btnIn);
+    // * hidden until zooming: no tab stops in it
+    if(Modes.a11y) this.zoomElements.container.inert = true;
 
     if(!IS_TOUCH_SUPPORTED) {
       this.wholeDiv.append(this.zoomElements.container);
@@ -772,8 +785,18 @@ export default class AppMediaViewerBase<
       return;
     }
 
-    replaceButtonIcon(this.buttons.zoomin, !enable ? 'zoomin' : 'zoomout');
+    const zoomIcon: Icon = !enable ? 'zoomin' : 'zoomout';
+    replaceButtonIcon(this.buttons.zoomin, zoomIcon);
+    this.buttons.zoomin.setAttribute('aria-label', iconButtonLabel(zoomIcon));
     this.zoomElements.container.classList.toggle('is-visible', this.isZooming = enable);
+    if(Modes.a11y) {
+      const {container} = this.zoomElements;
+      // * the bar going with the focus in it hands that to the toggle it came from, not to the page's body
+      if(!enable && container.contains(container.ownerDocument.activeElement)) {
+        this.buttons.zoomin.focus({preventScroll: true});
+      }
+      container.inert = !enable;
+    }
     this.wholeDiv.classList.toggle('is-zooming', enable);
 
     if(auto || !enable) {
@@ -1053,6 +1076,7 @@ export default class AppMediaViewerBase<
 
     this.closing = true;
     this.swipeHandler?.removeListeners();
+    this.focusTrap?.release();
 
     if(this.navigationItem) {
       appNavigationController.removeItem(this.navigationItem);
@@ -1570,10 +1594,7 @@ export default class AppMediaViewerBase<
         // A viewer opened from a fully visible source carries no clip at rest. Prime
         // a syntactically compatible inset(0) before the close target so the browser
         // can interpolate instead of switching none -> inset() discretely.
-        wrapper.style.transition = 'none';
-        wrapper.style.clipPath = NO_MEDIA_VIEWER_CLIP_PATH;
-        void wrapper.offsetLeft;
-        wrapper.style.transition = '';
+        applyWithoutTransition([wrapper], () => wrapper.style.clipPath = NO_MEDIA_VIEWER_CLIP_PATH);
       } else if(!closing) {
         // Do not animate from `none` to the opening start state. The transition is
         // restored in the preparation frame below.
@@ -1713,6 +1734,7 @@ export default class AppMediaViewerBase<
       mediaElement = mover.querySelector('video, img');
       if(mediaElement instanceof HTMLImageElement) {
         mediaElement.classList.add('thumbnail');
+        if(!mediaElement.hasAttribute('alt')) mediaElement.alt = '';
         if(!aspecter) {
           mediaElement.style.width = containerRect.width + 'px';
           mediaElement.style.height = containerRect.height + 'px';
@@ -1828,10 +1850,7 @@ export default class AppMediaViewerBase<
       // .center-transform не анимировался; затем чистим инлайн — будущие
       // изменения (PiP opacity, close transform) пойдут через .active-правило.
       mover.classList.add('center');
-      mover.style.transition = 'none';
-      this.applyCenterStyles(mover);
-      void mover.offsetLeft; // reflow — commits center transform without anim
-      mover.style.transition = '';
+      applyWithoutTransition([mover], () => this.applyCenterStyles(mover)); // reflow — commits center transform without anim
 
       // это уже нужно для будущих анимаций
       mover.classList.add('active');
@@ -2445,11 +2464,13 @@ export default class AppMediaViewerBase<
       this.toggleWholeActive(true);
 
       // after it is shown: a hidden element cannot take the focus. A popup under the viewer (a
-      // paid media's) traps the focus, and leaves it to the viewer
+      // paid media's) traps the focus, and leaves it to the viewer, which keeps it: Tab goes round
+      // the viewer's controls, not on to the page under it
       if(this.returnFocusTo) {
         this.wholeDiv.tabIndex = -1;
         this.wholeDiv.setAttribute(FOCUS_TRAP_ATTACHED_ATTRIBUTE, '');
         this.wholeDiv.focus({preventScroll: true});
+        (this.focusTrap ??= createViewerFocusTrap(this.wholeDiv)).hold(this.returnFocusTo);
       }
     }
 
@@ -2535,6 +2556,8 @@ export default class AppMediaViewerBase<
 
       if(img) {
         img.classList.add('thumbnail');
+        // * a stand-in until the picture comes: nothing to read out
+        if(img instanceof HTMLImageElement) img.alt = '';
         container.append(img);
       }
     }
@@ -2542,6 +2565,7 @@ export default class AppMediaViewerBase<
     if(isLiveStream) {
       if(mediaThumbnail) {
         const img = new Image();
+        img.alt = '';
         img.classList.add('thumbnail');
         container.append(img);
         renderImageFromUrl(img, mediaThumbnail, undefined, false);
@@ -2641,9 +2665,15 @@ export default class AppMediaViewerBase<
           if(isLiveStream) {
             // this.releaseSingleMedia = appMediaPlaybackController.setSingleMedia();
           } else {
+            // * the controller tells a video from a song by the message's media: a rich message has none
+            // * of its own, the video shown is the one it stands for (`getMediaFromMessageOrRich`)
             this.releaseSingleMedia = appMediaPlaybackController.setSingleMedia({
               media: video,
-              message: message as Message.message
+              message: getMessageWithRichMedia(message as Message.message, {
+                _: 'messageMediaDocument',
+                pFlags: {},
+                document: media as MyDocument
+              })
             });
           }
         };
@@ -2702,6 +2732,7 @@ export default class AppMediaViewerBase<
               this.toggleWholeActive(!pip);
               this.toggleOverlay(!pip);
               this.toggleGlobalListeners(!pip);
+              this.focusTrap?.stepAside(pip);
 
               if(this.navigationItem) {
                 if(pip) appNavigationController.removeItem(this.navigationItem);
@@ -2993,9 +3024,12 @@ export default class AppMediaViewerBase<
               const div = mover.firstElementChild && mover.firstElementChild.classList.contains('media-viewer-aspecter') ? mover.firstElementChild : mover;
               const haveImage = ['CANVAS', 'IMG'].includes(div.firstElementChild?.tagName) ? div.firstElementChild as HTMLElement : null;
               if((haveImage as HTMLImageElement)?.src !== url)  {
+                // * the viewer names what it shows (author, date, caption); the pictures, like a bubble's, add nothing
                 const image = new Image();
+                image.alt = '';
                 image.classList.add('thumbnail');
                 const fullImage = cancellableFullPromise && new Image();
+                if(fullImage) fullImage.alt = '';
 
                 renderPicture(image, url, isDocument ? undefined : size, (url) => {
                   fastRaf(() => {

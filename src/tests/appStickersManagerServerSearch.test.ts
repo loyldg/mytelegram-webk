@@ -4,6 +4,15 @@ import type {MyDocument} from '@appManagers/appDocsManager';
 import {setEnvironment} from '@environment/utils';
 import createStickersSearch from '@components/emoticonsDropdown/stickersSearch';
 import {ReferenceContext, ReferencesStorage} from '@lib/storages/references';
+import collectUnhandledRejections from '@/tests/helpers/collectUnhandledRejections';
+import deferred from '@/tests/helpers/deferred';
+import lastItem from '@helpers/array/lastItem';
+import dispatchedEvents from '@/tests/helpers/dispatchedEvents';
+import makeReferenceRequestFileManager from '@/tests/helpers/referenceRequestFileManager';
+import makeApiManagerMethods from '@/tests/helpers/apiManagerMethods';
+import createDeferredCalls from '@/tests/helpers/deferredCalls';
+import testListChangeRefusals, {makeDocs} from '@/tests/helpers/listChangeRefusals';
+import withTimeout from '@helpers/schedulers/withTimeout';
 
 const doc = (id: string) => ({_: 'document', id} as any as MyDocument);
 
@@ -14,19 +23,199 @@ const found = (ids: string[], nextOffset?: number) => ({
   stickers: ids.map(doc)
 });
 
+const stickers = (ids: string[]) => ({_: 'messages.stickers', hash: 0, stickers: ids.map(doc)});
+
 function createManager(language = 'ru') {
   const invokeApi = vi.fn();
+  const invokeApiHashable = vi.fn();
   const saveDoc = vi.fn((document: MyDocument, _context?: ReferenceContext) => document);
+  const dispatchEvent = vi.fn();
   const manager = new AppStickersManager();
   Object.assign(manager as any, {
-    apiManager: {invokeApi},
+    apiManager: {invokeApi, invokeApiHashable},
+    apiFileManager: Object.assign(makeReferenceRequestFileManager(), {downloadMedia: vi.fn()}),
     appDocsManager: {saveDoc},
     networkerFactory: {language},
-    rootScope: {premium: false}
+    rootScope: {premium: false, dispatchEvent}
   });
   manager.clear(true);
-  return {manager, invokeApi, saveDoc};
+  return {manager, invokeApi, invokeApiHashable, saveDoc, dispatchEvent};
 }
+
+/**
+ * A search by emoji (`messages.getStickers` and the user's own stickers: the suggestions over the composer, the
+ * media editor's emoji groups, the premium stickers) is kept for the session. One that failed was kept as well, and
+ * every later ask for the same emoji got that failure until the page was reloaded.
+ */
+describe('AppStickersManager.getStickersByEmoticon', () => {
+  const search = (manager: AppStickersManager) => manager.getStickersByEmoticon({emoticon: '🐱', includeServerStickers: true});
+
+  it('forgets a failed search, so the next one asks the server again, and keeps one that came', async() => {
+    const {manager, invokeApiHashable} = createManager();
+    invokeApiHashable.mockRejectedValueOnce({type: 'NETWORK_BAD_REQUEST'}).mockResolvedValue(stickers(['1']));
+
+    await expect(search(manager)).rejects.toMatchObject({type: 'NETWORK_BAD_REQUEST'});
+    expect((await search(manager)).map((doc) => doc.id)).toEqual(['1']);
+    expect((await search(manager)).map((doc) => doc.id)).toEqual(['1']);
+    expect(invokeApiHashable).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves no failure unhandled when a used sticker reorders a search still on its way', async() => {
+    const {manager, invokeApi, invokeApiHashable} = createManager();
+    const used = Object.assign(doc('1'), {stickerEmojiRaw: '🐱'});
+    Object.assign(manager as any, {recentStickers: []});
+    Object.assign((manager as any).appDocsManager, {getDoc: () => used});
+    invokeApi.mockResolvedValue(true);
+    const request = deferred<never>();
+    invokeApiHashable.mockReturnValueOnce(request.promise);
+
+    const unhandled = await collectUnhandledRejections(async() => {
+      const searching = search(manager);
+      await manager.saveRecentSticker(used.id);
+      request.reject({type: 'NETWORK_BAD_REQUEST'});
+      await expect(searching).rejects.toMatchObject({type: 'NETWORK_BAD_REQUEST'});
+    });
+
+    expect(unhandled).toEqual([]);
+  });
+
+  it('refreshes a found sticker\'s reference by asking the server anew, past the search kept and its hash', async() => {
+    const {manager, saveDoc} = createManager();
+    const found = (fileReference: number) => ({_: 'document', id: '1', file_reference: [fileReference]});
+    // * the server says nothing new to the hash of what it said last: those stickers, out-of-date references and all
+    const invokeApi = vi.fn(async(_method: string, params: {hash?: number}) => {
+      return params.hash === 7 ?
+        {_: 'messages.stickersNotModified'} :
+        {_: 'messages.stickers', hash: 7, stickers: [found(invokeApi.mock.calls.length)]};
+    });
+    (manager as any).apiManager = makeApiManagerMethods(invokeApi);
+
+    await search(manager);
+    const context = saveDoc.mock.calls[0][1];
+    expect(context).toEqual({type: 'stickerSearch', emoticon: '🐱'});
+
+    const references = new ReferencesStorage();
+    Object.assign(references as any, {appStickersManager: manager});
+    await (references as any).getRefreshPromise(context);
+
+    expect(invokeApi).toHaveBeenCalledTimes(2);
+    expect(lastItem(saveDoc.mock.calls)).toEqual([found(2), context]);
+  });
+});
+
+describe('AppStickersManager.getStickerSet', () => {
+  const input = {_: 'inputStickerSetShortName', short_name: 'cats'} as const;
+  const stickerSet = () => ({
+    _: 'messages.stickerSet',
+    set: {_: 'stickerSet', id: '5', access_hash: '6', short_name: 'cats', title: 'Cats', count: 1, hash: 0, pFlags: {}},
+    packs: [] as any[],
+    documents: [doc('1')],
+    keywords: [] as any[]
+  });
+
+  // * the set kept on the device cannot be read: the storage fails, as a database closed under it does
+  function createLoading() {
+    const created = createManager();
+    Object.assign(created.manager as any, {
+      log: Object.assign(vi.fn(), {error: vi.fn(), warn: vi.fn()}),
+      storage: {
+        get: () => Promise.reject(new Error('the storage failed')),
+        getFromCache: (): undefined => undefined,
+        setToCache: (_key: string, value: unknown) => value,
+        set: vi.fn()
+      }
+    });
+
+    const load = () => withTimeout(Promise.resolve(created.manager.getStickerSet(input)), 100, 'still loading');
+    return {...created, load};
+  }
+
+  it('asks the server when the set kept here cannot be read, instead of waiting for it for good', async() => {
+    const {invokeApi, load} = createLoading();
+    invokeApi.mockResolvedValue(stickerSet());
+
+    expect(await load()).toMatchObject({set: {id: '5'}});
+    expect(invokeApi).toHaveBeenCalledWith('messages.getStickerSet', {stickerset: input, hash: 0});
+  });
+
+  it('settles with nothing when the server fails as well, and asks again the next time', async() => {
+    const {invokeApi, load} = createLoading();
+    invokeApi.mockRejectedValueOnce({type: 'NETWORK_BAD_REQUEST'}).mockResolvedValue(stickerSet());
+
+    expect(await load()).toBeNull();
+    expect(await load()).toMatchObject({set: {id: '5'}});
+    expect(invokeApi).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('AppStickersManager.getAnimatedEmojiSounds', () => {
+  it('forgets a failed load, so the next ask goes to the server again', async() => {
+    const {manager} = createManager();
+    const getAppConfig = vi.fn().mockRejectedValueOnce({type: 'NETWORK_BAD_REQUEST'}).mockResolvedValue({emojies_sounds: {}});
+    Object.assign((manager as any).apiManager, {getAppConfig, getConfig: vi.fn().mockResolvedValue({this_dc: 2})});
+
+    await expect(manager.getAnimatedEmojiSounds()).rejects.toMatchObject({type: 'NETWORK_BAD_REQUEST'});
+    await expect(manager.getAnimatedEmojiSounds()).resolves.toBeUndefined();
+    expect(getAppConfig).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * Faving or unfaving a sticker changes the list at once and tells the panel and the toast (`sticker_updated`). When the
+ * server did not take it, the sticker stayed (un)faved here until a reload.
+ */
+describe('AppStickersManager.faveSticker', () => {
+  testListChangeRefusals((faved, limit = 5) => {
+    const {manager, invokeApiHashable, dispatchEvent} = createManager();
+    const getDoc = makeDocs();
+    const {calls, invokeApi} = createDeferredCalls();
+    Object.assign(manager as any, {favedStickers: faved.map(getDoc)});
+    Object.assign((manager as any).appDocsManager, {getDoc});
+    Object.assign((manager as any).apiManager, {invokeApi, getLimit: vi.fn().mockResolvedValue(limit)});
+    const events = (name: string) => dispatchedEvents(dispatchEvent, name);
+    return {
+      calls,
+      change: (id, remove) => manager.faveSticker(id, remove),
+      getList: () => (manager as any).favedStickers,
+      replaceList: (list) => (manager as any).favedStickers = list.map(getDoc),
+      removeFlag: 'unfave',
+      told: () => events('sticker_updated').filter(({type}) => type === 'faved').map(({faved}) => faved),
+      reverted: () => events('stickers_updated').filter(({type, reverted}) => type === 'faved' && reverted).map(({stickers}) => stickers),
+      listReads: () => invokeApiHashable.mock.calls.length
+    };
+  });
+});
+
+/**
+ * The sticker an empty private chat greets with (`getGreetingSticker`, the placeholder of `renderEmptyPlaceholder`)
+ * comes from a search by emoji (`messages.getStickers`), made once and kept. A search that failed - offline 5 seconds
+ * after the start, when it is preloaded - or found nothing was kept as well, here and by the emoji: every empty chat's
+ * placeholder failed with it, and was not shown, until the page was reloaded.
+ */
+describe('AppStickersManager.getGreetingSticker', () => {
+  it.each([
+    ['the search failed', false, () => Promise.reject({type: 'NETWORK_BAD_REQUEST'})],
+    ['nothing was found', false, () => Promise.resolve(stickers([]))],
+    ['the preload failed', true, () => Promise.reject({type: 'NETWORK_BAD_REQUEST'})]
+  ])('%s: the next greeting searches again', async(_, justPreload, firstAnswer) => {
+    const {manager, invokeApiHashable} = createManager();
+    invokeApiHashable.mockImplementationOnce(firstAnswer).mockResolvedValue(stickers(['1']));
+
+    await expect(manager.getGreetingSticker(justPreload)).rejects.toBeDefined();
+    await expect(manager.getGreetingSticker()).resolves.toMatchObject({id: '1'});
+    expect(invokeApiHashable).toHaveBeenCalledTimes(2);
+  });
+
+  it('a search that came is kept: the next greetings take turns from it', async() => {
+    const {manager, invokeApiHashable} = createManager();
+    invokeApiHashable.mockResolvedValue(stickers(['1', '2']));
+
+    const first = await manager.getGreetingSticker();
+    const second = await manager.getGreetingSticker();
+    expect(new Set([first.id, second.id])).toEqual(new Set(['1', '2']));
+    expect(invokeApiHashable).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('AppStickersManager.searchStickersOnServer', () => {
   beforeEach(() => {

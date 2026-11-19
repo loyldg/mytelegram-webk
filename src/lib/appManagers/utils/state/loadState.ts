@@ -34,8 +34,6 @@ export type LoadStateResult = {
 
 const TEST_MULTI_MIGRATION = false;
 
-const DC_IDS: TrueDcId[] = [1, 2, 3, 4, 5];
-
 const REFRESH_EVERY = 24 * 60 * 60 * 1000; // 1 day
 // const REFRESH_EVERY = 1e3;
 // const REFRESH_EVERY_WEEK = 24 * 60 * 60 * 1000 * 7; // 7 days
@@ -53,9 +51,10 @@ const REFRESH_KEYS: Array<keyof State> = [
   'filtersArr'
 ];
 
+// * the version is not among them: it is kept as seen once its message is in the "Telegram" chat
+// * (apiUpdatesManager.deliverChangelog), so a start that stops on the way leaves the message for the next one
 const RESET_WITH_BUILD: Array<keyof State> = [
   'appConfig',
-  'version',
   'build'
 ];
 
@@ -198,28 +197,38 @@ const STATE_STEPS = {
       writer.push('settings', writer.state.settings);
     }
   },
+  RESET_DIALOG_LIST: (writer: ReturnType<typeof StateWriter>) => {
+    writer.resetStorages.set('dialogs', []);
+    writer.push('allDialogsLoaded', copy(STATE_INIT.allDialogsLoaded));
+    writer.push('dialogsPaginationOffsets', copy(STATE_INIT.dialogsPaginationOffsets));
+    writer.push('pinnedOrders', copy(STATE_INIT.pinnedOrders));
+  },
   VERSION: (writer: ReturnType<typeof StateWriter>) => {
     let newVersion: string, oldVersion: string;
-    if(writer.state.version !== STATE_VERSION || writer.state.build !== BUILD/*  || true */) {
+    // * the migrations go with the build, which is written at once; the version stays as it was until its
+    // * message has come, and every start until then finds it new
+    if(writer.state.build !== BUILD/*  || true */) {
       if(writer.state.build < 526) { // * drop all previous migrations
         writer.reset();
       } else if(writer.state.build < 562) { // * drop filtersArr
         writer.push('filtersArr', copy(STATE_INIT.filtersArr));
       } else if(writer.state.build < 677) {
-        writer.resetStorages.set('dialogs', []);
-        writer.push('allDialogsLoaded', copy(STATE_INIT.allDialogsLoaded));
-        writer.push('pinnedOrders', copy(STATE_INIT.pinnedOrders));
+        STATE_STEPS.RESET_DIALOG_LIST(writer);
         writer.push('botCommands', copy(STATE_INIT.botCommands));
-      }
-
-      if(compareVersion(writer.state.version, STATE_VERSION) !== 0) {
-        newVersion = STATE_VERSION;
-        oldVersion = writer.state.version;
+      } else if(writer.state.build < 687) {
+        // * the dialogs the old pagination skipped (a dialog out of date order made the next page jump over
+        // * everything between) were marked as loaded: load the list again
+        STATE_STEPS.RESET_DIALOG_LIST(writer);
       }
 
       RESET_WITH_BUILD.forEach((key) => {
         writer.push(key, copy(STATE_INIT[key]));
       });
+    }
+
+    if(compareVersion(writer.state.version, STATE_VERSION) !== 0) {
+      newVersion = STATE_VERSION;
+      oldVersion = writer.state.version;
     }
 
     return {newVersion, oldVersion};
@@ -315,10 +324,20 @@ async function loadStateForAccount(accountNumber: ActiveAccountNumber): Promise<
   STATE_STEPS.VALIDATE(writer, STATE_INIT);
   STATE_STEPS.VALIDATE(commonWriter, COMMON_STATE_INIT);
   STATE_STEPS.MIGRATE_THEMES(commonWriter);
-  const {newVersion, oldVersion} = STATE_STEPS.VERSION(writer);
+  // * a state that could not be read (its database did not open: an older version's tab held it at its own
+  // * version) is not a new one: the defaults it was filled with are not written over what is kept, and its
+  // * version is not taken for one the app was updated from
+  const unreadable = !stateStorage.isAvailable();
+  const {newVersion, oldVersion} = unreadable ? {newVersion: undefined, oldVersion: undefined} : STATE_STEPS.VERSION(writer);
 
   if(writer.state.userId !== userId) {
     writer.push('userId', userId);
+  }
+
+  if(unreadable) {
+    log.error('the state could not be read: nothing of it is written');
+    writer.pushedKeys.clear();
+    writer.resetStorages.clear();
   }
 
   return {
@@ -504,7 +523,7 @@ async function moveStoragesToMultiAccountFormat() {
  */
 async function checkIfHasMultiAccount() {
   const accountData = await AccountController.get(1);
-  return !!accountData.userId || DC_IDS.some((dcId) => accountData[`dc${dcId}_auth_key`]);
+  return !!accountData.userId || AccountController.hasAuthKey(accountData);
 }
 
 function deleteOldDatabase() {
@@ -556,6 +575,8 @@ async function loadStateForAllAccounts() {
       deleteOldDatabase(); // * don't wait for the result
     }
   } else {
+    // * before its auth key is compared with the copy kept for Web A, which may be left behind a passcode turned on
+    await AccountController.removeLegacyCopyBehindPasscode();
     stateForFirstAccount = await loadStateForAccount(1);
   }
 

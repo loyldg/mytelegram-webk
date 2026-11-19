@@ -31,6 +31,7 @@ export interface MTAppConfig {
   ringtone_size_max?:                        number;
   ringtone_saved_count_max?:                 number;
   premium_purchase_blocked?:                 boolean;
+  web_widgets_disabled?:                     boolean;
   channels_limit_default?:                   number;
   channels_limit_premium?:                   number;
   saved_gifs_limit_default?:                 number;
@@ -116,6 +117,7 @@ export interface MTAppConfig {
   saved_dialogs_pinned_limit_default?:       number;
   saved_dialogs_pinned_limit_premium?:       number;
   boosts_per_sent_gift?:                     number;
+  boosts_channel_level_max?:                 number;
   cachedTime?:                               number;
   hash?:                                     number;
   pm_read_date_expire_period?:               number;

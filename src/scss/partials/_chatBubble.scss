@@ -32,10 +32,20 @@
   height: var(--message-out-gradient-height, 100%);
   border-radius: 0;
   background-size: 100% 100%;
+  image-rendering: var(--message-out-gradient-rendering, auto);
   // * the column across both ways: what took it in may start inside the bubble's tail
   transform: scaleX(calc(20000 - 19999 * var(--message-out-gradient-freeform, 0)));
   transform-origin: 50% 0;
   pointer-events: none;
+}
+
+// * the gradient's phases (`GRADIENT_PHASES`): the freeform one's, the same picture at every one of them otherwise
+$message-out-gradient-phases: 0, 1, 2, 3, 4, 5, 6, 7;
+
+// * no piece of the gradient drawn, nor laid out: a piece is a layer of the compositor's even when it draws nothing
+@mixin message-out-gradient-hidden {
+  --message-out-gradient-display: none;
+  --message-out-gradient-next-display: none;
 }
 
 @mixin message-out-gradient {
@@ -66,7 +76,7 @@
 // * the freeform gradient's phase and its move to the next one, classes of the chat's frame
 // * (`advanceOutgoingMessageGradient`), set on its pieces, not there: a property changed there restyles every message.
 // * The pictures are the nearest theme's, the same one at every phase but the freeform gradient's
-@each $phase in 0, 1, 2, 3, 4, 5, 6, 7 {
+@each $phase in $message-out-gradient-phases {
   .message-out-gradient-phase-#{$phase} {
     .bubbles-gradient,
     .bubble-gradient,
@@ -103,13 +113,15 @@
   inset: 0;
   z-index: 0;
   pointer-events: none;
+  // * the list's first child, as tall as the list and in sight wherever it is scrolled: the browser would keep it where
+  // * it is rather than a message, and a message above the screen that grows would push the ones in sight down
+  overflow-anchor: none;
   // * the bubbles' colour under it, as a bubble paints it under its own piece
   background-color: var(--message-out-gradient-under, var(--message-out-background-color));
   @include message-out-gradient;
 
   &.is-empty {
-    --message-out-gradient-display: none;
-    --message-out-gradient-next-display: none;
+    @include message-out-gradient-hidden;
     background: none;
   }
 
@@ -885,6 +897,16 @@
     }
   }
 
+  // a link preview's large photo or video sets the bubble's width, as in Telegram Desktop: the headers above it
+  // (the reply, the name line with a forward or a bot) add nothing to that width, they fill what it gives and elide
+  &.has-webpage.photo:not(.is-square-photo),
+  &.has-webpage.video {
+    .bubble-content > .reply,
+    .bubble-content > .name {
+      contain: inline-size;
+    }
+  }
+
   &.emoji-big .emoji-image {
     height: 1.125rem;
     width: 1.125rem;
@@ -1056,11 +1078,7 @@
 
   .attachment {
     max-width: 100%;
-    border-start-start-radius: var(--border-start-start-radius);
-    border-start-end-radius: var(--border-start-end-radius);
-    border-end-start-radius: var(--border-end-start-radius);
-    border-end-end-radius: var(--border-end-end-radius);
-    overflow: hidden;
+    @include bubble-corners(start, end);
     user-select: none;
 
     //-webkit-mask-image: -webkit-radial-gradient(circle, white 100%, black 100%); // fix safari overflow
@@ -1135,6 +1153,32 @@
       max-height: string.unquote('min(400px, 100%)');
 
       width: max-content;
+    }
+  }
+
+  // An HTML widget: as wide as it was sent (`width` on the attachment), else as wide as a bubble may be;
+  // as tall as its content or its declared height. It has no intrinsic size, so the media limits above do
+  // not apply.
+  &.widget-message {
+    // the content too: an outgoing one (pushed to the end by its margin) is not stretched, and a widget, as wide as its
+    // box, would take the width it started at
+    &.is-full-width {
+      .bubble-content-wrapper,
+      .bubble-content {
+        width: 100%;
+      }
+    }
+
+    .attachment {
+      width: 100%;
+      max-width: 100%;
+      max-height: none;
+    }
+
+    // the network marker explains itself on a tap, and on hover (its title): a time icon takes no pointer otherwise
+    .time-widget-network {
+      cursor: pointer;
+      pointer-events: auto;
     }
   }
 
@@ -1815,10 +1859,6 @@
       opacity: .4;
     }
 
-    .reaction-block.is-paid {
-      --background-color: #fff6e3 !important;
-    }
-
     .reaction-block {
       &:not(.is-chosen) {
         @include hover() {
@@ -1967,18 +2007,12 @@
     }
 
     &.is-floating {
+      @include floating-time;
       margin-left: 0;
-      display: flex;
       align-items: center;
       padding: 0 .3125rem !important;
       margin: 0 !important;
-      white-space: nowrap;
-      height: calc(var(--messages-time-text-size) + .375rem);
       max-width: inherit;
-      position: absolute;
-      bottom: .1875rem;
-      inset-inline-end: .1875rem;
-      z-index: 2;
       opacity: 1;
 
       @include animation-level(1) {
@@ -1986,11 +2020,9 @@
       }
 
       .time-inner {
-        color: #fff;
+        @include floating-time-backing;
         margin: inherit;
         max-width: inherit;
-        border-radius: .75rem;
-        background-color: var(--message-time-background);
         // padding: 0 .3125rem;
         height: inherit;
         bottom: 0 !important;
@@ -2208,8 +2240,27 @@
       text-overflow: ellipsis;
     }
 
+    // * the line is laid out in the interface's direction, whatever its texts' are: `.name` around it is
+    // * `dir=auto`, which an Arabic tag after a Latin name would turn right to left
+    direction: ltr;
+
+    .is-rtl & {
+      direction: rtl;
+    }
+
+    // * the free room between the name and what follows it is a flexible gap of the line itself: a
+    // * margin on the name (`dir=auto`, so RTL for an Arabic one) would land on the other side of it and
+    // * push the name from the line's start
+    &::before {
+      content: '';
+      flex: 1 1 0;
+      order: 1;
+    }
+
     > .bubble-name-rank {
       flex-shrink: 0;
+      // * a tag's text keeps its own direction, as the name's (`dir=auto`)
+      unicode-bidi: plaintext;
     }
 
     &-topic {
@@ -2221,10 +2272,6 @@
   }
 
   &-name {
-    &-first {
-      margin-inline-end: auto;
-    }
-
     &-rank {
       color: var(--message-time-color);
       order: 999;
@@ -2261,7 +2308,8 @@
 
   &:not(.has-webpage) {
     &.photo,
-    &.video {
+    &.video,
+    &.widget-message {
       &:not(.is-reply) .bubble-content > .name {
         margin-bottom: $message-padding-top;
       }
@@ -3606,6 +3654,12 @@
 .bubble.service, .bubble.has-fake-service {
   .service-msg {
     --link-plate-color: #{$link-plate-service-color};
+
+    // * a chat theme change, which opens the theme picker
+    &.is-clickable {
+      cursor: pointer;
+    }
+
     color: #fff;
     //background-color: rgba(0, 0, 0, .24);
     background-color: var(--message-highlighting-color);
@@ -3863,8 +3917,7 @@
 
   // * cut out of the chat's piece (`OutgoingGradientUnion`), which is the bubble's gradient, its colour and its tail's
   &.is-gradient-joined {
-    --message-out-gradient-display: none;
-    --message-out-gradient-next-display: none;
+    @include message-out-gradient-hidden;
 
     .bubble-tail {
       background-color: transparent;
@@ -3888,6 +3941,26 @@
       // * a selected document's cover of its band, which is under the piece already and would cover the piece now
       .bubble-content.has-gradient .document-wrapper::before {
         background-color: var(--message-out-gradient-content-background, var(--message-background-color));
+      }
+    }
+  }
+
+  // * one that holds a widget is of one colour all over (widget-sandbox's SDK §5.1): the one the gradient shows most
+  // * (`--message-out-gradient-solid-color`), which the widget is told is its background. The gradient moves under the
+  // * bubble as the chat scrolls, and a widget that paints its own background stood out against it. Its content paints
+  // * the colour, so it is not cut out of the chat's piece (`OutgoingGradientUnion`); its pieces have no picture, so
+  // * nothing takes a colour of the gradient for it (`readOutgoingMessageGradient`), mid-change too (`.morphing`)
+  &.widget-message {
+    --message-background-color: var(--message-out-gradient-solid-color, var(--message-out-background-color));
+    @include message-out-gradient-hidden;
+
+    @each $phase in $message-out-gradient-phases {
+      --message-out-gradient-image-#{$phase}: none;
+    }
+
+    @supports (clip-path: border-box) {
+      &:not(.just-media) .bubble-content.has-gradient {
+        background-color: var(--message-background-color);
       }
     }
   }

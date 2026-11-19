@@ -1,6 +1,7 @@
 import copy from '@helpers/object/copy';
-import {Message} from '@layer';
+import {Message, MessageMedia} from '@layer';
 import {hasRichMessageSpoilers} from '@lib/richMessage';
+import countEmojiOnly from '@lib/richTextProcessor/countEmojiOnly';
 
 /**
  * Legacy-shell fields that must remain compatible while a Solid message body is updated in place.
@@ -10,7 +11,8 @@ import {hasRichMessageSpoilers} from '@lib/richMessage';
  * reactions (`messages_reactions`), the views and shares (in the time, made anew with every edit)
  * and the comments' count (`replies_updated`) - as part of the shell, an edit made after any of them
  * changed would render the whole bubble anew. A pin shows in the time too (`peer_pinned_messages`).
- * Whether there are views at all is the shell's still: a post that has them is made as one.
+ * Whether there are views at all is the shell's still: a post that has them is made as one. An HTML
+ * widget's source and state reach its running widget by a way of their own as well (`widgetEdit.ts`).
  */
 export function getSolidMessageBodyStructure(message: Message.message) {
   const bigEmoji = getBigEmojiShellSignature(message);
@@ -52,12 +54,27 @@ export function getSolidMessageBodyStructure(message: Message.message) {
   } = pFlags;
   return copy({
     ...structure,
+    ...(structure.media?._ === 'messageMediaWidget' && {media: getWidgetShellSignature(structure.media)}),
     pFlags: structuralFlags,
     bigEmoji,
     hasBodyContent,
     hasViews: !!views,
     replies: replies && getRepliesShellSignature(replies)
   });
+}
+
+// a widget without its source (`payload`) and its state (`chat_data`, `public_data`, and the bits of `flags` that say
+// which there are): its size, its flags, a shared widget's id
+function getWidgetShellSignature(media: MessageMedia.messageMediaWidget) {
+  const {
+    flags: _flags,
+    payload: _payload,
+    chat_data: _chatData,
+    public_data: _publicData,
+    public_data_hash: _publicDataHash,
+    ...shell
+  } = media;
+  return shell;
 }
 
 // what kind of a thread the message opens, not how much is in it
@@ -71,22 +88,7 @@ function getBigEmojiShellSignature(message: Message.message) {
   const entities = message.totalEntities || message.entities;
   if(!entities?.length) return;
 
-  let count = 0;
-  let textLength = 0;
-  for(let index = 0; index < entities.length; ++index) {
-    const entity = entities[index];
-    if(entity._ === 'messageEntityCustomEmoji') {
-      // The parsed list also contains the underlying emoji entity for a custom emoji.
-      ++index;
-    } else if(entity._ !== 'messageEntityEmoji') {
-      continue;
-    }
-
-    ++count;
-    textLength += entity.length;
-  }
-
-  return count && textLength === message.message.replace(/\s/g, '').length ? count : undefined;
+  return countEmojiOnly(message.message, entities) || undefined;
 }
 
 export function hasMessageTextSpoilers(message: Message.message) {

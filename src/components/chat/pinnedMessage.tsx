@@ -107,7 +107,9 @@ export type ChatPinnedMessageController = TopbarPlateController & {
    */
   prepareInitial: (data: {mid: number, index?: number, count?: number}) => Promise<void>,
   /** Flip the prepared plate visible. No-op if `prepareInitial` was skipped. */
-  revealPrepared: () => void
+  revealPrepared: () => void,
+  /** The chat started or stopped holding back the links and buttons of the pin's sender. */
+  refreshActionButton: () => void
 };
 
 export default function createChatPinnedMessage(
@@ -128,6 +130,9 @@ export default function createChatPinnedMessage(
   let wasPinnedIndex = 0;
   let wasPinnedMediaIndex = 0;
   let customButtonMiddleware: MiddlewareHelper | undefined;
+  // * the message the action button is for, and whether the chat held its button back (`refreshActionButton`)
+  let actionMessage: Message.message | undefined;
+  let actionHeldBack = false;
   /**
    * Bumped by every `_setPinnedMessage` run. The function awaits content
    * wrapping, and the debounce can have two runs in flight (first + last), so a
@@ -679,6 +684,12 @@ export default function createChatPinnedMessage(
   }
 
   function updateActionButton(message?: Message.message) {
+    actionMessage = message;
+    // * a sender whose links and buttons the chat holds back gets no button here either. The chat knows nothing of the
+    // * sender only when it has gone on to another peer before this plate is replaced: no button till then
+    actionHeldBack = !!message && (chat.bubbles.hidesMessageLinks(message) ?? true);
+    if(actionHeldBack) message = undefined;
+
     const oldBtn = actionContainer.querySelector(
       '.pinned-container-action-button:not(.is-leaving)'
     ) as HTMLElement | null;
@@ -749,12 +760,22 @@ export default function createChatPinnedMessage(
 
     if(oldBtn) {
       oldBtn.classList.add('is-leaving');
+      // * a button going takes no key while it fades either (one held back among them): the class keeps only the
+      // * pointer off it
+      oldBtn.inert = true;
       const timeout = window.setTimeout(() => {
         leavingButtonTimeouts.delete(timeout);
         oldBtn.remove();
         oldMiddleware?.destroy();
       }, 200);
       leavingButtonTimeouts.add(timeout);
+    }
+  }
+
+  function refreshActionButton() {
+    const heldBack = actionMessage && chat.bubbles.hidesMessageLinks(actionMessage);
+    if(heldBack !== undefined && heldBack !== actionHeldBack) {
+      updateActionButton(actionMessage);
     }
   }
 
@@ -771,16 +792,18 @@ export default function createChatPinnedMessage(
     const btn = document.createElement(opts.as || 'button');
     btn.classList.add(
       'pinned-container-action-button',
-      'pinned-message-action-button',
-      'text-overflow-no-wrap'
+      'pinned-message-action-button'
     );
-    // * a bot's button label: truncated at its own end, whatever the layout's direction
-    setDirection(btn);
+    // The label follows its text, but the button's logical inset follows the interface.
+    const label = document.createElement('span');
+    label.classList.add('pinned-message-action-label', 'text-overflow-no-wrap');
+    setDirection(label);
     if(typeof opts.text === 'string') {
-      btn.textContent = opts.text;
+      label.textContent = opts.text;
     } else {
-      btn.append(opts.text);
+      label.append(opts.text);
     }
+    btn.append(label);
     if(opts.onClick) {
       attachClickEvent(btn, opts.onClick, {listenerSetter});
     }
@@ -832,8 +855,11 @@ export default function createChatPinnedMessage(
       prepared = false;
       // the real list resolved to empty while we were preparing — nothing to show
       if(!count) return;
+      // * the sender's settings may have come to the chat after the plate was prepared, while the old plate was still up
+      refreshActionButton();
       plateSetHidden(false);
     },
+    refreshActionButton,
     destroy: () => {
       destroyed = true;
       // deferred work would otherwise run against destroyed rows / a detached plate

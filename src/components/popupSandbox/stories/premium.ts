@@ -26,6 +26,14 @@ defineStories('Premium & Stars', [
     }
   },
   {
+    id: 'limit/folderPin',
+    title: 'Limit reached — pinned chats in the archive',
+    open: async(ctx) => {
+      const {default: showLimitPopup} = await import('@components/popups/limit');
+      await showLimitPopup('folderPin');
+    }
+  },
+  {
     id: 'limit/channels',
     title: 'Limit reached — channels (with inactive-chat picker)',
     managers: {
@@ -101,6 +109,17 @@ defineStories('Premium & Stars', [
     open: async(ctx) => {
       const {default: showBoostPopup} = await import('@components/popups/boost');
       showBoostPopup(ctx.peer('channel'));
+    }
+  },
+  {
+    id: 'boost/channel-reactions',
+    title: 'Boost a channel: custom reactions need a level',
+    open: async(ctx) => {
+      const [{default: showBoostPopup}, {getCustomReactionsBoostReason}] = await Promise.all([
+        import('@components/popups/boost'),
+        import('@components/openBoosts')
+      ]);
+      showBoostPopup(ctx.peer('channel'), {reason: getCustomReactionsBoostReason(3)});
     }
   }
 ]);

@@ -7,6 +7,8 @@
  */
 
 import noop from '@helpers/noop';
+import rootScope from '@lib/rootScope';
+import {bindManagersToSession} from '@lib/accounts/bindManagersToAccount';
 import showPeerPopup from '@components/popups/peer';
 import {defineStories} from '../registry';
 
@@ -194,6 +196,70 @@ defineStories('Confirmations', [
     open: async(ctx) => {
       const {default: showConvertToGigagroupPopup} = await import('@components/popups/convertToGigagroup');
       showConvertToGigagroupPopup(ctx.peer('group').toChatId()).catch(noop);
+    }
+  },
+  {
+    id: 'requestPeer/confirm/plain',
+    title: 'Send a group to a bot',
+    open: async(ctx) => {
+      const {showRequestPeerConfirmation} = await import('@components/popups/requestPeer');
+      showRequestPeerConfirmation({
+        peerType: {_: 'requestPeerTypeChat', pFlags: {}},
+        requestingPeerId: ctx.peer('bot'),
+        requestedPeerIds: [ctx.peer('supergroup')]
+      }).catch(noop);
+    }
+  },
+  {
+    id: 'requestPeer/confirm/addBot',
+    title: 'Send groups to a bot — the bot joins the one it is not in',
+    open: async(ctx) => {
+      const {showRequestPeerConfirmation} = await import('@components/popups/requestPeer');
+      showRequestPeerConfirmation({
+        peerType: {_: 'requestPeerTypeChat', pFlags: {bot_participant: true}},
+        requestingPeerId: ctx.peer('bot'),
+        requestedPeerIds: [ctx.peer('group'), ctx.peer('supergroup')],
+        botChatIds: [ctx.peer('group').toChatId()]
+      }).catch(noop);
+    }
+  },
+  {
+    id: 'requestPeer/confirm/adminRights',
+    title: 'Send a channel to a bot — the bot becomes its admin',
+    open: async(ctx) => {
+      const {showRequestPeerConfirmation} = await import('@components/popups/requestPeer');
+      showRequestPeerConfirmation({
+        peerType: {
+          _: 'requestPeerTypeBroadcast',
+          pFlags: {},
+          bot_admin_rights: {
+            _: 'chatAdminRights',
+            pFlags: {change_info: true, post_messages: true, delete_messages: true, other: true, add_admins: true}
+          }
+        },
+        requestingPeerId: ctx.peer('bot'),
+        requestedPeerIds: [ctx.peer('channel')]
+      }).catch(noop);
+    }
+  },
+  {
+    id: 'requestPhone/bot',
+    title: 'Share the phone number with a bot',
+    open: async(ctx) => {
+      const {default: requestPhone} = await import('@components/requestPhone');
+      requestPhone({managers: bindManagersToSession(rootScope.managers), peerId: ctx.peer('bot')}).catch(noop);
+    }
+  },
+  {
+    // A mini app's bot the user blocked: the question says it will be unblocked too (Android's)
+    id: 'requestPhone/blockedBot',
+    title: 'Share the phone number with a blocked bot (mini app)',
+    managers: {
+      appProfileManager: {isUserBlocked: () => true}
+    },
+    open: async(ctx) => {
+      const {default: requestPhone} = await import('@components/requestPhone');
+      requestPhone({managers: bindManagersToSession(rootScope.managers), peerId: ctx.peer('bot'), unblockBot: true}).catch(noop);
     }
   }
 ]);

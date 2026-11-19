@@ -176,6 +176,10 @@ function makeRichMessagesHarness() {
       resetPeerTranslationsByChannelCutoff: vi.fn(() => new Set<number>()),
       clearSummaries: vi.fn()
     },
+    appWidgetsManager: {
+      deleteWidgetStorage: vi.fn(),
+      deleteWidgetStorageByChannelCutoff: vi.fn()
+    },
     getMessageByPeer: vi.fn(),
     saveApiResult
   });
@@ -1995,9 +1999,12 @@ describe('manager cache race guards', () => {
         dialogsStorage: {
           isVirtualFilter: () => false,
           getOffsetDate: () => 0,
+          getDialogsPaginationOffsets: (): undefined => undefined,
+          setDialogsPaginationOffsets: vi.fn(),
           getFolderDialogs: (): any[] => []
         },
         appNotificationsManager: {getSettingsClock: () => 0},
+        appDraftsManager: {getDraftsClock: () => 0},
         appPeersManager: {getInputPeerById: () => ({_: 'inputPeerEmpty'})},
         saveApiResult
       });
@@ -2046,6 +2053,8 @@ describe('manager cache race guards', () => {
         dialogsStorage: {
           isVirtualFilter: () => true,
           getOffsetDate: () => 0,
+          getDialogsPaginationOffsets: (): undefined => undefined,
+          setDialogsPaginationOffsets: vi.fn(),
           getFolderDialogs: (): any[] => [],
           getForumTopicsPaginationOffsets: () => ({date: 0, id: 0, topic: 0}),
           processTopics,
@@ -2053,6 +2062,7 @@ describe('manager cache race guards', () => {
           updateForumTopicsPaginationOffsets
         },
         appNotificationsManager: {getSettingsClock: () => 0},
+        appDraftsManager: {getDraftsClock: () => 0},
         appPeersManager: {
           getInputPeerById: () => ({_: 'inputPeerEmpty'}),
           isChannel: () => true
